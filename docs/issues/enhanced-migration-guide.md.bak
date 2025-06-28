@@ -1,0 +1,1281 @@
+# Enhanced YJS Provider Migration Guide with Safety Measures
+
+## Overview
+
+This guide provides a safe, phased approach to migrate from the mock CollaborationProvider to the EnhancedCollaborationProvider that complies with `yjs-annotation-architecture-lates.md`. It includes rollback capabilities, feature flags, and gradual migration strategies.
+
+## Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Phase 1: Preparation and Safety Setup](#phase-1-preparation-and-safety-setup)
+3. [Phase 2: Parallel Implementation](#phase-2-parallel-implementation)
+4. [Phase 3: Component Migration](#phase-3-component-migration)
+5. [Phase 4: Data Migration](#phase-4-data-migration)
+6. [Phase 5: Production Rollout](#phase-5-production-rollout)
+7. [Rollback Procedures](#rollback-procedures)
+8. [Monitoring and Validation](#monitoring-and-validation)
+
+## Prerequisites
+
+### Required Dependencies
+```json
+{
+  "dependencies": {
+    "yjs": "^13.6.10",
+    "y-protocols": "^1.0.6",
+    "@tiptap/extension-collaboration": "^2.2.1",
+    "@tiptap/extension-collaboration-cursor": "^2.2.1",
+    "lru-cache": "^10.1.0"
+  }
+}
+```
+
+## Phase 1: Preparation and Safety Setup
+
+### Step 1.1: Create Feature Flag System
+
+```typescript
+// utils/feature-flags.ts
+export interface FeatureFlags {
+  USE_ENHANCED_PROVIDER: boolean;
+  ENABLE_LAZY_LOADING: boolean;
+  ENABLE_REAL_AWARENESS: boolean;
+  MIGRATION_PERCENTAGE: number; // 0-100
+}
+
+export class FeatureFlagManager {
+  private flags: FeatureFlags;
+  
+  constructor() {
+    this.flags = this.loadFlags();
+  }
+  
+  private loadFlags(): FeatureFlags {
+    const stored = localStorage.getItem('feature-flags');
+    const defaults: FeatureFlags = {
+      USE_ENHANCED_PROVIDER: false,
+      ENABLE_LAZY_LOADING: false,
+      ENABLE_REAL_AWARENESS: false,
+      MIGRATION_PERCENTAGE: 0
+    };
+    
+    return stored ? { ...defaults, ...JSON.parse(stored) } : defaults;
+  }
+  
+  isEnabled(flag: keyof FeatureFlags): boolean {
+    return !!this.flags[flag];
+  }
+  
+  getMigrationPercentage(): number {
+    return this.flags.MIGRATION_PERCENTAGE;
+  }
+  
+  updateFlag(flag: keyof FeatureFlags, value: boolean | number): void {
+    this.flags[flag] = value as any;
+    localStorage.setItem('feature-flags', JSON.stringify(this.flags));
+  }
+  
+  shouldUseMigration(userId: string): boolean {
+    // Deterministic rollout based on user ID
+    const hash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return (hash % 100) < this.flags.MIGRATION_PERCENTAGE;
+  }
+}
+
+export const featureFlags = new FeatureFlagManager();
+```
+
+### Step 1.2: Create Backup System
+
+```typescript
+// utils/backup-system.ts
+import * as Y from 'yjs';
+
+export interface BackupData {
+  timestamp: string;
+  version: string;
+  notes: Record<string, Uint8Array>;
+  metadata: Record<string, any>;
+}
+
+export class BackupSystem {
+  private readonly BACKUP_KEY = 'yjs-backup';
+  private readonly MAX_BACKUPS = 5;
+  
+  async createBackup(description: string): Promise<string> {
+    const backupId = `backup-${Date.now()}`;
+    const data = await this.collectCurrentData();
+    
+    const backup: BackupData = {
+      timestamp: new Date().toISOString(),
+      version: description,
+      notes: data.notes,
+      metadata: data.metadata
+    };
+    
+    // Store in IndexedDB for larger data
+    await this.storeBackup(backupId, backup);
+    
+    // Keep list of backups
+    this.updateBackupList(backupId, description);
+    
+    return backupId;
+  }
+  
+  private async collectCurrentData() {
+    const notes: Record<string, Uint8Array> = {};
+    const metadata: Record<string, any> = {};
+    
+    // Collect from old provider
+    const oldProvider = (await import('@/lib/yjs-provider')).CollaborationProvider.getInstance();
+    
+    // Get all note docs
+    const noteIds = this.getAllNoteIds();
+    for (const noteId of noteIds) {
+      const doc = oldProvider.getOrCreateNoteDoc(noteId);
+      notes[noteId] = Y.encodeStateAsUpdate(doc);
+      metadata[noteId] = {
+        branches: doc.getMap('branches').toJSON(),
+        lastModified: Date.now()
+      };
+    }
+    
+    return { notes, metadata };
+  }
+  
+  async restoreBackup(backupId: string): Promise<void> {
+    const backup = await this.loadBackup(backupId);
+    if (!backup) throw new Error(`Backup ${backupId} not found`);
+    
+    // Clear current state
+    await this.clearCurrentState();
+    
+    // Restore each note
+    const oldProvider = (await import('@/lib/yjs-provider')).CollaborationProvider.getInstance();
+    
+    for (const [noteId, update] of Object.entries(backup.notes)) {
+      const doc = oldProvider.getOrCreateNoteDoc(noteId);
+      Y.applyUpdate(doc, new Uint8Array(update));
+    }
+    
+    console.log(`Restored backup ${backupId} successfully`);
+  }
+  
+  private async storeBackup(backupId: string, backup: BackupData): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('annotation-backups', 1);
+      
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('backups')) {
+          db.createObjectStore('backups', { keyPath: 'id' });
+        }
+      };
+      
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(['backups'], 'readwrite');
+        const store = transaction.objectStore('backups');
+        
+        store.put({ id: backupId, ...backup });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      };
+    });
+  }
+  
+  private getAllNoteIds(): string[] {
+    // Get from localStorage or your current storage
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('note-'));
+    return keys.map(k => k.replace('note-', ''));
+  }
+  
+  private updateBackupList(backupId: string, description: string): void {
+    const list = JSON.parse(localStorage.getItem('backup-list') || '[]');
+    list.unshift({ id: backupId, description, timestamp: Date.now() });
+    
+    // Keep only recent backups
+    if (list.length > this.MAX_BACKUPS) {
+      const removed = list.splice(this.MAX_BACKUPS);
+      // Clean up old backups from IndexedDB
+      removed.forEach((b: any) => this.deleteBackup(b.id));
+    }
+    
+    localStorage.setItem('backup-list', JSON.stringify(list));
+  }
+  
+  async deleteBackup(backupId: string): Promise<void> {
+    // Implementation for cleaning up old backups
+  }
+  
+  private async clearCurrentState(): Promise<void> {
+    // Clear current provider state before restore
+  }
+  
+  private async loadBackup(backupId: string): Promise<BackupData | null> {
+    // Load from IndexedDB
+    return null; // Implement IndexedDB loading
+  }
+}
+
+export const backupSystem = new BackupSystem();
+```
+
+### Step 1.3: Create Provider Bridge
+
+```typescript
+// utils/provider-bridge.ts
+import { CollaborationProvider } from '@/lib/yjs-provider';
+import { EnhancedCollaborationProvider } from '@/lib/enhanced-yjs-provider';
+import { featureFlags } from './feature-flags';
+import { backupSystem } from './backup-system';
+
+export interface ProviderMetrics {
+  provider: 'old' | 'enhanced';
+  errors: number;
+  operations: number;
+  latency: number[];
+}
+
+export class ProviderBridge {
+  private static instance: ProviderBridge;
+  private oldProvider: CollaborationProvider;
+  private enhancedProvider: EnhancedCollaborationProvider | null = null;
+  private metrics: Map<string, ProviderMetrics> = new Map();
+  
+  private constructor() {
+    this.oldProvider = CollaborationProvider.getInstance();
+    this.initializeMetrics();
+  }
+  
+  static getInstance(): ProviderBridge {
+    if (!ProviderBridge.instance) {
+      ProviderBridge.instance = new ProviderBridge();
+    }
+    return ProviderBridge.instance;
+  }
+  
+  private initializeMetrics(): void {
+    this.metrics.set('old', {
+      provider: 'old',
+      errors: 0,
+      operations: 0,
+      latency: []
+    });
+    
+    this.metrics.set('enhanced', {
+      provider: 'enhanced',
+      errors: 0,
+      operations: 0,
+      latency: []
+    });
+  }
+  
+  async getProvider(userId?: string): Promise<any> {
+    // Determine which provider to use
+    const useEnhanced = userId 
+      ? featureFlags.shouldUseMigration(userId)
+      : featureFlags.isEnabled('USE_ENHANCED_PROVIDER');
+    
+    if (useEnhanced) {
+      return this.getEnhancedProvider();
+    }
+    
+    return this.getOldProvider();
+  }
+  
+  private getOldProvider(): any {
+    const start = Date.now();
+    
+    try {
+      const provider = this.oldProvider.getProvider();
+      
+      // Add missing getStates method to fix immediate error
+      if (provider.awareness && !provider.awareness.getStates) {
+        provider.awareness.getStates = () => new Map();
+      }
+      
+      this.recordMetric('old', Date.now() - start, false);
+      return provider;
+    } catch (error) {
+      this.recordMetric('old', Date.now() - start, true);
+      throw error;
+    }
+  }
+  
+  private async getEnhancedProvider(): Promise<any> {
+    const start = Date.now();
+    
+    try {
+      if (!this.enhancedProvider) {
+        this.enhancedProvider = EnhancedCollaborationProvider.getInstance();
+        
+        // Initialize if needed
+        const noteId = this.oldProvider.getCurrentNoteId();
+        if (noteId) {
+          await this.enhancedProvider.initializeNote(noteId, {});
+        }
+      }
+      
+      const provider = this.enhancedProvider.getProvider();
+      this.recordMetric('enhanced', Date.now() - start, false);
+      return provider;
+    } catch (error) {
+      console.error('Enhanced provider error, falling back to old:', error);
+      this.recordMetric('enhanced', Date.now() - start, true);
+      
+      // Fallback to old provider
+      return this.getOldProvider();
+    }
+  }
+  
+  private recordMetric(provider: 'old' | 'enhanced', latency: number, isError: boolean): void {
+    const metric = this.metrics.get(provider)!;
+    metric.operations++;
+    
+    if (isError) {
+      metric.errors++;
+    }
+    
+    metric.latency.push(latency);
+    
+    // Keep only last 100 latencies
+    if (metric.latency.length > 100) {
+      metric.latency.shift();
+    }
+  }
+  
+  getMetrics(): Record<string, ProviderMetrics> {
+    return Object.fromEntries(this.metrics);
+  }
+  
+  async switchToEnhanced(): Promise<void> {
+    // Create backup before switching
+    await backupSystem.createBackup('before-enhanced-switch');
+    
+    // Enable enhanced provider
+    featureFlags.updateFlag('USE_ENHANCED_PROVIDER', true);
+    
+    // Initialize enhanced provider
+    this.enhancedProvider = EnhancedCollaborationProvider.getInstance();
+  }
+  
+  async rollbackToOld(): Promise<void> {
+    // Disable enhanced provider
+    featureFlags.updateFlag('USE_ENHANCED_PROVIDER', false);
+    
+    // Clear enhanced provider
+    if (this.enhancedProvider) {
+      this.enhancedProvider.destroy();
+      this.enhancedProvider = null;
+    }
+  }
+}
+```
+
+## Phase 2: Parallel Implementation
+
+### Step 2.1: Update Enhanced Provider with Safety Features
+
+```typescript
+// lib/enhanced-yjs-provider.ts (additions)
+import { Awareness } from 'y-protocols/awareness';
+import { featureFlags } from '@/utils/feature-flags';
+
+export class EnhancedCollaborationProvider {
+  private awareness: Awareness;
+  private syncManager: HybridSyncManager | null = null;
+  private errorCount: number = 0;
+  private readonly MAX_ERRORS = 5;
+
+  private constructor() {
+    try {
+      this.mainDoc = new Y.Doc();
+      this.awareness = new Awareness(this.mainDoc);
+      
+      // Platform-specific persistence with error handling
+      const platform = detectPlatform();
+      this.persistence = this.createPersistenceAdapter(platform);
+      
+      this.structure = new EnhancedCollaborativeStructure(this.mainDoc, this.persistence);
+      this.performanceMonitor = new PerformanceMonitor(this);
+      this.annotationMerger = new AnnotationMerger(this.mainDoc);
+      this.fractionalIndexManager = new FractionalIndexManager();
+      
+      this.initializeMainDocStructure();
+      this.setupEventHandlers();
+      this.initializeAwareness();
+      
+      // Setup error boundary
+      this.setupErrorHandling();
+    } catch (error) {
+      console.error('Failed to initialize enhanced provider:', error);
+      this.handleInitializationError(error);
+    }
+  }
+
+  private createPersistenceAdapter(platform: string): PersistenceProvider {
+    try {
+      return platform === 'web' 
+        ? new EnhancedWebPersistenceAdapter('annotation-system')
+        : new ElectronPersistenceAdapter('annotation-system');
+    } catch (error) {
+      console.warn('Failed to create platform adapter, using memory-only:', error);
+      return new MemoryPersistenceAdapter();
+    }
+  }
+
+  private setupErrorHandling(): void {
+    // Global error handler for YJS operations
+    this.mainDoc.on('error', (error: Error) => {
+      this.handleError('mainDoc', error);
+    });
+    
+    // Monitor subdoc errors
+    this.mainDoc.on('subdocs', ({ added }: any) => {
+      added.forEach((subdoc: Y.Doc) => {
+        subdoc.on('error', (error: Error) => {
+          this.handleError('subdoc', error);
+        });
+      });
+    });
+  }
+
+  private handleError(source: string, error: Error): void {
+    this.errorCount++;
+    console.error(`Enhanced provider error from ${source}:`, error);
+    
+    // Emit error event for monitoring
+    const event = new CustomEvent('enhanced-provider-error', {
+      detail: { source, error, errorCount: this.errorCount }
+    });
+    window.dispatchEvent(event);
+    
+    // Auto-disable if too many errors
+    if (this.errorCount >= this.MAX_ERRORS) {
+      console.error('Too many errors, disabling enhanced provider');
+      featureFlags.updateFlag('USE_ENHANCED_PROVIDER', false);
+    }
+  }
+
+  // Safe initialization with migration
+  public async initializeNote(noteId: string, defaultData?: Record<string, any>): Promise<void> {
+    try {
+      this.currentNoteId = noteId;
+      
+      // Check if we need to migrate from old provider
+      if (featureFlags.isEnabled('AUTO_MIGRATE_DATA')) {
+        await this.migrateFromOldProvider(noteId);
+      }
+      
+      // Continue with normal initialization
+      const savedState = await this.persistence.load('main-doc');
+      if (savedState) {
+        Y.applyUpdate(this.mainDoc, savedState);
+        return;
+      }
+      
+      // Initialize with default data if no saved state
+      if (defaultData) {
+        this.initializeWithDefaultData(defaultData);
+      }
+    } catch (error) {
+      console.error('Failed to initialize note:', error);
+      throw error;
+    }
+  }
+
+  private async migrateFromOldProvider(noteId: string): Promise<void> {
+    try {
+      const { CollaborationProvider } = await import('./yjs-provider');
+      const oldProvider = CollaborationProvider.getInstance();
+      
+      // Get data from old provider
+      const oldDoc = oldProvider.getOrCreateNoteDoc(noteId);
+      const branches = oldDoc.getMap('branches');
+      
+      if (branches.size > 0) {
+        console.log(`Migrating ${branches.size} branches from old provider`);
+        
+        // Migrate branches
+        const enhancedBranches = this.mainDoc.getMap('branches');
+        branches.forEach((branch, branchId) => {
+          if (!enhancedBranches.has(branchId)) {
+            this.migrateBranch(branchId, branch);
+          }
+        });
+      }
+    } catch (error) {
+      console.warn('Migration from old provider failed:', error);
+      // Continue without migration
+    }
+  }
+
+  // Health check method
+  public getHealthStatus(): {
+    healthy: boolean;
+    errors: number;
+    uptime: number;
+    metrics: any;
+  } {
+    return {
+      healthy: this.errorCount < this.MAX_ERRORS,
+      errors: this.errorCount,
+      uptime: Date.now() - this.startTime,
+      metrics: this.performanceMonitor.getMetrics()
+    };
+  }
+}
+```
+
+### Step 2.2: Create Migration Utility with Safety
+
+```typescript
+// utils/safe-migration.ts
+import { CollaborationProvider } from '@/lib/yjs-provider';
+import { EnhancedCollaborationProvider } from '@/lib/enhanced-yjs-provider';
+import { backupSystem } from './backup-system';
+import { featureFlags } from './feature-flags';
+import * as Y from 'yjs';
+
+export interface MigrationResult {
+  success: boolean;
+  migratedNotes: number;
+  errors: string[];
+  backupId: string;
+}
+
+export class SafeMigrationUtility {
+  private errors: string[] = [];
+  
+  async migrateToEnhancedProvider(options: {
+    dryRun?: boolean;
+    selectedNotes?: string[];
+    progressCallback?: (progress: number) => void;
+  } = {}): Promise<MigrationResult> {
+    const { dryRun = false, selectedNotes, progressCallback } = options;
+    
+    console.log(`Starting ${dryRun ? 'dry run' : 'actual'} migration...`);
+    
+    // Create backup first
+    const backupId = await backupSystem.createBackup('pre-migration');
+    
+    try {
+      // Get instances
+      const oldProvider = CollaborationProvider.getInstance();
+      const enhancedProvider = EnhancedCollaborationProvider.getInstance();
+      
+      // Get notes to migrate
+      const noteIds = selectedNotes || this.getAllNoteIds();
+      let migratedCount = 0;
+      
+      for (let i = 0; i < noteIds.length; i++) {
+        const noteId = noteIds[i];
+        
+        try {
+          if (!dryRun) {
+            await this.migrateNote(noteId, oldProvider, enhancedProvider);
+          }
+          
+          migratedCount++;
+          
+          if (progressCallback) {
+            progressCallback((i + 1) / noteIds.length * 100);
+          }
+        } catch (error) {
+          const errorMsg = `Failed to migrate note ${noteId}: ${error}`;
+          this.errors.push(errorMsg);
+          console.error(errorMsg);
+          
+          if (!options.selectedNotes) {
+            // In full migration, stop on error
+            throw error;
+          }
+        }
+      }
+      
+      if (!dryRun) {
+        // Update feature flag
+        featureFlags.updateFlag('USE_ENHANCED_PROVIDER', true);
+        
+        // Mark migration complete
+        localStorage.setItem('migration-completed', new Date().toISOString());
+      }
+      
+      return {
+        success: true,
+        migratedNotes: migratedCount,
+        errors: this.errors,
+        backupId
+      };
+      
+    } catch (error) {
+      console.error('Migration failed:', error);
+      
+      if (!dryRun) {
+        // Restore from backup on failure
+        await backupSystem.restoreBackup(backupId);
+      }
+      
+      return {
+        success: false,
+        migratedNotes: 0,
+        errors: [...this.errors, error.toString()],
+        backupId
+      };
+    }
+  }
+  
+  private async migrateNote(
+    noteId: string,
+    oldProvider: CollaborationProvider,
+    enhancedProvider: EnhancedCollaborationProvider
+  ): Promise<void> {
+    console.log(`Migrating note: ${noteId}`);
+    
+    // Get old data
+    oldProvider.setCurrentNote(noteId);
+    const oldDoc = oldProvider.getOrCreateNoteDoc(noteId);
+    const branches = oldDoc.getMap('branches');
+    
+    // Initialize enhanced provider with note
+    await enhancedProvider.initializeNote(noteId, {
+      main: {
+        title: 'Migrated Document',
+        type: 'main',
+        position: { x: 2000, y: 1500 },
+        dimensions: { width: 600, height: 400 }
+      }
+    });
+    
+    // Migrate branches
+    branches.forEach((branch, branchId) => {
+      try {
+        this.migrateBranch(branchId, branch, enhancedProvider);
+      } catch (error) {
+        this.errors.push(`Failed to migrate branch ${branchId}: ${error}`);
+      }
+    });
+    
+    // Migrate editor content if exists
+    const editorDoc = oldProvider.getEditorYDoc?.(noteId);
+    if (editorDoc) {
+      await this.migrateEditorContent(noteId, editorDoc, enhancedProvider);
+    }
+  }
+  
+  private migrateBranch(
+    branchId: string,
+    branchData: any,
+    enhancedProvider: EnhancedCollaborationProvider
+  ): void {
+    const enhancedBranch = {
+      type: branchData.type || 'note',
+      originalText: branchData.originalText || '',
+      anchors: branchData.anchors || {},
+      metadata: branchData.metadata || {}
+    };
+    
+    enhancedProvider.addBranch(
+      branchData.sourcePanel || 'main',
+      branchId,
+      enhancedBranch
+    );
+    
+    // Create panel for branch if needed
+    if (branchData.targetPanel && branchData.targetPanel !== 'main') {
+      this.createPanelForBranch(branchData, enhancedProvider);
+    }
+  }
+  
+  private createPanelForBranch(
+    branchData: any,
+    enhancedProvider: EnhancedCollaborationProvider
+  ): void {
+    const mainDoc = enhancedProvider.getMainDoc();
+    const panels = mainDoc.getMap('metadata').get('panels') as Y.Map<any>;
+    
+    if (!panels.has(branchData.targetPanel)) {
+      const panel = new Y.Map();
+      panel.set('id', branchData.targetPanel);
+      panel.set('title', branchData.title || 'Untitled');
+      panel.set('type', 'branch');
+      panel.set('position', branchData.position || { x: 2400, y: 1500 });
+      panel.set('dimensions', branchData.dimensions || { width: 600, height: 400 });
+      panel.set('parentId', branchData.sourcePanel || 'main');
+      panel.set('state', 'lazy');
+      panel.set('lastAccessed', Date.now());
+      panel.set('annotations', []);
+      
+      panels.set(branchData.targetPanel, panel);
+    }
+  }
+  
+  private async migrateEditorContent(
+    panelId: string,
+    oldEditorDoc: Y.Doc,
+    enhancedProvider: EnhancedCollaborationProvider
+  ): Promise<void> {
+    const newEditorDoc = await enhancedProvider.getEditorDoc(panelId);
+    
+    // Copy content
+    const oldContent = oldEditorDoc.getXmlFragment('prosemirror');
+    const newContent = newEditorDoc.getXmlFragment('content');
+    
+    if (oldContent.length > 0) {
+      // Clone content to new doc
+      const update = Y.encodeStateAsUpdate(oldEditorDoc);
+      Y.applyUpdate(newEditorDoc, update);
+    }
+  }
+  
+  private getAllNoteIds(): string[] {
+    // Get from your storage
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('yjs-doc-'));
+    return keys.map(k => k.replace('yjs-doc-', ''));
+  }
+}
+
+export const migrationUtility = new SafeMigrationUtility();
+```
+
+## Phase 3: Component Migration
+
+### Step 3.1: Create HOC for Gradual Component Migration
+
+```typescript
+// components/hoc/with-provider-bridge.tsx
+import React, { useEffect, useState } from 'react';
+import { ProviderBridge } from '@/utils/provider-bridge';
+import { featureFlags } from '@/utils/feature-flags';
+
+export interface WithProviderProps {
+  provider: any;
+  isEnhanced: boolean;
+}
+
+export function withProviderBridge<P extends WithProviderProps>(
+  Component: React.ComponentType<P>,
+  componentName: string
+): React.ComponentType<Omit<P, keyof WithProviderProps>> {
+  
+  return function ProviderBridgedComponent(props: Omit<P, keyof WithProviderProps>) {
+    const [provider, setProvider] = useState<any>(null);
+    const [isEnhanced, setIsEnhanced] = useState(false);
+    const [error, setError] = useState<Error | null>(null);
+    
+    useEffect(() => {
+      const initProvider = async () => {
+        try {
+          const bridge = ProviderBridge.getInstance();
+          const userId = getUserId(); // Your user ID logic
+          
+          const prov = await bridge.getProvider(userId);
+          setProvider(prov);
+          setIsEnhanced(featureFlags.isEnabled('USE_ENHANCED_PROVIDER'));
+          
+        } catch (err) {
+          console.error(`Provider error in ${componentName}:`, err);
+          setError(err as Error);
+        }
+      };
+      
+      initProvider();
+      
+      // Listen for provider switches
+      const handleProviderSwitch = () => {
+        initProvider();
+      };
+      
+      window.addEventListener('provider-switched', handleProviderSwitch);
+      
+      return () => {
+        window.removeEventListener('provider-switched', handleProviderSwitch);
+      };
+    }, []);
+    
+    if (error) {
+      return (
+        <div className="error-boundary">
+          <p>Error loading provider in {componentName}</p>
+          <button onClick={() => window.location.reload()}>Reload</button>
+        </div>
+      );
+    }
+    
+    if (!provider) {
+      return <div>Loading provider...</div>;
+    }
+    
+    return <Component {...(props as P)} provider={provider} isEnhanced={isEnhanced} />;
+  };
+}
+```
+
+### Step 3.2: Update Canvas Panel with Safety
+
+```typescript
+// components/canvas/canvas-panel-safe.tsx
+import { withProviderBridge } from '@/components/hoc/with-provider-bridge';
+import { useEffect, useState } from 'react';
+import * as Y from 'yjs';
+
+interface CanvasPanelProps {
+  panelId: string;
+  noteId: string;
+  onClose: () => void;
+  provider?: any;
+  isEnhanced?: boolean;
+}
+
+function CanvasPanelBase({ 
+  panelId, 
+  noteId, 
+  onClose, 
+  provider, 
+  isEnhanced 
+}: CanvasPanelProps) {
+  const [editorDoc, setEditorDoc] = useState<Y.Doc | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  
+  useEffect(() => {
+    const loadEditorDoc = async () => {
+      try {
+        if (isEnhanced) {
+          // Enhanced provider path
+          const enhancedProvider = (await import('@/lib/enhanced-yjs-provider'))
+            .EnhancedCollaborationProvider.getInstance();
+          const doc = await enhancedProvider.getEditorDoc(panelId);
+          setEditorDoc(doc);
+        } else {
+          // Old provider path
+          const oldProvider = (await import('@/lib/yjs-provider'))
+            .CollaborationProvider.getInstance();
+          const doc = oldProvider.getEditorYDoc(panelId);
+          setEditorDoc(doc);
+        }
+      } catch (err) {
+        console.error('Failed to load editor doc:', err);
+        setError(err as Error);
+      }
+    };
+    
+    loadEditorDoc();
+  }, [panelId, isEnhanced]);
+  
+  if (error) {
+    return (
+      <div className="panel-error">
+        <p>Failed to load panel</p>
+        <button onClick={() => window.location.reload()}>Reload</button>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="canvas-panel">
+      {editorDoc && provider && (
+        <TiptapEditor
+          ydoc={editorDoc}
+          provider={provider}
+          panelId={panelId}
+          // ... other props
+        />
+      )}
+    </div>
+  );
+}
+
+// Export wrapped component
+export const CanvasPanel = withProviderBridge(CanvasPanelBase, 'CanvasPanel');
+```
+
+## Phase 4: Data Migration
+
+### Step 4.1: Migration UI Component
+
+```typescript
+// components/admin/migration-panel.tsx
+import { useState } from 'react';
+import { migrationUtility } from '@/utils/safe-migration';
+import { backupSystem } from '@/utils/backup-system';
+import { featureFlags } from '@/utils/feature-flags';
+
+export function MigrationPanel() {
+  const [migrationState, setMigrationState] = useState<'idle' | 'running' | 'complete' | 'error'>('idle');
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState<any>(null);
+  
+  const runDryRun = async () => {
+    setMigrationState('running');
+    const result = await migrationUtility.migrateToEnhancedProvider({
+      dryRun: true,
+      progressCallback: setProgress
+    });
+    setResult(result);
+    setMigrationState('complete');
+  };
+  
+  const runMigration = async () => {
+    if (!confirm('This will migrate all data to the enhanced provider. Continue?')) {
+      return;
+    }
+    
+    setMigrationState('running');
+    const result = await migrationUtility.migrateToEnhancedProvider({
+      dryRun: false,
+      progressCallback: setProgress
+    });
+    
+    setResult(result);
+    setMigrationState(result.success ? 'complete' : 'error');
+  };
+  
+  const rollback = async () => {
+    if (!result?.backupId) return;
+    
+    if (!confirm('This will restore the pre-migration state. Continue?')) {
+      return;
+    }
+    
+    await backupSystem.restoreBackup(result.backupId);
+    featureFlags.updateFlag('USE_ENHANCED_PROVIDER', false);
+    window.location.reload();
+  };
+  
+  return (
+    <div className="migration-panel p-4 border rounded">
+      <h2 className="text-lg font-bold mb-4">Migration Control Panel</h2>
+      
+      <div className="space-y-4">
+        {/* Current Status */}
+        <div className="status">
+          <p>Current Provider: {featureFlags.isEnabled('USE_ENHANCED_PROVIDER') ? 'Enhanced' : 'Legacy'}</p>
+          <p>Migration Status: {migrationState}</p>
+          {migrationState === 'running' && (
+            <div className="progress-bar">
+              <div className="progress" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+        </div>
+        
+        {/* Actions */}
+        <div className="actions space-x-2">
+          <button 
+            onClick={runDryRun}
+            disabled={migrationState === 'running'}
+            className="btn btn-secondary"
+          >
+            Run Dry Run
+          </button>
+          
+          <button 
+            onClick={runMigration}
+            disabled={migrationState === 'running'}
+            className="btn btn-primary"
+          >
+            Run Migration
+          </button>
+          
+          {result?.backupId && (
+            <button 
+              onClick={rollback}
+              className="btn btn-danger"
+            >
+              Rollback
+            </button>
+          )}
+        </div>
+        
+        {/* Results */}
+        {result && (
+          <div className="results mt-4">
+            <h3 className="font-semibold">Results:</h3>
+            <p>Success: {result.success ? 'Yes' : 'No'}</p>
+            <p>Migrated Notes: {result.migratedNotes}</p>
+            {result.errors.length > 0 && (
+              <div className="errors text-red-600">
+                <p>Errors:</p>
+                <ul>
+                  {result.errors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+## Phase 5: Production Rollout
+
+### Step 5.1: Monitoring Dashboard
+
+```typescript
+// components/admin/provider-monitoring.tsx
+import { useEffect, useState } from 'react';
+import { ProviderBridge } from '@/utils/provider-bridge';
+import { featureFlags } from '@/utils/feature-flags';
+
+export function ProviderMonitoring() {
+  const [metrics, setMetrics] = useState<any>(null);
+  const [rolloutPercentage, setRolloutPercentage] = useState(0);
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const bridge = ProviderBridge.getInstance();
+      setMetrics(bridge.getMetrics());
+      setRolloutPercentage(featureFlags.getMigrationPercentage());
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  const updateRollout = (percentage: number) => {
+    featureFlags.updateFlag('MIGRATION_PERCENTAGE', percentage);
+    setRolloutPercentage(percentage);
+  };
+  
+  return (
+    <div className="monitoring-dashboard">
+      <h2>Provider Monitoring</h2>
+      
+      {/* Rollout Control */}
+      <div className="rollout-control">
+        <h3>Rollout Percentage: {rolloutPercentage}%</h3>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={rolloutPercentage}
+          onChange={(e) => updateRollout(Number(e.target.value))}
+        />
+        <div className="quick-buttons">
+          <button onClick={() => updateRollout(0)}>0%</button>
+          <button onClick={() => updateRollout(10)}>10%</button>
+          <button onClick={() => updateRollout(50)}>50%</button>
+          <button onClick={() => updateRollout(100)}>100%</button>
+        </div>
+      </div>
+      
+      {/* Metrics Display */}
+      {metrics && (
+        <div className="metrics">
+          <div className="metric-card">
+            <h4>Old Provider</h4>
+            <p>Operations: {metrics.old.operations}</p>
+            <p>Errors: {metrics.old.errors}</p>
+            <p>Avg Latency: {average(metrics.old.latency).toFixed(2)}ms</p>
+          </div>
+          
+          <div className="metric-card">
+            <h4>Enhanced Provider</h4>
+            <p>Operations: {metrics.enhanced.operations}</p>
+            <p>Errors: {metrics.enhanced.errors}</p>
+            <p>Avg Latency: {average(metrics.enhanced.latency).toFixed(2)}ms</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function average(arr: number[]): number {
+  return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+}
+```
+
+### Step 5.2: Health Check Endpoint
+
+```typescript
+// pages/api/health/provider.ts (Next.js API route)
+import type { NextApiRequest, NextApiResponse } from 'next';
+import { ProviderBridge } from '@/utils/provider-bridge';
+import { EnhancedCollaborationProvider } from '@/lib/enhanced-yjs-provider';
+import { featureFlags } from '@/utils/feature-flags';
+
+export default function handler(req: NextApiRequest, res: NextApiResponse) {
+  try {
+    const bridge = ProviderBridge.getInstance();
+    const metrics = bridge.getMetrics();
+    
+    let enhancedHealth = null;
+    if (featureFlags.isEnabled('USE_ENHANCED_PROVIDER')) {
+      const enhanced = EnhancedCollaborationProvider.getInstance();
+      enhancedHealth = enhanced.getHealthStatus();
+    }
+    
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      providers: {
+        old: {
+          active: !featureFlags.isEnabled('USE_ENHANCED_PROVIDER'),
+          metrics: metrics.old
+        },
+        enhanced: {
+          active: featureFlags.isEnabled('USE_ENHANCED_PROVIDER'),
+          health: enhancedHealth,
+          metrics: metrics.enhanced
+        }
+      },
+      rollout: {
+        percentage: featureFlags.getMigrationPercentage(),
+        featureFlags: {
+          USE_ENHANCED_PROVIDER: featureFlags.isEnabled('USE_ENHANCED_PROVIDER'),
+          ENABLE_LAZY_LOADING: featureFlags.isEnabled('ENABLE_LAZY_LOADING')
+        }
+      }
+    };
+    
+    res.status(200).json(health);
+  } catch (error) {
+    res.status(500).json({
+      status: 'error',
+      error: error.message
+    });
+  }
+}
+```
+
+## Rollback Procedures
+
+### Quick Rollback Script
+
+```typescript
+// scripts/rollback.ts
+import { backupSystem } from '@/utils/backup-system';
+import { featureFlags } from '@/utils/feature-flags';
+
+async function emergencyRollback() {
+  console.log('🚨 Starting emergency rollback...');
+  
+  try {
+    // 1. Disable enhanced provider
+    featureFlags.updateFlag('USE_ENHANCED_PROVIDER', false);
+    featureFlags.updateFlag('MIGRATION_PERCENTAGE', 0);
+    
+    // 2. Get latest backup
+    const backups = await backupSystem.listBackups();
+    if (backups.length === 0) {
+      throw new Error('No backups available!');
+    }
+    
+    // 3. Restore from backup
+    const latestBackup = backups[0];
+    await backupSystem.restoreBackup(latestBackup.id);
+    
+    // 4. Clear enhanced provider data
+    localStorage.removeItem('migration-completed');
+    localStorage.removeItem('enhanced-provider-data');
+    
+    // 5. Notify monitoring
+    await fetch('/api/notify-rollback', {
+      method: 'POST',
+      body: JSON.stringify({ 
+        reason: 'Emergency rollback executed',
+        timestamp: new Date().toISOString()
+      })
+    });
+    
+    console.log('✅ Rollback complete');
+    
+  } catch (error) {
+    console.error('❌ Rollback failed:', error);
+    process.exit(1);
+  }
+}
+
+// Execute if called directly
+if (require.main === module) {
+  emergencyRollback();
+}
+```
+
+## Monitoring and Validation
+
+### Automated Validation Tests
+
+```typescript
+// tests/migration-validation.test.ts
+import { describe, it, expect } from 'vitest';
+import { migrationUtility } from '@/utils/safe-migration';
+import { CollaborationProvider } from '@/lib/yjs-provider';
+import { EnhancedCollaborationProvider } from '@/lib/enhanced-yjs-provider';
+
+describe('Migration Validation', () => {
+  it('should preserve all branches during migration', async () => {
+    // Setup test data
+    const oldProvider = CollaborationProvider.getInstance();
+    const testNoteId = 'test-note-' + Date.now();
+    
+    oldProvider.setCurrentNote(testNoteId);
+    oldProvider.addBranch('main', 'branch-1', { type: 'note' });
+    oldProvider.addBranch('main', 'branch-2', { type: 'explore' });
+    
+    // Run migration
+    const result = await migrationUtility.migrateToEnhancedProvider({
+      selectedNotes: [testNoteId]
+    });
+    
+    expect(result.success).toBe(true);
+    
+    // Verify data
+    const enhanced = EnhancedCollaborationProvider.getInstance();
+    const branches = enhanced.getBranches('main');
+    
+    expect(branches).toHaveLength(2);
+    expect(branches.find(b => b.id === 'branch-1')).toBeDefined();
+    expect(branches.find(b => b.id === 'branch-2')).toBeDefined();
+  });
+  
+  it('should handle migration errors gracefully', async () => {
+    // Test with invalid note
+    const result = await migrationUtility.migrateToEnhancedProvider({
+      selectedNotes: ['invalid-note-id']
+    });
+    
+    expect(result.success).toBe(true); // Should continue despite individual errors
+    expect(result.errors.length).toBeGreaterThan(0);
+  });
+});
+```
+
+## Implementation Timeline
+
+### Week 1: Setup & Testing
+- Day 1-2: Implement Phase 1 (Safety infrastructure)
+- Day 3-4: Implement Phase 2 (Parallel providers)
+- Day 5: Test in development environment
+
+### Week 2: Component Migration
+- Day 1-3: Update components with HOC
+- Day 4-5: Test all components with both providers
+
+### Week 3: Data Migration & Validation
+- Day 1-2: Test migration with sample data
+- Day 3: Run migration on staging
+- Day 4-5: Monitor and fix issues
+
+### Week 4: Production Rollout
+- Day 1: Enable for 10% of users
+- Day 2: Monitor metrics, increase to 25%
+- Day 3: Increase to 50%
+- Day 4: Increase to 100%
+- Day 5: Remove old provider code
+
+## Summary
+
+This comprehensive guide provides:
+
+1. **Immediate Error Fix**: Quick patch for the `getStates` error
+2. **Safe Migration Path**: Gradual transition to enhanced provider
+3. **Rollback Capability**: Emergency procedures if issues arise
+4. **Monitoring Tools**: Real-time metrics and health checks
+5. **Testing Strategy**: Validation at each step
+
+The approach minimizes risk while moving toward the full enhanced architecture implementation described in `yjs-annotation-architecture-lates.md`.
