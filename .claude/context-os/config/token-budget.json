@@ -1,0 +1,119 @@
+{
+  "version": "1.0.0",
+  "budgets": {
+    "default": {
+      "max_context_tokens": 8000,
+      "warning_threshold": 6000,
+      "reserve_tokens": 1000,
+      "priority_allocations": {
+        "project_context": 1000,
+        "current_task": 2000,
+        "relevant_knowledge": 2000,
+        "recent_changes": 1000,
+        "search_results": 1000,
+        "error_context": 1000
+      }
+    },
+    "small_context": {
+      "max_context_tokens": 4000,
+      "warning_threshold": 3000,
+      "reserve_tokens": 500,
+      "priority_allocations": {
+        "project_context": 500,
+        "current_task": 1500,
+        "relevant_knowledge": 1000,
+        "recent_changes": 500,
+        "search_results": 500
+      }
+    },
+    "large_context": {
+      "max_context_tokens": 16000,
+      "warning_threshold": 12000,
+      "reserve_tokens": 2000,
+      "priority_allocations": {
+        "project_context": 2000,
+        "current_task": 4000,
+        "relevant_knowledge": 4000,
+        "recent_changes": 2000,
+        "search_results": 2000,
+        "error_context": 2000
+      }
+    }
+  },
+  "rules": {
+    "token_counting": {
+      "method": "tiktoken",
+      "fallback_method": "character_estimate",
+      "chars_per_token": 4
+    },
+    "optimization": {
+      "auto_summarize": true,
+      "summarize_threshold": 0.8,
+      "compression_enabled": true,
+      "remove_comments": false,
+      "remove_whitespace": true,
+      "truncate_long_lines": true,
+      "max_line_length": 200
+    },
+    "loading_strategy": {
+      "progressive": true,
+      "priority_order": [
+        "current_task",
+        "project_context",
+        "recent_errors",
+        "relevant_knowledge",
+        "recent_changes",
+        "search_results",
+        "related_files"
+      ],
+      "stop_on_budget": true,
+      "leave_reserve": true
+    },
+    "file_limits": {
+      "max_file_size": 100000,
+      "max_files_per_category": 10,
+      "exclude_patterns": [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/build/**",
+        "**/*.min.js",
+        "**/*.map"
+      ]
+    }
+  },
+  "presets": {
+    "quick_fix": {
+      "budget": "small_context",
+      "focus": ["current_file", "related_tests", "recent_errors"],
+      "exclude": ["documentation", "examples"]
+    },
+    "feature_development": {
+      "budget": "default",
+      "focus": ["current_task", "related_files", "patterns", "tests"],
+      "include_examples": true
+    },
+    "large_refactor": {
+      "budget": "large_context",
+      "focus": ["architecture", "all_related_files", "tests", "documentation"],
+      "deep_scan": true
+    },
+    "debugging": {
+      "budget": "default",
+      "focus": ["error_traces", "recent_changes", "related_files", "logs"],
+      "include_git_history": true
+    }
+  },
+  "alerts": {
+    "token_usage": {
+      "warn_at_percentage": 75,
+      "error_at_percentage": 95,
+      "suggest_optimization": true,
+      "show_breakdown": true
+    },
+    "performance": {
+      "slow_load_threshold": 5000,
+      "suggest_caching": true,
+      "track_load_times": true
+    }
+  }
+}

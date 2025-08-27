@@ -1,0 +1,168 @@
+{
+  "version": "1.0.0",
+  "core": {
+    "max_context_tokens": 8000,
+    "auto_organize_threshold": 10,
+    "context_cache_ttl": 3600,
+    "smart_loading_enabled": true,
+    "progressive_enhancement": true,
+    "token_optimization": {
+      "enabled": true,
+      "compression_threshold": 1000,
+      "summarization_model": "auto",
+      "chunk_size": 500
+    }
+  },
+  "knowledge": {
+    "auto_categorization": true,
+    "merge_threshold": 0.8,
+    "similarity_algorithm": "cosine",
+    "index_update_frequency": "on_change",
+    "knowledge_graph": {
+      "enabled": true,
+      "max_nodes": 1000,
+      "visualization": true
+    },
+    "categories": {
+      "patterns": {
+        "keywords": ["pattern", "always", "best practice", "convention"],
+        "min_occurrences": 3
+      },
+      "errors": {
+        "keywords": ["error", "failed", "bug", "issue", "problem"],
+        "track_resolution": true
+      },
+      "decisions": {
+        "keywords": ["decided", "chose", "selected", "prefer", "because"],
+        "require_rationale": true
+      },
+      "performance": {
+        "keywords": ["slow", "fast", "optimize", "performance", "efficient"],
+        "track_metrics": true
+      }
+    }
+  },
+  "tasks": {
+    "archive_after_days": 30,
+    "auto_switch_context": true,
+    "preserve_context": true,
+    "task_templates": {
+      "feature": {
+        "sections": ["description", "requirements", "approach", "testing"],
+        "auto_load_patterns": true
+      },
+      "bugfix": {
+        "sections": ["symptoms", "root_cause", "solution", "prevention"],
+        "auto_load_errors": true
+      },
+      "refactor": {
+        "sections": ["current_state", "target_state", "migration", "validation"],
+        "auto_load_decisions": true
+      }
+    }
+  },
+  "team": {
+    "enabled": false,
+    "sync_method": "git",
+    "sync_frequency": "manual",
+    "conflict_resolution": "manual_review",
+    "shared_knowledge": {
+      "patterns": false,
+      "errors": false,
+      "decisions": false
+    },
+    "review_required": true,
+    "auto_propagate": false,
+    "voting": {
+      "enabled": false,
+      "min_votes": 2,
+      "vote_timeout_hours": 48,
+      "require_majority": true,
+      "weight_by_seniority": false
+    }
+  },
+  "search": {
+    "algorithm": "hybrid",
+    "weight_recent": 1.5,
+    "weight_frequency": 1.2,
+    "weight_relevance": 2.0,
+    "fuzzy_matching": true,
+    "semantic_search": true,
+    "index_format": "inverted",
+    "cache_results": true
+  },
+  "automation": {
+    "hooks_enabled": false,
+    "require_user_confirmation": true,
+    "dry_run_by_default": true,
+    "pre_commit": {
+      "validate_context": true,
+      "update_knowledge": false,
+      "check_conflicts": true,
+      "scan_secrets": true
+    },
+    "post_task": {
+      "archive_context": false,
+      "extract_learnings": false,
+      "update_metrics": false
+    },
+    "scheduled": {
+      "enabled": false,
+      "cleanup_old_tasks": "manual",
+      "optimize_knowledge": "manual",
+      "generate_reports": "manual"
+    }
+  },
+  "ci_cd": {
+    "enabled": false,
+    "require_explicit_enable": true,
+    "pipelines": {
+      "validate_context": {
+        "on": ["manual"],
+        "checks": ["syntax", "completeness", "conflicts"]
+      },
+      "knowledge_quality": {
+        "on": ["manual"],
+        "checks": ["duplication", "categorization", "accuracy"]
+      },
+      "metrics_tracking": {
+        "on": ["manual"],
+        "generate": ["usage_report", "knowledge_growth", "team_efficiency"]
+      }
+    }
+  },
+  "claude_integration": {
+    "command_prefix": "/context",
+    "auto_suggest": true,
+    "inline_knowledge": true,
+    "context_aware_completions": true,
+    "max_suggestion_tokens": 500,
+    "workarounds": {
+      "use_file_system": true,
+      "batch_operations": true,
+      "cache_responses": true,
+      "progressive_loading": true
+    }
+  },
+  "metrics": {
+    "track_usage": false,
+    "anonymous": true,
+    "opt_in_required": true,
+    "report_frequency": "manual",
+    "tracked_metrics": [
+      "context_switches",
+      "knowledge_reuse",
+      "task_completion_time",
+      "error_prevention",
+      "team_conflicts",
+      "search_efficiency"
+    ]
+  },
+  "experimental": {
+    "ai_categorization": false,
+    "predictive_loading": false,
+    "multi_repo_sync": false,
+    "context_streaming": false,
+    "knowledge_synthesis": false
+  }
+}

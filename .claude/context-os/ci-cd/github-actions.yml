@@ -1,0 +1,97 @@
+name: Context OS CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  context-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+    
+    - name: Install Context OS
+      run: |
+        cd .claude/context-os
+        npm install
+    
+    - name: Validate Context Structure
+      run: |
+        node .claude/context-os/ci-cd/validate-structure.js
+    
+    - name: Check Knowledge Consistency
+      run: |
+        node .claude/context-os/ci-cd/check-knowledge.js
+    
+    - name: Analyze Context Size
+      run: |
+        node .claude/context-os/core/token-optimizer.js stats
+    
+    - name: Generate Context Report
+      run: |
+        node .claude/context-os/ci-cd/generate-report.js
+    
+    - name: Upload Context Report
+      uses: actions/upload-artifact@v3
+      with:
+        name: context-report
+        path: .claude/context-os/reports/
+  
+  knowledge-sync:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+    
+    - name: Setup Git
+      run: |
+        git config --global user.name "Context OS Bot"
+        git config --global user.email "context-os@example.com"
+    
+    - name: Sync Team Knowledge
+      run: |
+        node .claude/context-os/team/team-sync.js sync
+    
+    - name: Push Knowledge Updates
+      run: |
+        git add .claude/context-os/team/shared/
+        git commit -m "chore: sync team knowledge [skip ci]" || true
+        git push origin knowledge-share || true
+  
+  context-optimization:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Run Enhancement Analysis
+      run: |
+        node .claude/context-os/core/enhancement-advisor.js analyze
+    
+    - name: Auto-organize if needed
+      run: |
+        node .claude/context-os/ci-cd/auto-organize.js
+    
+    - name: Create PR with improvements
+      uses: peter-evans/create-pull-request@v5
+      with:
+        commit-message: "feat: context optimization improvements"
+        title: "Context OS: Automated Improvements"
+        body: |
+          This PR contains automated context optimizations:
+          - File organization improvements
+          - Knowledge base cleanup
+          - Rule optimizations
+        branch: context-os/auto-improvements

@@ -1,0 +1,572 @@
+#!/usr/bin/env node
+
+const { Command } = require('commander');
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+const { Worker } = require('worker_threads');
+
+const CONTEXT_OS_ROOT = path.dirname(__dirname);
+const PROJECT_ROOT = path.resolve(CONTEXT_OS_ROOT, '../..');
+
+// Import ContextManager for smart loading
+const { ContextManager } = require(path.join(CONTEXT_OS_ROOT, 'core', 'context-manager'));
+
+// Initialize commander
+const program = new Command();
+program
+  .name('context')
+  .description('Context-OS CLI - Intelligent context management for development')
+  .version('1.0.0');
+
+// Load context command
+program
+  .command('load [pattern]')
+  .description('Load context files matching pattern')
+  .option('-t, --type <type>', 'filter by type (knowledge, current, patterns, errors)')
+  .option('-o, --output <file>', 'write to file instead of stdout')
+  .option('-s, --smart', 'use smart loading with semantic analysis and compression', true)
+  .option('-c, --compress', 'compress code files to save tokens', true)
+  .option('-m, --max-tokens <number>', 'maximum token budget', '8000')
+  .action(async (pattern, options) => {
+    pattern = pattern || 'general';
+    
+    if (options.smart) {
+      // Use new smart loading
+      const manager = new ContextManager(PROJECT_ROOT);
+      await manager.initialize();
+      
+      console.log('🧠 Using smart context loading...');
+      const result = await manager.loadContext(pattern, {
+        maxTokens: parseInt(options.maxTokens),
+        compress: options.compress,
+        smart: true,
+        includeKnowledge: options.type !== 'current'
+      });
+      
+      console.log(`✓ Loaded ${result.files.length} files (${result.tokenCount} tokens)`);
+      if (result.compressed) {
+        console.log('✓ Applied smart compression');
+      }
+      
+      if (options.output) {
+        fs.writeFileSync(options.output, result.context);
+        console.log(`✓ Context written to ${options.output}`);
+      } else {
+        console.log(result.context);
+      }
+    } else {
+      // Fall back to original loading
+      const contextFiles = findContextFiles(pattern, options.type);
+      const content = loadContextContent(contextFiles);
+      
+      if (options.output) {
+        fs.writeFileSync(options.output, content);
+        console.log(`✓ Context written to ${options.output}`);
+      } else {
+        console.log(content);
+      }
+    }
+  });
+
+// Search knowledge base
+program
+  .command('search <query>')
+  .description('Search knowledge base using semantic search')
+  .option('-l, --limit <number>', 'limit results', '5')
+  .action((query, options) => {
+    const results = searchKnowledge(query, parseInt(options.limit));
+    displaySearchResults(results);
+  });
+
+// Watch for changes and auto-organize
+program
+  .command('watch')
+  .description('Watch project for changes and auto-organize context')
+  .option('-d, --daemon', 'run as daemon')
+  .action((options) => {
+    if (options.daemon) {
+      // Fork as daemon
+      const daemon = require('child_process').fork(__filename, ['watch'], {
+        detached: true,
+        stdio: 'ignore'
+      });
+      daemon.unref();
+      console.log(`✓ Context watcher started (PID: ${daemon.pid})`);
+      fs.writeFileSync(path.join(CONTEXT_OS_ROOT, '.watch-pid'), daemon.pid.toString());
+    } else {
+      startWatcher();
+    }
+  });
+
+// Stop watcher
+program
+  .command('stop')
+  .description('Stop context watcher')
+  .action(() => {
+    const pidFile = path.join(CONTEXT_OS_ROOT, '.watch-pid');
+    if (fs.existsSync(pidFile)) {
+      const pid = fs.readFileSync(pidFile, 'utf8');
+      try {
+        process.kill(pid);
+        fs.unlinkSync(pidFile);
+        console.log('✓ Context watcher stopped');
+      } catch (e) {
+        console.error('✗ Failed to stop watcher:', e.message);
+      }
+    } else {
+      console.log('No watcher running');
+    }
+  });
+
+// Extract context from current work
+program
+  .command('extract')
+  .description('Extract context from current git changes')
+  .option('-c, --commit <hash>', 'extract from specific commit')
+  .action((options) => {
+    extractCurrentContext(options.commit);
+  });
+
+// Generate context summary
+program
+  .command('summarize')
+  .description('Generate AI-ready context summary')
+  .option('-f, --focus <area>', 'focus on specific area')
+  .action((options) => {
+    const summary = generateContextSummary(options.focus);
+    console.log(summary);
+  });
+
+// Learn from errors
+program
+  .command('learn <error>')
+  .description('Learn from error and update knowledge base')
+  .option('-s, --solution <text>', 'provide solution')
+  .action((error, options) => {
+    learnFromError(error, options.solution);
+  });
+
+// Track usage command
+program
+  .command('track')
+  .description('Track which files were modified and update usage patterns')
+  .option('-f, --files <files...>', 'list of modified files')
+  .action(async (options) => {
+    const manager = new ContextManager(PROJECT_ROOT);
+    await manager.initialize();
+    
+    let modifiedFiles = options.files || [];
+    
+    // If no files provided, get from git
+    if (modifiedFiles.length === 0) {
+      try {
+        const gitStatus = execSync('git diff --name-only HEAD~1', { cwd: PROJECT_ROOT, encoding: 'utf8' });
+        modifiedFiles = gitStatus.split('\n').filter(Boolean);
+      } catch (e) {
+        console.error('Could not get modified files from git');
+        return;
+      }
+    }
+    
+    const result = await manager.trackTaskCompletion(modifiedFiles);
+    if (result) {
+      console.log('📊 Usage patterns updated successfully');
+    }
+  });
+
+// View statistics command
+program
+  .command('stats')
+  .description('View context loading statistics and usage patterns')
+  .option('-d, --detailed', 'show detailed statistics')
+  .action(async (options) => {
+    const manager = new ContextManager(PROJECT_ROOT);
+    await manager.initialize();
+    
+    const stats = await manager.getContextStats();
+    
+    console.log('\n📊 Context-OS Statistics\n');
+    
+    // Index stats
+    console.log('📂 File Index:');
+    console.log(`  Total files: ${stats.indexStats.totalFiles}`);
+    console.log(`  Total tokens: ${stats.indexStats.totalTokens.toLocaleString()}`);
+    console.log(`  Languages: ${Object.keys(stats.indexStats.byLanguage).join(', ')}`);
+    
+    // Usage stats
+    console.log('\n🎯 Usage Patterns:');
+    console.log(`  Files tracked: ${stats.usageStats.totalFiles}`);
+    console.log(`  Patterns found: ${stats.usageStats.totalPatterns}`);
+    console.log(`  Avg usefulness: ${(stats.usageStats.avgUsefulness * 100).toFixed(1)}%`);
+    
+    if (options.detailed) {
+      console.log('\n📈 Most Useful Files:');
+      stats.usageStats.mostUseful.forEach((f, i) => {
+        console.log(`  ${i + 1}. ${f.file} (${(f.usefulness * 100).toFixed(0)}%)`);
+      });
+      
+      console.log('\n📉 Least Useful Files:');
+      stats.usageStats.leastUseful.forEach((f, i) => {
+        console.log(`  ${i + 1}. ${f.file} (${(f.usefulness * 100).toFixed(0)}%)`);
+      });
+    }
+    
+    // Compression estimates
+    console.log('\n🗜️  Compression Estimates:');
+    console.log(`  JavaScript: ${(stats.compressionEstimate.javascript * 100).toFixed(0)}% of original`);
+    console.log(`  TypeScript: ${(stats.compressionEstimate.typescript * 100).toFixed(0)}% of original`);
+    console.log(`  Python: ${(stats.compressionEstimate.python * 100).toFixed(0)}% of original`);
+  });
+
+// Rebuild index command
+program
+  .command('reindex')
+  .description('Rebuild the file index for faster context loading')
+  .action(async () => {
+    const manager = new ContextManager(PROJECT_ROOT);
+    await manager.initialize();
+    
+    console.log('🔄 Rebuilding file index...');
+    const startTime = Date.now();
+    
+    await manager.indexer.updateIndex();
+    const stats = manager.indexer.getStats();
+    
+    const duration = Date.now() - startTime;
+    console.log(`✓ Indexed ${stats.totalFiles} files in ${duration}ms`);
+    console.log(`✓ Total tokens: ${stats.totalTokens.toLocaleString()}`);
+  });
+
+// Helper functions
+
+function findContextFiles(pattern, type) {
+  const contextDirs = {
+    knowledge: path.join(CONTEXT_OS_ROOT, 'knowledge'),
+    current: path.join(CONTEXT_OS_ROOT, 'current'),
+    patterns: path.join(CONTEXT_OS_ROOT, 'knowledge/patterns'),
+    errors: path.join(CONTEXT_OS_ROOT, 'knowledge/errors')
+  };
+
+  const searchDirs = type ? [contextDirs[type]] : Object.values(contextDirs);
+  const files = [];
+
+  searchDirs.forEach(dir => {
+    if (fs.existsSync(dir)) {
+      walkDir(dir, (file) => {
+        if (file.endsWith('.md') || file.endsWith('.json')) {
+          if (!pattern || file.includes(pattern)) {
+            files.push(file);
+          }
+        }
+      });
+    }
+  });
+
+  return files;
+}
+
+function walkDir(dir, callback) {
+  fs.readdirSync(dir).forEach(file => {
+    const fullPath = path.join(dir, file);
+    if (fs.statSync(fullPath).isDirectory()) {
+      walkDir(fullPath, callback);
+    } else {
+      callback(fullPath);
+    }
+  });
+}
+
+function loadContextContent(files) {
+  const sections = [];
+  
+  files.forEach(file => {
+    const content = fs.readFileSync(file, 'utf8');
+    const relativePath = path.relative(CONTEXT_OS_ROOT, file);
+    sections.push(`\n## ${relativePath}\n\n${content}`);
+  });
+
+  return `# Context OS - Loaded Context\n\nGenerated: ${new Date().toISOString()}\nFiles: ${files.length}\n${sections.join('\n---\n')}`;
+}
+
+function searchKnowledge(query, limit) {
+  const knowledgeFiles = findContextFiles('', 'knowledge');
+  const results = [];
+
+  knowledgeFiles.forEach(file => {
+    const content = fs.readFileSync(file, 'utf8');
+    const score = calculateRelevance(query, content);
+    if (score > 0) {
+      results.push({
+        file: path.relative(CONTEXT_OS_ROOT, file),
+        score,
+        excerpt: extractExcerpt(content, query)
+      });
+    }
+  });
+
+  return results
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
+function calculateRelevance(query, content) {
+  const queryWords = query.toLowerCase().split(/\s+/);
+  const contentLower = content.toLowerCase();
+  let score = 0;
+
+  queryWords.forEach(word => {
+    const count = (contentLower.match(new RegExp(word, 'g')) || []).length;
+    score += count;
+  });
+
+  // Boost for exact phrase match
+  if (contentLower.includes(query.toLowerCase())) {
+    score *= 2;
+  }
+
+  return score;
+}
+
+function extractExcerpt(content, query) {
+  const lines = content.split('\n');
+  const queryLower = query.toLowerCase();
+  
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes(queryLower)) {
+      const start = Math.max(0, i - 1);
+      const end = Math.min(lines.length, i + 2);
+      return lines.slice(start, end).join('\n');
+    }
+  }
+
+  return lines.slice(0, 3).join('\n');
+}
+
+function displaySearchResults(results) {
+  if (results.length === 0) {
+    console.log('No results found.');
+    return;
+  }
+
+  console.log('\n🔍 Search Results:\n');
+  results.forEach((result, i) => {
+    console.log(`${i + 1}. ${result.file} (score: ${result.score})`);
+    console.log(`   ${result.excerpt.replace(/\n/g, '\n   ')}\n`);
+  });
+}
+
+function startWatcher() {
+  const chokidar = require('chokidar');
+  console.log('👁️  Watching for changes...');
+
+  // Watch source files
+  const watcher = chokidar.watch([
+    path.join(PROJECT_ROOT, 'components/**/*.{ts,tsx}'),
+    path.join(PROJECT_ROOT, 'lib/**/*.{ts,tsx}'),
+    path.join(PROJECT_ROOT, 'app/**/*.{ts,tsx}'),
+    path.join(PROJECT_ROOT, 'docs/**/*.md')
+  ], {
+    ignored: /node_modules/,
+    persistent: true
+  });
+
+  watcher
+    .on('change', (filepath) => {
+      console.log(`✓ Detected change: ${path.relative(PROJECT_ROOT, filepath)}`);
+      updateContextFromFile(filepath);
+    })
+    .on('add', (filepath) => {
+      console.log(`✓ New file: ${path.relative(PROJECT_ROOT, filepath)}`);
+      updateContextFromFile(filepath);
+    });
+
+  // Watch for git events
+  setInterval(() => {
+    checkGitStatus();
+  }, 30000); // Every 30 seconds
+}
+
+function updateContextFromFile(filepath) {
+  const content = fs.readFileSync(filepath, 'utf8');
+  const filename = path.basename(filepath);
+  
+  // Extract patterns
+  if (content.includes('useYDoc') || content.includes('YDoc')) {
+    updatePattern('yjs', filepath, content);
+  }
+  
+  // Extract decisions from comments
+  const decisionMatch = content.match(/\/\/ DECISION: (.+)/g);
+  if (decisionMatch) {
+    decisionMatch.forEach(decision => {
+      recordDecision(decision.replace('// DECISION: ', ''), filepath);
+    });
+  }
+
+  // Update current work context
+  updateCurrentContext(filepath);
+}
+
+function updatePattern(patternType, filepath, content) {
+  const patternFile = path.join(CONTEXT_OS_ROOT, `knowledge/patterns/${patternType}-usage.md`);
+  const timestamp = new Date().toISOString();
+  
+  const entry = `\n### ${path.relative(PROJECT_ROOT, filepath)} (${timestamp})\n\`\`\`typescript\n${extractRelevantCode(content, patternType)}\n\`\`\`\n`;
+  
+  if (fs.existsSync(patternFile)) {
+    fs.appendFileSync(patternFile, entry);
+  } else {
+    fs.writeFileSync(patternFile, `# ${patternType} Usage Patterns\n${entry}`);
+  }
+}
+
+function extractRelevantCode(content, pattern) {
+  const lines = content.split('\n');
+  const relevantLines = [];
+  let capturing = false;
+  let depth = 0;
+
+  lines.forEach(line => {
+    if (line.includes(pattern)) {
+      capturing = true;
+      depth = 0;
+    }
+    
+    if (capturing) {
+      relevantLines.push(line);
+      depth += (line.match(/{/g) || []).length;
+      depth -= (line.match(/}/g) || []).length;
+      
+      if (depth <= 0 && relevantLines.length > 5) {
+        capturing = false;
+      }
+    }
+  });
+
+  return relevantLines.slice(0, 20).join('\n');
+}
+
+function recordDecision(decision, filepath) {
+  const decisionsFile = path.join(CONTEXT_OS_ROOT, 'knowledge/decisions/recent.md');
+  const timestamp = new Date().toISOString();
+  const entry = `\n- **${timestamp}** in \`${path.relative(PROJECT_ROOT, filepath)}\`: ${decision}`;
+  
+  if (fs.existsSync(decisionsFile)) {
+    fs.appendFileSync(decisionsFile, entry);
+  } else {
+    fs.writeFileSync(decisionsFile, `# Recent Architecture Decisions\n${entry}`);
+  }
+}
+
+function updateCurrentContext(filepath) {
+  const currentFile = path.join(CONTEXT_OS_ROOT, 'current/active.md');
+  const timestamp = new Date().toISOString();
+  const relPath = path.relative(PROJECT_ROOT, filepath);
+  
+  let content = fs.existsSync(currentFile) ? fs.readFileSync(currentFile, 'utf8') : '# Current Work Context\n\n';
+  
+  // Update file list
+  if (!content.includes(relPath)) {
+    content += `\n- ${relPath} (modified: ${timestamp})`;
+    fs.writeFileSync(currentFile, content);
+  }
+}
+
+function checkGitStatus() {
+  try {
+    const status = execSync('git status --porcelain', { cwd: PROJECT_ROOT }).toString();
+    const lines = status.split('\n').filter(l => l.trim());
+    
+    if (lines.length > 0) {
+      const workFile = path.join(CONTEXT_OS_ROOT, 'current/work-in-progress.md');
+      const content = `# Work in Progress\n\nLast updated: ${new Date().toISOString()}\n\n## Modified Files:\n${lines.map(l => `- ${l}`).join('\n')}`;
+      fs.writeFileSync(workFile, content);
+    }
+  } catch (e) {
+    // Git not available or not a git repo
+  }
+}
+
+function extractCurrentContext(commit) {
+  const outputFile = path.join(CONTEXT_OS_ROOT, 'current/extracted.md');
+  let content = `# Extracted Context\n\nExtracted: ${new Date().toISOString()}\n\n`;
+
+  try {
+    if (commit) {
+      const diff = execSync(`git show ${commit}`, { cwd: PROJECT_ROOT }).toString();
+      content += `## Commit: ${commit}\n\n\`\`\`diff\n${diff}\n\`\`\`\n`;
+    } else {
+      const diff = execSync('git diff --cached', { cwd: PROJECT_ROOT }).toString();
+      const status = execSync('git status --porcelain', { cwd: PROJECT_ROOT }).toString();
+      
+      content += `## Staged Changes\n\n\`\`\`diff\n${diff}\n\`\`\`\n\n## Working Directory\n\n\`\`\`\n${status}\n\`\`\``;
+    }
+
+    fs.writeFileSync(outputFile, content);
+    console.log(`✓ Context extracted to ${outputFile}`);
+  } catch (e) {
+    console.error('✗ Failed to extract context:', e.message);
+  }
+}
+
+function generateContextSummary(focus) {
+  const sections = [];
+  
+  // Load project context
+  const projectFile = path.join(CONTEXT_OS_ROOT, 'project.md');
+  if (fs.existsSync(projectFile)) {
+    sections.push(`## Project Overview\n\n${fs.readFileSync(projectFile, 'utf8')}`);
+  }
+
+  // Load current work
+  const currentFiles = findContextFiles('', 'current');
+  if (currentFiles.length > 0) {
+    sections.push(`## Current Work\n\n${loadContextContent(currentFiles)}`);
+  }
+
+  // Load relevant patterns
+  if (focus) {
+    const patterns = findContextFiles(focus, 'patterns');
+    if (patterns.length > 0) {
+      sections.push(`## Relevant Patterns (${focus})\n\n${loadContextContent(patterns)}`);
+    }
+  }
+
+  // Load recent errors
+  const errors = findContextFiles('', 'errors').slice(-3);
+  if (errors.length > 0) {
+    sections.push(`## Recent Issues\n\n${loadContextContent(errors)}`);
+  }
+
+  return sections.join('\n\n---\n\n');
+}
+
+function learnFromError(error, solution) {
+  const timestamp = new Date().toISOString();
+  const slug = error.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 50);
+  const errorFile = path.join(CONTEXT_OS_ROOT, `knowledge/errors/${slug}.md`);
+  
+  const content = `# Error: ${error}\n\nRecorded: ${timestamp}\n\n## Problem\n${error}\n\n## Solution\n${solution || 'TODO: Add solution'}\n\n## Prevention\nTODO: Add prevention steps`;
+  
+  fs.writeFileSync(errorFile, content);
+  console.log(`✓ Error recorded: ${errorFile}`);
+  
+  // Update learned.md
+  const learnedFile = path.join(CONTEXT_OS_ROOT, 'knowledge/learned.md');
+  const learnedEntry = `\n- **${timestamp}**: ${error} → ${solution || 'Solution pending'}`;
+  
+  if (fs.existsSync(learnedFile)) {
+    fs.appendFileSync(learnedFile, learnedEntry);
+  } else {
+    fs.writeFileSync(learnedFile, `# Learned Lessons\n${learnedEntry}`);
+  }
+}
+
+// Parse and run
+program.parse(process.argv);
+
+// Export for daemon mode
+if (require.main !== module) {
+  module.exports = { startWatcher };
+}

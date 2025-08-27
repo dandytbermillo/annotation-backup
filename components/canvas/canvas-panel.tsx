@@ -7,6 +7,7 @@ import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getEditorYDoc } from "@/lib/yjs-provider"
+import { EnhancedCollaborationProvider } from "@/lib/enhanced-yjs-provider"
 
 interface CanvasPanelProps {
   panelId: string
@@ -25,6 +26,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
+  const [isContentLoading, setIsContentLoading] = useState(true)
   
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
@@ -40,7 +42,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
   // Get collaboration provider and YJS document for this editor
   const provider = UnifiedProvider.getInstance()
-  const ydoc = getEditorYDoc(panelId)
+  // Use enhanced provider to get subdoc with PostgreSQL persistence
+  const enhancedProvider = EnhancedCollaborationProvider.getInstance()
+  // Note: getEditorSubdoc is async, so we'll use the synchronous method
+  // Fixed: Using getEditorYDoc which now has PostgreSQL persistence built-in
+  // Pass noteId to ensure proper isolation between notes
+  const ydoc = getEditorYDoc(panelId, currentNoteId)
   
   // Set the current note context if provided
   useEffect(() => {
@@ -48,6 +55,29 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       provider.setCurrentNote(currentNoteId)
     }
   }, [currentNoteId])
+  
+  // Wait for Y.Doc content to load
+  useEffect(() => {
+    // Reset loading state when note/panel changes
+    setIsContentLoading(true)
+    
+    const checkDocLoading = async () => {
+      const { docLoadingStates } = await import('@/lib/yjs-utils')
+      const cacheKey = currentNoteId ? `${currentNoteId}-${panelId}` : panelId
+      
+      // Check if doc is loading
+      const loadingPromise = docLoadingStates.get(cacheKey)
+      if (loadingPromise) {
+        // Wait for loading to complete
+        await loadingPromise
+      }
+      
+      // Content is loaded, allow rendering
+      setIsContentLoading(false)
+    }
+    
+    checkDocLoading()
+  }, [currentNoteId, panelId])
   
   // Ensure panel position is set on mount
   useEffect(() => {
@@ -560,17 +590,28 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 />
               )}
               
-              <TiptapEditor
-                ref={editorRef}
-                content={currentBranch.content}
-                isEditable={isEditing}
-                panelId={panelId}
-                onUpdate={handleUpdate}
-                onSelectionChange={handleSelectionChange}
-                placeholder={isEditing ? "Start typing..." : ""}
-                ydoc={ydoc}
-                provider={provider.getProvider()}
-              />
+              {isContentLoading ? (
+                <div style={{
+                  padding: '40px',
+                  textAlign: 'center',
+                  color: '#666',
+                  fontSize: '14px'
+                }}>
+                  Loading content...
+                </div>
+              ) : (
+                <TiptapEditor
+                  ref={editorRef}
+                  content={ydoc ? '' : currentBranch.content}
+                  isEditable={isEditing}
+                  panelId={panelId}
+                  onUpdate={handleUpdate}
+                  onSelectionChange={handleSelectionChange}
+                  placeholder={isEditing ? "Start typing..." : ""}
+                  ydoc={ydoc}
+                  provider={provider.getProvider()}
+                />
+              )}
             </div>
           </div>
         </div>

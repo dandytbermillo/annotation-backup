@@ -1,0 +1,256 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+const CONTEXT_OS_ROOT = path.dirname(__dirname);
+const PROJECT_ROOT = path.resolve(CONTEXT_OS_ROOT, '../..');
+
+const hookType = process.argv[2];
+
+switch (hookType) {
+  case 'pre-commit':
+    handlePreCommit();
+    break;
+  case 'post-commit':
+    handlePostCommit();
+    break;
+  case 'pre-push':
+    handlePrePush();
+    break;
+  default:
+    console.error('Unknown hook type:', hookType);
+    process.exit(1);
+}
+
+function handlePreCommit() {
+  console.log('🔍 Context-OS: Analyzing commit...');
+  
+  try {
+    // Get staged files
+    const stagedFiles = execSync('git diff --cached --name-only', { cwd: PROJECT_ROOT })
+      .toString()
+      .split('\n')
+      .filter(f => f);
+    
+    if (stagedFiles.length === 0) return;
+    
+    // Extract patterns and decisions from staged changes
+    const patterns = new Set();
+    const decisions = [];
+    
+    stagedFiles.forEach(file => {
+      if (file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.js')) {
+        try {
+          const diff = execSync(`git diff --cached ${file}`, { cwd: PROJECT_ROOT }).toString();
+          
+          // Look for patterns
+          if (diff.includes('+') && (diff.includes('useYDoc') || diff.includes('YDoc'))) {
+            patterns.add('yjs');
+          }
+          if (diff.includes('postgres') || diff.includes('pg')) {
+            patterns.add('postgres');
+          }
+          
+          // Look for decision comments
+          const decisionMatches = diff.match(/\+.*\/\/ DECISION: (.+)/g);
+          if (decisionMatches) {
+            decisionMatches.forEach(match => {
+              const decision = match.replace(/.*\/\/ DECISION: /, '');
+              decisions.push({ file, decision });
+            });
+          }
+        } catch (e) {
+          // File might be deleted or binary
+        }
+      }
+    });
+    
+    // Update commit context
+    const commitContext = {
+      timestamp: new Date().toISOString(),
+      files: stagedFiles,
+      patterns: Array.from(patterns),
+      decisions
+    };
+    
+    const contextFile = path.join(CONTEXT_OS_ROOT, 'current/next-commit.json');
+    fs.writeFileSync(contextFile, JSON.stringify(commitContext, null, 2));
+    
+    // Generate commit message suggestion if needed
+    if (!process.env.GIT_EDITOR && patterns.size > 0) {
+      const suggestion = generateCommitMessage(stagedFiles, patterns, decisions);
+      console.log('\n💡 Suggested commit message:');
+      console.log(suggestion);
+      console.log('\n');
+    }
+    
+  } catch (e) {
+    console.error('Context-OS warning:', e.message);
+    // Don't block the commit
+  }
+}
+
+function handlePostCommit() {
+  console.log('📝 Context-OS: Recording commit...');
+  
+  try {
+    // Get commit info
+    const commitHash = execSync('git rev-parse HEAD', { cwd: PROJECT_ROOT }).toString().trim();
+    const commitMessage = execSync('git log -1 --pretty=%B', { cwd: PROJECT_ROOT }).toString().trim();
+    const commitAuthor = execSync('git log -1 --pretty=%an', { cwd: PROJECT_ROOT }).toString().trim();
+    const commitDate = execSync('git log -1 --pretty=%ai', { cwd: PROJECT_ROOT }).toString().trim();
+    
+    // Get changed files
+    const changedFiles = execSync('git diff-tree --no-commit-id --name-only -r HEAD', { cwd: PROJECT_ROOT })
+      .toString()
+      .split('\n')
+      .filter(f => f);
+    
+    // Load pre-commit context if exists
+    const contextFile = path.join(CONTEXT_OS_ROOT, 'current/next-commit.json');
+    let preCommitContext = {};
+    if (fs.existsSync(contextFile)) {
+      preCommitContext = JSON.parse(fs.readFileSync(contextFile, 'utf8'));
+      fs.unlinkSync(contextFile); // Clean up
+    }
+    
+    // Create commit record
+    const commitRecord = {
+      hash: commitHash,
+      message: commitMessage,
+      author: commitAuthor,
+      date: commitDate,
+      files: changedFiles,
+      patterns: preCommitContext.patterns || [],
+      decisions: preCommitContext.decisions || [],
+      recordedAt: new Date().toISOString()
+    };
+    
+    // Append to commit log
+    const commitLogFile = path.join(CONTEXT_OS_ROOT, 'knowledge/commit-log.json');
+    let commitLog = [];
+    if (fs.existsSync(commitLogFile)) {
+      commitLog = JSON.parse(fs.readFileSync(commitLogFile, 'utf8'));
+    }
+    commitLog.unshift(commitRecord);
+    commitLog = commitLog.slice(0, 100); // Keep last 100 commits
+    
+    fs.writeFileSync(commitLogFile, JSON.stringify(commitLog, null, 2));
+    
+    // Update patterns if any
+    if (commitRecord.patterns.length > 0) {
+      updatePatternKnowledge(commitRecord);
+    }
+    
+    // Update decisions if any
+    if (commitRecord.decisions.length > 0) {
+      updateDecisionLog(commitRecord);
+    }
+    
+    // Update learned knowledge based on commit message
+    if (commitMessage.toLowerCase().includes('fix')) {
+      extractAndLearnFromFix(commitRecord);
+    }
+    
+    // Rebuild search index
+    execSync(`${path.join(CONTEXT_OS_ROOT, 'bin/context-index')} build`, { stdio: 'ignore' });
+    
+  } catch (e) {
+    console.error('Context-OS warning:', e.message);
+  }
+}
+
+function handlePrePush() {
+  console.log('🚀 Context-OS: Preparing push context...');
+  
+  try {
+    // Get commits being pushed
+    const commits = execSync('git log @{u}..HEAD --oneline', { cwd: PROJECT_ROOT })
+      .toString()
+      .split('\n')
+      .filter(l => l);
+    
+    if (commits.length === 0) return;
+    
+    // Generate push summary
+    const summary = {
+      timestamp: new Date().toISOString(),
+      commits: commits.length,
+      preview: commits.slice(0, 5)
+    };
+    
+    const summaryFile = path.join(CONTEXT_OS_ROOT, 'current/push-summary.json');
+    fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
+    
+    console.log(`📊 Pushing ${commits.length} commits`);
+    
+  } catch (e) {
+    // Remote might not be set
+  }
+}
+
+function generateCommitMessage(files, patterns, decisions) {
+  const fileTypes = new Set();
+  files.forEach(file => {
+    if (file.includes('/components/')) fileTypes.add('components');
+    if (file.includes('/lib/')) fileTypes.add('lib');
+    if (file.includes('/app/')) fileTypes.add('app');
+    if (file.includes('/docs/')) fileTypes.add('docs');
+    if (file.includes('.test.')) fileTypes.add('tests');
+  });
+  
+  let scope = Array.from(fileTypes).join(',') || 'misc';
+  if (patterns.has('postgres')) scope = 'postgres';
+  if (patterns.has('yjs')) scope = 'yjs';
+  
+  let type = 'feat';
+  if (files.some(f => f.includes('.test.'))) type = 'test';
+  if (files.every(f => f.includes('/docs/'))) type = 'docs';
+  if (decisions.some(d => d.decision.toLowerCase().includes('fix'))) type = 'fix';
+  
+  const mainFile = files[0];
+  const action = type === 'fix' ? 'fix' : 'update';
+  
+  return `${type}(${scope}): ${action} ${path.basename(mainFile, path.extname(mainFile))}`;
+}
+
+function updatePatternKnowledge(commit) {
+  commit.patterns.forEach(pattern => {
+    const patternFile = path.join(CONTEXT_OS_ROOT, `knowledge/patterns/${pattern}-commits.md`);
+    
+    const entry = `\n## ${commit.hash.substring(0, 7)} - ${commit.message}\n\nDate: ${commit.date}\nFiles: ${commit.files.join(', ')}\n`;
+    
+    if (fs.existsSync(patternFile)) {
+      fs.appendFileSync(patternFile, entry);
+    } else {
+      fs.writeFileSync(patternFile, `# ${pattern} Pattern Commits\n${entry}`);
+    }
+  });
+}
+
+function updateDecisionLog(commit) {
+  const decisionFile = path.join(CONTEXT_OS_ROOT, 'knowledge/decisions/log.md');
+  
+  let content = fs.existsSync(decisionFile) ? fs.readFileSync(decisionFile, 'utf8') : '# Architecture Decision Log\n\n';
+  
+  commit.decisions.forEach(({ file, decision }) => {
+    content += `\n- **${commit.date}** in \`${file}\` (${commit.hash.substring(0, 7)}): ${decision}`;
+  });
+  
+  fs.writeFileSync(decisionFile, content);
+}
+
+function extractAndLearnFromFix(commit) {
+  // Try to extract what was fixed
+  const fixMatch = commit.message.match(/fix[:\s]+(.+)/i);
+  if (!fixMatch) return;
+  
+  const issue = fixMatch[1];
+  const fixFile = path.join(CONTEXT_OS_ROOT, `knowledge/errors/fix-${commit.hash.substring(0, 7)}.md`);
+  
+  const content = `# Fix: ${issue}\n\nCommit: ${commit.hash}\nDate: ${commit.date}\nAuthor: ${commit.author}\n\n## Issue\n${issue}\n\n## Changed Files\n${commit.files.map(f => `- ${f}`).join('\n')}\n\n## Resolution\nThis issue was resolved in commit ${commit.hash}.\n`;
+  
+  fs.writeFileSync(fixFile, content);
+}

@@ -1,0 +1,50 @@
+{
+  "name": "context-os",
+  "version": "2.0.0",
+  "description": "Powerful context engineering for Claude - Intelligent context management for development",
+  "main": "index.js",
+  "bin": {
+    "context": "./bin/context",
+    "context-index": "./bin/context-index",
+    "context-hook": "./bin/context-hook",
+    "claude-context": "./bin/claude-integration.js"
+  },
+  "scripts": {
+    "setup": "npm install && ./setup.sh",
+    "watch": "./bin/context watch --daemon",
+    "stop": "./bin/context stop",
+    "test": "node test.js",
+    "analyze": "node core/enhancement-advisor.js analyze",
+    "organize": "node workflows/auto-organize.js",
+    "report": "node ci-cd/generate-report.js",
+    "validate": "node ci-cd/validate-structure.js",
+    "team:enable": "node team/team-sync.js enable",
+    "team:sync": "node team/team-sync.js sync",
+    "knowledge:build-graph": "node core/knowledge-manager.js build-graph",
+    "context:optimize": "node core/token-optimizer.js stats"
+  },
+  "dependencies": {
+    "commander": "^11.1.0",
+    "chokidar": "^3.5.3",
+    "fuse.js": "^7.0.0",
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^4.1.0",
+    "natural": "^6.10.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "context",
+    "knowledge",
+    "automation",
+    "development",
+    "claude",
+    "ai",
+    "team-collaboration",
+    "knowledge-management"
+  ],
+  "author": "Context OS Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

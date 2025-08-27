@@ -108,7 +108,8 @@ export class EnhancedCollaborativeStructure {
     
     if (!this.mainDoc.getMap('presence').size) {
       const presence = this.mainDoc.getMap('presence')
-      presence.set('awareness', new Y.Awareness(this.mainDoc))
+      // Skip awareness for now - it requires y-protocols package
+      // presence.set('awareness', new Awareness(this.mainDoc))
       presence.set('cursors', new Y.Map())
       presence.set('selections', new Y.Map())
       presence.set('viewports', new Y.Map())
@@ -152,14 +153,28 @@ export class EnhancedCollaborativeStructure {
     // Create subdoc
     const subdoc = new Y.Doc()
     
+    // Flag to track if initial content has been loaded
+    let initialLoadComplete = false
+    
     // Try to load from persistence
     try {
       const snapshot = await this.persistence.loadSnapshot(`panel-${panelId}`)
       if (snapshot) {
-        Y.applyUpdate(subdoc, snapshot)
+        Y.applyUpdate(subdoc, snapshot, 'persistence')
       }
+      
+      // Also try to load updates if no snapshot
+      if (!snapshot) {
+        const data = await this.persistence.load(`panel-${panelId}`)
+        if (data) {
+          Y.applyUpdate(subdoc, data, 'persistence')
+        }
+      }
+      
+      initialLoadComplete = true
     } catch (error) {
       console.warn(`Failed to load panel ${panelId} from persistence:`, error)
+      initialLoadComplete = true
     }
     
     // Initialize content structure
@@ -171,11 +186,14 @@ export class EnhancedCollaborativeStructure {
     this.updatePanelState(panelId, 'active')
     
     // Set up auto-save
-    subdoc.on('update', async (update: Uint8Array) => {
-      try {
-        await this.persistence.persist(`panel-${panelId}`, update)
-      } catch (error) {
-        console.error(`Failed to persist panel ${panelId}:`, error)
+    subdoc.on('update', async (update: Uint8Array, origin: any) => {
+      // Only persist if initial load is complete and origin is not persistence
+      if (initialLoadComplete && origin !== 'persistence') {
+        try {
+          await this.persistence.persist(`panel-${panelId}`, update)
+        } catch (error) {
+          console.error(`Failed to persist panel ${panelId}:`, error)
+        }
       }
     })
     
@@ -270,9 +288,18 @@ export class EnhancedCollaborationProvider {
     
     // Platform-specific persistence
     const platform = detectPlatform()
-    this.persistence = platform === 'web' 
-      ? new EnhancedWebPersistenceAdapter('annotation-system')
-      : new ElectronPersistenceAdapter('annotation-system')
+    
+    if (platform === 'web') {
+      // Web development uses PostgreSQL via API routes
+      // Import synchronously to ensure it's ready immediately
+      const { WebPostgresAdapter } = require('./adapters/web-postgres-adapter')
+      this.persistence = new WebPostgresAdapter('/api/persistence')
+    } else {
+      // For Electron, use the mock adapter that works in browser
+      // The actual PostgreSQL persistence should be handled via IPC
+      // from the Electron main process
+      this.persistence = new ElectronPersistenceAdapter('annotation-system')
+    }
     
     this.structure = new EnhancedCollaborativeStructure(this.mainDoc, this.persistence)
     this.syncManager = new HybridSyncManager(this.mainDoc, 'default-room')

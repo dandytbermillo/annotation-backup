@@ -1,0 +1,172 @@
+{
+  "version": "2.0.0",
+  "security": {
+    "secrets_scanning": {
+      "enabled": true,
+      "patterns": [
+        {
+          "name": "AWS Keys",
+          "pattern": "AKIA[0-9A-Z]{16}",
+          "severity": "critical"
+        },
+        {
+          "name": "Private Keys",
+          "pattern": "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----",
+          "severity": "critical"
+        },
+        {
+          "name": "API Keys",
+          "pattern": "(api[_-]?key|apikey)\\s*[:=]\\s*['\"]?[a-zA-Z0-9]{16,}['\"]?",
+          "severity": "high"
+        },
+        {
+          "name": "Passwords",
+          "pattern": "(password|passwd|pwd)\\s*[:=]\\s*['\"]?[^'\"\\s]{8,}['\"]?",
+          "severity": "high"
+        },
+        {
+          "name": "Database URLs",
+          "pattern": "(postgres|mysql|mongodb)://[^\\s]+@[^\\s]+",
+          "severity": "high"
+        },
+        {
+          "name": "JWT Tokens",
+          "pattern": "eyJ[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+",
+          "severity": "medium"
+        },
+        {
+          "name": "GitHub Tokens",
+          "pattern": "ghp_[a-zA-Z0-9]{36}",
+          "severity": "critical"
+        },
+        {
+          "name": "Slack Tokens",
+          "pattern": "xox[baprs]-[0-9a-zA-Z-]+",
+          "severity": "high"
+        },
+        {
+          "name": "Environment Variables",
+          "pattern": "\\.env(\\.local|\\.production)?$",
+          "file_pattern": true,
+          "severity": "high"
+        }
+      ],
+      "exclude_paths": [
+        "node_modules/",
+        ".git/",
+        "dist/",
+        "build/",
+        ".next/",
+        "coverage/"
+      ],
+      "actions": {
+        "on_detection": "block",
+        "log_attempts": true,
+        "notify_user": true,
+        "quarantine_file": true
+      }
+    },
+    "file_access": {
+      "sandboxing": true,
+      "allowed_paths": [
+        "{PROJECT_ROOT}/**",
+        "{HOME}/.claude/**"
+      ],
+      "blocked_paths": [
+        "/etc/**",
+        "/usr/**",
+        "/System/**",
+        "C:\\Windows\\**",
+        "C:\\Program Files\\**",
+        "{HOME}/.ssh/**",
+        "{HOME}/.aws/**",
+        "{HOME}/.config/gh/**"
+      ],
+      "require_confirmation": [
+        "**/.env*",
+        "**/secrets/**",
+        "**/credentials/**",
+        "**/*.pem",
+        "**/*.key"
+      ]
+    },
+    "command_execution": {
+      "allowed_commands": [
+        "git",
+        "npm",
+        "pnpm",
+        "yarn",
+        "node",
+        "npx",
+        "tsc",
+        "jest",
+        "vitest",
+        "eslint",
+        "prettier"
+      ],
+      "blocked_commands": [
+        "rm -rf /",
+        "curl | sh",
+        "wget | sh",
+        "eval",
+        "exec"
+      ],
+      "require_confirmation": [
+        "rm -rf",
+        "git push --force",
+        "npm publish",
+        "git reset --hard"
+      ],
+      "command_timeout": 30000,
+      "max_output_size": 1048576
+    },
+    "audit": {
+      "enabled": true,
+      "log_level": "info",
+      "log_rotation": {
+        "max_files": 10,
+        "max_size": "10MB"
+      },
+      "log_sensitive_actions": true,
+      "retention_days": 90
+    }
+  },
+  "safety": {
+    "auto_merge": {
+      "enabled": false,
+      "require_approval": true,
+      "min_approvers": 1,
+      "allowed_branches": ["develop", "staging"],
+      "blocked_branches": ["main", "master", "production"]
+    },
+    "auto_commit": {
+      "enabled": true,
+      "require_tests_pass": true,
+      "require_lint_pass": true,
+      "max_files_per_commit": 20,
+      "require_user_confirmation": true
+    },
+    "knowledge_sharing": {
+      "auto_propagate": false,
+      "require_review": true,
+      "min_confidence": 3.0,
+      "min_usage_count": 5
+    }
+  },
+  "privacy": {
+    "telemetry": {
+      "enabled": false,
+      "anonymous": true,
+      "opt_in_required": true
+    },
+    "data_collection": {
+      "store_file_contents": false,
+      "store_commands": true,
+      "anonymize_paths": true,
+      "exclude_patterns": [
+        "**/personal/**",
+        "**/private/**"
+      ]
+    }
+  }
+}

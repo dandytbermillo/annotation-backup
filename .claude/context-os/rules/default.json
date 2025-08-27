@@ -1,0 +1,142 @@
+{
+  "version": "1.0",
+  "description": "Default context loading rules for Claude Code",
+  "rules": [
+    {
+      "name": "core_always",
+      "description": "Always load core project context",
+      "when": "always",
+      "load": [
+        ".claude/context-os/project.md",
+        "CLAUDE.md"
+      ],
+      "priority": 100,
+      "maxTokens": 2000
+    },
+    {
+      "name": "current_task",
+      "description": "Load current active task/feature",
+      "when": "always",
+      "load": [
+        ".claude/context-os/current/active.md"
+      ],
+      "priority": 90,
+      "maxTokens": 1500
+    },
+    {
+      "name": "prp_execution",
+      "description": "When executing a PRP",
+      "when": {
+        "command": "execute-prp",
+        "or": [
+          { "filePattern": "PRPs/*.md" }
+        ]
+      },
+      "load": [
+        "PRPs/templates/prp_base.md",
+        ".claude/context-os/knowledge/patterns/*.md",
+        ".claude/context-os/knowledge/errors/common-issues.md"
+      ],
+      "priority": 80,
+      "maxTokens": 3000
+    },
+    {
+      "name": "debugging",
+      "description": "When debugging errors",
+      "when": {
+        "keywords": ["error", "bug", "fix", "debug", "issue"],
+        "or": [
+          { "filePattern": "**/test-*.js" },
+          { "filePattern": "**/*.test.ts" }
+        ]
+      },
+      "load": [
+        ".claude/context-os/knowledge/errors/*.md",
+        ".claude/context-os/knowledge/patterns/testing.md"
+      ],
+      "priority": 85,
+      "maxTokens": 2000
+    },
+    {
+      "name": "yjs_work",
+      "description": "When working with YJS",
+      "when": {
+        "filePattern": "**/yjs*.ts",
+        "or": [
+          { "keywords": ["yjs", "ydoc", "crdt", "collaborative"] }
+        ]
+      },
+      "load": [
+        ".claude/context-os/knowledge/patterns/yjs-integration.md",
+        "docs/yjs-annotation-architecture.md"
+      ],
+      "priority": 75,
+      "maxTokens": 2500
+    },
+    {
+      "name": "database_work",
+      "description": "When working with database",
+      "when": {
+        "filePattern": "**/db*.ts",
+        "or": [
+          { "filePattern": "migrations/*.sql" },
+          { "keywords": ["postgres", "database", "sql", "migration"] }
+        ]
+      },
+      "load": [
+        ".claude/context-os/knowledge/patterns/postgres-adapters.md",
+        ".claude/context-os/knowledge/decisions/architecture-choices.md"
+      ],
+      "priority": 75,
+      "maxTokens": 2000
+    },
+    {
+      "name": "admin_interface",
+      "description": "When working on admin features",
+      "when": {
+        "filePattern": "**/admin/**",
+        "or": [
+          { "keywords": ["admin", "dashboard", "management"] }
+        ]
+      },
+      "load": [
+        ".claude/context-os/current/active.md",
+        ".claude/context-os/knowledge/patterns/admin-patterns.md"
+      ],
+      "priority": 70,
+      "maxTokens": 1500
+    },
+    {
+      "name": "architecture_decisions",
+      "description": "When making architectural changes",
+      "when": {
+        "keywords": ["architecture", "design", "refactor", "migrate"]
+      },
+      "load": [
+        ".claude/context-os/knowledge/decisions/*.md",
+        "docs/enhanced-architecture-migration-guide.md"
+      ],
+      "priority": 80,
+      "maxTokens": 3000
+    },
+    {
+      "name": "performance",
+      "description": "When optimizing performance",
+      "when": {
+        "keywords": ["performance", "optimize", "slow", "memory", "profile"]
+      },
+      "load": [
+        ".claude/context-os/knowledge/patterns/performance.md",
+        ".claude/context-os/knowledge/errors/common-issues.md#performance-issues"
+      ],
+      "priority": 70,
+      "maxTokens": 1500
+    }
+  ],
+  "globalSettings": {
+    "maxTotalTokens": 8000,
+    "conflictResolution": "priority",
+    "cacheDuration": 300,
+    "autoArchiveAfterDays": 30
+  }
+}

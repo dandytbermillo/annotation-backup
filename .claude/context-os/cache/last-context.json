@@ -1,0 +1,9 @@
+{
+  "files": [
+    "/Users/dandy/Downloads/all-project/postgres-persistence/demo-postgres-features.js",
+    "/Users/dandy/Downloads/all-project/postgres-persistence/test-postgres-with-uuid.js",
+    "/Users/dandy/Downloads/all-project/postgres-persistence/lib/adapters/postgres-client-adapter.ts"
+  ],
+  "task": "postgres",
+  "timestamp": 1756131903307
+}

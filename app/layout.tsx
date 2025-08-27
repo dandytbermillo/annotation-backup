@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   generator: 'v0.dev',
 }
 
+import { PersistenceMonitor } from '@/components/persistence-monitor'
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -14,7 +16,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PersistenceMonitor />
+      </body>
     </html>
   )
 }

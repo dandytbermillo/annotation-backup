@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Check IndexedDB</title>
+</head>
+<body>
+    <h1>IndexedDB Check</h1>
+    <div id="results"></div>
+    <script>
+        async function checkIndexedDB() {
+            const results = document.getElementById('results');
+            
+            // Open the database
+            const request = indexedDB.open('annotation-system');
+            
+            request.onsuccess = async (event) => {
+                const db = event.target.result;
+                const stores = Array.from(db.objectStoreNames);
+                
+                results.innerHTML += `<p>Database: ${db.name}</p>`;
+                results.innerHTML += `<p>Object Stores: ${stores.join(', ')}</p>`;
+                
+                // Check yjs_updates store
+                if (stores.includes('yjs_updates')) {
+                    const transaction = db.transaction(['yjs_updates'], 'readonly');
+                    const store = transaction.objectStore('yjs_updates');
+                    const countRequest = store.count();
+                    
+                    countRequest.onsuccess = () => {
+                        results.innerHTML += `<p>yjs_updates count: ${countRequest.result}</p>`;
+                    };
+                }
+                
+                db.close();
+            };
+            
+            request.onerror = (event) => {
+                results.innerHTML = `<p>Error: ${event.target.error}</p>`;
+            };
+        }
+        
+        checkIndexedDB();
+    </script>
+</body>
+</html>

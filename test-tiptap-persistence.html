@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test TipTap PostgreSQL Persistence</title>
+</head>
+<body>
+    <h1>TipTap PostgreSQL Persistence Test</h1>
+    <div id="results"></div>
+    
+    <script>
+    // This script monitors API calls to verify TipTap is persisting to PostgreSQL
+    
+    console.log('🔍 Monitoring PostgreSQL persistence...\n');
+    
+    // Intercept fetch to monitor API calls
+    const originalFetch = window.fetch;
+    let persistCalls = 0;
+    let lastPersistTime = null;
+    
+    window.fetch = function(...args) {
+      const url = args[0];
+      
+      if (url && url.includes('/api/persistence/persist')) {
+        persistCalls++;
+        lastPersistTime = new Date();
+        
+        console.log(`📤 PostgreSQL persist call #${persistCalls} at ${lastPersistTime.toLocaleTimeString()}`);
+        console.log('   URL:', url);
+        
+        if (args[1] && args[1].body) {
+          try {
+            const body = JSON.parse(args[1].body);
+            console.log('   Doc:', body.docName);
+            console.log('   Update size:', body.update ? body.update.length : 0);
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+        
+        // Update UI
+        document.getElementById('results').innerHTML = `
+          <p><strong>Persist calls:</strong> ${persistCalls}</p>
+          <p><strong>Last persist:</strong> ${lastPersistTime.toLocaleTimeString()}</p>
+          <p style="color: green;">✅ TipTap is persisting to PostgreSQL!</p>
+        `;
+      }
+      
+      return originalFetch.apply(this, args);
+    };
+    
+    console.log('✅ Monitoring active. Make some edits in the TipTap editor.');
+    console.log('You should see persist calls logged here.\n');
+    
+    // Also monitor console errors
+    window.addEventListener('error', (event) => {
+      if (event.message.includes('persist') || event.message.includes('postgres')) {
+        console.error('⚠️ Persistence error:', event.message);
+      }
+    });
+    
+    // Check status after 5 seconds
+    setTimeout(() => {
+      if (persistCalls === 0) {
+        console.error('❌ No persist calls detected after 5 seconds!');
+        console.error('TipTap changes are NOT being saved to PostgreSQL.');
+        
+        document.getElementById('results').innerHTML = `
+          <p style="color: red;">❌ No persistence detected!</p>
+          <p>TipTap changes are NOT being saved to PostgreSQL.</p>
+        `;
+      }
+    }, 5000);
+    </script>
+</body>
+</html>

@@ -4,7 +4,7 @@ import { useEffect, useState, forwardRef, useImperativeHandle } from "react"
 import { CanvasProvider } from "./canvas/canvas-context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { CollaborationProvider, clearEditorDocsForNote } from "@/lib/yjs-provider"
 import { CanvasControls } from "./canvas/canvas-controls"
 import { Minimap } from "./canvas/minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
@@ -40,6 +40,10 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const [panels, setPanels] = useState<string[]>([])
 
   useEffect(() => {
+    // Note: We no longer clear editor docs when switching notes
+    // The composite key system (noteId-panelId) already isolates docs between notes
+    // This allows content to load immediately when switching back to a previously viewed note
+    
     // Initialize collaboration provider with YJS persistence
     const provider = CollaborationProvider.getInstance()
     
@@ -48,7 +52,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       'main': {
         title: 'New Document',
         type: 'main',
-        content: `<p>Start writing your document here...</p>`,
+        content: '', // Start with empty content instead of placeholder
         branches: [],
         position: { x: 2000, y: 1500 },
         isEditable: true

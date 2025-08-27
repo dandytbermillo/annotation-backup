@@ -1443,3 +1443,8 @@ This enhanced future-proof architecture represents the next evolution in collabo
 - **Federation**: Cross-instance collaboration
 
 This architecture provides the most robust foundation for building a truly collaborative, performant, and scalable annotation system that works seamlessly across all platforms while maintaining the simplicity and elegance of the YJS ecosystem.
+
+
+⚠️ Note: Original persistence examples use IndexedDB/SQLite.  
+  For this project, replace persistence with PostgreSQL-based adapters.  
+  All other architecture principles remain mandatory.

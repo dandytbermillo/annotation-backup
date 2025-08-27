@@ -128,10 +128,12 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         Placeholder.configure({
           placeholder: placeholder || 'Start typing...',
         }),
-        ...(provider ? [
+        ...(ydoc ? [
           Collaboration.configure({
             document: doc,
           }),
+        ] : []),
+        ...(provider ? [
           CollaborationCursor.configure({
             provider: provider,
             user: {
@@ -145,7 +147,9 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         AnnotationDecorations(),
         PerformanceMonitor(),
       ],
-      content,
+      // Only set initial content if NOT using Y.js collaboration
+      // When using Y.js, content comes from the Y.Doc
+      content: ydoc ? undefined : content,
       editable: isEditable,
       onUpdate: ({ editor }) => {
         const html = editor.getHTML()
@@ -218,11 +222,12 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
     }, [editor, isEditable])
 
     // Update content when it changes externally
+    // BUT only if NOT using Y.js collaboration (content should come from Y.Doc)
     useEffect(() => {
-      if (editor && content !== editor.getHTML() && !editor.isFocused) {
+      if (editor && !ydoc && content !== editor.getHTML() && !editor.isFocused) {
         editor.commands.setContent(content)
       }
-    }, [editor, content])
+    }, [editor, content, ydoc])
 
     // Add styles for annotations and decorations
     useEffect(() => {

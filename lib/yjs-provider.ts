@@ -73,16 +73,189 @@ class MockIndexeddbPersistence implements PersistenceProvider {
   }
 }
 
-// Store for editor Y.Docs indexed by panel ID
+// Store for editor Y.Docs indexed by note ID + panel ID
 const editorDocs = new Map<string, Y.Doc>()
 
+// Track last access time for cache management
+const editorDocsLastAccess = new Map<string, number>()
+
+// Maximum number of editor docs to keep in cache
+const MAX_EDITOR_DOCS = 50
+
+// Time to keep unused docs in cache (5 minutes)
+const EDITOR_DOC_TTL = 5 * 60 * 1000
+
+// Clear editor docs for a specific note when switching
+// This is now deprecated - we use smart cache management instead
+export function clearEditorDocsForNote(noteId: string): void {
+  // No longer aggressively clear docs
+  // The smart cache management in cleanupEditorDocsCache handles memory
+  // and the composite key system prevents content leakage between notes
+  
+  // Optional: Mark docs from this note as older to prioritize cleanup
+  const now = Date.now()
+  editorDocsLastAccess.forEach((lastAccess, key) => {
+    if (key.startsWith(`${noteId}-`)) {
+      // Age the entry by 1 minute to prioritize it for cleanup if needed
+      editorDocsLastAccess.set(key, lastAccess - 60000)
+    }
+  })
+}
+
 // Get or create Y.Doc for a specific panel's editor
-export function getEditorYDoc(panelId: string): Y.Doc {
-  if (!editorDocs.has(panelId)) {
-    const doc = new Y.Doc()
-    editorDocs.set(panelId, doc)
+export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
+  // Create a composite key that includes both note ID and panel ID
+  const cacheKey = noteId ? `${noteId}-${panelId}` : panelId
+  
+  // Check if we already have a cached doc for this note+panel combination
+  if (editorDocs.has(cacheKey)) {
+    // Update last access time
+    editorDocsLastAccess.set(cacheKey, Date.now())
+    
+    // Clear any loading state since we have a cached doc
+    try {
+      const { docLoadingStates } = require('./yjs-utils')
+      docLoadingStates.delete(cacheKey)
+    } catch (e) {
+      // Ignore if module not available
+    }
+    
+    return editorDocs.get(cacheKey)!
   }
-  return editorDocs.get(panelId)!
+
+  // Try to get from enhanced provider first for PostgreSQL persistence
+  try {
+    const { EnhancedCollaborationProvider } = require('./enhanced-yjs-provider')
+    const enhancedProvider = EnhancedCollaborationProvider.getInstance()
+    
+    // Get the subdoc synchronously - create if it doesn't exist
+    if (enhancedProvider.mainDoc) {
+      const editors = enhancedProvider.mainDoc.getMap('editors')
+      if (!editors.has(panelId)) {
+        // Create subdoc with composite guid including note ID
+        const subdocGuid = noteId ? `editor-${noteId}-${panelId}` : `editor-${panelId}`
+        const subdoc = new Y.Doc({ guid: subdocGuid })
+        
+        // Store in cache first to prevent duplicates with composite key
+        editorDocs.set(cacheKey, subdoc)
+        editorDocsLastAccess.set(cacheKey, Date.now())
+        
+        // Clean up old entries if cache is getting too large
+        cleanupEditorDocsCache()
+        
+        // Then store in main doc
+        enhancedProvider.mainDoc.getMap('editors').set(panelId, subdoc)
+        
+        // Flag to track if initial content has been loaded
+        let initialLoadComplete = false
+        let updateCount = 0
+        const docKey = `${noteId || 'default'}-panel-${panelId}`
+        
+        // Add update handler but don't persist until after initial load
+        subdoc.on('update', async (update: Uint8Array, origin: any) => {
+          // Skip if initial load not complete or if this is a persistence update
+          if (!initialLoadComplete || origin === 'persistence') {
+            return
+          }
+          
+          // Persist the update
+          if (enhancedProvider.persistence) {
+            try {
+              await enhancedProvider.persistence.persist(docKey, update)
+              updateCount++
+              
+              // Auto-compact after 50 updates to prevent accumulation
+              if (updateCount > 50) {
+                console.log(`Auto-compacting ${docKey} after ${updateCount} updates`)
+                await enhancedProvider.persistence.compact(docKey)
+                updateCount = 0
+              }
+            } catch (error) {
+              console.error(`Failed to persist panel ${panelId}:`, error)
+            }
+          }
+        })
+        
+        // Load existing updates immediately when doc is created
+        if (enhancedProvider.persistence) {
+          // Track loading state for external components to wait
+          const { docLoadingStates } = require('./yjs-utils')
+          
+          const loadPromise = enhancedProvider.persistence.load(docKey).then((data: Uint8Array | null) => {
+            if (data && data.length > 0) {
+              // Apply the loaded state with 'persistence' origin to skip re-persisting
+              Y.applyUpdate(subdoc, data, 'persistence')
+              console.log(`Loaded content for panel ${panelId}, size: ${data.length} bytes`)
+            }
+            // Set flag after applying to ensure future updates are persisted
+            initialLoadComplete = true
+            // Clear loading state
+            docLoadingStates.delete(cacheKey)
+          }).catch((error: any) => {
+            console.error(`Failed to load panel ${panelId}:`, error)
+            initialLoadComplete = true
+            // Clear loading state even on error
+            docLoadingStates.delete(cacheKey)
+          })
+          
+          // Store the loading promise so components can wait for it
+          docLoadingStates.set(cacheKey, loadPromise)
+        } else {
+          initialLoadComplete = true
+        }
+        
+        return subdoc
+      }
+      
+      // Doc exists in main doc, get it and cache it with composite key
+      const existingDoc = editors.get(panelId) as Y.Doc
+      editorDocs.set(cacheKey, existingDoc)
+      editorDocsLastAccess.set(cacheKey, Date.now())
+      cleanupEditorDocsCache()
+      return existingDoc
+    }
+  } catch (error) {
+    console.warn('Enhanced provider not available, falling back to standalone doc')
+  }
+  
+  // Fallback to standalone doc with composite guid
+  const docGuid = noteId ? `editor-${noteId}-${panelId}` : `editor-${panelId}`
+  const doc = new Y.Doc({ guid: docGuid })
+  editorDocs.set(cacheKey, doc)
+  editorDocsLastAccess.set(cacheKey, Date.now())
+  cleanupEditorDocsCache()
+  return doc
+}
+
+// Smart cleanup that keeps recently used docs
+function cleanupEditorDocsCache(): void {
+  // Only cleanup if we exceed the max cache size
+  if (editorDocs.size <= MAX_EDITOR_DOCS) {
+    return
+  }
+  
+  const now = Date.now()
+  const entries = Array.from(editorDocsLastAccess.entries())
+  
+  // Sort by last access time (oldest first)
+  entries.sort((a, b) => a[1] - b[1])
+  
+  // Remove oldest entries until we're under the limit
+  const toRemove = editorDocs.size - MAX_EDITOR_DOCS + 5 // Remove 5 extra for headroom
+  
+  for (let i = 0; i < toRemove && i < entries.length; i++) {
+    const [key, lastAccess] = entries[i]
+    
+    // Only remove if it hasn't been accessed recently
+    if (now - lastAccess > EDITOR_DOC_TTL) {
+      const doc = editorDocs.get(key)
+      if (doc && (!doc._observers || Object.keys(doc._observers).length === 0)) {
+        // Doc is not actively being used, safe to remove
+        editorDocs.delete(key)
+        editorDocsLastAccess.delete(key)
+      }
+    }
+  }
 }
 
 // YJS Native Types Implementation for Collaborative Document Structure
@@ -386,15 +559,19 @@ export class CollaborationProvider {
     // Clean up document structure
     this.documentStructures.delete(noteId)
     
-    // Clean up editor docs for this note
+    // Clean up editor docs for this note (with composite keys)
     const keysToDelete: string[] = []
     editorDocs.forEach((doc, key) => {
+      // Check if the key contains this noteId (format: noteId-panelId)
       if (key.startsWith(`${noteId}-`) || key === noteId) {
         doc.destroy()
         keysToDelete.push(key)
       }
     })
-    keysToDelete.forEach(key => editorDocs.delete(key))
+    keysToDelete.forEach(key => {
+      editorDocs.delete(key)
+      editorDocsLastAccess.delete(key)
+    })
   }
 
   public destroy(): void {
@@ -411,6 +588,7 @@ export class CollaborationProvider {
     
     editorDocs.forEach(doc => doc.destroy())
     editorDocs.clear()
+    editorDocsLastAccess.clear()
     
     this.currentNoteId = null
   }

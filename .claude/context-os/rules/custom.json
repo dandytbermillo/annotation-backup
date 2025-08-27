@@ -1,0 +1,60 @@
+{
+  "version": "1.0",
+  "description": "Project-specific context loading rules",
+  "extends": "default.json",
+  "rules": [
+    {
+      "name": "phase2b_postgres",
+      "description": "Current Phase 2B PostgreSQL work",
+      "when": {
+        "keywords": ["phase2b", "structured-data", "sync"],
+        "or": [
+          { "filePattern": "**/structured-data-sync*.ts" },
+          { "filePattern": "**/yjs-data-extractor.ts" }
+        ]
+      },
+      "load": [
+        "PRPs/postgres-structured-data-phase2b.md",
+        "PHASE2B_IMPLEMENTATION_SUMMARY.md",
+        "PHASE2B_SETUP_GUIDE.md"
+      ],
+      "priority": 95,
+      "maxTokens": 3000
+    },
+    {
+      "name": "current_debugging",
+      "description": "Current debugging focus",
+      "when": {
+        "keywords": ["fix", "debug", "error"],
+        "and": [
+          { "recentFiles": ["**/fix-*.js", "**/test-*.js"] }
+        ]
+      },
+      "load": [
+        "DEBUG_AND_FIX.md",
+        "IMMEDIATE_FIX.md",
+        "QUICK_FIX_GUIDE.md"
+      ],
+      "priority": 90,
+      "maxTokens": 2500
+    }
+  ],
+  "projectSettings": {
+    "preferredPatterns": [
+      "adapter-pattern",
+      "event-driven-sync",
+      "yjs-first"
+    ],
+    "avoidPatterns": [
+      "direct-binary-parsing",
+      "synchronous-db-calls",
+      "global-state"
+    ],
+    "contextWindowBudget": {
+      "core": 0.25,
+      "current": 0.35,
+      "knowledge": 0.25,
+      "search": 0.15
+    }
+  }
+}

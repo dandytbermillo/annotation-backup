@@ -1,0 +1,274 @@
+#!/usr/bin/env node
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const Fuse = require('fuse.js');
+const matter = require('gray-matter');
+
+const CONTEXT_OS_ROOT = path.dirname(__dirname);
+const INDEX_FILE = path.join(CONTEXT_OS_ROOT, 'indexes/knowledge.json');
+const PROJECT_ROOT = path.resolve(CONTEXT_OS_ROOT, '../..');
+
+// Command line handling
+const command = process.argv[2];
+
+switch (command) {
+  case 'build':
+    buildIndex();
+    break;
+  case 'search':
+    searchIndex(process.argv.slice(3).join(' '));
+    break;
+  case 'update':
+    updateIndex(process.argv[3]);
+    break;
+  default:
+    console.log('Usage: context-index <build|search|update> [args]');
+    process.exit(1);
+}
+
+function buildIndex() {
+  console.log('🔨 Building knowledge index...');
+  
+  const documents = [];
+  const directories = [
+    path.join(CONTEXT_OS_ROOT, 'knowledge'),
+    path.join(CONTEXT_OS_ROOT, 'current'),
+    path.join(PROJECT_ROOT, 'docs'),
+    path.join(PROJECT_ROOT, 'PRPs')
+  ];
+
+  directories.forEach(dir => {
+    if (fs.existsSync(dir)) {
+      indexDirectory(dir, documents);
+    }
+  });
+
+  // Process and enhance documents
+  const enhancedDocs = documents.map(doc => {
+    const enhanced = { ...doc };
+    
+    // Extract metadata from frontmatter
+    const parsed = matter(doc.content);
+    enhanced.metadata = parsed.data;
+    enhanced.content = parsed.content;
+    
+    // Extract code blocks
+    const codeBlocks = [];
+    const codeRegex = /```(\w+)?\n([\s\S]*?)```/g;
+    let match;
+    while ((match = codeRegex.exec(doc.content)) !== null) {
+      codeBlocks.push({
+        language: match[1] || 'text',
+        code: match[2]
+      });
+    }
+    enhanced.codeBlocks = codeBlocks;
+    
+    // Extract headings for structure
+    const headings = [];
+    const headingRegex = /^(#{1,6})\s+(.+)$/gm;
+    while ((match = headingRegex.exec(doc.content)) !== null) {
+      headings.push({
+        level: match[1].length,
+        text: match[2]
+      });
+    }
+    enhanced.headings = headings;
+    
+    // Extract links and references
+    const links = [];
+    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+    while ((match = linkRegex.exec(doc.content)) !== null) {
+      links.push({
+        text: match[1],
+        url: match[2]
+      });
+    }
+    enhanced.links = links;
+    
+    // Calculate content hash for change detection
+    enhanced.hash = crypto.createHash('md5').update(doc.content).digest('hex');
+    
+    // Add semantic tags based on content
+    enhanced.tags = extractTags(doc.content);
+    
+    return enhanced;
+  });
+
+  // Create Fuse search index
+  const fuseOptions = {
+    keys: [
+      { name: 'title', weight: 0.3 },
+      { name: 'content', weight: 0.2 },
+      { name: 'tags', weight: 0.2 },
+      { name: 'headings.text', weight: 0.15 },
+      { name: 'metadata.keywords', weight: 0.15 }
+    ],
+    includeScore: true,
+    threshold: 0.4,
+    ignoreLocation: true
+  };
+
+  const searchIndex = {
+    documents: enhancedDocs,
+    fuseOptions,
+    created: new Date().toISOString(),
+    stats: {
+      totalDocs: enhancedDocs.length,
+      totalSize: enhancedDocs.reduce((sum, doc) => sum + doc.content.length, 0),
+      codeBlocks: enhancedDocs.reduce((sum, doc) => sum + doc.codeBlocks.length, 0)
+    }
+  };
+
+  // Save index
+  fs.mkdirSync(path.dirname(INDEX_FILE), { recursive: true });
+  fs.writeFileSync(INDEX_FILE, JSON.stringify(searchIndex, null, 2));
+  
+  console.log(`✓ Index built: ${enhancedDocs.length} documents indexed`);
+  console.log(`  - Total size: ${(searchIndex.stats.totalSize / 1024).toFixed(2)} KB`);
+  console.log(`  - Code blocks: ${searchIndex.stats.codeBlocks}`);
+}
+
+function indexDirectory(dir, documents) {
+  const files = fs.readdirSync(dir);
+  
+  files.forEach(file => {
+    const fullPath = path.join(dir, file);
+    const stat = fs.statSync(fullPath);
+    
+    if (stat.isDirectory() && !file.startsWith('.') && file !== 'node_modules') {
+      indexDirectory(fullPath, documents);
+    } else if (file.endsWith('.md') || file.endsWith('.mdx')) {
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const relativePath = path.relative(PROJECT_ROOT, fullPath);
+      
+      documents.push({
+        id: crypto.createHash('md5').update(fullPath).digest('hex'),
+        path: fullPath,
+        relativePath,
+        title: extractTitle(content, file),
+        content,
+        modified: stat.mtime.toISOString(),
+        size: stat.size,
+        type: categorizeDocument(relativePath)
+      });
+    }
+  });
+}
+
+function extractTitle(content, filename) {
+  // Try to extract title from first heading
+  const match = content.match(/^#\s+(.+)$/m);
+  if (match) return match[1];
+  
+  // Try frontmatter title
+  const parsed = matter(content);
+  if (parsed.data.title) return parsed.data.title;
+  
+  // Use filename
+  return filename.replace(/\.(md|mdx)$/, '').replace(/[-_]/g, ' ');
+}
+
+function categorizeDocument(path) {
+  if (path.includes('/knowledge/patterns/')) return 'pattern';
+  if (path.includes('/knowledge/errors/')) return 'error';
+  if (path.includes('/knowledge/decisions/')) return 'decision';
+  if (path.includes('/current/')) return 'current';
+  if (path.includes('/docs/')) return 'documentation';
+  if (path.includes('/PRPs/')) return 'prp';
+  return 'general';
+}
+
+function extractTags(content) {
+  const tags = new Set();
+  
+  // Common patterns
+  const patterns = [
+    /\b(postgres|postgresql|database|db)\b/gi,
+    /\b(yjs|crdt|collaboration)\b/gi,
+    /\b(react|next\.?js|typescript)\b/gi,
+    /\b(error|bug|issue|fix)\b/gi,
+    /\b(pattern|architecture|design)\b/gi,
+    /\b(api|endpoint|route)\b/gi,
+    /\b(test|testing|unit|integration)\b/gi
+  ];
+  
+  patterns.forEach(pattern => {
+    const matches = content.match(pattern);
+    if (matches) {
+      matches.forEach(match => tags.add(match.toLowerCase()));
+    }
+  });
+  
+  return Array.from(tags);
+}
+
+function searchIndex(query) {
+  if (!fs.existsSync(INDEX_FILE)) {
+    console.error('Index not found. Run: context-index build');
+    process.exit(1);
+  }
+  
+  const index = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
+  const fuse = new Fuse(index.documents, index.fuseOptions);
+  
+  const results = fuse.search(query);
+  
+  if (results.length === 0) {
+    console.log('No results found.');
+    return;
+  }
+  
+  console.log(`\n🔍 Found ${results.length} results for "${query}":\n`);
+  
+  results.slice(0, 10).forEach((result, i) => {
+    const doc = result.item;
+    const score = (1 - result.score).toFixed(2);
+    
+    console.log(`${i + 1}. ${doc.title} (${score} relevance)`);
+    console.log(`   📄 ${doc.relativePath}`);
+    console.log(`   🏷️  ${doc.tags.slice(0, 5).join(', ')}`);
+    
+    // Show relevant excerpt
+    const excerpt = findRelevantExcerpt(doc.content, query);
+    if (excerpt) {
+      console.log(`   📝 ...${excerpt}...`);
+    }
+    
+    console.log('');
+  });
+}
+
+function findRelevantExcerpt(content, query) {
+  const lines = content.split('\n');
+  const queryLower = query.toLowerCase();
+  
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].toLowerCase().includes(queryLower)) {
+      const start = Math.max(0, i - 1);
+      const end = Math.min(lines.length, i + 2);
+      return lines.slice(start, end)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .substring(0, 150);
+    }
+  }
+  
+  // Return first meaningful line if no match
+  const firstContent = lines.find(l => l.trim() && !l.startsWith('#'));
+  return firstContent ? firstContent.substring(0, 150) : '';
+}
+
+function updateIndex(filePath) {
+  if (!filePath) {
+    console.error('Usage: context-index update <file>');
+    process.exit(1);
+  }
+  
+  // For now, just rebuild the entire index
+  // In the future, this could be optimized to update only the changed file
+  console.log(`Updating index for ${filePath}...`);
+  buildIndex();
+}
