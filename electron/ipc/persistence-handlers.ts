@@ -37,7 +37,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       await adapter.persist(docName, update)
     } catch (error) {
       console.error('Persist error:', error)
-      throw new Error(`Failed to persist: ${error.message}`)
+      throw new Error(`Failed to persist: ${(error as Error).message}`)
     }
   })
 
@@ -56,7 +56,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       return data ? Array.from(data) : null
     } catch (error) {
       console.error('Load error:', error)
-      throw new Error(`Failed to load: ${error.message}`)
+      throw new Error(`Failed to load: ${(error as Error).message}`)
     }
   })
 
@@ -75,7 +75,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       return updates.map(update => Array.from(update))
     } catch (error) {
       console.error('Get all updates error:', error)
-      throw new Error(`Failed to get updates: ${error.message}`)
+      throw new Error(`Failed to get updates: ${(error as Error).message}`)
     }
   })
 
@@ -92,7 +92,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       await adapter.clearUpdates(docName)
     } catch (error) {
       console.error('Clear updates error:', error)
-      throw new Error(`Failed to clear updates: ${error.message}`)
+      throw new Error(`Failed to clear updates: ${(error as Error).message}`)
     }
   })
 
@@ -116,7 +116,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       await adapter.saveSnapshot(docName, snapshot)
     } catch (error) {
       console.error('Save snapshot error:', error)
-      throw new Error(`Failed to save snapshot: ${error.message}`)
+      throw new Error(`Failed to save snapshot: ${(error as Error).message}`)
     }
   })
 
@@ -134,7 +134,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       return snapshot ? Array.from(snapshot) : null
     } catch (error) {
       console.error('Load snapshot error:', error)
-      throw new Error(`Failed to load snapshot: ${error.message}`)
+      throw new Error(`Failed to load snapshot: ${(error as Error).message}`)
     }
   })
 
@@ -151,7 +151,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       await adapter.compact(docName)
     } catch (error) {
       console.error('Compact error:', error)
-      throw new Error(`Failed to compact: ${error.message}`)
+      throw new Error(`Failed to compact: ${(error as Error).message}`)
     }
   })
 
@@ -186,7 +186,7 @@ export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter): v
       await adapter.forceMode(mode)
     } catch (error) {
       console.error('Force mode error:', error)
-      throw new Error(`Failed to force mode: ${error.message}`)
+      throw new Error(`Failed to force mode: ${(error as Error).message}`)
     }
   })
 }

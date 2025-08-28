@@ -9,13 +9,14 @@ const pool = new Pool({
 // GET /api/postgres-offline/notes/[id] - Get a note by ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const result = await pool.query(
       `SELECT id, title, metadata, created_at, updated_at
        FROM notes WHERE id = $1`,
-      [params.id]
+      [id]
     )
     
     if (result.rows.length === 0) {
@@ -38,15 +39,16 @@ export async function GET(
 // PATCH /api/postgres-offline/notes/[id] - Update a note
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const body = await request.json()
     const { title, metadata } = body
     
     // Build dynamic update query
     const updates: string[] = []
-    const values: any[] = [params.id]
+    const values: any[] = [id]
     let paramIndex = 2
     
     if (title !== undefined) {

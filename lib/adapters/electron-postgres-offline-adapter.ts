@@ -89,11 +89,4 @@ export class ElectronPostgresOfflineAdapter extends PostgresOfflineAdapter {
   }
 }
 
-// Type declaration for window.electronAPI
-declare global {
-  interface Window {
-    electronAPI: {
-      invoke(channel: string, ...args: any[]): Promise<IPCResult>
-    }
-  }
-}
+// Type declaration moved to types/global.d.ts to avoid duplication

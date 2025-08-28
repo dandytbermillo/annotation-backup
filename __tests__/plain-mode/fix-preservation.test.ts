@@ -162,17 +162,17 @@ describe('10 TipTap Fixes in Plain Mode', () => {
     // Test that same panel ID with different note IDs are isolated
     const panelId = 'shared-panel'
     
-    await provider.saveDocument('note1', panelId, { content: 'Note 1 content' })
-    await provider.saveDocument('note2', panelId, { content: 'Note 2 content' })
-    await provider.saveDocument('note3', panelId, { content: 'Note 3 content' })
+    await provider.saveDocument('note1', panelId, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 1 content' }] }] })
+    await provider.saveDocument('note2', panelId, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 2 content' }] }] })
+    await provider.saveDocument('note3', panelId, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 3 content' }] }] })
     
     const doc1 = provider.getDocument('note1', panelId)
     const doc2 = provider.getDocument('note2', panelId)
     const doc3 = provider.getDocument('note3', panelId)
     
-    expect(doc1).toEqual({ content: 'Note 1 content' })
-    expect(doc2).toEqual({ content: 'Note 2 content' })
-    expect(doc3).toEqual({ content: 'Note 3 content' })
+    expect(doc1).toEqual({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 1 content' }] }] })
+    expect(doc2).toEqual({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 2 content' }] }] })
+    expect(doc3).toEqual({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Note 3 content' }] }] })
   })
   
   test('Fix #6: Metadata handling for field type', () => {
@@ -195,7 +195,7 @@ describe('10 TipTap Fixes in Plain Mode', () => {
     
     // Save a document and verify state updates
     const initialUpdateCount = state.updateCount
-    await provider.saveDocument('note1', 'panel1', { content: 'test' })
+    await provider.saveDocument('note1', 'panel1', '<p>test</p>')
     
     const newState = provider.getPersistenceState()
     expect(newState.updateCount).toBe(initialUpdateCount + 1)
@@ -239,7 +239,7 @@ describe('10 TipTap Fixes in Plain Mode', () => {
     provider.getDocument('note57', 'panel57')
     
     // Trigger another save to force cleanup
-    await provider.saveDocument('note60', 'panel60', { content: 'Trigger cleanup' })
+    await provider.saveDocument('note60', 'panel60', '<p>Trigger cleanup</p>')
     
     // Recent documents should still be cached
     expect(provider.getDocument('note55', 'panel55')).toBeTruthy()

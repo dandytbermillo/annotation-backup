@@ -10,7 +10,7 @@ export async function getEditorYDocWithPersistence(panelId: string): Promise<Y.D
   const structure = provider.getMainDoc().getMap('structure') // or use the proper structure accessor
   
   // Use the enhanced provider's subdoc system which has persistence built-in
-  const editorDoc = await structure.getEditorSubdoc(panelId)
+  const editorDoc = await provider.getEditorSubdoc(panelId)
   return editorDoc
 }
 

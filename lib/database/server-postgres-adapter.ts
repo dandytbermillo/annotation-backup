@@ -14,7 +14,7 @@ export class ServerPostgresAdapter extends PostgresAdapter {
     
     // Configure based on environment
     const connectionString = process.env.DATABASE_URL || 
-                           'postgres://postgres:postgres@localhost:5432/annotation_system'
+                           'postgres://postgres:postgres@localhost:5432/annotation_dev'
     
     this.pool = new Pool({
       connectionString,
@@ -38,7 +38,7 @@ export class ServerPostgresAdapter extends PostgresAdapter {
       this.isConnected = true
       console.log('PostgreSQL connected successfully')
     } catch (error) {
-      console.warn('PostgreSQL connection failed, using in-memory fallback:', error.message)
+      console.warn('PostgreSQL connection failed, using in-memory fallback:', (error as Error).message)
       this.isConnected = false
       this.fallbackAdapter = new MemoryAdapter()
     }

@@ -22,9 +22,9 @@ export class FractionalIndexManager {
     const sorted = annotations.sort((a, b) => a.order.localeCompare(b.order))
     
     if (position <= 0 || annotations.length === 0) {
-      return this.generateBefore(sorted[0]?.order || null)
+      return this.generateBefore(sorted[0]?.order || '')
     } else if (position >= sorted.length) {
-      return this.generateAfter(sorted[sorted.length - 1]?.order || null)
+      return this.generateAfter(sorted[sorted.length - 1]?.order || '')
     } else {
       return this.generateBetween(
         sorted[position - 1].order,

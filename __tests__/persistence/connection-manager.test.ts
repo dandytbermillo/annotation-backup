@@ -24,7 +24,7 @@ describe('ConnectionManager', () => {
     ConnectionManager['instances'].clear()
     
     // Mock Pool constructor
-    ;(Pool as jest.Mock).mockImplementation((config) => ({
+    ;(Pool as unknown as jest.Mock).mockImplementation((config) => ({
       connect: jest.fn(),
       query: jest.fn(),
       end: jest.fn(),

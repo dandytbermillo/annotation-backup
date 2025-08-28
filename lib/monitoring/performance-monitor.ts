@@ -126,8 +126,9 @@ export class PerformanceMonitor {
     let total = 0, active = 0, merged = 0, orphaned = 0
     branches.forEach(branch => {
       total++
-      const visibility = branch.get('visibility')
-      const mergedInto = branch.get('mergedInto')
+      const yBranch = branch as Y.Map<any>
+      const visibility = yBranch.get('visibility')
+      const mergedInto = yBranch.get('mergedInto')
       
       if (visibility === 'merged' || mergedInto) merged++
       else if (visibility === 'orphaned') orphaned++

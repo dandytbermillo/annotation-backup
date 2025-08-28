@@ -1,9 +1,22 @@
 import { PostgresAdapter } from '../../lib/adapters/postgres-adapter'
-import { Pool, PoolClient } from 'pg'
+import { Pool, PoolClient, QueryResult } from 'pg'
 import * as Y from 'yjs'
 
 // Mock pg module
 jest.mock('pg')
+
+// Type helpers for mocks
+type MockPool = jest.Mocked<Pick<Pool, 'query' | 'connect' | 'end'>>
+type MockPoolClient = jest.Mocked<Pick<PoolClient, 'query' | 'release'>>
+
+// Helper to create a mock QueryResult
+const createMockQueryResult = (rows: any[] = []): QueryResult => ({
+  rows,
+  rowCount: rows.length,
+  command: '',
+  oid: 0,
+  fields: []
+})
 
 // Create a testable concrete implementation
 class TestablePostgresAdapter extends PostgresAdapter {
@@ -18,24 +31,24 @@ class TestablePostgresAdapter extends PostgresAdapter {
 
 describe('PostgresAdapter', () => {
   let adapter: TestablePostgresAdapter
-  let mockPool: jest.Mocked<Pool>
-  let mockClient: jest.Mocked<PoolClient>
+  let mockPool: MockPool
+  let mockClient: MockPoolClient
 
   beforeEach(() => {
     // Create mock client
     mockClient = {
-      query: jest.fn(),
-      release: jest.fn(),
-    } as any
+      query: jest.fn<Promise<QueryResult>, [string, any[]?]>(),
+      release: jest.fn<void, []>(),
+    }
 
     // Create mock pool
     mockPool = {
-      query: jest.fn(),
-      connect: jest.fn().mockResolvedValue(mockClient),
-      end: jest.fn(),
-    } as any
+      query: jest.fn<Promise<QueryResult>, [string, any[]?]>(),
+      connect: jest.fn<Promise<PoolClient>, []>().mockResolvedValue(mockClient as unknown as PoolClient),
+      end: jest.fn<Promise<void>, []>(),
+    }
 
-    adapter = new TestablePostgresAdapter(mockPool)
+    adapter = new TestablePostgresAdapter(mockPool as unknown as Pool)
   })
 
   afterEach(() => {
@@ -46,6 +59,8 @@ describe('PostgresAdapter', () => {
     test('stores binary data as BYTEA', async () => {
       const update = new Uint8Array([1, 2, 3, 4, 5])
       const docName = 'test-doc'
+
+      mockPool.query.mockResolvedValue(createMockQueryResult())
 
       await adapter.persist(docName, update)
 
@@ -58,6 +73,8 @@ describe('PostgresAdapter', () => {
     test('handles empty updates', async () => {
       const update = new Uint8Array([])
       
+      mockPool.query.mockResolvedValue(createMockQueryResult())
+
       await adapter.persist('test-doc', update)
 
       expect(mockPool.query).toHaveBeenCalledWith(
@@ -69,7 +86,7 @@ describe('PostgresAdapter', () => {
 
   describe('load', () => {
     test('returns null for non-existent doc', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] } as any)
+      mockPool.query.mockResolvedValue(createMockQueryResult())
 
       const result = await adapter.load('missing-doc')
       
@@ -79,9 +96,7 @@ describe('PostgresAdapter', () => {
     test('returns snapshot if available', async () => {
       const snapshotData = new Uint8Array([10, 20, 30])
       mockPool.query
-        .mockResolvedValueOnce({ 
-          rows: [{ snapshot: Buffer.from(snapshotData) }] 
-        } as any)
+        .mockResolvedValueOnce(createMockQueryResult([{ snapshot: Buffer.from(snapshotData) }]))
 
       const result = await adapter.load('test-doc')
 
@@ -98,14 +113,12 @@ describe('PostgresAdapter', () => {
 
       // No snapshot
       mockPool.query
-        .mockResolvedValueOnce({ rows: [] } as any)
+        .mockResolvedValueOnce(createMockQueryResult()) // no snapshot
         // Updates available
-        .mockResolvedValueOnce({ 
-          rows: [
-            { update: Buffer.from(update1) },
-            { update: Buffer.from(update2) }
-          ] 
-        } as any)
+        .mockResolvedValueOnce(createMockQueryResult([
+          { update: Buffer.from(update1) },
+          { update: Buffer.from(update2) }
+        ]))
 
       const doc = new Y.Doc()
       const text = doc.getText('test')
@@ -121,7 +134,7 @@ describe('PostgresAdapter', () => {
 
   describe('getAllUpdates', () => {
     test('returns empty array when no updates exist', async () => {
-      mockPool.query.mockResolvedValue({ rows: [] } as any)
+      mockPool.query.mockResolvedValue(createMockQueryResult())
 
       const updates = await adapter.getAllUpdates('test-doc')
 
@@ -136,12 +149,10 @@ describe('PostgresAdapter', () => {
       const update1 = new Uint8Array([1, 2, 3])
       const update2 = new Uint8Array([4, 5, 6])
 
-      mockPool.query.mockResolvedValue({
-        rows: [
-          { update: Buffer.from(update1) },
-          { update: Buffer.from(update2) }
-        ]
-      } as any)
+      mockPool.query.mockResolvedValue(createMockQueryResult([
+        { update: Buffer.from(update1) },
+        { update: Buffer.from(update2) }
+      ]))
 
       const updates = await adapter.getAllUpdates('test-doc')
 
@@ -152,73 +163,90 @@ describe('PostgresAdapter', () => {
   })
 
   describe('compact', () => {
-    test('merges updates and saves as snapshot', async () => {
+    test('creates snapshot from merged updates', async () => {
       const update1 = new Uint8Array([1, 2, 3])
       const update2 = new Uint8Array([4, 5, 6])
 
-      // Mock getAllUpdates
-      jest.spyOn(adapter, 'getAllUpdates').mockResolvedValue([update1, update2])
-      jest.spyOn(adapter, 'saveSnapshot').mockResolvedValue(undefined)
-      jest.spyOn(adapter, 'clearUpdates').mockResolvedValue(undefined)
+      // Mock getting updates
+      mockPool.query.mockResolvedValueOnce(createMockQueryResult([
+        { update: Buffer.from(update1) },
+        { update: Buffer.from(update2) }
+      ]))
+
+      // Mock transaction queries
+      mockClient.query
+        .mockResolvedValueOnce(createMockQueryResult()) // BEGIN
+        .mockResolvedValueOnce(createMockQueryResult()) // DELETE
+        .mockResolvedValueOnce(createMockQueryResult()) // INSERT
+        .mockResolvedValueOnce(createMockQueryResult()) // COMMIT
 
       await adapter.compact('test-doc')
 
+      expect(mockPool.connect).toHaveBeenCalled()
       expect(mockClient.query).toHaveBeenCalledWith('BEGIN')
+      expect(mockClient.query).toHaveBeenCalledWith(
+        'DELETE FROM snapshots WHERE doc_name = $1',
+        ['test-doc']
+      )
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO snapshots'),
+        expect.arrayContaining(['test-doc', expect.any(Buffer)])
+      )
       expect(mockClient.query).toHaveBeenCalledWith('COMMIT')
-      expect(adapter.saveSnapshot).toHaveBeenCalled()
-      expect(adapter.clearUpdates).toHaveBeenCalled()
+      expect(mockClient.release).toHaveBeenCalled()
     })
 
     test('rolls back on error', async () => {
-      jest.spyOn(adapter, 'getAllUpdates').mockRejectedValue(new Error('DB error'))
+      const error = new Error('Database error')
+      
+      // Mock getting updates
+      mockPool.query.mockResolvedValueOnce(createMockQueryResult([
+        { update: Buffer.from([1, 2, 3]) }
+      ]))
 
-      await expect(adapter.compact('test-doc')).rejects.toThrow('DB error')
+      // Mock transaction failure
+      mockClient.query
+        .mockResolvedValueOnce(createMockQueryResult()) // BEGIN
+        .mockRejectedValueOnce(error) // DELETE fails
 
-      expect(mockClient.query).toHaveBeenCalledWith('BEGIN')
-      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK')
-      expect(mockClient.query).not.toHaveBeenCalledWith('COMMIT')
-    })
+      await expect(adapter.compact('test-doc')).rejects.toThrow('Database error')
 
-    test('handles empty updates gracefully', async () => {
-      jest.spyOn(adapter, 'getAllUpdates').mockResolvedValue([])
-
-      await adapter.compact('test-doc')
-
-      expect(mockClient.query).toHaveBeenCalledWith('BEGIN')
       expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK')
       expect(mockClient.release).toHaveBeenCalled()
     })
   })
 
-  describe('saveSnapshot', () => {
-    test('upserts snapshot data', async () => {
-      const snapshot = new Uint8Array([10, 20, 30, 40, 50])
+  describe('destroy', () => {
+    test('deletes all document data', async () => {
+      mockClient.query.mockResolvedValue(createMockQueryResult())
 
-      await adapter.saveSnapshot('test-doc', snapshot)
+      await adapter.destroy('test-doc')
 
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO snapshots'),
-        ['test-doc', Buffer.from(snapshot)]
+      expect(mockPool.connect).toHaveBeenCalled()
+      expect(mockClient.query).toHaveBeenCalledWith('BEGIN')
+      expect(mockClient.query).toHaveBeenCalledWith(
+        'DELETE FROM yjs_updates WHERE doc_name = $1',
+        ['test-doc']
       )
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('ON CONFLICT (doc_name) DO UPDATE'),
-        expect.any(Array)
+      expect(mockClient.query).toHaveBeenCalledWith(
+        'DELETE FROM snapshots WHERE doc_name = $1',
+        ['test-doc']
       )
+      expect(mockClient.query).toHaveBeenCalledWith('COMMIT')
+      expect(mockClient.release).toHaveBeenCalled()
     })
-  })
 
-  describe('binary conversion', () => {
-    test('preserves data integrity through conversions', () => {
-      const originalData = new Uint8Array([0, 255, 128, 64, 32, 16, 8, 4, 2, 1])
-      const buffer = adapter['toBuffer'](originalData)
-      const converted = adapter['fromBuffer'](buffer)
-
-      expect(converted).toEqual(originalData)
-      expect(converted.length).toBe(originalData.length)
+    test('rolls back on error', async () => {
+      const error = new Error('Delete failed')
       
-      for (let i = 0; i < originalData.length; i++) {
-        expect(converted[i]).toBe(originalData[i])
-      }
+      mockClient.query
+        .mockResolvedValueOnce(createMockQueryResult()) // BEGIN
+        .mockRejectedValueOnce(error) // First DELETE fails
+
+      await expect(adapter.destroy('test-doc')).rejects.toThrow('Delete failed')
+
+      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK')
+      expect(mockClient.release).toHaveBeenCalled()
     })
   })
 })

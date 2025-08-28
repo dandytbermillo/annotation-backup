@@ -52,7 +52,7 @@ async function testPersistenceFix() {
   console.log('\n3. Simulating page reload to test persistence...')
   
   // Clear the cache to force reload from persistence
-  const { default: editorDocs } = await import('./lib/yjs-provider')
+  const yjsProvider = await import('./lib/yjs-provider')
   // @ts-ignore - accessing private module state for testing
   const cacheKey = `${noteId}-${panelId}`
   

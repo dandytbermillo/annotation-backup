@@ -1,5 +1,14 @@
 const { ipcMain } = require('electron')
 const { Pool } = require('pg')
+const { v5: uuidv5 } = require('uuid')
+
+// Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
+// deterministic UUID per note using UUID v5 in the DNS namespace.
+const normalizePanelId = (noteId: string, panelId: string): string => {
+  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
+  if (isUuid.test(panelId)) return panelId
+  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+}
 
 // Get database URL based on environment
 const getDatabaseUrl = () => {
@@ -236,13 +245,15 @@ const handlers = {
         ? { html: content } 
         : content
       
+      const normalizedPanelId = normalizePanelId(noteId, panelId)
+      
       await pool.query(
         `INSERT INTO document_saves 
          (note_id, panel_id, content, version, created_at)
          VALUES ($1, $2, $3::jsonb, $4, NOW())
          ON CONFLICT (note_id, panel_id, version)
          DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
-        [noteId, panelId, JSON.stringify(contentJson), version]
+        [noteId, normalizedPanelId, JSON.stringify(contentJson), version]
       )
       
       console.log(`[postgres-offline:saveDocument] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
@@ -256,6 +267,8 @@ const handlers = {
   'postgres-offline:loadDocument': async (event: any, noteId: string, panelId: string) => {
     const pool = getPool()
     try {
+      const normalizedPanelId = normalizePanelId(noteId, panelId)
+      
       // Get the latest version for this note-panel combination
       const result = await pool.query(
         `SELECT content, version 
@@ -263,7 +276,7 @@ const handlers = {
          WHERE note_id = $1 AND panel_id = $2
          ORDER BY version DESC
          LIMIT 1`,
-        [noteId, panelId]
+        [noteId, normalizedPanelId]
       )
       
       if (result.rows.length === 0) {
@@ -416,13 +429,14 @@ async function processQueueOperation(client: any, row: any) {
       
     case 'update':
       if (table_name === 'document_saves') {
+        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
         await client.query(
           `INSERT INTO document_saves 
            (note_id, panel_id, content, version, created_at)
            VALUES ($1, $2, $3::jsonb, $4, NOW())
            ON CONFLICT (note_id, panel_id, version)
            DO UPDATE SET content = EXCLUDED.content`,
-          [data.noteId, data.panelId, JSON.stringify(data.content), data.version]
+          [data.noteId, normalizedPanelId, JSON.stringify(data.content), data.version]
         )
       }
       // Add other update operations as needed

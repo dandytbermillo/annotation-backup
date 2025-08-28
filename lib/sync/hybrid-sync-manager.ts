@@ -82,7 +82,7 @@ export class HybridSyncManager {
         const { WebrtcProvider } = await import('y-webrtc')
         return new WebrtcProvider(this.roomId, this.doc, {
           signaling: ['wss://signaling.example.com'],
-          password: null,
+          password: undefined,
           awareness: new Awareness(this.doc),
           maxConns: 20,
           filterBcConns: true,
@@ -108,8 +108,7 @@ export class HybridSyncManager {
           awareness: new Awareness(this.doc),
           params: {},
           resyncInterval: 5000,
-          maxBackoffTime: 2500,
-          subdocs: true
+          maxBackoffTime: 2500
         }
       )
     } catch (error) {

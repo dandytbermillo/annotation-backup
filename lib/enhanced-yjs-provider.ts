@@ -330,15 +330,15 @@ export class EnhancedCollaborationProvider {
   private setupEventHandlers(): void {
     // Listen for performance warnings
     if (typeof window !== 'undefined') {
-      window.addEventListener('performance-warning', (event: CustomEvent) => {
+      window.addEventListener('performance-warning', ((event: CustomEvent) => {
         console.warn('Performance issues detected:', event.detail)
         this.optimizePerformance(event.detail.issues)
-      })
+      }) as EventListener)
       
       // Listen for sync strategy changes
-      window.addEventListener('sync-strategy-change', (event: CustomEvent) => {
+      window.addEventListener('sync-strategy-change', ((event: CustomEvent) => {
         this.syncManager.switchStrategy(event.detail.strategy)
-      })
+      }) as EventListener)
     }
     
     // Auto-merge overlapping annotations
@@ -365,8 +365,9 @@ export class EnhancedCollaborationProvider {
     const annotations: any[] = []
     
     branches.forEach((branch, id) => {
-      if (!branch.get('mergedInto')) {
-        annotations.push(this.branchToAnnotation(branch, id))
+      const yBranch = branch as Y.Map<any>
+      if (!yBranch.get('mergedInto')) {
+        annotations.push(this.branchToAnnotation(yBranch, id))
       }
     })
     
@@ -468,10 +469,11 @@ export class EnhancedCollaborationProvider {
     const result: any[] = []
     
     branches.forEach((branch, id) => {
-      if (branch.get('sourcePanel') === panelId) {
+      const yBranch = branch as Y.Map<any>
+      if (yBranch.get('sourcePanel') === panelId) {
         result.push({
           id,
-          ...this.branchToAnnotation(branch, id)
+          ...this.branchToAnnotation(yBranch, id)
         })
       }
     })
@@ -536,11 +538,12 @@ export class EnhancedCollaborationProvider {
     const panelGroups = new Map<string, any[]>()
     
     branches.forEach((branch, id) => {
-      const sourcePanel = branch.get('sourcePanel')
+      const yBranch = branch as Y.Map<any>
+      const sourcePanel = yBranch.get('sourcePanel')
       if (!panelGroups.has(sourcePanel)) {
         panelGroups.set(sourcePanel, [])
       }
-      panelGroups.get(sourcePanel)!.push({ id, order: branch.get('order') })
+      panelGroups.get(sourcePanel)!.push({ id, order: yBranch.get('order') })
     })
     
     // Rebalance each panel's annotations
@@ -548,7 +551,7 @@ export class EnhancedCollaborationProvider {
       if (annotations.length > 100) {
         const rebalanced = this.fractionalIndexManager.rebalanceIndices(annotations)
         rebalanced.forEach(({ id, order }) => {
-          const branch = branches.get(id)
+          const branch = branches.get(id) as Y.Map<any>
           if (branch) {
             branch.set('order', order)
           }

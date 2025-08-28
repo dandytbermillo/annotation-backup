@@ -1,14 +1,12 @@
 // Provider Switcher - Allows switching between Yjs collaboration and plain offline mode
 // This fixes the awareness.getStates error while enabling enhanced features
 
-import { CollaborationProvider } from './yjs-provider'
-import { EnhancedCollaborationProvider } from './enhanced-yjs-provider'
-import './enhanced-yjs-provider-patch' // Apply the patch
-import { applyEnhancedProviderPatch } from './enhanced-yjs-provider-patch'
 import { PlainOfflineProvider } from './providers/plain-offline-provider'
 
-// Apply patch on module load
-applyEnhancedProviderPatch()
+// Lazy loading of Yjs providers to avoid loading them in plain mode
+let CollaborationProvider: any = null
+let EnhancedCollaborationProvider: any = null
+let patchApplied = false
 
 // Feature flags for provider selection
 const USE_ENHANCED_PROVIDER = process.env.NEXT_PUBLIC_USE_ENHANCED_PROVIDER === 'true' || 
@@ -21,32 +19,59 @@ const COLLAB_MODE = process.env.NEXT_PUBLIC_COLLAB_MODE ||
 // Singleton instance for plain provider
 let plainProviderInstance: PlainOfflineProvider | null = null
 
-// Quick fix for old provider - add missing getStates method
-const originalGetProvider = CollaborationProvider.prototype.getProvider
-CollaborationProvider.prototype.getProvider = function() {
-  const provider = originalGetProvider.call(this)
+// Function to apply patch to CollaborationProvider when loaded
+function applyCollaborationProviderPatch() {
+  if (!CollaborationProvider || !CollaborationProvider.prototype) return
   
-  // Fix the awareness.getStates error
-  if (provider.awareness && !provider.awareness.getStates) {
-    provider.awareness.getStates = () => provider.awareness.states || new Map()
-    provider.awareness.clientID = provider.awareness.clientID || 1
-    provider.awareness.meta = provider.awareness.meta || new Map()
+  const originalGetProvider = CollaborationProvider.prototype.getProvider
+  CollaborationProvider.prototype.getProvider = function() {
+    const provider = originalGetProvider.call(this)
+    
+    // Fix the awareness.getStates error
+    if (provider.awareness && !provider.awareness.getStates) {
+      provider.awareness.getStates = () => provider.awareness.states || new Map()
+      provider.awareness.clientID = provider.awareness.clientID || 1
+      provider.awareness.meta = provider.awareness.meta || new Map()
+    }
+    
+    return provider
   }
-  
-  return provider
 }
 
 // Unified interface that switches between providers
 export class UnifiedProvider {
   private static instance: UnifiedProvider
-  private provider: CollaborationProvider | EnhancedCollaborationProvider
+  private provider: any = null
   
   private constructor() {
-    if (USE_ENHANCED_PROVIDER) {
+    // Check if we're in plain mode
+    if (COLLAB_MODE === 'plain') {
+      console.log('📝 Using Plain Mode (no collaboration)')
+      // Don't initialize Yjs providers in plain mode
+      this.provider = null
+    } else if (USE_ENHANCED_PROVIDER) {
       console.log('🚀 Using Enhanced YJS Provider with all advanced features')
+      // Dynamically import and initialize enhanced provider
+      const { EnhancedCollaborationProvider: EnhancedProvider } = require('./enhanced-yjs-provider')
+      const { applyEnhancedProviderPatch } = require('./enhanced-yjs-provider-patch')
+      
+      // Apply patch if not already applied
+      if (!patchApplied) {
+        applyEnhancedProviderPatch()
+        patchApplied = true
+      }
+      
+      EnhancedCollaborationProvider = EnhancedProvider
       this.provider = EnhancedCollaborationProvider.getInstance()
     } else {
       console.log('Using standard YJS Provider (with getStates fix)')
+      // Dynamically import and initialize standard provider
+      const { CollaborationProvider: StandardProvider } = require('./yjs-provider')
+      CollaborationProvider = StandardProvider
+      
+      // Apply patch
+      applyCollaborationProviderPatch()
+      
       this.provider = CollaborationProvider.getInstance()
     }
   }
@@ -60,46 +85,67 @@ export class UnifiedProvider {
   
   // Delegate all methods to the underlying provider
   public getProvider() {
+    if (!this.provider) {
+      // Return a minimal object for plain mode
+      return {
+        awareness: {
+          getStates: () => new Map(),
+          clientID: 1,
+          meta: new Map()
+        }
+      }
+    }
     return this.provider.getProvider()
   }
   
   public setCurrentNote(noteId: string) {
-    if ('setCurrentNote' in this.provider) {
+    if (this.provider && 'setCurrentNote' in this.provider) {
       this.provider.setCurrentNote(noteId)
     }
   }
   
   public getBranchesMap() {
-    if ('getBranchesMap' in this.provider) {
+    if (this.provider && 'getBranchesMap' in this.provider) {
       return this.provider.getBranchesMap()
     }
     return new Map()
   }
   
   public addBranch(parentId: string, branchId: string, branchData: any) {
-    if ('addBranch' in this.provider) {
+    if (this.provider && 'addBranch' in this.provider) {
       this.provider.addBranch(parentId, branchId, branchData)
     }
   }
   
   public getBranches(panelId: string) {
-    if ('getBranches' in this.provider) {
+    if (this.provider && 'getBranches' in this.provider) {
       return this.provider.getBranches(panelId)
     }
     return []
   }
   
+  public getDocumentStructure() {
+    if (this.provider && 'getDocumentStructure' in this.provider) {
+      return this.provider.getDocumentStructure()
+    }
+    return null
+  }
+  
   public initializeDefaultData(noteId: string, data: any) {
+    if (!this.provider) return
+    
     if ('initializeDefaultData' in this.provider) {
       this.provider.initializeDefaultData(noteId, data)
     } else if ('initializeNote' in this.provider) {
-      ;(this.provider as EnhancedCollaborationProvider).initializeNote(noteId, data)
+      this.provider.initializeNote(noteId, data)
     }
   }
   
   // Get the underlying provider type
-  public getProviderType(): 'standard' | 'enhanced' {
-    return this.provider instanceof EnhancedCollaborationProvider ? 'enhanced' : 'standard'
+  public getProviderType(): 'standard' | 'enhanced' | 'plain' {
+    if (!this.provider) return 'plain'
+    // Check by constructor name since we're dynamically loading
+    return this.provider.constructor.name === 'EnhancedCollaborationProvider' ? 'enhanced' : 'standard'
   }
   
   // Enable enhanced provider at runtime
@@ -120,7 +166,7 @@ export class UnifiedProvider {
 }
 
 // Export helper to check current provider
-export function getCurrentProviderType(): 'standard' | 'enhanced' {
+export function getCurrentProviderType(): 'standard' | 'enhanced' | 'plain' {
   return UnifiedProvider.getInstance().getProviderType()
 }
 
@@ -136,14 +182,19 @@ export function toggleProvider() {
 
 // Get plain provider instance (for Option A mode)
 export function getPlainProvider(): PlainOfflineProvider | null {
+  console.log('[getPlainProvider] Called. COLLAB_MODE:', COLLAB_MODE, 'Instance:', plainProviderInstance)
+  
   if (COLLAB_MODE !== 'plain') {
+    console.log('[getPlainProvider] Not in plain mode, returning null')
     return null
   }
   
   if (!plainProviderInstance) {
     // Initialize plain provider with appropriate adapter
     // This will be connected to the actual adapter in the app initialization
-    console.warn('[getPlainProvider] Plain provider not initialized yet')
+    console.warn('[getPlainProvider] ⚠️ Plain provider not initialized yet')
+  } else {
+    console.log('[getPlainProvider] ✅ Returning plain provider instance')
   }
   
   return plainProviderInstance

@@ -27,6 +27,10 @@ export function AnnotationApp() {
   
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
+  
+  // Determine collaboration mode from environment
+  const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
+  const isPlainMode = collabMode === 'plain'
 
   const openNotesExplorer = () => {
     setIsNotesExplorerOpen(true)
@@ -67,6 +71,14 @@ export function AnnotationApp() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden relative">
+      {/* Mode Indicator Badge */}
+      {isPlainMode && (
+        <div className="fixed top-4 right-4 z-50 px-3 py-1.5 bg-gray-800 text-gray-200 rounded-md shadow-lg flex items-center gap-2 text-sm font-medium">
+          <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
+          Offline Mode - No Collaboration
+        </div>
+      )}
+      
       {/* Backdrop Overlay */}
       {isNotesExplorerOpen && (
         <div 

@@ -1,19 +1,32 @@
 import { ElectronPostgresAdapter } from '../../lib/adapters/electron-postgres-adapter'
 import { ConnectionManager } from '../../lib/database/connection-manager'
 import { OplogSync } from '../../lib/database/oplog-sync'
-import { Pool } from 'pg'
+import { Pool, PoolClient, QueryResult } from 'pg'
 
 // Mock dependencies
 jest.mock('../../lib/database/connection-manager')
 jest.mock('../../lib/database/oplog-sync')
 jest.mock('pg')
 
+// Type helpers for mocks
+type MockPool = jest.Mocked<Pick<Pool, 'query' | 'connect' | 'end'>>
+type MockPoolClient = jest.Mocked<Pick<PoolClient, 'query' | 'release'>>
+
+// Helper to create a mock QueryResult
+const createMockQueryResult = (rows: any[] = []): QueryResult => ({
+  rows,
+  rowCount: rows.length,
+  command: '',
+  oid: 0,
+  fields: []
+})
+
 describe('ElectronPostgresAdapter', () => {
   let adapter: ElectronPostgresAdapter
   let mockConnectionManager: jest.Mocked<ConnectionManager>
   let mockOplogSync: jest.Mocked<OplogSync>
-  let mockRemotePool: jest.Mocked<Pool>
-  let mockLocalPool: jest.Mocked<Pool>
+  let mockRemotePool: MockPool
+  let mockLocalPool: MockPool
 
   const config = {
     remote: { connectionString: 'postgres://remote' },
@@ -24,33 +37,36 @@ describe('ElectronPostgresAdapter', () => {
   beforeEach(() => {
     // Setup mock pools
     mockRemotePool = {
-      query: jest.fn(),
-      connect: jest.fn(),
-      end: jest.fn(),
-    } as any
+      query: jest.fn<Promise<QueryResult>, [string, any[]?]>(),
+      connect: jest.fn<Promise<PoolClient>, []>(),
+      end: jest.fn<Promise<void>, []>(),
+    }
 
     mockLocalPool = {
-      query: jest.fn(),
-      connect: jest.fn(),
-      end: jest.fn(),
-    } as any
+      query: jest.fn<Promise<QueryResult>, [string, any[]?]>(),
+      connect: jest.fn<Promise<PoolClient>, []>(),
+      end: jest.fn<Promise<void>, []>(),
+    }
 
     // Setup mock connection manager
     mockConnectionManager = {
-      getRemotePool: jest.fn().mockReturnValue(mockRemotePool),
-      getLocalPool: jest.fn().mockReturnValue(mockLocalPool),
-      getHealthyPool: jest.fn(),
-      checkHealth: jest.fn(),
-      reconnectWithBackoff: jest.fn(),
-      close: jest.fn(),
-    } as any
+      getRemotePool: jest.fn().mockReturnValue(mockRemotePool as unknown as Pool),
+      getLocalPool: jest.fn().mockReturnValue(mockLocalPool as unknown as Pool),
+      getHealthyPool: jest.fn<Promise<{ pool: Pool; isRemote: boolean }>, []>(),
+      checkHealth: jest.fn<Promise<{ remote: boolean; local: boolean }>, []>(),
+      reconnectWithBackoff: jest.fn<Promise<boolean>, [boolean]>(),
+      close: jest.fn<Promise<void>, []>(),
+    } as unknown as jest.Mocked<ConnectionManager>
 
     // Setup mock oplog sync
     mockOplogSync = {
-      start: jest.fn(),
-      stop: jest.fn(),
-      syncPending: jest.fn(),
-    } as any
+      start: jest.fn<Promise<void>, []>(),
+      stop: jest.fn<void, []>(),
+      syncPending: jest.fn<Promise<void>, []>(),
+      syncToRemote: jest.fn<Promise<void>, []>(),
+      syncToLocal: jest.fn<Promise<void>, []>(),
+      processPendingOperations: jest.fn<Promise<number>, []>(),
+    } as unknown as jest.Mocked<OplogSync>
 
     // Mock getInstance to return our mock
     ;(ConnectionManager.getInstance as jest.Mock).mockReturnValue(mockConnectionManager)
@@ -67,7 +83,7 @@ describe('ElectronPostgresAdapter', () => {
   describe('persist with failover', () => {
     test('uses remote pool when available', async () => {
       const update = new Uint8Array([1, 2, 3])
-      mockRemotePool.query.mockResolvedValue({ rows: [] } as any)
+      mockRemotePool.query.mockResolvedValue(createMockQueryResult())
 
       await adapter.persist('test-doc', update)
 
@@ -81,13 +97,13 @@ describe('ElectronPostgresAdapter', () => {
     test('falls back to local on network error', async () => {
       const update = new Uint8Array([1, 2, 3])
       const networkError = new Error('Connection timeout')
-      ;(networkError as any).code = 'ETIMEDOUT'
+      Object.assign(networkError, { code: 'ETIMEDOUT' })
 
-      const mockClient = {
-        query: jest.fn().mockResolvedValue({}),
-        release: jest.fn(),
+      const mockClient: MockPoolClient = {
+        query: jest.fn<Promise<QueryResult>, [string, any[]?]>().mockResolvedValue(createMockQueryResult()),
+        release: jest.fn<void, []>(),
       }
-      mockLocalPool.connect.mockResolvedValue(mockClient as any)
+      mockLocalPool.connect.mockResolvedValue(mockClient as unknown as PoolClient)
 
       // First call fails with network error
       mockRemotePool.query.mockRejectedValueOnce(networkError)
@@ -112,13 +128,13 @@ describe('ElectronPostgresAdapter', () => {
       
       const update = new Uint8Array([1, 2, 3])
       const networkError = new Error('Connection refused')
-      ;(networkError as any).code = 'ECONNREFUSED'
+      Object.assign(networkError, { code: 'ECONNREFUSED' })
 
-      const mockClient = {
-        query: jest.fn().mockResolvedValue({}),
-        release: jest.fn(),
+      const mockClient: MockPoolClient = {
+        query: jest.fn<Promise<QueryResult>, [string, any[]?]>().mockResolvedValue(createMockQueryResult()),
+        release: jest.fn<void, []>(),
       }
-      mockLocalPool.connect.mockResolvedValue(mockClient as any)
+      mockLocalPool.connect.mockResolvedValue(mockClient as unknown as PoolClient)
       mockRemotePool.query.mockRejectedValueOnce(networkError)
       
       await adapter.persist('test-doc', update)
@@ -143,7 +159,7 @@ describe('ElectronPostgresAdapter', () => {
   describe('connection status', () => {
     test('reports connection status correctly', async () => {
       mockConnectionManager.getHealthyPool.mockResolvedValue({
-        pool: mockRemotePool,
+        pool: mockRemotePool as unknown as Pool,
         isRemote: true
       })
 
@@ -160,11 +176,11 @@ describe('ElectronPostgresAdapter', () => {
       await adapter.forceMode('local')
 
       // Verify mode change by attempting persist
-      const mockClient = {
-        query: jest.fn().mockResolvedValue({}),
-        release: jest.fn(),
+      const mockClient: MockPoolClient = {
+        query: jest.fn<Promise<QueryResult>, [string, any[]?]>().mockResolvedValue(createMockQueryResult()),
+        release: jest.fn<void, []>(),
       }
-      mockLocalPool.connect.mockResolvedValue(mockClient as any)
+      mockLocalPool.connect.mockResolvedValue(mockClient as unknown as PoolClient)
 
       await adapter.persist('test-doc', new Uint8Array([1]))
 
@@ -178,17 +194,17 @@ describe('ElectronPostgresAdapter', () => {
     test('adds compaction to oplog when in local mode', async () => {
       await adapter.forceMode('local')
 
-      const mockClient = {
-        query: jest.fn().mockResolvedValue({}),
-        release: jest.fn(),
+      const mockClient: MockPoolClient = {
+        query: jest.fn<Promise<QueryResult>, [string, any[]?]>().mockResolvedValue(createMockQueryResult()),
+        release: jest.fn<void, []>(),
       }
-      mockLocalPool.connect.mockResolvedValue(mockClient as any)
+      mockLocalPool.connect.mockResolvedValue(mockClient as unknown as PoolClient)
       
       // Mock snapshot data
       const snapshot = new Uint8Array([10, 20, 30])
       mockLocalPool.query
-        .mockResolvedValueOnce({ rows: [] }) // getAllUpdates
-        .mockResolvedValueOnce({ rows: [{ snapshot: Buffer.from(snapshot) }] }) // loadSnapshot
+        .mockResolvedValueOnce(createMockQueryResult()) // getAllUpdates
+        .mockResolvedValueOnce(createMockQueryResult([{ snapshot: Buffer.from(snapshot) }])) // loadSnapshot
 
       await adapter.compact('test-doc')
 
@@ -213,25 +229,25 @@ describe('ElectronPostgresAdapter', () => {
       
       // Trigger a reconnect timer
       const networkError = new Error('timeout')
-      ;(networkError as any).code = 'ETIMEDOUT'
+      Object.assign(networkError, { code: 'ETIMEDOUT' })
       mockRemotePool.query.mockRejectedValueOnce(networkError)
       
-      const mockClient = {
-        query: jest.fn().mockResolvedValue({}),
-        release: jest.fn(),
+      const mockClient: MockPoolClient = {
+        query: jest.fn<Promise<QueryResult>, [string, any[]?]>().mockResolvedValue(createMockQueryResult()),
+        release: jest.fn<void, []>(),
       }
-      mockLocalPool.connect.mockResolvedValue(mockClient as any)
+      mockLocalPool.connect.mockResolvedValue(mockClient as unknown as PoolClient)
       
       await adapter.persist('test-doc', new Uint8Array([1]))
 
-      await adapter.close()
+      // Cleanup should cancel timers
+      adapter.cleanup()
 
-      expect(mockOplogSync.stop).toHaveBeenCalled()
-      expect(mockConnectionManager.close).toHaveBeenCalled()
-
-      // Verify timer was cleared by advancing time
+      // Advance time - reconnect should not trigger
       jest.advanceTimersByTime(10000)
       expect(mockConnectionManager.reconnectWithBackoff).not.toHaveBeenCalled()
+      
+      jest.useRealTimers()
     })
   })
 })

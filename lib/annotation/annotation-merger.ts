@@ -121,7 +121,7 @@ export class AnnotationMerger {
     
     // Mark original annotations as merged
     group.annotations.forEach(anno => {
-      const branch = branches.get(anno.id)
+      const branch = branches.get(anno.id) as Y.Map<any>
       if (branch) {
         branch.set('mergedInto', mergedId)
         branch.set('visibility', 'merged')
@@ -136,20 +136,21 @@ export class AnnotationMerger {
     const branches = this.doc.getMap('branches')
     const merged = branches.get(mergedId)
     
-    if (!merged || !merged.get('mergedFrom')) {
+    const mergedBranch = merged as Y.Map<any>
+    if (!mergedBranch || !mergedBranch.get('mergedFrom')) {
       throw new Error('Not a merged annotation')
     }
     
-    const originalIds = merged.get('mergedFrom') as string[]
+    const originalIds = mergedBranch.get('mergedFrom') as string[]
     const restoredAnnotations: Annotation[] = []
     
     // Restore original annotations
     originalIds.forEach(id => {
-      const branch = branches.get(id)
+      const branch = branches.get(id) as Y.Map<any>
       if (branch) {
         branch.set('mergedInto', null)
         branch.set('visibility', 'visible')
-        restoredAnnotations.push(this.branchToAnnotation(branch, id))
+        restoredAnnotations.push(this.branchToAnnotation(branch as Y.Map<any>, id))
       }
     })
     

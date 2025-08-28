@@ -56,7 +56,7 @@ export async function loadYDocWithCompaction(
   }
   
   // Apply updates to doc
-  updates.forEach(update => {
+  updates.forEach((update: Uint8Array) => {
     Y.applyUpdate(doc, update, 'persistence')
   })
   

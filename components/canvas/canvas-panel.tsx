@@ -7,9 +7,7 @@ import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
 import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
-import { getEditorYDoc } from "@/lib/yjs-provider"
-import { EnhancedCollaborationProvider } from "@/lib/enhanced-yjs-provider"
-import { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
+import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
 
 interface CanvasPanelProps {
   panelId: string
@@ -57,12 +55,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     plainProvider = getPlainProvider()
   } else {
     // Yjs mode: Use enhanced provider to get subdoc with PostgreSQL persistence
-    const enhancedProvider = EnhancedCollaborationProvider.getInstance()
-    // Note: getEditorSubdoc is async, so we'll use the synchronous method
-    // Fixed: Using getEditorYDoc which now has PostgreSQL persistence built-in
-    // Pass noteId to ensure proper isolation between notes
-    // IMPORTANT: Use useMemo to prevent calling getEditorYDoc on every render
-    ydoc = useMemo(() => getEditorYDoc(panelId, currentNoteId), [panelId, currentNoteId])
+    // IMPORTANT: Only import and use Yjs components when NOT in plain mode
+    ydoc = useMemo(() => {
+      // Dynamic import to avoid loading Yjs in plain mode
+      const { getEditorYDoc } = require('@/lib/yjs-provider')
+      return getEditorYDoc(panelId, currentNoteId)
+    }, [panelId, currentNoteId])
   }
   
   // Set the current note context if provided
@@ -379,8 +377,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const isMainPanel = panelId === 'main'
   const showToolbar = isMainPanel || isEditing
 
-  // Filter branches based on active filter using YJS native types
-  const allBranches = provider.getBranches(panelId) // Get branches using YJS native types
+  // Filter branches based on active filter
+  const allBranches = provider.getBranches ? provider.getBranches(panelId) : [] // Get branches safely
   const filteredBranches = allBranches.filter((branchId: string) => {
     if (activeFilter === 'all') return true
     
@@ -399,6 +397,19 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
   // Force re-render when branches change
   useEffect(() => {
+    // Skip Yjs observation in plain mode
+    if (isPlainMode) {
+      // In plain mode, we don't have reactive updates
+      // Changes will be reflected on reload or manual refresh
+      return
+    }
+    
+    // Check if branchesMap has observe method (Yjs Map)
+    if (!branchesMap || typeof branchesMap.observe !== 'function') {
+      // Plain JavaScript Map, no observation needed
+      return
+    }
+    
     const updateHandler = (event: any) => {
       // Check if this panel's branches were updated
       if (event && event.keysChanged && event.keysChanged.has(panelId)) {
@@ -419,13 +430,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     
     // Listen for changes to the YJS native branches array
     try {
-      const structure = provider.getDocumentStructure()
-      const branchesArray = structure.getBranchesArray(panelId)
-      branchesArray.observe(branchesArrayUpdateHandler)
+      const structure = provider.getDocumentStructure && provider.getDocumentStructure()
+      if (structure && structure.getBranchesArray) {
+        const branchesArray = structure.getBranchesArray(panelId)
+        if (branchesArray && typeof branchesArray.observe === 'function') {
+          branchesArray.observe(branchesArrayUpdateHandler)
+          
+          return () => {
+            branchesMap.unobserve(updateHandler)
+            branchesArray.unobserve(branchesArrayUpdateHandler)
+          }
+        }
+      }
       
+      // Fallback to legacy observation only
       return () => {
         branchesMap.unobserve(updateHandler)
-        branchesArray.unobserve(branchesArrayUpdateHandler)
       }
     } catch {
       // Fallback to legacy observation only
@@ -433,7 +453,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         branchesMap.unobserve(updateHandler)
       }
     }
-  }, [panelId, forceUpdate, branchesMap, provider])
+  }, [panelId, forceUpdate, branchesMap, provider, isPlainMode])
 
   // Handle branch click to open panel
   const handleBranchClick = (branchId: string) => {

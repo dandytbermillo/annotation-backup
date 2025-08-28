@@ -62,7 +62,7 @@ A modern annotation system built with Next.js and TipTap that supports both offl
    ```
    Edit `.env.local` with your database credentials:
    ```env
-   DATABASE_URL=postgresql://user:password@localhost:5432/annotation_db
+   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/annotation_dev
    NEXT_PUBLIC_COLLAB_MODE=plain  # Use 'plain' for Option A or 'yjs' for Option B
    ```
 
@@ -75,7 +75,7 @@ A modern annotation system built with Next.js and TipTap that supports both offl
    
    Or install PostgreSQL locally and create database:
    ```sql
-   CREATE DATABASE annotation_db;
+   CREATE DATABASE annotation_dev;
    ```
 
 5. **Run database migrations**
@@ -95,6 +95,22 @@ A modern annotation system built with Next.js and TipTap that supports both offl
 
 7. **Open in browser**
    Open [http://localhost:3000](http://localhost:3000) to view the application.
+
+### Option A Quick Start
+
+For a streamlined Option A (plain mode) setup, you can use the quick start script:
+
+```bash
+./scripts/quick-start-option-a.sh
+```
+
+This script will:
+- Set environment to plain mode
+- Configure database connection
+- Provide usage instructions
+- Show testing commands
+
+**Note**: Switching between Option A and Option B requires restarting the application.
 
 ## 🎯 Usage
 
@@ -185,8 +201,8 @@ annotation/
 See `.env.example` for a complete list. Key variables:
 
 ```env
-# Database Configuration
-DATABASE_URL=postgresql://user:password@localhost:5432/annotation_db
+# Database Configuration (Option A default)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/annotation_dev
 
 # Collaboration Mode
 NEXT_PUBLIC_COLLAB_MODE=plain  # 'plain' or 'yjs'
@@ -197,6 +213,17 @@ NEXT_PUBLIC_WS_URL=wss://your-server.com
 # Option B Only: WebRTC signaling server
 NEXT_PUBLIC_WEBRTC_SIGNALING=wss://signaling.example.com
 ```
+
+## ⚡ Option A (Plain Mode) Quick Start
+
+- Start PostgreSQL:
+  - Docker: `docker compose up -d postgres`
+  - Or local Postgres with DB `annotation_dev`
+- Run migrations: `npm run db:migrate`
+- Set mode: `NEXT_PUBLIC_COLLAB_MODE=plain`
+- Start app: `npm run dev`
+- Optional: `./scripts/quick-start-option-a.sh` for a guided setup
+- Note: Switching between modes requires a restart of the dev server.
 
 ### Mode Configuration
 The system uses a mode switcher to toggle between:
@@ -243,6 +270,54 @@ npm run export
 2. Add SQLite dependency
 3. Package with electron-builder
 4. Enable file system features
+
+## 🧪 Testing
+
+### Running Tests
+
+```bash
+# Unit tests
+npm test
+
+# Integration tests
+npm run test:integration
+
+# Type checking
+npm run type-check
+
+# Linting
+npm run lint
+
+# Option A integration tests
+./scripts/test-plain-mode.sh
+```
+
+### Electron Testing
+
+Electron-specific tests must be run locally as they require an Electron environment:
+
+```bash
+# Run Electron tests (requires local Electron)
+./scripts/test-electron-plain-mode.sh
+```
+
+**Note**: Electron tests are not included in CI due to environment requirements. These tests verify:
+- IPC handler loading (TypeScript/JavaScript compatibility)
+- Offline queue processing
+- PostgreSQL failover logic
+
+If you only have TypeScript files (`.ts`), you'll need to either:
+1. Build the project first: `npm run build`
+2. Set up ts-node with Electron for direct TypeScript execution
+
+### CI/CD
+
+The project includes GitHub Actions workflows for:
+- Type checking (with continue-on-error for gradual fixes)
+- Linting
+- Integration tests
+- PostgreSQL migration validation
+- Renderer isolation checks (no direct DB imports)
 
 ## 🤝 Contributing
 

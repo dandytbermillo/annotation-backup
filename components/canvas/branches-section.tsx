@@ -55,7 +55,7 @@ Features:
     
     if (!currentBranch.branches || currentBranch.branches.length === 0) return []
 
-    return currentBranch.branches.filter((branchId) => {
+    return currentBranch.branches.filter((branchId: string) => {
       if (activeFilter === "all") return true
       const childBranch = branchesMap.get(branchId) || dataStore.get(branchId)
       return childBranch && childBranch.type === activeFilter
@@ -104,12 +104,14 @@ Features:
             transition: "all 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.target.style.background = "rgba(255,255,255,0.3)"
-            e.target.style.transform = "translateY(-1px)"
+            const target = e.target as HTMLElement
+            target.style.background = "rgba(255,255,255,0.3)"
+            target.style.transform = "translateY(-1px)"
           }}
           onMouseLeave={(e) => {
-            e.target.style.background = "rgba(255,255,255,0.2)"
-            e.target.style.transform = "translateY(0)"
+            const target = e.target as HTMLElement
+            target.style.background = "rgba(255,255,255,0.2)"
+            target.style.transform = "translateY(0)"
           }}
         >
           + Add
@@ -147,14 +149,16 @@ Features:
             }}
             onMouseEnter={(e) => {
               if (activeFilter !== filterType) {
-                e.target.style.background = "rgba(255,255,255,0.25)"
-                e.target.style.transform = "translateY(-1px)"
+                const target = e.target as HTMLElement
+                target.style.background = "rgba(255,255,255,0.25)"
+                target.style.transform = "translateY(-1px)"
               }
             }}
             onMouseLeave={(e) => {
               if (activeFilter !== filterType) {
-                e.target.style.background = "rgba(255,255,255,0.15)"
-                e.target.style.transform = "translateY(0)"
+                const target = e.target as HTMLElement
+                target.style.background = "rgba(255,255,255,0.15)"
+                target.style.transform = "translateY(0)"
               }
             }}
           >
@@ -180,7 +184,7 @@ Features:
               : `No ${activeFilter} branches found.\nTry selecting "All" or create new ${activeFilter} annotations!`}
           </div>
         ) : (
-          filteredBranches.map((branchId) => <BranchItem key={branchId} branchId={branchId} parentId={panelId} />)
+          filteredBranches.map((branchId: string) => <BranchItem key={branchId} branchId={branchId} parentId={panelId} />)
         )}
       </div>
     </div>

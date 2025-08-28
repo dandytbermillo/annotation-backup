@@ -14,7 +14,7 @@
 - Collaboration: Yjs (Option B only; out-of-scope for current Option A; do not add Yjs runtime or CRDT logic in Option A)
 - Styling: Tailwind CSS + Radix UI
 - Animations: Framer Motion
-- Persistence: **PostgreSQL-only** (remote primary, local failover supported for Electron). No IndexedDB fallback. Schema must remain compatible with future Yjs real-time collaboration.
+- Persistence: **PostgreSQL-only** (remote primary, local failover supported for Electron). No IndexedDB fallback. Schema must remain compatible with future Yjs real-time collaboration. For local development, use database `annotation_dev`.
 
 ### Conventions
 - Follow existing adapter/provider patterns in `lib/adapters/*` and `lib/sync/*`.
@@ -42,7 +42,8 @@ validate and wire into Electron via npm run electron:dev.
 3. `npm run test` — unit tests
 4. `docker compose up -d postgres` (CI step for integration)
 5. `npm run test:integration` — integration tests that require Postgres
-6. `npm run test:e2e` — Playwright or designated E2E suite (multi-client flows)
+6. `./scripts/test-plain-mode.sh` — Option A end-to-end verification (Web/API)
+7. `npm run test:e2e` — Playwright or designated E2E suite (multi-client flows)
 
 Migration hygiene:
 - Ensure every DB migration has reversible scripts: `.up.sql` and `.down.sql`.
@@ -103,12 +104,31 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ---
 
+## IMPLEMENTATION REPORTS (MANDATORY)
+- After each task or meaningful milestone, write a concise implementation report and save it to `fixes_doc/option_A/YYYY-MM-DD-<short-title>.md`.
+- Each report must include:
+  - Summary: what was implemented/fixed and why
+  - Changes: files/paths modified and key diffs
+  - Migrations/Scripts/CI: added or updated items
+  - Commands: how to run, validate, and reproduce
+  - Tests: unit/integration/CI results and logs location
+  - Errors encountered: the error(s)observed, root cause analysis, and the solution implemented (include file paths/lines,reproduction commands, and how the fix was validated)
+  - Risks/limitations: known issues
+  - Next steps/TODOs: follow-ups
+- Keep reports clear and actionable; link to relevant PRs, CI runs, or logs rather than pasting long outputs.
+
+---
+
 ## ANTI-HALLUCINATION RULES (must be enforced by agents)
 - **File verification**: Before referencing any file, run `git ls-files | rg "<pattern>"` or `test -f` and include the output. If file not found, state `NOT FOUND` and propose a stub file under `lib/stubs/`.
 - **Cite exact code**: When suggesting edits, include the file path and a 3–6 line excerpt showing relevant code context.
 - **Small diffs only**: Propose minimal, reversible changes. Large refactors must include a rollback plan and run in feature flags.
 - **No invented endpoints**: Do not invent server routes or APIs without adding a matching test and server-side handler.
 - **Respect YJS runtime**: Never replace YJS with Postgres for live CRDT operations (Option B). Option A does not implement live CRDT — do not introduce ad‑hoc merge logic.
+
+### Plain Mode Guardrails
+- No Yjs imports in plain-mode files (e.g., `lib/providers/plain-offline-provider.ts`, `lib/adapters/*-offline-adapter.ts`, `components/canvas/tiptap-editor-plain.tsx`). CI may enforce via a simple grep step.
+- Renderer must not import `pg` or hold DB connections. All database access from renderer goes through Electron IPC to the main process.
 
 ---
 
@@ -162,6 +182,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 - [ ] DB migrations are present in `migrations/` and idempotent.
 - [ ] Reversible migrations: each change includes both `.up.sql` and `.down.sql`, tested forward/backward.
 - [ ] `INITIAL.md` is updated with attempt history and any error summaries.
+- [ ] Implementation report saved under `fixes_doc/option_A/YYYY-MM-DD-<short-title>.md`.
 
 ---
 
