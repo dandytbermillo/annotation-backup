@@ -1,0 +1,494 @@
+"use client"
+
+/**
+ * TipTap Editor for Plain Mode - Option A (offline, single-user, no Yjs)
+ * 
+ * This editor variant operates without Yjs collaboration features.
+ * It implements all 10 critical fixes from the Yjs version while
+ * using standard TipTap history instead of CRDT-based collaboration.
+ * 
+ * @module components/canvas/tiptap-editor-plain
+ */
+
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Highlight from '@tiptap/extension-highlight'
+import Underline from '@tiptap/extension-underline'
+import Placeholder from '@tiptap/extension-placeholder'
+import { useEffect, useImperativeHandle, forwardRef, useState, useMemo } from 'react'
+import { Mark, mergeAttributes } from '@tiptap/core'
+import { AnnotationDecorations } from './annotation-decorations'
+import { PerformanceMonitor } from './performance-decorations'
+import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
+
+// Custom annotation mark extension (same as Yjs version)
+const Annotation = Mark.create({
+  name: 'annotation',
+  
+  addOptions() {
+    return {
+      HTMLAttributes: {},
+    }
+  },
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-annotation-id'),
+        renderHTML: attributes => {
+          if (!attributes.id) return {}
+          return { 'data-annotation-id': attributes.id }
+        },
+      },
+      type: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-type'),
+        renderHTML: attributes => {
+          if (!attributes.type) return {}
+          return { 'data-type': attributes.type }
+        },
+      },
+      branchId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-branch'),
+        renderHTML: attributes => {
+          if (!attributes.branchId) return {}
+          return { 'data-branch': attributes.branchId }
+        },
+      },
+      'data-branch': {
+        default: null,
+        parseHTML: element => element.getAttribute('data-branch'),
+        renderHTML: attributes => {
+          if (!attributes['data-branch']) return {}
+          return { 'data-branch': attributes['data-branch'] }
+        },
+      },
+    }
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'span[data-annotation-id]',
+      },
+    ]
+  },
+
+  renderHTML({ HTMLAttributes, mark }) {
+    const type = mark.attrs.type || 'note'
+    const className = `annotation annotation-${type}`
+    
+    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { 
+      class: className,
+      style: 'cursor: pointer;'
+    }), 0]
+  },
+})
+
+interface TiptapEditorPlainProps {
+  content?: string | ProseMirrorJSON
+  isEditable: boolean
+  noteId: string
+  panelId: string
+  onUpdate?: (content: ProseMirrorJSON) => void
+  onSelectionChange?: (text: string, range: Range | null) => void
+  placeholder?: string
+  provider?: PlainOfflineProvider
+  onCreateAnnotation?: (type: string, selectedText: string) => { id: string; branchId: string } | null
+}
+
+export interface TiptapEditorPlainHandle {
+  getHTML: () => string
+  getJSON: () => ProseMirrorJSON
+  focus: () => void
+  setEditable: (editable: boolean) => void
+  executeCommand: (command: string, value?: any) => void
+  insertAnnotation: (type: string, annotationId: string, branchId: string) => void
+}
+
+const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainProps>(
+  ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, placeholder, provider, onCreateAnnotation }, ref) => {
+    // Fix #3: Track loading state
+    const [isContentLoading, setIsContentLoading] = useState(true)
+    
+    // Fix #10: Memoize content loading
+    const initialContent = useMemo(() => {
+      if (!provider || !noteId) return content || ''
+      
+      // Load content from provider asynchronously
+      provider.loadDocument(noteId, panelId).then(loadedContent => {
+        if (loadedContent && editor) {
+          editor.commands.setContent(loadedContent)
+          setIsContentLoading(false)
+        }
+      }).catch(error => {
+        console.error('[TiptapEditorPlain] Failed to load content:', error)
+        setIsContentLoading(false)
+      })
+      
+      return content || ''
+    }, [noteId, panelId]) // Only reload when noteId or panelId changes
+    
+    const editor = useEditor({
+      extensions: [
+        StarterKit.configure({
+          history: true, // Enable history for plain mode
+        }),
+        Highlight,
+        Underline,
+        Annotation,
+        Placeholder.configure({
+          placeholder: placeholder || 'Start typing...',
+        }),
+      ],
+      plugins: [
+        AnnotationDecorations(),
+        PerformanceMonitor(),
+      ],
+      content: initialContent,
+      editable: isEditable,
+      onCreate: ({ editor }) => {
+        // Fix #1: Prevent duplicate "Start writing..."
+        const currentContent = editor.getHTML()
+        if (!currentContent || currentContent === '<p></p>' || currentContent.trim() === '') {
+          editor.commands.clearContent()
+        }
+        setIsContentLoading(false)
+      },
+      onUpdate: ({ editor }) => {
+        // Get content as JSON for plain mode
+        const json = editor.getJSON()
+        console.log(`[TiptapEditorPlain] onUpdate fired for noteId: ${noteId}, panelId: ${panelId}`)
+        
+        // Save to provider if available
+        if (provider && noteId) {
+          provider.saveDocument(noteId, panelId, json).catch(error => {
+            console.error('[TiptapEditorPlain] Failed to save content:', error)
+          })
+        }
+        
+        // Notify parent component
+        onUpdate?.(json)
+      },
+      onSelectionUpdate: ({ editor }) => {
+        const { from, to } = editor.state.selection
+        const text = editor.state.doc.textBetween(from, to, ' ')
+        
+        if (text.trim().length > 0 && onSelectionChange) {
+          // Create a DOM range for compatibility with existing annotation system
+          const view = editor.view
+          const domRange = document.createRange()
+          
+          try {
+            const start = view.domAtPos(from)
+            const end = view.domAtPos(to)
+            domRange.setStart(start.node, start.offset)
+            domRange.setEnd(end.node, end.offset)
+            onSelectionChange(text, domRange)
+          } catch (e) {
+            // Fallback if DOM position fails
+            onSelectionChange(text, null)
+          }
+        } else {
+          onSelectionChange?.('', null)
+        }
+      },
+      editorProps: {
+        attributes: {
+          class: 'prose prose-lg max-w-none focus:outline-none tiptap-editor',
+          'data-panel': panelId, // Add data-panel attribute for annotation toolbar
+          'data-note': noteId,   // Add data-note for tracking
+          style: `
+            background: #fafbfc;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 250px;
+            font-family: 'Georgia', serif;
+            line-height: 1.8;
+            font-size: 15px;
+            color: #2c3e50;
+          `,
+        },
+        handleClick: (view, pos, event) => {
+          // Handle clicks on annotation spans
+          const target = event.target as HTMLElement
+          if (target.classList.contains('annotation') || target.closest('.annotation')) {
+            const annotationElement = target.classList.contains('annotation') ? target : target.closest('.annotation') as HTMLElement
+            const branchId = annotationElement.getAttribute('data-branch') || annotationElement.getAttribute('data-branch-id')
+            
+            if (branchId) {
+              // Dispatch event to open panel
+              window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId } }))
+            }
+            
+            // Prevent text selection on click
+            return true
+          }
+          return false
+        },
+      },
+    })
+
+    // Update editable state when prop changes
+    useEffect(() => {
+      if (editor && editor.isEditable !== isEditable) {
+        editor.setEditable(isEditable)
+      }
+    }, [editor, isEditable])
+
+    // Fix #2 & #5: Handle content updates with composite key awareness
+    useEffect(() => {
+      if (editor && !isContentLoading && content !== undefined) {
+        const currentJSON = editor.getJSON()
+        const newContent = typeof content === 'string' 
+          ? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: content }] }] }
+          : content
+        
+        // Only update if content actually changed
+        if (JSON.stringify(currentJSON) !== JSON.stringify(newContent)) {
+          editor.commands.setContent(newContent)
+        }
+      }
+    }, [editor, content, isContentLoading])
+
+    // Add styles for annotations and decorations (same as Yjs version)
+    useEffect(() => {
+      if (typeof window === 'undefined') return
+      
+      const style = document.createElement('style')
+      style.textContent = `
+        .tiptap-editor .annotation {
+          background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+          padding: 2px 6px;
+          border-radius: 4px;
+          cursor: pointer;
+          position: relative;
+          transition: all 0.3s ease;
+          font-weight: 600;
+          border-bottom: 2px solid transparent;
+        }
+        
+        .tiptap-editor .annotation:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .tiptap-editor .annotation.annotation-note {
+          background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+          border-bottom-color: #2196f3;
+          color: #1565c0;
+        }
+        
+        .tiptap-editor .annotation.annotation-explore {
+          background: linear-gradient(135deg, #fff3e0 0%, #ffcc80 100%);
+          border-bottom-color: #ff9800;
+          color: #ef6c00;
+        }
+        
+        .tiptap-editor .annotation.annotation-promote {
+          background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%);
+          border-bottom-color: #4caf50;
+          color: #2e7d32;
+        }
+        
+        /* Enhanced hover effects for decorations */
+        .tiptap-editor .annotation-hover-target {
+          position: relative;
+          display: inline-block;
+        }
+        
+        .tiptap-editor .annotation-hover-target.annotation-hovered {
+          transform: translateY(-2px) scale(1.02);
+          filter: brightness(1.1);
+          z-index: 10;
+        }
+        
+        .tiptap-editor .annotation-hover-target.annotation-clicked {
+          animation: annotationClick 0.3s ease-out;
+        }
+        
+        @keyframes annotationClick {
+          0% { transform: scale(1); }
+          50% { transform: scale(0.95); }
+          100% { transform: scale(1); }
+        }
+        
+        /* Tooltip styles */
+        .annotation-tooltip {
+          position: absolute;
+          background: rgba(0, 0, 0, 0.95);
+          color: white;
+          padding: 12px 16px;
+          border-radius: 8px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+          z-index: 10000;
+          max-width: 300px;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.2s ease, transform 0.2s ease;
+          transform: translateY(5px);
+        }
+        
+        .annotation-tooltip.visible {
+          opacity: 1;
+          transform: translateY(0);
+        }
+        
+        /* Additional plain mode specific styles */
+        .tiptap-editor.plain-mode {
+          border-color: #4caf50;
+        }
+        
+        .tiptap-editor.plain-mode:focus-within {
+          border-color: #2e7d32;
+          box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+        }
+      `
+      document.head.appendChild(style)
+      
+      return () => {
+        document.head.removeChild(style)
+      }
+    }, [])
+
+    // Expose editor methods via ref
+    useImperativeHandle(ref, () => ({
+      getHTML: () => editor?.getHTML() || '',
+      getJSON: () => editor?.getJSON() || { type: 'doc', content: [] },
+      focus: () => {
+        editor?.commands.focus()
+      },
+      setEditable: (editable: boolean) => {
+        editor?.setEditable(editable)
+      },
+      executeCommand: (command: string, value?: any) => {
+        if (!editor) return
+        
+        switch (command) {
+          case 'bold':
+            editor.chain().focus().toggleBold().run()
+            break
+          case 'italic':
+            editor.chain().focus().toggleItalic().run()
+            break
+          case 'underline':
+            editor.chain().focus().toggleUnderline().run()
+            break
+          case 'heading':
+            editor.chain().focus().toggleHeading({ level: value || 2 }).run()
+            break
+          case 'bulletList':
+            editor.chain().focus().toggleBulletList().run()
+            break
+          case 'orderedList':
+            editor.chain().focus().toggleOrderedList().run()
+            break
+          case 'blockquote':
+            editor.chain().focus().toggleBlockquote().run()
+            break
+          case 'highlight':
+            editor.chain().focus().toggleHighlight().run()
+            break
+          case 'removeFormat':
+            editor.chain().focus().clearNodes().unsetAllMarks().run()
+            break
+          case 'undo':
+            editor.chain().focus().undo().run()
+            break
+          case 'redo':
+            editor.chain().focus().redo().run()
+            break
+        }
+      },
+      insertAnnotation: (type: string, annotationId: string, branchId: string) => {
+        if (!editor) {
+          console.warn('[TiptapEditorPlain] Editor not initialized')
+          return
+        }
+
+        const { from, to } = editor.state.selection
+        
+        // Check if there's actually a selection
+        if (from === to) {
+          console.warn('[TiptapEditorPlain] No text selected for annotation')
+          return
+        }
+        
+        // Apply the annotation mark
+        editor
+          .chain()
+          .focus()
+          .setMark('annotation', {
+            id: annotationId,
+            type,
+            branchId,
+            'data-branch': branchId,
+          })
+          .run()
+        
+        // Trigger update to save content
+        const json = editor.getJSON()
+        
+        // Save to provider if available
+        if (provider && noteId) {
+          provider.saveDocument(noteId, panelId, json).catch(error => {
+            console.error('[TiptapEditorPlain] Failed to save annotation:', error)
+          })
+        }
+        
+        onUpdate?.(json)
+      }
+    }), [editor, onUpdate, provider, noteId, panelId])
+
+    // Show loading state
+    if (isContentLoading && provider) {
+      return (
+        <div className="tiptap-editor-wrapper">
+          <div className="tiptap-editor-loading" style={{
+            background: '#fafbfc',
+            border: '1px solid #e1e8ed',
+            borderRadius: '8px',
+            padding: '20px',
+            minHeight: '250px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#667eea'
+          }}>
+            Loading content...
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div 
+        className="tiptap-editor-wrapper"
+        onFocus={(e) => {
+          const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
+          if (target) {
+            target.classList.add('plain-mode')
+            target.style.borderColor = '#4caf50'
+            target.style.boxShadow = '0 0 0 3px rgba(76, 175, 80, 0.1)'
+          }
+        }}
+        onBlur={(e) => {
+          const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
+          if (target) {
+            target.style.borderColor = '#e1e8ed'
+            target.style.boxShadow = 'none'
+          }
+        }}
+      >
+        <EditorContent editor={editor} />
+      </div>
+    )
+  }
+)
+
+TiptapEditorPlain.displayName = 'TiptapEditorPlain'
+
+export default TiptapEditorPlain

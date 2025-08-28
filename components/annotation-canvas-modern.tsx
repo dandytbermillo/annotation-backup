@@ -67,9 +67,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     setPanels(['main'])
 
     return () => {
-      // YJS persistence providers handle saving automatically
-      // Just cleanup the note when component unmounts
-      provider.destroyNote(noteId)
+      // Don't destroy note when switching - only cleanup when truly unmounting
+      // The provider's smart cache management will handle memory efficiently
+      // This allows content to persist when switching between notes
     }
   }, [noteId])
 

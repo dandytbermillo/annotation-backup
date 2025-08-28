@@ -21,6 +21,48 @@ This folder contains documentation of all fixes applied to the annotation system
    - Shows "Loading content..." while waiting for PostgreSQL
    - Eliminates empty editor state completely
 
+4. **[TipTap Content Deletion Fix](./2024-08-27-tiptap-deletion-fix.md)**
+   - Fixed content being deleted when switching between notes
+   - Removed aggressive Y.Doc cleanup from destroyNote()
+   - Added protection against persisting empty updates
+   - Content now preserved when navigating between notes
+
+5. **[Y.Doc Cross-Note Contamination Fix](./2024-08-27-ydoc-cross-note-fix.md)**
+   - Fixed Y.Docs being shared between different notes
+   - Implemented composite keys (noteId-panelId) for proper isolation
+   - Fixed Next.js 15 API route params handling
+   - Fixed Awareness import errors from y-protocols
+
+6. **[Reload Content Fix - Fragment Field Mismatch](./2024-08-27-reload-content-fix.md)**
+   - Fixed both notes showing same content after reload
+   - Removed small update filtering that was discarding keystrokes
+   - Added dynamic fragment detection (default vs prosemirror)
+   - Backward compatible solution without data migration
+
+7. **[Post-Reload Persistence Fix](./2024-08-27-post-reload-persistence-fix.md)**
+   - Fixed changes not saving after reload
+   - Added persistence handler tracking and setup
+   - Ensures all Y.Doc retrieval paths have proper persistence
+   - Fresh closure variables prevent stale state issues
+
+8. **[Multiple Reload Persistence Fix](./2024-08-27-multiple-reload-persistence-fix.md)**
+   - Fixed persistence breaking after second reload
+   - Enhanced handler tracking with WeakMap and metadata
+   - Intelligent handler detection prevents duplicates
+   - Works across unlimited reload cycles
+
+9. **[Persistence Handler Closure Fix](./2024-08-27-persistence-handler-closure-fix.md)**
+   - Fixed stale closure preventing persistence after reload
+   - Changed to object-based state to avoid closure capture
+   - Always remove old handlers before setting up new ones
+   - Added extensive debug logging for visibility
+
+10. **[Infinite Load Loop Fix](./2024-08-27-infinite-load-loop-fix.md)**
+    - Fixed continuous /api/persistence/load requests
+    - Memoized Y.Doc retrieval in component
+    - Added guards against concurrent loads
+    - Prevents duplicate handler setup
+
 ## Fix Documentation Template
 
 When documenting a new fix, please use this template:

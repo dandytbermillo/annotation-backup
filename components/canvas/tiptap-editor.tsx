@@ -107,6 +107,21 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
     // Create or use existing YDoc for this editor
     const doc = ydoc || new Y.Doc()
     
+    // Debug: Log Y.Doc info
+    useEffect(() => {
+      if (ydoc) {
+        console.log(`[TiptapEditor] Using Y.Doc for panelId: ${panelId}`, {
+          guid: doc.guid,
+          hasContent: doc.getXmlFragment('prosemirror').length > 0,
+          fragmentContent: doc.getXmlFragment('prosemirror').toString().substring(0, 50),
+          _persistenceDocKey: (doc as any)._persistenceDocKey
+        });
+      }
+    }, [ydoc, panelId])
+    
+    // Check which fragment field to use (for migration compatibility)
+    const fragmentField = doc.getMap('_meta').get('fragmentField') || 'prosemirror'
+    
     // Set up persistence if no provider is given (for local-only editing)
     useEffect(() => {
       if (!provider && !ydoc && typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
@@ -131,6 +146,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         ...(ydoc ? [
           Collaboration.configure({
             document: doc,
+            field: fragmentField, // Use dynamic field based on migration status
           }),
         ] : []),
         ...(provider ? [
@@ -153,6 +169,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
       editable: isEditable,
       onUpdate: ({ editor }) => {
         const html = editor.getHTML()
+        console.log(`[TiptapEditor] onUpdate fired for panelId: ${panelId}, html length: ${html.length}`)
         onUpdate?.(html)
       },
       onSelectionUpdate: ({ editor }) => {

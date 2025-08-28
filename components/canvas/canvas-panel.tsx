@@ -1,13 +1,15 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer } from "react"
+import { useRef, useState, useEffect, useReducer, useMemo } from "react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
+import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getEditorYDoc } from "@/lib/yjs-provider"
 import { EnhancedCollaborationProvider } from "@/lib/enhanced-yjs-provider"
+import { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
 
 interface CanvasPanelProps {
   panelId: string
@@ -19,7 +21,7 @@ interface CanvasPanelProps {
 
 export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId } = useCanvas()
-  const editorRef = useRef<TiptapEditorHandle>(null)
+  const editorRef = useRef<TiptapEditorHandle | TiptapEditorPlainHandle>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [isEditing, setIsEditing] = useState(branch.isEditable ?? true)
   const [zIndex, setZIndex] = useState(1)
@@ -31,6 +33,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
   
+  // Check if plain mode is enabled
+  const isPlainMode = process.env.NEXT_PUBLIC_COLLAB_MODE === 'plain' || 
+                     (typeof window !== 'undefined' && localStorage.getItem('collab-mode') === 'plain')
+  
   // Use ref to maintain dragging state across renders
   const dragState = useRef({
     isDragging: false,
@@ -40,14 +46,24 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     offsetY: 0
   })
 
-  // Get collaboration provider and YJS document for this editor
+  // Get appropriate provider based on mode
+  let plainProvider: PlainOfflineProvider | null = null
+  let ydoc = null
   const provider = UnifiedProvider.getInstance()
-  // Use enhanced provider to get subdoc with PostgreSQL persistence
-  const enhancedProvider = EnhancedCollaborationProvider.getInstance()
-  // Note: getEditorSubdoc is async, so we'll use the synchronous method
-  // Fixed: Using getEditorYDoc which now has PostgreSQL persistence built-in
-  // Pass noteId to ensure proper isolation between notes
-  const ydoc = getEditorYDoc(panelId, currentNoteId)
+  
+  if (isPlainMode) {
+    // Plain mode: Get the initialized provider
+    const { getPlainProvider } = require('@/lib/provider-switcher')
+    plainProvider = getPlainProvider()
+  } else {
+    // Yjs mode: Use enhanced provider to get subdoc with PostgreSQL persistence
+    const enhancedProvider = EnhancedCollaborationProvider.getInstance()
+    // Note: getEditorSubdoc is async, so we'll use the synchronous method
+    // Fixed: Using getEditorYDoc which now has PostgreSQL persistence built-in
+    // Pass noteId to ensure proper isolation between notes
+    // IMPORTANT: Use useMemo to prevent calling getEditorYDoc on every render
+    ydoc = useMemo(() => getEditorYDoc(panelId, currentNoteId), [panelId, currentNoteId])
+  }
   
   // Set the current note context if provided
   useEffect(() => {
@@ -56,8 +72,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [currentNoteId])
   
-  // Wait for Y.Doc content to load
+  // Wait for content to load (Y.Doc for Yjs mode, or skip for plain mode)
   useEffect(() => {
+    if (isPlainMode) {
+      // Plain mode doesn't need to wait for Y.Doc loading
+      setIsContentLoading(false)
+      return
+    }
+    
     // Reset loading state when note/panel changes
     setIsContentLoading(true)
     
@@ -77,7 +99,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
     
     checkDocLoading()
-  }, [currentNoteId, panelId])
+  }, [currentNoteId, panelId, isPlainMode])
   
   // Ensure panel position is set on mount
   useEffect(() => {
@@ -599,9 +621,21 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 }}>
                   Loading content...
                 </div>
+              ) : isPlainMode ? (
+                <TiptapEditorPlain
+                  ref={editorRef as any}
+                  content={currentBranch.content}
+                  isEditable={isEditing}
+                  noteId={currentNoteId || ''}
+                  panelId={panelId}
+                  onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
+                  onSelectionChange={handleSelectionChange}
+                  placeholder={isEditing ? "Start typing..." : ""}
+                  provider={plainProvider || undefined}
+                />
               ) : (
                 <TiptapEditor
-                  ref={editorRef}
+                  ref={editorRef as any}
                   content={ydoc ? '' : currentBranch.content}
                   isEditable={isEditing}
                   panelId={panelId}

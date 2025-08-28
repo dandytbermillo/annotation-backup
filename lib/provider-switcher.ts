@@ -1,17 +1,25 @@
-// Provider Switcher - Allows gradual migration from old to enhanced provider
+// Provider Switcher - Allows switching between Yjs collaboration and plain offline mode
 // This fixes the awareness.getStates error while enabling enhanced features
 
 import { CollaborationProvider } from './yjs-provider'
 import { EnhancedCollaborationProvider } from './enhanced-yjs-provider'
 import './enhanced-yjs-provider-patch' // Apply the patch
 import { applyEnhancedProviderPatch } from './enhanced-yjs-provider-patch'
+import { PlainOfflineProvider } from './providers/plain-offline-provider'
 
 // Apply patch on module load
 applyEnhancedProviderPatch()
 
-// Feature flag - set to true to use enhanced provider
+// Feature flags for provider selection
 const USE_ENHANCED_PROVIDER = process.env.NEXT_PUBLIC_USE_ENHANCED_PROVIDER === 'true' || 
                               typeof window !== 'undefined' && window.localStorage?.getItem('use-enhanced-provider') === 'true'
+
+const COLLAB_MODE = process.env.NEXT_PUBLIC_COLLAB_MODE || 
+                    (typeof window !== 'undefined' && window.localStorage?.getItem('collab-mode')) || 
+                    'yjs' // default to yjs mode
+
+// Singleton instance for plain provider
+let plainProviderInstance: PlainOfflineProvider | null = null
 
 // Quick fix for old provider - add missing getStates method
 const originalGetProvider = CollaborationProvider.prototype.getProvider
@@ -123,5 +131,28 @@ export function toggleProvider() {
     UnifiedProvider.enableEnhancedProvider()
   } else {
     UnifiedProvider.disableEnhancedProvider()
+  }
+}
+
+// Get plain provider instance (for Option A mode)
+export function getPlainProvider(): PlainOfflineProvider | null {
+  if (COLLAB_MODE !== 'plain') {
+    return null
+  }
+  
+  if (!plainProviderInstance) {
+    // Initialize plain provider with appropriate adapter
+    // This will be connected to the actual adapter in the app initialization
+    console.warn('[getPlainProvider] Plain provider not initialized yet')
+  }
+  
+  return plainProviderInstance
+}
+
+// Initialize plain provider with adapter
+export function initializePlainProvider(adapter: any): void {
+  if (COLLAB_MODE === 'plain' && !plainProviderInstance) {
+    plainProviderInstance = new PlainOfflineProvider(adapter)
+    console.log('[initializePlainProvider] Plain provider initialized')
   }
 } 

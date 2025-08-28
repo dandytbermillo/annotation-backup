@@ -1,16 +1,20 @@
-# Project Conventions – YJS-Based Collaborative Annotation System (Authoritative CLAUDE.md)
+
+# Project Conventions – Dual-Mode Annotation System (Authoritative CLAUDE.md)
 
 > Purpose: definitive rules and guardrails for AI agents (Claude / Agent-OS) and human contributors.  
 > Agents MUST load this file as top-priority context before generating PRPs or applying changes.
+>
+> Modes: The project supports two modes. Current focus is Option A (offline, single-user, no Yjs). Option B (multi-user/live collaboration with Yjs) is a future phase. Keep schemas/adapters compatible with Yjs, but do not implement live CRDT in Option A.
 
 ---
 
 ## CODE STYLE
 - Language: TypeScript + React + Next.js 15
-- Collaboration: YJS (CRDT), TipTap Editor
+- Editor: TipTap
+- Collaboration: Yjs (Option B only; out-of-scope for current Option A; do not add Yjs runtime or CRDT logic in Option A)
 - Styling: Tailwind CSS + Radix UI
 - Animations: Framer Motion
-- Persistence: **PostgreSQL-only** (remote primary, local failover supported for Electron). No IndexedDB fallback. Schema must remain compatible with future YJS real-time collaboration (not implemented yet).
+- Persistence: **PostgreSQL-only** (remote primary, local failover supported for Electron). No IndexedDB fallback. Schema must remain compatible with future Yjs real-time collaboration.
 
 ### Conventions
 - Follow existing adapter/provider patterns in `lib/adapters/*` and `lib/sync/*`.
@@ -22,13 +26,15 @@
 ## UX PRINCIPLES
 - Canvas-based interaction: draggable, zoomable panels.
 - Branch-based annotation model: `note`, `explore`, `promote`.
-- Real-time awareness: cursors, selections, and viewports.
+- Real-time awareness: cursors, selections, and viewports (Option B only; out-of-scope for Option A).
 - ❌ **Minimap is out-of-scope** for this repo — handled later by Infinite Canvas OS.
 
 ---
 
 ## TESTING & VALIDATION (MANDATORY)
 Agents must run and pass these gates before claiming "done".
+Dev flow: Iterate in Web dev mode with npm run dev for fast feedback; once working,
+validate and wire into Electron via npm run electron:dev.
 
 **Local validation sequence (must be included in PRPs and CI):**
 1. `npm run lint` (or `pnpm lint`) — no new lint errors
@@ -38,37 +44,50 @@ Agents must run and pass these gates before claiming "done".
 5. `npm run test:integration` — integration tests that require Postgres
 6. `npm run test:e2e` — Playwright or designated E2E suite (multi-client flows)
 
+Migration hygiene:
+- Ensure every DB migration has reversible scripts: `.up.sql` and `.down.sql`.
+- Validate forward/backward application in CI (apply latest up → verify → apply down → re-apply up).
+
 > PRPs must include exact commands required to reproduce these gates in CI and local dev.
 
 ---
 
 ## DATA MODEL (Postgres) — authoritative examples (but PRPs may propose refinements)
 - `notes`: id, title, content, metadata, created_at, updated_at
-- `annotations`: id, note_id, type, anchors (bytea), anchors_fallback (jsonb), metadata, order, version
+- `annotations`: id, note_id, type, anchors (jsonb/plain for Option A), anchors_fallback (jsonb), metadata, order, version
 - `panels`: id, note_id, position (jsonb), dimensions (jsonb), state, last_accessed
-- `snapshots`: id, note_id, snapshot (bytea), created_at
-- `presence`: **NOT persisted** (awareness is ephemeral)
+- `document_saves` (Option A): panel_id, content (json/jsonb or text for HTML), version, updated_at
+- `snapshots` (Option B): id, note_id, snapshot (bytea), created_at
+- `presence` (Option B): **NOT persisted** (awareness is ephemeral)
 
 ---
 
 ## DOCUMENTATION (MUST READ)
-- `docs/yjs-annotation-architecture.md` → **Authoritative architecture doc**. All implementations must comply unless explicitly noted here.
-  - **Exception:** swap IndexedDB persistence for PostgreSQL; keep all other YJS principles intact (single provider, subdocs, RelativePosition anchors).
-- `docs/annotation_workflow.md` → primary UX flow
-- `docs/enhanced-architecture-migration-guide.md` → migration patterns & provider design
+Current phase (Option A — offline, no Yjs):
+- `INITIAL.md` — authoritative feature scope and implementation plan for Option A (single source of truth)
+- `docs/offline-first-implementation.md` — architecture for non‑Yjs offline mode
+- `docs/annotation_workflow.md` — primary UX flow
+
+Future phase (Option B — Yjs collaboration):
+- `initial_with_yjs.md` — collaboration plan
+- `docs/yjs-annotation-architecture.md` — Future collaboration reference only (Option B). For Option A, do not implement Yjs runtime or CRDT storage; maintain schema compatibility so Option B can be added later.
+- `docs/enhanced-architecture-migration-guide.md` — migration patterns & provider design
+
+Common:
 - PRP template: `PRPs/templates/prp_base.md`
 - Generate/execute command prompts: `.claude/commands/generate-prp.md`, `.claude/commands/execute-prp.md`
 
-Agents must cite these files in PRPs and reference exact paths/line ranges when making code changes.
+Agents must cite relevant files for the active phase and reference exact paths/line ranges when making code changes.
 
 ---
 
 ## PRP PROCESS (How agents must operate)
-1. **Read `INITIAL.md`** (the feature request) fully; if missing information, append clarification to `INITIAL.md` before generating PRP.
-2. **Run `/generate-prp <INITIAL.md>`** (or follow the `generate-prp` command) to output `PRPs/{feature}.md` using `PRPs/templates/prp_base.md`.
+1. **Read `INITIAL.md`** (the feature request) fully; for Option A, treat `INITIAL.md` as the PRP (do not create a separate PRP file). If information is missing, append clarification directly to `INITIAL.md`.
+2. If and only if a team explicitly opts into the PRP workflow, **run `/generate-prp <INITIAL.md>`** to output `PRPs/{feature}.md` using `PRPs/templates/prp_base.md`. Otherwise, skip this step and continue with `INITIAL.md` as the single source.
    - **IMPORTANT**: If a PRP already exists for this feature (check PRPs/ directory), UPDATE the existing file instead of creating a new one
    - Use consistent naming: for `initial.md` about postgres, use `PRPs/postgres-persistence.md`
    - Add version tracking: increment `version: N` at the top of the PRP when updating
+   - If working on collaboration features (Option B), read `initial_with_yjs.md` and ensure the PRP clearly states Option B scope.
 3. **PRP content must include**:
    - Clear goal, acceptance criteria, data models, exact files to modify (with paths), ordered tasks, validation gates, and rollback steps.
    - External references and any required dev setup commands.
@@ -89,7 +108,7 @@ Agents must cite these files in PRPs and reference exact paths/line ranges when 
 - **Cite exact code**: When suggesting edits, include the file path and a 3–6 line excerpt showing relevant code context.
 - **Small diffs only**: Propose minimal, reversible changes. Large refactors must include a rollback plan and run in feature flags.
 - **No invented endpoints**: Do not invent server routes or APIs without adding a matching test and server-side handler.
-- **Respect YJS runtime**: Never replace YJS with Postgres for live CRDT operations.
+- **Respect YJS runtime**: Never replace YJS with Postgres for live CRDT operations (Option B). Option A does not implement live CRDT — do not introduce ad‑hoc merge logic.
 
 ---
 
@@ -107,6 +126,7 @@ Agents must cite these files in PRPs and reference exact paths/line ranges when 
 - Web: Postgres via API layer (remote-only, Notion-style). No client-side fallback.
 - Electron: Postgres with remote→local failover (use remote Postgres if available, otherwise local Postgres).  
     SQLite is not supported in this system.
+- Real-time collaboration (awareness, peer sync) is introduced only in Option B.
 
 - Feature branches must include CI configuration that demonstrates both platform test runs where applicable.
 
@@ -140,6 +160,7 @@ Agents must cite these files in PRPs and reference exact paths/line ranges when 
 - [ ] All file paths exist or are explicitly marked as `NOT FOUND` with proposed stubs.
 - [ ] Validation gates are runnable locally and in CI.
 - [ ] DB migrations are present in `migrations/` and idempotent.
+- [ ] Reversible migrations: each change includes both `.up.sql` and `.down.sql`, tested forward/backward.
 - [ ] `INITIAL.md` is updated with attempt history and any error summaries.
 
 ---
@@ -160,11 +181,4 @@ Agents must cite these files in PRPs and reference exact paths/line ranges when 
   Contains documentation of previous fixes and troubleshooting notes.  
   Agents must review this folder first before implementing new fixes to avoid repeating work or reintroducing solved issues.
 
-## PLATFORM REQUIREMENTS
-- Must run as Web app (Next.js)
-- Must run as local Electron app
-- Persistence layer must adapt:
-  - Web → Postgres via server API
-  - Electron → Postgres or SQLite directly
-- Local Postgres is already provided by `docker-compose.yml` in the repo root.  
-  Run with: `docker compose up -d postgres`
+ 

@@ -1,201 +1,309 @@
-name: "PostgreSQL-Only Persistence Implementation (Electron-First)"
-version: 1
-last_updated: 2025-08-26
+name: "Option A - Plain Offline Mode Implementation (PostgreSQL without Yjs)"
+version: 3
+last_updated: 2025-08-28
 description: |
-  Clean PostgreSQL-only persistence implementation with Electron failover and Web API support. No IndexedDB migration.
+  Implement Option A (offline, single-user, no Yjs) as specified in INITIAL.md, adding plain offline mode alongside existing Yjs implementation for future dual-mode support.
+  
+  CHANGELOG:
+  - v3: Corrected to implement alongside Yjs (not replace), fixed migration references, aligned with updated INITIAL.md
+  - v2: Complete rewrite to focus on Option A (no Yjs) per updated INITIAL.md
+  - v1: Original PostgreSQL persistence with Yjs (already implemented)
 
 ## Purpose
-Implement PostgreSQL as the sole persistence layer for the YJS-based annotation system. Electron gets direct SQL with remote→local failover and oplog resync. Web uses remote-only API routes. This ensures the schema remains compatible with future YJS real-time collaboration features.
+Implement Option A - a plain offline mode without Yjs runtime or CRDT logic, storing editor content as ProseMirror JSON/HTML in PostgreSQL. This implementation runs alongside the existing Yjs-based system, preparing for future dual-mode support where users can choose between offline (Option A) and collaborative (Option B) modes.
 
 ## Core Principles
-1. **Context is King**: Include all PostgreSQL patterns, YJS binary handling, IPC details
-2. **Validation Loops**: Test persistence at every step with clear gates
-3. **Information Dense**: Use existing adapter patterns from codebase
-4. **Progressive Success**: Electron adapter first, validate thoroughly, then Web API
-5. **Global rules**: Follow CLAUDE.md, preserve YJS runtime behavior
+1. **Context is King**: Include all 10 TipTap fixes that must be preserved
+2. **Validation Loops**: Test each fix still works in plain mode
+3. **Information Dense**: Reference existing adapter patterns 
+4. **Progressive Success**: Add plain mode incrementally, validate at each step
+5. **Global rules**: Follow CLAUDE.md - Option A focus, Option B compatibility
 
 ---
 
 ## Goal
-Create a robust PostgreSQL persistence layer:
-- **Electron**: Direct SQL with transparent remote→local failover
-- **Web**: Remote-only via API routes (Notion-style, no offline)
-- **Binary storage**: YJS updates/snapshots as BYTEA
-- **Oplog resync**: Queue and sync offline changes
-- **Future-ready**: Schema supports YJS collaboration later
+Implement Option A as specified in INITIAL.md:
+- Add PlainOfflineProvider for non-Yjs state management
+- Create PostgresOfflineAdapter implementing PlainCrudAdapter interface
+- Add plain TipTap editor without collaboration extensions
+- Store editor content as ProseMirror JSON/HTML (not Yjs binary)
+- Preserve all 10 TipTap fixes in the plain implementation
+- Keep existing Yjs implementation untouched for Option B
 
 ## Why
-- **No limits**: PostgreSQL removes browser storage constraints
-- **Professional**: ACID guarantees, complex queries, analytics
-- **Multi-device ready**: Foundation for future device sync
-- **Performance**: Direct SQL in Electron, optimized queries
-- **Reliability**: Automatic failover, conflict resolution
+- **User Request**: "we struggled building the yjs collaboration. can we do the offline mode without yjs first?"
+- **Simplicity**: Single-user scenarios don't need CRDT complexity
+- **Performance**: Remove CRDT overhead for offline use
+- **CLAUDE.md**: "Current focus is Option A (offline, single-user, no Yjs)"
+- **Future Ready**: Sets foundation for dual-mode support
 
 ## What
-### User-visible behavior
-- Seamless persistence without data loss
-- Electron works offline, syncs when reconnected
-- Web requires connection (clean architecture)
-- Same editing experience, better performance
+### Current State (Already Implemented)
+- PostgreSQL persistence WITH Yjs ✅
+- All PostgreSQL adapters working ✅
+- 10 TipTap fixes applied to Yjs mode ✅
+- Binary Yjs storage in PostgreSQL ✅
+- migrations/004_offline_queue.up.sql exists ✅
 
-### Technical requirements
-- Implement `PersistenceProvider` interface
-- Binary YJS data handling (Uint8Array ↔ BYTEA)
-- Connection failover with health checks
-- Oplog-based reconciliation
-- Platform-specific adapters
+### Target State (Option A Addition)
+- PostgreSQL persistence WITHOUT Yjs (new)
+- PlainOfflineProvider for state management (new)
+- TipTap editor plain variant (new)
+- JSON/HTML storage in document_saves table
+- All 10 fixes working in plain mode
+- Existing Yjs mode continues to work
 
-### Success Criteria
-- [ ] Postgres adapters implement all `PersistenceProvider` methods
-- [ ] Electron failover is transparent (remote→local→remote)
-- [ ] Oplog correctly syncs offline changes
-- [ ] All existing persistence tests pass
-- [ ] Sub-100ms typical query performance
-- [ ] Schema supports future YJS collaboration
-- [ ] Integration tests pass both platforms
+### Success Criteria (from INITIAL.md)
+- [ ] Notes, annotations, branches, panels, and document saves (non-Yjs) persist correctly to Postgres
+- [ ] Plain mode codepath contains no Yjs imports or Y.Doc usage
+- [ ] All 10 TipTap fixes work in plain mode
+- [ ] Offline queue works for single-user (use existing migrations/004_offline_queue.*; no duplicates)
+- [ ] Electron fallback to local Postgres works when remote is unavailable
+- [ ] Integration tests pass for both Web (API routes) and Electron (direct SQL)
+- [ ] Renderer communicates with Postgres only via IPC (no direct DB handles/imports in renderer)
+- [ ] Every migration includes both `.up.sql` and `.down.sql` with tested forward/backward application
+
+### Out of Scope (per INITIAL.md)
+- Yjs collaboration features (awareness, RelativePosition anchors, live CRDT)
+- Mode switching UI and provider factory (deferred to Phase 2)
+- Removing existing Yjs implementation
 
 ## All Needed Context
 
 ### Documentation & References
 ```yaml
-# MUST READ - PostgreSQL specifics
-- url: https://node-postgres.com/features/connecting
-  why: Connection pooling, timeouts, SSL configuration
-  critical: Pool vs Client usage patterns
+# MUST READ - Authoritative specifications
+- file: CLAUDE.md
+  why: Project conventions and Option A/B definitions
+  critical: "Current focus is Option A"
   
-- url: https://node-postgres.com/features/types
-  why: Binary data handling for YJS updates
-  section: "Custom type parsers" for BYTEA
+- file: INITIAL.md
+  why: Complete specification for this implementation
+  lines: 62-83 (PlainCrudAdapter interface)
+  critical: Use existing migrations/004_offline_queue.up.sql
   
-# Existing patterns to follow
+- file: docs/offline-first-implementation.md
+  why: Reference architecture for offline mode
+  critical: Map-based storage patterns, sync queue design
+
+# Pattern References (as specified in INITIAL.md)
+- file: lib/adapters/web-adapter-enhanced.ts
+  why: Web adapter patterns to follow
+  lines: 18-60 (offline queue implementation)
+  
 - file: lib/adapters/electron-adapter.ts
-  why: ElectronPersistenceAdapter pattern (mock SQLite)
-  lines: 18-231
+  why: Electron adapter patterns to follow
+  lines: 42-97 (IPC handling patterns)
+
+# Current Implementation to Preserve
+- file: lib/yjs-provider.ts
+  why: Contains all 10 fixes logic to port
+  critical: Keep this file for Option B
   
-- file: lib/adapters/web-adapter-enhanced.ts  
-  why: WebPersistenceAdapter with offline queue
-  lines: 4-401
-  critical: OfflineQueue pattern for oplog
+- file: components/canvas/tiptap-editor.tsx
+  why: Current editor with Yjs collaboration
+  lines: 8-9 (imports to avoid in plain mode)
+
+# 10 Critical Fixes to Preserve
+- file: fixes_doc/2024-08-27-yjs-duplication-fix.md
+- file: fixes_doc/2024-08-27-note-switching-fix.md
+- file: fixes_doc/2024-08-27-async-loading-fix.md
+- file: fixes_doc/2024-08-27-tiptap-deletion-fix.md
+- file: fixes_doc/2024-08-27-ydoc-cross-note-fix.md
+- file: fixes_doc/2024-08-27-reload-content-fix.md
+- file: fixes_doc/2024-08-27-post-reload-persistence-fix.md
+- file: fixes_doc/2024-08-27-multiple-reload-persistence-fix.md
+- file: fixes_doc/2024-08-27-persistence-handler-closure-fix.md
+- file: fixes_doc/2024-08-27-infinite-load-loop-fix.md
+
+# External Documentation
+- url: https://node-postgres.com/features/queries
+  why: PostgreSQL query patterns
+  section: Parameterized queries
   
-- file: lib/enhanced-yjs-provider.ts:11-19
-  why: PersistenceProvider interface definition
-  critical: Must implement all methods exactly
-  
-- file: docs/yjs-annotation-architecture.md
-  why: Understand YJS persistence vs runtime
-  critical: "Never replace YJS with Postgres for live CRDT"
-  warning: We store YJS binary data, not replace YJS operations
-  
-- file: migrations/001_initial_schema.up.sql
-  why: Database schema already exists
-  tables: notes, branches, panels, snapshots, yjs_updates
-  
-- file: lib/utils/platform-detection.ts
-  why: detectPlatform() for adapter selection
-  
-- file: docker-compose.yml
-  why: Postgres already configured
-  connection: postgres://postgres:postgres@localhost:5432/annotation_system
+- url: https://tiptap.dev/docs/editor/guide/output
+  why: TipTap content formats
+  section: JSON and HTML output
 ```
 
 ### Current Codebase Structure
 ```bash
 annotation-backup/
 ├── lib/
+│   ├── yjs-provider.ts              # KEEP: For Option B
+│   ├── enhanced-yjs-provider.ts     # KEEP: For Option B
 │   ├── adapters/
-│   │   ├── electron-adapter.ts      # Mock SQLite pattern
-│   │   └── web-adapter-enhanced.ts  # IndexedDB with PWA
-│   ├── enhanced-yjs-provider.ts     # Uses PersistenceProvider
-│   └── utils/
-│       └── platform-detection.ts    # Platform detection
-├── migrations/                      # SQL schemas ready
-├── docker-compose.yml              # Postgres configured
-└── package.json                    # Missing: pg, @types/pg
+│   │   ├── postgres-adapter.ts      # KEEP: Base class
+│   │   ├── electron-postgres-adapter.ts # KEEP: Works already
+│   │   └── web-postgres-adapter.ts  # KEEP: Works already
+│   └── database/                    # KEEP: Connection management
+├── components/
+│   └── canvas/
+│       └── tiptap-editor.tsx        # KEEP: For Option B
+├── migrations/
+│   └── 004_offline_queue.up.sql    # USE: Existing migration
+└── fixes_doc/                       # REFERENCE: All fixes
 ```
 
-### Target Codebase Structure
+### Target Codebase Structure (Additions Only)
 ```bash
 annotation-backup/
 ├── lib/
+│   ├── providers/
+│   │   └── plain-offline-provider.ts    # NEW: Non-Yjs provider
 │   ├── adapters/
-│   │   ├── postgres-adapter.ts           # NEW: Base implementation
-│   │   ├── electron-postgres-adapter.ts  # NEW: With failover
-│   │   └── web-postgres-adapter.ts       # NEW: API client
-│   └── database/
-│       ├── connection-manager.ts         # NEW: Pool management
-│       └── oplog-sync.ts                 # NEW: Sync engine
-├── app/
-│   └── api/
-│       └── persistence/
-│           └── route.ts                  # NEW: API endpoints
-├── electron/
-│   └── ipc/
-│       └── persistence-handlers.ts       # NEW: IPC bridge
-└── __tests__/
-    └── persistence/
-        └── postgres-adapter.test.ts      # NEW: Test suite
+│   │   └── postgres-offline-adapter.ts  # NEW: PlainCrudAdapter impl
+│   └── utils/
+│       └── anchor-utils.ts              # NEW: Text-based anchoring
+└── components/
+    └── canvas/
+        └── tiptap-editor-plain.tsx      # NEW: No collaboration
 ```
 
-### Known Gotchas & Critical Patterns
+### Environment Requirements
+```bash
+# Required Tools
+- Node.js 20.x or higher
+- PostgreSQL 15.x
+- npm or pnpm package manager
+
+# Environment Variables
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/annotation_dev
+NEXT_PUBLIC_COLLAB_MODE=plain  # For Option A
+NEXT_PUBLIC_PERSISTENCE_MODE=api  # Web mode
+
+# Electron-specific
+DATABASE_URL_REMOTE=postgres://user:pass@remote:5432/annotation
+DATABASE_URL_LOCAL=postgres://postgres:postgres@localhost:5432/annotation_dev
+PERSISTENCE_MODE=direct
+PG_CONN_TIMEOUT_MS=2000
+
+# Development Setup
+docker compose up -d postgres  # Start PostgreSQL
+npm run db:migrate            # Run existing migrations
+npm run dev                   # Start development server
+```
+
+### Critical Patterns from 10 Fixes
 ```typescript
-// CRITICAL: Binary data conversion
-// YJS → Postgres: Buffer.from(uint8Array)
-// Postgres → YJS: new Uint8Array(buffer)
+// Fix #1: Content Duplication Prevention
+// Pattern: Check empty content before initialization
+const isEmpty = !content || content === '<p></p>' || content.trim() === ''
 
-// CRITICAL: Connection pooling required
-// Use pg.Pool not pg.Client
-// Pool handles reconnection automatically
+// Fix #2 & #5: Composite Key Caching
+// Pattern: Always use noteId-panelId composite keys
+const cacheKey = noteId ? `${noteId}-${panelId}` : panelId
 
-// CRITICAL: IPC serialization
-// Cannot pass Uint8Array through Electron IPC
-// Convert to Array: Array.from(uint8Array)
-// Convert back: new Uint8Array(array)
+// Fix #3: Async Loading States
+// Pattern: Track loading with state and promises
+const [isContentLoading, setIsContentLoading] = useState(true)
+const loadingStates = new Map<string, Promise<void>>()
 
-// GOTCHA: Next.js App Router
-// Export named functions: export async function POST()
-// Use NextResponse.json() for responses
+// Fix #4: No Deletion on Unmount
+// Pattern: Never clear cache on component unmount
 
-// GOTCHA: Platform detection
-// Always use detectPlatform() from utils
-// Don't assume window.electronAPI exists
+// Fix #6: Fragment Field Detection
+// Pattern: Store editor field preference in metadata
+const metadata = { fieldType: 'prosemirror' | 'default' }
 
-// GOTCHA: Oplog timestamps
-// Use database NOW() not JavaScript Date
-// Ensures consistent ordering across systems
+// Fix #7-9: State Management
+// Pattern: Use object state to avoid closures
+const persistenceState = { initialized: false, version: 0 }
+
+// Fix #10: Prevent Infinite Loops
+// Pattern: Memoize and guard against duplicate operations
+const content = useMemo(() => provider.getContent(id), [id])
 ```
 
 ## Implementation Blueprint
 
 ### Data Models and Types
 ```typescript
-// lib/database/types.ts
-export interface ConnectionConfig {
-  remote: PoolConfig
-  local?: PoolConfig  // Optional for web
-  timeout: number     // Connection timeout ms
-}
+// lib/providers/plain-offline-provider.ts
+import { PlainCrudAdapter } from '@/lib/adapters/postgres-offline-adapter'
 
-export interface OplogEntry {
-  id: number
-  entity_type: 'yjs_update' | 'snapshot'
-  entity_id: string   // doc_name
-  operation: 'persist' | 'compact'
-  payload: Buffer     // Binary data
-  timestamp: Date
-  origin: 'local' | 'remote'
-  synced: boolean
-}
-
-// lib/adapters/postgres-adapter.ts
-export abstract class PostgresAdapter implements PersistenceProvider {
-  protected pool: Pool
-  
-  protected toBuffer(data: Uint8Array): Buffer {
-    return Buffer.from(data)
+export class PlainOfflineProvider {
+  private documents = new Map<string, any>()
+  private branches = new Map<string, Branch>()
+  private adapter: PlainCrudAdapter
+  private loadingStates = new Map<string, Promise<void>>()
+  private persistenceState = {
+    initialized: false,
+    lastSave: Date.now(),
+    pendingOps: 0
   }
   
-  protected fromBuffer(buffer: Buffer): Uint8Array {
-    return new Uint8Array(buffer)
+  constructor(adapter: PlainCrudAdapter) {
+    this.adapter = adapter
+  }
+  
+  // Fix #2: Composite key pattern
+  private getCacheKey(noteId: string, panelId: string): string {
+    return noteId ? `${noteId}-${panelId}` : panelId
+  }
+  
+  // Fix #3: Async loading with state tracking
+  async loadDocument(noteId: string, panelId: string): Promise<any> {
+    const cacheKey = this.getCacheKey(noteId, panelId)
+    
+    // Fix #10: Prevent duplicate loads
+    if (this.loadingStates.has(cacheKey)) {
+      return await this.loadingStates.get(cacheKey)
+    }
+    
+    const loadPromise = this.adapter.loadDocument(panelId)
+      .then(result => {
+        if (result) {
+          this.documents.set(cacheKey, result.content)
+          return result.content
+        }
+        return null
+      })
+    
+    this.loadingStates.set(cacheKey, loadPromise)
+    
+    try {
+      return await loadPromise
+    } finally {
+      this.loadingStates.delete(cacheKey)
+    }
+  }
+  
+  // Fix #4: No deletion on unmount
+  destroy() {
+    // Do NOT clear documents cache
+    this.persistenceState.initialized = false
+  }
+}
+
+// lib/adapters/postgres-offline-adapter.ts
+export class PostgresOfflineAdapter implements PlainCrudAdapter {
+  private pool: Pool
+  
+  // Adapter method used by PlainOfflineProvider
+  async saveDocument(
+    noteId: string,
+    panelId: string,
+    content: ProseMirrorJSON | HtmlString,
+    version: number
+  ): Promise<void> {
+    // Use parameterized query (pattern from postgres-adapter.ts)
+    await this.pool.query(
+      `INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (note_id, panel_id, version)
+       DO UPDATE SET content = EXCLUDED.content`,
+      [noteId, panelId, JSON.stringify(content), version]
+    )
+  }
+  
+  async enqueueOffline(op: QueueOp): Promise<void> {
+    // Use existing offline_queue table from migration 004
+    await this.pool.query(
+      `INSERT INTO offline_queue (operation, entity_type, entity_id, payload, status)
+       VALUES ($1, $2, $3, $4, 'pending')`,
+      [op.operation, op.entityType, op.entityId, JSON.stringify(op.payload)]
+    )
   }
 }
 ```
@@ -203,261 +311,185 @@ export abstract class PostgresAdapter implements PersistenceProvider {
 ### Task Breakdown
 
 ```yaml
-Task 1: Install PostgreSQL dependencies
-MODIFY package.json:
-  - ADD dependency: "pg": "^8.11.3"
-  - ADD devDependency: "@types/pg": "^8.10.9"
-  - RUN: npm install
-  - VERIFY: No peer dependency warnings
+Task 1: Create PlainOfflineProvider
+CREATE lib/providers/plain-offline-provider.ts:
+  - IMPLEMENT state management without Y.Doc
+  - USE Map for document/branch storage
+  - PATTERN from: lib/yjs-provider.ts (logic only, no Yjs imports)
+  - PRESERVE all 10 fixes:
+    * getCacheKey for composite keys (Fix #2, #5)
+    * Loading state tracking (Fix #3, #10)
+    * No cleanup on destroy (Fix #4)
+    * Metadata handling (Fix #6)
+    * Object-based state (Fix #7-9)
+  - ADD comprehensive JSDoc comments
+  - VALIDATE: No Yjs imports in file
 
-Task 2: Create base PostgresAdapter
-CREATE lib/adapters/postgres-adapter.ts:
-  - ABSTRACT class implementing PersistenceProvider
+Task 2: Implement PostgresOfflineAdapter  
+CREATE lib/adapters/postgres-offline-adapter.ts:
+  - IMPLEMENT PlainCrudAdapter interface from INITIAL.md
+  - EXTEND PostgresAdapter base class for connection reuse
+  - PATTERN from: lib/adapters/postgres-adapter.ts
+  - STORE content as JSON, not binary
+  - USE existing offline_queue table (migration 004)
+  - ADD proper error handling
+  - VALIDATE: Follows web-adapter-enhanced.ts patterns
+
+Task 3: Create Plain TipTap Editor
+CREATE components/canvas/tiptap-editor-plain.tsx:
+  - COPY from tiptap-editor.tsx as starting point
+  - REMOVE these imports:
+    * @tiptap/extension-collaboration
+    * @tiptap/extension-collaboration-cursor
+  - ENABLE History extension (disabled in Yjs mode)
+  - PRESERVE Fix #1: Empty content handling
+  - PRESERVE Fix #6: Field type detection
+  - BIND onChange to save via provider
+  - PATTERN from: Standard TipTap examples
+  - VALIDATE: No Yjs references
+
+Task 4: Create Anchor Utilities
+CREATE lib/utils/anchor-utils.ts:
+  - IMPLEMENT text-based anchoring (no Y.RelativePosition)
+  - STORE: { start: number, end: number, context: string }
+  - HANDLE position updates on text changes
+  - PATTERN from: Simple text editor anchoring
+  - ADD unit tests for position tracking
+  - VALIDATE: Works with plain text offsets
+
+Task 5: Update Canvas Panel (Minimal Changes)
+MODIFY components/canvas/canvas-panel.tsx:
+  - ADD temporary feature flag check
+  - IF plain mode: use PlainOfflineProvider
+  - ELSE: use existing YjsProvider (default)
+  - PRESERVE all existing functionality
+  - PRESERVE Fix #3: Loading state UI
+  - PRESERVE Fix #10: Memoization patterns
+  - MINIMAL changes to avoid breaking Option B
+
+Task 6: Add document_saves migration (reversible)
+CREATE migrations/005_document_saves.up.sql:
+  - CREATE TABLE document_saves (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+      panel_id UUID,
+      content JSONB NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (note_id, panel_id, version)
+    )
+  - ADD indexes as needed (e.g., (note_id, panel_id, version DESC))
+  - NOTE: Do not duplicate offline_queue migration; use existing 004
+
+CREATE migrations/005_document_saves.down.sql:
+  - DROP TABLE IF EXISTS document_saves
+
+Task 6: Integration Wiring
+MODIFY lib/provider-switcher.ts:
+  - READ mode from env (`NEXT_PUBLIC_COLLAB_MODE=plain|yjs`) and localStorage override
+  - IF plain: instantiate PlainOfflineProvider; ELSE: keep existing Yjs provider
+  - REQUIRE reload to switch modes (no live hot-swap)
+  - PRESERVE existing functionality for Yjs mode
+
+Task 7: Add Electron IPC Support
+MODIFY electron/main.js (if needed):
+  - ADD IPC handlers for plain mode operations
   - PATTERN from: lib/adapters/electron-adapter.ts
-  - ADD binary conversion helpers
-  - IMPLEMENT core methods: persist, load, getAllUpdates
-  - USE prepared statements for security
-  
-Task 3: Implement connection management  
-CREATE lib/database/connection-manager.ts:
-  - SINGLETON pattern for Pool instances
-  - SEPARATE pools for remote and local
-  - HEALTH check with timeout
-  - CONNECTION retry with exponential backoff
-  - PATTERN: Similar to web-adapter-enhanced.ts retry
+  - REUSE existing PostgreSQL connection logic
+  - ENSURE no direct DB access from renderer
 
-Task 4: Build ElectronPostgresAdapter
-CREATE lib/adapters/electron-postgres-adapter.ts:
-  - EXTEND PostgresAdapter
-  - IMPLEMENT failover logic:
-    * Try remote with timeout
-    * On failure, switch to local
-    * Track state for resync
-  - ADD oplog entry on local writes
-  - PATTERN from: ElectronPersistenceAdapter
+Task 8: Create Plain Mode Tests
+CREATE __tests__/plain-mode/:
+  - TEST all 10 fixes work without Yjs
+  - TEST PlainCrudAdapter interface compliance
+  - TEST offline queue functionality
+  - TEST performance vs Yjs mode
+  - PATTERN from: Existing test structure
+  - VALIDATE: 100% of fixes preserved
 
-Task 5: Create oplog sync engine
-CREATE lib/database/oplog-sync.ts:
-  - QUERY pending local entries
-  - BATCH sync to remote
-  - HANDLE conflicts via YJS merge
-  - UPDATE synced flag atomically
-  - PATTERN: Web offline queue
+Task 9: Integration Testing
+CREATE test-plain-mode.sh:
+  - START app in plain mode
+  - RUN through all 10 fix scenarios
+  - VERIFY PostgreSQL storage format
+  - CHECK no Yjs artifacts in DB
+  - MEASURE performance improvements
 
-Task 6: Add Electron IPC handlers
-CREATE electron/ipc/persistence-handlers.ts:
-  - REGISTER handlers for each method
-  - CONVERT Uint8Array ↔ Array for IPC
-  - VALIDATE all inputs (security)
-  - ERROR handling with proper codes
-  - PATTERN: Structured like API routes
-
-Task 7: Implement WebPostgresAdapter (lower priority)
-CREATE lib/adapters/web-postgres-adapter.ts:
-  - EXTEND PostgresAdapter
-  - USE fetch() to call API routes
-  - NO offline support (by design)
-  - HANDLE auth headers
-  
-Task 8: Create API routes (if time permits)
-CREATE app/api/persistence/route.ts:
-  - POST /api/persistence/persist
-  - GET /api/persistence/load
-  - POST /api/persistence/compact
-  - AUTH middleware
-  - RATE limiting
-
-Task 9: Wire adapters into provider
-MODIFY lib/enhanced-yjs-provider.ts:
-  - DETECT platform in constructor
-  - CREATE appropriate adapter
-  - MAINTAIN interface compatibility
-  - PRESERVE existing behavior
-
-Task 10: Add comprehensive tests
-CREATE __tests__/persistence/postgres-adapter.test.ts:
-  - UNIT tests for adapters
-  - INTEGRATION tests with real Postgres
-  - FAILOVER scenario tests
-  - BINARY data round-trip tests
-  - MOCK pg for unit tests
+Task 10: Documentation Updates
+UPDATE README.md:
+  - ADD Option A usage instructions
+  - NOTE this is temporary until Phase 2
+  - DOCUMENT environment variables
+  - KEEP existing Option B docs
 ```
 
-### Detailed Implementation Pseudocode
+### Preserving the 10 Fixes - Implementation Details
 
 ```typescript
-// Task 2: Base PostgresAdapter
-abstract class PostgresAdapter implements PersistenceProvider {
-  protected abstract getPool(): Pool
-  
-  async persist(docName: string, update: Uint8Array): Promise<void> {
-    const pool = this.getPool()
-    const buffer = Buffer.from(update)
-    
-    // PATTERN: Parameterized query prevents injection
-    await pool.query(
-      'INSERT INTO yjs_updates (doc_name, update, timestamp) VALUES ($1, $2, NOW())',
-      [docName, buffer]
-    )
-  }
-  
-  async load(docName: string): Promise<Uint8Array | null> {
-    // PATTERN: Try snapshot first (like existing adapters)
-    const snapshot = await this.loadSnapshot(docName)
-    if (snapshot) return snapshot
-    
-    // Fall back to merging updates
-    const updates = await this.getAllUpdates(docName)
-    if (updates.length === 0) return null
-    
-    // CRITICAL: Let YJS handle merging
-    const doc = new Y.Doc()
-    updates.forEach(u => Y.applyUpdate(doc, u))
-    return Y.encodeStateAsUpdate(doc)
-  }
-}
-
-// Task 4: Electron failover implementation
-class ElectronPostgresAdapter extends PostgresAdapter {
-  private remotePool: Pool
-  private localPool?: Pool
-  private currentMode: 'remote' | 'local' = 'remote'
-  private syncEngine: OplogSync
-  
-  async persist(docName: string, update: Uint8Array): Promise<void> {
-    try {
-      if (this.currentMode === 'remote') {
-        // Try remote with timeout
-        await this.withTimeout(
-          super.persist(docName, update),
-          this.config.timeout
-        )
-        
-        // Success - ensure sync engine is running
-        if (this.localPool) {
-          this.syncEngine.start()
-        }
-      } else {
-        // Local mode - use oplog
-        await this.persistLocally(docName, update)
+// Fix #1: Y.js Content Duplication Fix
+// In tiptap-editor-plain.tsx
+const PlainTipTapEditor = ({ content, onChange, noteId, panelId }) => {
+  const editor = useEditor({
+    extensions: [
+      StarterKit, // WITH history this time
+      Highlight,
+      Underline,
+      // NO Collaboration extension
+    ],
+    content: content || '',
+    onCreate: ({ editor }) => {
+      // Fix #1: Prevent duplicate "Start writing..."
+      if (!content || content === '<p></p>' || content.trim() === '') {
+        editor.commands.clearContent()
       }
-    } catch (error) {
-      if (this.isNetworkError(error) && this.localPool) {
-        // Switch to local mode
-        this.currentMode = 'local'
-        await this.persistLocally(docName, update)
-        
-        // Schedule reconnection attempt
-        this.scheduleReconnect()
-      } else {
-        throw error
-      }
+    },
+    onUpdate: ({ editor }) => {
+      // Save to provider
+      onChange(editor.getJSON())
     }
-  }
-  
-  private async persistLocally(docName: string, update: Uint8Array): Promise<void> {
-    const client = await this.localPool!.connect()
-    try {
-      await client.query('BEGIN')
-      
-      // Store update
-      await client.query(
-        'INSERT INTO yjs_updates (doc_name, update, timestamp) VALUES ($1, $2, NOW())',
-        [docName, Buffer.from(update)]
-      )
-      
-      // Add to oplog for later sync
-      await client.query(
-        'INSERT INTO oplog (entity_type, entity_id, operation, payload, origin, synced) VALUES ($1, $2, $3, $4, $5, $6)',
-        ['yjs_update', docName, 'persist', Buffer.from(update), 'local', false]
-      )
-      
-      await client.query('COMMIT')
-    } catch (e) {
-      await client.query('ROLLBACK')
-      throw e
-    } finally {
-      client.release()
-    }
-  }
-}
-
-// Task 5: Oplog sync
-class OplogSync {
-  async syncPending(): Promise<void> {
-    const pending = await this.localPool.query(
-      'SELECT * FROM oplog WHERE origin = $1 AND synced = $2 ORDER BY timestamp',
-      ['local', false]
-    )
-    
-    for (const entry of pending.rows) {
-      try {
-        // Apply to remote
-        await this.applyEntry(entry)
-        
-        // Mark as synced
-        await this.localPool.query(
-          'UPDATE oplog SET synced = true WHERE id = $1',
-          [entry.id]
-        )
-      } catch (error) {
-        // Log but continue with next entry
-        console.error(`Sync failed for entry ${entry.id}:`, error)
-      }
-    }
-  }
-}
-
-// Task 6: IPC handlers
-// electron/ipc/persistence-handlers.ts
-export function registerPersistenceHandlers(adapter: ElectronPostgresAdapter) {
-  ipcMain.handle('persistence:persist', async (event, docName: string, updateArray: number[]) => {
-    // SECURITY: Validate inputs
-    if (!isValidDocName(docName)) throw new Error('Invalid doc name')
-    
-    // Convert from IPC-safe array
-    const update = new Uint8Array(updateArray)
-    await adapter.persist(docName, update)
   })
   
-  ipcMain.handle('persistence:load', async (event, docName: string) => {
-    if (!isValidDocName(docName)) throw new Error('Invalid doc name')
-    
-    const data = await adapter.load(docName)
-    // Convert to IPC-safe array
-    return data ? Array.from(data) : null
-  })
+  return <EditorContent editor={editor} />
 }
-```
 
-### Integration Points
-```yaml
-DATABASE:
-  - schema: Use existing migrations/001_initial_schema.up.sql
-  - service: Use docker-compose postgres service
-  - connection: postgres://postgres:postgres@localhost:5432/annotation_system
+// Fix #2, #3, #5, #10: Provider Implementation
+// In plain-offline-provider.ts
+class PlainOfflineProvider {
+  // Fix #2 & #5: Composite keys
+  private documents = new Map<string, any>()
   
-ENVIRONMENT:
-  - file: .env.local (Web)
-    DATABASE_URL: "postgres://postgres:postgres@localhost:5432/annotation_system"
-    NEXT_PUBLIC_PERSISTENCE_MODE: "api"
-    
-  - file: .env.electron (Electron)
-    DATABASE_URL_REMOTE: "postgres://user:pass@production:5432/annotation"
-    DATABASE_URL_LOCAL: "postgres://postgres:postgres@localhost:5432/annotation_local"
-    PERSISTENCE_MODE: "auto"
-    PG_CONN_TIMEOUT_MS: "2000"
-    ALLOW_OFFLINE_WRITES: "true"
-    
-PROVIDER:
-  - file: lib/enhanced-yjs-provider.ts
-  - location: constructor (around line 69)
-  - pattern: Use detectPlatform() to choose adapter
+  // Fix #3: Async loading
+  private loadingStates = new Map<string, Promise<void>>()
   
-ELECTRON:
-  - file: electron/main.js (create if needed)
-  - register: IPC handlers on app ready
-  - security: Enable context isolation
+  // Fix #7-9: Object state (not closures)
+  private persistenceState = {
+    initialized: false,
+    updateCount: 0,
+    lastSave: Date.now()
+  }
+  
+  // Fix #10: Prevent infinite loops
+  async loadDocument(noteId: string, panelId: string): Promise<any> {
+    const cacheKey = this.getCacheKey(noteId, panelId)
+    
+    if (this.loadingStates.has(cacheKey)) {
+      return await this.loadingStates.get(cacheKey)
+    }
+    
+    // Load implementation...
+  }
+  
+  // Fix #4: No deletion
+  destroy() {
+    // Do NOT clear documents
+    this.persistenceState.initialized = false
+  }
+  
+  // Fix #6: Metadata handling
+  private getFieldType(metadata: any): string {
+    return metadata?.useDefaultField ? 'default' : 'prosemirror'
+  }
+}
 ```
 
 ## Validation Loop
@@ -465,233 +497,158 @@ ELECTRON:
 ### Level 1: Syntax & Type Checking
 ```bash
 # After each file creation
-npm run lint          # ESLint passes
-npm run type-check    # TypeScript compilation
+npm run lint          # No errors
+npm run type-check    # TypeScript passes
 
-# Fix any errors before proceeding
+# Check for Yjs imports in plain mode files
+grep -r "from 'yjs'" lib/providers/plain-offline-provider.ts  # Should return nothing
+grep -r "from 'yjs'" lib/adapters/postgres-offline-adapter.ts # Should return nothing
 ```
 
-### Level 2: Unit Tests
+### Level 2: Fix Preservation Tests
 ```typescript
-// __tests__/persistence/postgres-adapter.test.ts
-import { PostgresAdapter } from '@/lib/adapters/postgres-adapter'
-import { Pool } from 'pg'
+// __tests__/plain-mode/fix-preservation.test.ts
+import { PlainOfflineProvider } from '@/lib/providers/plain-offline-provider'
 
-jest.mock('pg')
-
-describe('PostgresAdapter', () => {
-  let adapter: TestablePostgresAdapter
-  let mockPool: jest.Mocked<Pool>
+describe('10 TipTap Fixes in Plain Mode', () => {
+  let provider: PlainOfflineProvider
   
   beforeEach(() => {
-    mockPool = {
-      query: jest.fn(),
-      connect: jest.fn(),
-      end: jest.fn()
-    } as any
-    
-    ;(Pool as jest.Mock).mockImplementation(() => mockPool)
+    provider = new PlainOfflineProvider(mockAdapter)
   })
   
-  test('persist stores binary data as BYTEA', async () => {
-    const update = new Uint8Array([1, 2, 3, 4, 5])
-    
-    await adapter.persist('test-doc', update)
-    
-    expect(mockPool.query).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO yjs_updates'),
-      ['test-doc', Buffer.from(update)]
-    )
+  test('Fix #1: No content duplication', () => {
+    const editor = createPlainEditor('')
+    expect(editor.getHTML()).not.toContain('Start writing')
   })
   
-  test('load returns null for non-existent doc', async () => {
-    mockPool.query.mockResolvedValue({ rows: [] })
+  test('Fix #2: Note switching with composite keys', async () => {
+    await provider.saveDocument('note1', 'panel1', { type: 'doc', content: [] })
+    await provider.saveDocument('note2', 'panel1', { type: 'doc', content: [] })
     
-    const result = await adapter.load('missing-doc')
-    expect(result).toBeNull()
+    const doc1 = await provider.loadDocument('note1', 'panel1')
+    const doc2 = await provider.loadDocument('note2', 'panel1')
+    expect(doc1).not.toEqual(doc2)
   })
+  
+  // ... test all 10 fixes
 })
 
-# Run unit tests
-npm run test __tests__/persistence/postgres-adapter.test.ts
+# Run tests
+npm test __tests__/plain-mode/
 ```
 
-### Level 3: Integration Tests
+### Level 3: Integration Testing
 ```bash
-# Start dependencies
-docker compose up -d postgres
+# Set environment for plain mode
+export NEXT_PUBLIC_COLLAB_MODE=plain
 
-# Run migrations
+# Start services
+docker compose up -d postgres
 npm run db:migrate
 
-# Integration test script
-cat > test-integration.ts << 'EOF'
-import { ElectronPostgresAdapter } from './lib/adapters/electron-postgres-adapter'
+# Run app
+npm run dev
 
-const config = {
-  remote: {
-    connectionString: process.env.DATABASE_URL_REMOTE
-  },
-  local: {
-    connectionString: process.env.DATABASE_URL_LOCAL  
-  },
-  timeout: 2000
-}
-
-async function test() {
-  const adapter = new ElectronPostgresAdapter(config)
-  
-  // Test persist/load
-  const testUpdate = new Uint8Array([1,2,3,4,5])
-  await adapter.persist('test-doc', testUpdate)
-  
-  const loaded = await adapter.load('test-doc')
-  console.assert(loaded?.length === testUpdate.length, 'Round trip failed')
-  
-  console.log('✓ Integration test passed')
-  process.exit(0)
-}
-
-test().catch(console.error)
-EOF
-
-npx tsx test-integration.ts
+# Manual test checklist:
+- [ ] Create new note - no errors
+- [ ] Add content - saves to PostgreSQL
+- [ ] Check DB: SELECT * FROM document_saves; -- JSON content, not binary
+- [ ] Reload page - content persists
+- [ ] Switch notes - correct content loads
+- [ ] No console errors about Yjs
+- [ ] Performance feels snappier
 ```
 
-### Level 4: Failover Testing
+### Level 4: Electron Testing
 ```bash
-# Test failover scenario
-# 1. Start with remote available
-# 2. Stop remote postgres  
-# 3. Verify failover to local
-# 4. Start remote again
-# 5. Verify resync completes
+# Electron-specific tests
+export COLLAB_MODE=plain
+npm run electron:dev
 
-# Can be automated with shell script
-./test-sync.sh  # Uses existing test script
+# Verify:
+- [ ] IPC handlers work for plain mode
+- [ ] Local PostgreSQL fallback works
+- [ ] Offline queue processes correctly
 ```
 
 ## Progressive Implementation Strategy
 
-### Phase 1: Core PostgreSQL (Week 1)
-- PostgresAdapter base class
-- Connection management
-- Binary data handling
-- Basic unit tests
-- **Validation**: `npm test` passes
-- **Rollback**: Remove new files, no impact
+### Phase 1: Core Implementation (Current Phase)
+- Implement PlainOfflineProvider
+- Create PostgresOfflineAdapter
+- Add plain TipTap editor
+- Basic integration
+- **Validation**: Plain mode works end-to-end
+- **Rollback**: Simply don't use COLLAB_MODE=plain
 
-### Phase 2: Electron Failover (Week 2)
-- ElectronPostgresAdapter
-- Failover logic
-- Oplog implementation
-- IPC handlers
-- **Validation**: Failover test passes
-- **Rollback**: Use `PERSISTENCE_MODE=remote` only
+### Phase 2: Mode Switching (Future - Out of Scope)
+- Provider factory with proper switching
+- UI for mode selection
+- Data migration between modes
+- Full dual-mode support
+- **Note**: Explicitly out of scope per INITIAL.md
 
-### Phase 3: Production Hardening (Week 3-4)
-- Sync engine robustness
-- Error recovery
+### Phase 3: Production Hardening (Future)
 - Performance optimization
-- Comprehensive tests
-- **Validation**: All integration tests pass
-- **Rollback**: Previous phase functionality
-
-### Phase 4: Web API (If time permits)
-- API routes
-- WebPostgresAdapter
-- Authentication
-- Rate limiting
-- **Validation**: Web platform tests
-- **Rollback**: Electron-only deployment
+- Advanced offline sync strategies
+- Conflict resolution for offline edits
+- Monitoring and analytics
 
 ---
 
 ## Anti-Patterns to Avoid
-- ❌ Don't store YJS data as JSON (must be binary)
-- ❌ Don't skip connection pooling
-- ❌ Don't pass Uint8Array through IPC directly
-- ❌ Don't hardcode connection strings
-- ❌ Don't create new persistence patterns
-- ❌ Don't implement IndexedDB migration
-- ❌ Don't rush oplog implementation
-
-## Security Considerations
-- Parameterized queries only (no string concatenation)
-- Validate all IPC inputs
-- Sanitize docName (alphanumeric + dash only)
-- Rate limit API endpoints
-- Use connection SSL in production
-- Audit log sensitive operations
-
-## Performance Optimization
-- Connection pool: 10 (Electron), 25 (Web)
-- Prepared statements for repeated queries
-- Batch oplog syncs (max 100 per batch)
-- Index on (doc_name, timestamp) exists
-- Consider partitioning yjs_updates monthly
-
-## Monitoring & Observability
-- Log connection state changes
-- Track sync latency metrics
-- Monitor pool utilization
-- Alert on repeated sync failures
-- Dashboard for oplog backlog
-
----
-
-## Final Checklist
-- [ ] TypeScript compilation: `npm run type-check`
-- [ ] Linting passes: `npm run lint`
-- [ ] Unit tests pass: `npm test`
-- [ ] Integration tests pass
-- [ ] Failover works transparently
-- [ ] Oplog syncs correctly
-- [ ] Binary data preserved exactly
-- [ ] No YJS runtime operations replaced
-- [ ] Schema supports future collaboration
-
----
+- ❌ Don't import Yjs in any plain mode file
+- ❌ Don't break existing Yjs functionality
+- ❌ Don't implement mode switching UI (Phase 2)
+- ❌ Don't modify existing PostgreSQL adapters
+- ❌ Don't duplicate the offline_queue migration (use existing 004); do add reversible migrations for new tables like document_saves
+- ❌ Don't skip any of the 10 fixes
+- ❌ Don't over-engineer - keep it simple
 
 ## Risk Assessment
-- **Technical Debt**: [2/9] - Following existing patterns closely
-- **Integration Complexity**: [6/9] - Multiple platforms and failover
-- **Regression Risk**: [3/9] - Well-isolated changes
-- **Performance Impact**: [2/9] - PostgreSQL faster than IndexedDB
-- **Security Risk**: [5/9] - New IPC surface, mitigated by validation
+- **Technical Debt**: [2/9] - Adding alongside, not replacing
+- **Integration Complexity**: [5/9] - New provider pattern
+- **Regression Risk**: [3/9] - Isolated plain mode
+- **Performance Impact**: [1/9] - Should improve
+- **Security Risk**: [2/9] - Reusing secure patterns
 
 ### Mitigation Strategies
-- Gradual rollout with feature flags
-- Comprehensive test coverage
-- Monitoring and alerting
-- Regular security reviews
-- Performance profiling
+- Extensive fix preservation tests
+- Keep changes isolated to new files
+- Reuse existing patterns
+- Gradual rollout with env variable
+- Comprehensive documentation
 
 ---
 
-## Rollback Procedures
+## Implementation Guardrails
+- Start with PlainOfflineProvider core
+- Validate after each component
+- Use existing patterns from referenced files
+- Test with: `NEXT_PUBLIC_COLLAB_MODE=plain npm run dev`
+- Check for regressions: existing tests should still pass
+- Security: Use parameterized queries only
 
-### Environment Variable Control
-```bash
-# Full remote-only mode (safest)
-PERSISTENCE_MODE=remote
+## Expected Challenges and Mitigations
+- **Challenge**: Preserving all 10 fixes without Yjs
+  - **Mitigation**: Port logic carefully, test each fix
+  - **Fallback**: Can reference Yjs implementation
+  
+- **Challenge**: Anchor management without Y.RelativePosition
+  - **Mitigation**: Simple offset-based anchoring
+  - **Fallback**: Store extra context for robustness
 
-# Local-only mode (offline)
-PERSISTENCE_MODE=local  
+- **Challenge**: Ensuring no Yjs leakage
+  - **Mitigation**: Strict import checking in CI
+  - **Fallback**: Automated linting rules
 
-# Automatic failover (default)
-PERSISTENCE_MODE=auto
-
-# Disable problematic features
-ALLOW_OFFLINE_WRITES=false
-```
-
-### Emergency Rollback
-1. Set `PERSISTENCE_MODE=remote`
-2. Disable offline writes
-3. Monitor for stability
-4. Fix issues in local mode
-5. Re-enable gradually
+## Success Metrics
+- All 10 fixes working in plain mode ✓
+- Zero Yjs imports in plain files ✓
+- 40%+ memory usage reduction ✓
+- Sub-10ms save operations ✓
+- All existing tests still pass ✓
 
 ---
 
@@ -700,32 +657,27 @@ ALLOW_OFFLINE_WRITES=false
 ### Confidence Score: 8.5/10
 
 **Strengths:**
-- Clear patterns to follow
-- Well-defined interfaces  
-- Good existing examples
-- Schema already prepared
+- Clear requirements in updated INITIAL.md
+- Existing patterns to follow (adapters)
+- All 10 fixes well documented
+- PostgreSQL infrastructure ready
+- Migrations already exist
 
-**Complexity points:**
-- Oplog sync requires careful implementation
-- Failover testing needs thorough scenarios
-- IPC serialization needs attention
+**Minor Concerns:**
+- Anchor utilities need design work
+- Integration points need careful handling
 
 ### Readiness Indicators
 - **Green Light (8.5/10)**: Ready for implementation
 - All context provided
-- Clear validation path
-- Realistic timeline (3-4 weeks)
-
-### Minor Clarifications Helpful
-1. Preferred IPC error handling pattern
-2. Specific performance benchmarks expected
-3. Conflict resolution preferences for oplog
+- Clear implementation path
+- Patterns well established
 
 ### Next Steps
-1. Install pg dependencies
-2. Create PostgresAdapter base
-3. Test binary round-trip
-4. Build connection manager
-5. Implement Electron failover
+1. Create PlainOfflineProvider first
+2. Implement PostgresOfflineAdapter
+3. Test core functionality
+4. Add plain TipTap editor
+5. Validate all 10 fixes preserved
 
-Implementation can proceed with high confidence, following existing patterns and focusing on thorough testing of the failover and sync mechanisms.
+Implementation can proceed with high confidence. The approach of adding Option A alongside Option B (rather than replacing) reduces risk significantly. Focus on preserving the 10 fixes while keeping the implementation simple and isolated from the existing Yjs code.

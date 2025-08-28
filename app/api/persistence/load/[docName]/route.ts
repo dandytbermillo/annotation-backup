@@ -3,13 +3,14 @@ import { getServerPostgresAdapter } from '@/lib/database/server-postgres-adapter
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { docName: string } }
+  { params }: { params: Promise<{ docName: string }> }
 ) {
   try {
     const adapter = getServerPostgresAdapter()
-    const docName = decodeURIComponent(params.docName)
+    const { docName } = await params
+    const decodedDocName = decodeURIComponent(docName)
     
-    const content = await adapter.load(docName)
+    const content = await adapter.load(decodedDocName)
     
     if (!content) {
       return NextResponse.json(
@@ -24,7 +25,7 @@ export async function GET(
   } catch (error) {
     console.error('Load API error:', error)
     return NextResponse.json(
-      { error: error.message || 'Failed to load document' },
+      { error: error instanceof Error ? error.message : 'Failed to load document' },
       { status: 500 }
     )
   }

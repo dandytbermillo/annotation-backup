@@ -3,12 +3,13 @@
 
 import { EnhancedCollaborationProvider } from './enhanced-yjs-provider'
 import * as Y from 'yjs'
+import { Awareness } from 'y-protocols/awareness'
 
 // Extend the prototype to add the missing method
 declare module './enhanced-yjs-provider' {
   interface EnhancedCollaborationProvider {
     getProvider(): {
-      awareness: Y.Awareness;
+      awareness: Awareness;
       doc: Y.Doc;
       connect: () => void;
       disconnect: () => void;
@@ -27,8 +28,8 @@ EnhancedCollaborationProvider.prototype.getProvider = function() {
   const presence = this.mainDoc.getMap('presence')
   let awareness = presence.get('awareness')
   
-  if (!awareness || !(awareness instanceof Y.Awareness)) {
-    awareness = new Y.Awareness(this.mainDoc)
+  if (!awareness || !(awareness instanceof Awareness)) {
+    awareness = new Awareness(this.mainDoc)
     presence.set('awareness', awareness)
     
     // Initialize user state

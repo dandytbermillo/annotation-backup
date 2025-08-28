@@ -1,4 +1,5 @@
 import * as Y from 'yjs'
+import { Awareness } from 'y-protocols/awareness'
 
 export interface SyncStrategy {
   type: 'webrtc' | 'websocket' | 'local'
@@ -82,7 +83,7 @@ export class HybridSyncManager {
         return new WebrtcProvider(this.roomId, this.doc, {
           signaling: ['wss://signaling.example.com'],
           password: null,
-          awareness: new Y.Awareness(this.doc),
+          awareness: new Awareness(this.doc),
           maxConns: 20,
           filterBcConns: true,
           peerOpts: {}
@@ -104,7 +105,7 @@ export class HybridSyncManager {
         this.doc,
         {
           connect: true,
-          awareness: new Y.Awareness(this.doc),
+          awareness: new Awareness(this.doc),
           params: {},
           resyncInterval: 5000,
           maxBackoffTime: 2500,

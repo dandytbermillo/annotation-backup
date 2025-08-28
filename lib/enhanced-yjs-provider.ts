@@ -276,7 +276,7 @@ export class EnhancedCollaborationProvider {
   private static instance: EnhancedCollaborationProvider
   private mainDoc: Y.Doc
   private structure: EnhancedCollaborativeStructure
-  private persistence: PersistenceProvider
+  private _persistence: PersistenceProvider
   private syncManager: HybridSyncManager
   private performanceMonitor: PerformanceMonitor
   private annotationMerger: AnnotationMerger
@@ -293,15 +293,15 @@ export class EnhancedCollaborationProvider {
       // Web development uses PostgreSQL via API routes
       // Import synchronously to ensure it's ready immediately
       const { WebPostgresAdapter } = require('./adapters/web-postgres-adapter')
-      this.persistence = new WebPostgresAdapter('/api/persistence')
+      this._persistence = new WebPostgresAdapter('/api/persistence')
     } else {
       // For Electron, use the mock adapter that works in browser
       // The actual PostgreSQL persistence should be handled via IPC
       // from the Electron main process
-      this.persistence = new ElectronPersistenceAdapter('annotation-system')
+      this._persistence = new ElectronPersistenceAdapter('annotation-system')
     }
     
-    this.structure = new EnhancedCollaborativeStructure(this.mainDoc, this.persistence)
+    this.structure = new EnhancedCollaborativeStructure(this.mainDoc, this._persistence)
     this.syncManager = new HybridSyncManager(this.mainDoc, 'default-room')
     this.performanceMonitor = new PerformanceMonitor(this)
     this.annotationMerger = new AnnotationMerger(this.mainDoc)
@@ -504,6 +504,11 @@ export class EnhancedCollaborationProvider {
     return this.mainDoc
   }
 
+  // Getter for persistence to ensure it's always accessible
+  public get persistence(): PersistenceProvider {
+    return this._persistence
+  }
+
   public getMetrics(): PerformanceMetrics {
     const structureMetrics = this.structure.getMetrics()
     return {
@@ -552,7 +557,7 @@ export class EnhancedCollaborationProvider {
     }
     
     await this.structure.forceGarbageCollection()
-    await this.persistence.compact('main-doc')
+    await this._persistence.compact('main-doc')
   }
 
   public destroy(): void {
@@ -561,7 +566,7 @@ export class EnhancedCollaborationProvider {
     
     // Save final state
     const snapshot = Y.encodeStateAsUpdate(this.mainDoc)
-    this.persistence.saveSnapshot('main-doc', snapshot)
+    this._persistence.saveSnapshot('main-doc', snapshot)
     
     // Cleanup
     this.mainDoc.destroy()

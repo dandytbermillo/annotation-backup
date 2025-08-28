@@ -8,6 +8,7 @@ export const metadata: Metadata = {
 }
 
 import { PersistenceMonitor } from '@/components/persistence-monitor'
+import { PlainModeProvider } from './providers/plain-mode-provider'
 
 export default function RootLayout({
   children,
@@ -17,8 +18,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {children}
-        <PersistenceMonitor />
+        <PlainModeProvider>
+          {children}
+          <PersistenceMonitor />
+        </PlainModeProvider>
       </body>
     </html>
   )

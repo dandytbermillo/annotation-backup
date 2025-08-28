@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Persistence Fix</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .editor {
+            min-height: 100px;
+            border: 2px solid #ddd;
+            padding: 10px;
+            background: white;
+            font-family: Georgia, serif;
+            margin: 10px 0;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>Testing Persistence Fix</h1>
+    
+    <div class="test-section">
+        <h2>Test Scenario</h2>
+        <ol>
+            <li>Click "Initialize Editor" to set up the editor with persistence</li>
+            <li>Type some content in the editor</li>
+            <li>Click "Simulate Reload" to test if content persists after reload</li>
+            <li>Try editing after reload - this should also persist</li>
+            <li>Click "Full Test Sequence" to run all tests automatically</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>Controls</h2>
+        <button onclick="initializeEditor()">Initialize Editor</button>
+        <button onclick="simulateReload()">Simulate Reload</button>
+        <button onclick="clearPersistence()">Clear Persistence</button>
+        <button onclick="runFullTest()">Full Test Sequence</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <div class="test-section">
+        <h2>Editor</h2>
+        <div id="status" class="status">Not initialized</div>
+        <div id="editor" class="editor" contenteditable="true"></div>
+        <div>Update Count: <span id="updateCount">0</span></div>
+        <div>Persistence State: <span id="persistenceState">Unknown</span></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Debug Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script src="https://unpkg.com/yjs@13/dist/yjs.min.js"></script>
+    <script>
+        // Global variables
+        let currentDoc = null;
+        let updateCount = 0;
+        let persistenceStorage = localStorage;
+        
+        // Logging
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString().split('T')[1].substring(0, 8);
+            const logEl = document.getElementById('log');
+            logEl.textContent += `[${timestamp}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+        
+        function updateStatus(message, type = 'success') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + type;
+        }
+        
+        // Mock persistence adapter
+        const persistence = {
+            persist: async function(docKey, update) {
+                const key = `yjs-${docKey}-updates`;
+                const existing = JSON.parse(persistenceStorage.getItem(key) || '[]');
+                existing.push(Array.from(update));
+                persistenceStorage.setItem(key, JSON.stringify(existing));
+                log(`Persisted update for ${docKey}, total: ${existing.length}`);
+            },
+            
+            load: async function(docKey) {
+                const key = `yjs-${docKey}-updates`;
+                const updates = JSON.parse(persistenceStorage.getItem(key) || '[]');
+                if (updates.length === 0) {
+                    log(`No persisted data for ${docKey}`);
+                    return null;
+                }
+                
+                // Merge all updates
+                const tempDoc = new Y.Doc();
+                updates.forEach(u => Y.applyUpdate(tempDoc, new Uint8Array(u)));
+                const merged = Y.encodeStateAsUpdate(tempDoc);
+                log(`Loaded ${updates.length} updates for ${docKey}, merged: ${merged.length} bytes`);
+                return merged;
+            },
+            
+            clear: function(docKey) {
+                const key = `yjs-${docKey}-updates`;
+                persistenceStorage.removeItem(key);
+                log(`Cleared persistence for ${docKey}`);
+            }
+        };
+        
+        // Fixed setup persistence handler
+        function setupPersistenceFixed(doc, docKey) {
+            log(`Setting up persistence for ${docKey}`);
+            
+            // Create load state object
+            const loadState = {
+                initialLoadComplete: false,
+                updateCount: 0
+            };
+            
+            // Store on doc for debugging
+            doc._loadState = loadState;
+            doc._docKey = docKey;
+            
+            // Remove any existing handlers
+            if (doc._updateHandler) {
+                log(`Removing existing handler for ${docKey}`);
+                doc.off('update', doc._updateHandler);
+            }
+            
+            // Create new update handler
+            const updateHandler = async (update, origin) => {
+                // Always check current state from the doc
+                const currentLoadState = doc._loadState;
+                log(`Update triggered: initialLoadComplete=${currentLoadState.initialLoadComplete}, origin=${origin}`);
+                
+                if (!currentLoadState.initialLoadComplete || origin === 'persistence') {
+                    log(`Skipping update (not ready or from persistence)`);
+                    return;
+                }
+                
+                try {
+                    await persistence.persist(docKey, update);
+                    currentLoadState.updateCount++;
+                    updateCount = currentLoadState.updateCount;
+                    document.getElementById('updateCount').textContent = updateCount;
+                    log(`Persisted update ${updateCount} for ${docKey}`);
+                } catch (error) {
+                    log(`Failed to persist: ${error}`, 'error');
+                }
+            };
+            
+            // Store handler reference
+            doc._updateHandler = updateHandler;
+            
+            // Attach handler
+            doc.on('update', updateHandler);
+            log(`Update handler attached`);
+            
+            // Load existing data
+            persistence.load(docKey).then(data => {
+                if (data && data.length > 0) {
+                    log(`Applying loaded data to doc`);
+                    Y.applyUpdate(doc, data, 'persistence');
+                    
+                    // Update editor content
+                    const text = doc.getText('content');
+                    document.getElementById('editor').textContent = text.toString();
+                }
+                
+                // Mark as ready
+                loadState.initialLoadComplete = true;
+                document.getElementById('persistenceState').textContent = 'Ready';
+                log(`Initial load complete, ready for persistence`);
+            }).catch(error => {
+                log(`Load failed: ${error}`, 'error');
+                loadState.initialLoadComplete = true;
+            });
+            
+            return doc;
+        }
+        
+        // Initialize editor
+        function initializeEditor() {
+            log('\n=== Initializing Editor ===');
+            
+            if (currentDoc) {
+                currentDoc.destroy();
+                currentDoc = null;
+            }
+            
+            // Create new doc
+            currentDoc = new Y.Doc();
+            setupPersistenceFixed(currentDoc, 'test-panel');
+            
+            // Bind to editor
+            const editor = document.getElementById('editor');
+            const text = currentDoc.getText('content');
+            
+            // Editor -> Y.Doc
+            editor.addEventListener('input', (e) => {
+                const content = editor.textContent;
+                currentDoc.transact(() => {
+                    text.delete(0, text.length);
+                    text.insert(0, content);
+                });
+            });
+            
+            // Y.Doc -> Editor
+            text.observe(() => {
+                if (editor.textContent !== text.toString()) {
+                    editor.textContent = text.toString();
+                }
+            });
+            
+            updateStatus('Editor initialized - try typing!');
+            log('Editor initialized successfully');
+        }
+        
+        // Simulate reload
+        function simulateReload() {
+            log('\n=== Simulating Reload ===');
+            
+            if (!currentDoc) {
+                updateStatus('Please initialize editor first', 'error');
+                return;
+            }
+            
+            // Destroy current doc
+            const oldContent = currentDoc.getText('content').toString();
+            log(`Content before reload: "${oldContent}"`);
+            currentDoc.destroy();
+            currentDoc = null;
+            
+            // Clear UI
+            document.getElementById('editor').textContent = '';
+            document.getElementById('updateCount').textContent = '0';
+            updateCount = 0;
+            
+            // Simulate delay
+            setTimeout(() => {
+                log('Creating new doc after reload...');
+                initializeEditor();
+                updateStatus('Reload complete - check if content persisted!');
+            }, 500);
+        }
+        
+        // Clear persistence
+        function clearPersistence() {
+            log('\n=== Clearing Persistence ===');
+            persistence.clear('test-panel');
+            updateStatus('Persistence cleared');
+        }
+        
+        // Run full test
+        async function runFullTest() {
+            log('\n=== Running Full Test Sequence ===');
+            
+            // Step 1: Initialize
+            updateStatus('Step 1: Initializing...', 'info');
+            initializeEditor();
+            await new Promise(r => setTimeout(r, 1000));
+            
+            // Step 2: Add content
+            updateStatus('Step 2: Adding content...', 'info');
+            const editor = document.getElementById('editor');
+            editor.textContent = 'Hello World - Initial Content';
+            editor.dispatchEvent(new Event('input'));
+            await new Promise(r => setTimeout(r, 1000));
+            
+            // Step 3: Simulate reload
+            updateStatus('Step 3: Simulating reload...', 'info');
+            simulateReload();
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Step 4: Check content
+            const afterReload = document.getElementById('editor').textContent;
+            if (afterReload.includes('Hello World')) {
+                updateStatus('Step 4: Content persisted! ✓');
+                log('SUCCESS: Content persisted after reload');
+            } else {
+                updateStatus('Step 4: Content NOT persisted! ✗', 'error');
+                log('FAILURE: Content did not persist', 'error');
+            }
+            await new Promise(r => setTimeout(r, 1000));
+            
+            // Step 5: Edit after reload
+            updateStatus('Step 5: Testing edits after reload...', 'info');
+            editor.textContent += ' - Edit after reload';
+            editor.dispatchEvent(new Event('input'));
+            await new Promise(r => setTimeout(r, 1000));
+            
+            // Step 6: Second reload
+            updateStatus('Step 6: Testing second reload...', 'info');
+            simulateReload();
+            await new Promise(r => setTimeout(r, 2000));
+            
+            // Step 7: Final check
+            const finalContent = document.getElementById('editor').textContent;
+            if (finalContent.includes('Edit after reload')) {
+                updateStatus('✓ All tests passed! Edits after reload persist correctly.');
+                log('SUCCESS: All tests passed!');
+            } else {
+                updateStatus('✗ Test failed: Edits after reload did not persist.', 'error');
+                log('FAILURE: Edits after reload did not persist', 'error');
+            }
+        }
+        
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('Test page loaded, ready for testing');
+            updateStatus('Ready - click "Initialize Editor" to start');
+        });
+    </script>
+</body>
+</html>

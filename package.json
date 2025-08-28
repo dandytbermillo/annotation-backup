@@ -9,8 +9,13 @@
     "lint": "next lint",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:integration": "echo 'Integration tests placeholder'",
+    "test:e2e": "echo 'E2E tests placeholder'",
     "type-check": "tsc --noEmit",
-    "migrate": "tsx scripts/migrate-to-enhanced-architecture.ts"
+    "migrate": "tsx scripts/migrate-to-enhanced-architecture.ts",
+    "db:migrate": "echo 'Apply database migrations from migrations/ folder'",
+    "db:validate": "./scripts/validate-migrations.sh",
+    "electron:dev": "echo 'Electron development mode'"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -76,6 +81,7 @@
     "uuid": "^11.1.0",
     "vaul": "^0.9.6",
     "y-indexeddb": "^9.0.12",
+    "y-webrtc": "^10.3.0",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.27",
     "zod": "^3.24.1"

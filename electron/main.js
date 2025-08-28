@@ -58,6 +58,14 @@ async function initializePostgresAdapter() {
     // Register IPC handlers
     registerPersistenceHandlers(postgresAdapter)
     
+    // Register plain mode handlers if in plain mode
+    const collabMode = process.env.COLLAB_MODE || 'yjs'
+    if (collabMode === 'plain') {
+      const { registerPostgresOfflineHandlers } = require('./ipc/postgres-offline-handlers')
+      registerPostgresOfflineHandlers()
+      console.log('Plain mode IPC handlers registered')
+    }
+    
     console.log('PostgreSQL persistence initialized in Electron main process')
   } catch (error) {
     console.error('Failed to initialize PostgreSQL adapter:', error)

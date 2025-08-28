@@ -1,32 +1,45 @@
-# YJS-Based Collaborative Annotation System
+# Dual-Mode Annotation System
 
-A modern, real-time collaborative annotation system built with Next.js, YJS, and TipTap. This application provides a canvas-based interface for creating and managing annotations with real-time collaboration capabilities.
+A modern annotation system built with Next.js and TipTap that supports both offline single-user mode (Option A) and real-time collaborative editing (Option B). This application provides a canvas-based interface for creating and managing annotations with flexible deployment options.
 
 ## 🚀 Features
 
 ### Core Functionality
-- **Real-time Collaboration**: Multiple users can edit simultaneously using YJS CRDTs
+- **Dual-Mode Support**: Switch between offline single-user (Option A) and collaborative (Option B) modes
 - **Canvas-based Interface**: Drag and drop panels with visual connections
-- **Rich Text Editing**: TipTap editor with collaborative cursors and awareness
+- **Rich Text Editing**: TipTap editor with optional collaborative features
 - **Branch-based Annotations**: Three types of annotations (note, explore, promote)
 - **Offline-first Architecture**: Works without internet, syncs when connected
 
-### Advanced Features
+### Option A: Plain Offline Mode (Current Default)
+- **PostgreSQL Persistence**: Direct database storage without CRDTs
+- **Single-user Focus**: Optimized for individual use cases
+- **Simpler Architecture**: No Yjs overhead when collaboration isn't needed
+- **Electron Support**: Local PostgreSQL failover for desktop apps
+
+### Option B: Real-time Collaboration Mode (Future)
 - **YJS Integration**: Conflict-free collaborative editing
-- **IndexedDB Persistence**: Client-side data storage with snapshots
-- **Awareness Protocol**: Real-time user presence and cursor tracking
-- **Migration-ready**: Easily adaptable to database or Electron
-- **Performance Optimized**: Lazy loading and memory management
+- **Real-time Sync**: Multiple users can edit simultaneously
+- **Awareness Protocol**: User presence and cursor tracking
+- **CRDT-based**: Automatic conflict resolution
 
 ## 🛠️ Tech Stack
 
 - **Frontend**: Next.js 15, React 19, TypeScript
-- **Collaboration**: YJS, TipTap Editor
+- **Editor**: TipTap (with optional YJS collaboration)
 - **Styling**: Tailwind CSS, Radix UI
-- **Storage**: LocalStorage, IndexedDB
-- **State Management**: YJS CRDTs, React Context
+- **Storage (Option A)**: PostgreSQL with JSON/JSONB
+- **Storage (Option B)**: YJS CRDTs, IndexedDB
+- **State Management**: Map-based stores (Option A) or YJS CRDTs (Option B)
 
 ## 📦 Installation
+
+### Prerequisites
+- Node.js 18+ 
+- PostgreSQL 14+ (for Option A)
+- Docker (optional, for PostgreSQL)
+
+### Setup Steps
 
 1. **Clone the repository**
    ```bash
@@ -43,7 +56,35 @@ A modern, real-time collaborative annotation system built with Next.js, YJS, and
    yarn install
    ```
 
-3. **Run the development server**
+3. **Configure environment**
+   ```bash
+   cp .env.example .env.local
+   ```
+   Edit `.env.local` with your database credentials:
+   ```env
+   DATABASE_URL=postgresql://user:password@localhost:5432/annotation_db
+   NEXT_PUBLIC_COLLAB_MODE=plain  # Use 'plain' for Option A or 'yjs' for Option B
+   ```
+
+4. **Setup PostgreSQL** (for Option A)
+   
+   Using Docker:
+   ```bash
+   docker compose up -d postgres
+   ```
+   
+   Or install PostgreSQL locally and create database:
+   ```sql
+   CREATE DATABASE annotation_db;
+   ```
+
+5. **Run database migrations**
+   ```bash
+   npm run db:migrate
+   # or manually apply migrations from migrations/ folder
+   ```
+
+6. **Run the development server**
    ```bash
    npm run dev
    # or
@@ -52,7 +93,7 @@ A modern, real-time collaborative annotation system built with Next.js, YJS, and
    yarn dev
    ```
 
-4. **Open in browser**
+7. **Open in browser**
    Open [http://localhost:3000](http://localhost:3000) to view the application.
 
 ## 🎯 Usage
@@ -77,23 +118,48 @@ A modern, real-time collaborative annotation system built with Next.js, YJS, and
 
 ## 🏗️ Architecture
 
-### Storage Layers
-1. **LocalStorage**: Basic metadata and user preferences
-2. **IndexedDB**: Binary document data and snapshots
-3. **YJS Documents**: Real-time collaborative state
-4. **Memory**: Runtime application state
+### Dual-Mode Design
+The system supports two operational modes:
 
-### Collaboration Flow
+#### Option A: Plain Offline Mode (Current Default)
+```
+User Input → TipTap Editor → PlainOfflineProvider → PostgreSQL
+                              ↓
+                        Map-based State Store
+```
+- Direct PostgreSQL persistence
+- No CRDT overhead
+- Simpler data flow
+- Single-user optimized
+
+#### Option B: Collaborative Mode (Future)
 ```
 User Input → TipTap Editor → YJS Document → Persistence Layer
                                 ↓
                          Other Connected Users
 ```
+- YJS CRDT synchronization
+- Real-time collaboration
+- Conflict-free updates
+- Multi-user awareness
 
-### Migration Paths
-- **Database Migration**: PostgreSQL, MySQL, MongoDB
-- **Electron App**: Desktop application with SQLite
-- **Cloud Sync**: Hybrid local-first with server backup
+### Storage Layers by Mode
+
+#### Option A Storage:
+1. **PostgreSQL**: Primary storage for all data
+2. **Memory**: Runtime state in Map structures
+3. **LocalStorage**: User preferences only
+
+#### Option B Storage:
+1. **YJS Documents**: Real-time collaborative state
+2. **IndexedDB**: Binary document snapshots
+3. **PostgreSQL**: Long-term persistence
+4. **Memory**: Runtime application state
+
+### Platform Support
+- **Web Mode**: API-based PostgreSQL access
+- **Electron Mode**: Direct PostgreSQL with failover
+- **Migration Ready**: Easy switching between modes
 
 ## 📁 Project Structure
 
@@ -116,23 +182,31 @@ annotation/
 ## 🔧 Configuration
 
 ### Environment Variables
-Create a `.env.local` file for configuration:
+See `.env.example` for a complete list. Key variables:
 
 ```env
-# Enable enhanced provider (optional)
-NEXT_PUBLIC_USE_ENHANCED_PROVIDER=false
+# Database Configuration
+DATABASE_URL=postgresql://user:password@localhost:5432/annotation_db
 
-# WebSocket server for collaboration (optional)
+# Collaboration Mode
+NEXT_PUBLIC_COLLAB_MODE=plain  # 'plain' or 'yjs'
+
+# Option B Only: WebSocket server for collaboration
 NEXT_PUBLIC_WS_URL=wss://your-server.com
 
-# WebRTC signaling server (optional)
+# Option B Only: WebRTC signaling server
 NEXT_PUBLIC_WEBRTC_SIGNALING=wss://signaling.example.com
 ```
 
-### Provider Configuration
-The system uses a provider switcher that can toggle between:
-- **Standard Provider**: Basic YJS with localStorage
-- **Enhanced Provider**: Advanced features with IndexedDB
+### Mode Configuration
+The system uses a mode switcher to toggle between:
+- **Option A (Plain Mode)**: PostgreSQL-backed single-user mode
+- **Option B (YJS Mode)**: Real-time collaborative mode with CRDTs
+
+To switch modes:
+1. Set `NEXT_PUBLIC_COLLAB_MODE` in `.env.local`
+2. Restart the development server
+3. Clear browser cache if switching from Option B to Option A
 
 ## 🚀 Deployment
 

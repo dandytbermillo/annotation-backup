@@ -102,13 +102,171 @@ export function clearEditorDocsForNote(noteId: string): void {
   })
 }
 
+// Track which docs have persistence handlers set up
+const docsWithPersistence = new Set<string>()
+
+// WeakMap to track which Y.Doc instances have persistence handlers
+// This stores the handler function so we can properly manage it
+const docsWithPersistenceHandlers = new WeakMap<Y.Doc, any>()
+
+// Track which docs are currently loading to prevent multiple concurrent loads
+const docsCurrentlyLoading = new Set<string>()
+
+// Set up persistence handler for a Y.Doc
+function setupPersistenceHandler(doc: Y.Doc, docKey: string, cacheKey: string): void {
+  console.log(`[SETUP] Starting setupPersistenceHandler for docKey: ${docKey}, cacheKey: ${cacheKey}`)
+  
+  // Check if this specific doc instance already has handlers set up
+  const existingHandler = docsWithPersistenceHandlers.get(doc)
+  if (existingHandler) {
+    console.log(`[SETUP] Found existing handler for doc instance: ${docKey}`)
+    console.log(`[SETUP] Existing handler info:`, {
+      docKey: existingHandler.docKey,
+      cacheKey: existingHandler.cacheKey,
+      isActive: existingHandler.isActive ? existingHandler.isActive() : 'no isActive function'
+    })
+    
+    // IMPORTANT: Always remove the old handler to avoid duplicate handlers
+    console.log(`[SETUP] Removing old handler for ${docKey} to ensure clean setup`)
+    doc.off('update', existingHandler.handler)
+    docsWithPersistenceHandlers.delete(doc)
+    
+    // Continue with new setup below
+  }
+  
+  // Mark as having persistence to avoid duplicate handlers
+  docsWithPersistence.add(cacheKey)
+  
+  // Track if initial content has been loaded - use an object to avoid closure issues
+  const loadState = {
+    initialLoadComplete: false,
+    updateCount: 0
+  }
+  
+  console.log(`[SETUP] Current doc observers:`, Object.keys(doc._observers || {}))
+  
+  // Try to get enhanced provider for persistence
+  try {
+    const { EnhancedCollaborationProvider } = require('./enhanced-yjs-provider')
+    const enhancedProvider = EnhancedCollaborationProvider.getInstance()
+    
+    if (enhancedProvider.persistence) {
+      console.log(`[SETUP] Setting up persistence for ${docKey} with adapter:`, enhancedProvider.persistence.constructor.name)
+      // Create a unique handler function so we can track it
+      const updateHandler = async (update: Uint8Array, origin: any) => {
+        console.log(`[UPDATE] Update triggered for ${docKey}, initialLoadComplete: ${loadState.initialLoadComplete}, origin: ${origin}`)
+        // Skip if initial load not complete or if this is a persistence update
+        if (!loadState.initialLoadComplete || origin === 'persistence') {
+          console.log(`[UPDATE] Skipping update for ${docKey} - initialLoadComplete: ${loadState.initialLoadComplete}, origin: ${origin}`)
+          return
+        }
+        
+        // Persist the update
+        try {
+          await enhancedProvider.persistence.persist(docKey, update)
+          loadState.updateCount++
+          console.log(`[UPDATE] Persisted update ${loadState.updateCount} for ${docKey}`)
+          
+          // Auto-compact after 50 updates to prevent accumulation
+          if (loadState.updateCount > 50) {
+            console.log(`[UPDATE] Auto-compacting ${docKey} after ${loadState.updateCount} updates`)
+            await enhancedProvider.persistence.compact(docKey)
+            loadState.updateCount = 0
+          }
+        } catch (error) {
+          console.error(`[UPDATE] Failed to persist ${docKey}:`, error)
+        }
+      }
+      
+      // Add update handler
+      doc.on('update', updateHandler)
+      console.log(`[SETUP] Added update handler to doc for ${docKey}`)
+      
+      // Store the handler info in the WeakMap
+      docsWithPersistenceHandlers.set(doc, {
+        handler: updateHandler,
+        isActive: () => loadState.initialLoadComplete,
+        docKey,
+        cacheKey,
+        loadState // Store reference to the loadState object
+      })
+      
+      // Store reference to handler on the doc for debugging
+      ;(doc as any)._persistenceHandler = updateHandler
+      ;(doc as any)._persistenceDocKey = docKey
+      ;(doc as any)._persistenceLoadState = loadState
+      
+      // Load existing updates immediately (but only if not already loading)
+      if (docsCurrentlyLoading.has(cacheKey)) {
+        console.log(`[SETUP] Already loading ${cacheKey}, skipping duplicate load`)
+        return
+      }
+      
+      // Mark as loading
+      docsCurrentlyLoading.add(cacheKey)
+      
+      const { docLoadingStates } = require('./yjs-utils')
+      
+      const loadPromise = enhancedProvider.persistence.load(docKey).then((data: Uint8Array | null) => {
+        console.log(`[LOAD] Loading data for ${docKey}, data size: ${data ? data.length : 0}`)
+        if (data && data.length > 0) {
+          // Apply the loaded state with 'persistence' origin to skip re-persisting
+          Y.applyUpdate(doc, data, 'persistence')
+          console.log(`[LOAD] Applied loaded content for ${docKey}, size: ${data.length} bytes`)
+          
+          // Check for fragment field migration
+          const defaultFragment = doc.getXmlFragment('default')
+          const prosemirrorFragment = doc.getXmlFragment('prosemirror')
+          
+          if (defaultFragment.length > 0 && prosemirrorFragment.length === 0) {
+            console.log(`[LOAD] Found content in 'default' fragment for ${docKey}`)
+            doc.getMap('_meta').set('fragmentField', 'default')
+          } else if (prosemirrorFragment.length > 0) {
+            console.log(`[LOAD] Found content in 'prosemirror' fragment for ${docKey}`)
+            doc.getMap('_meta').set('fragmentField', 'prosemirror')
+          }
+        } else {
+          console.log(`[LOAD] No data to load for ${docKey}`)
+        }
+        // Set flag after loading to ensure future updates are persisted
+        loadState.initialLoadComplete = true
+        console.log(`[LOAD] Set initialLoadComplete=true for ${docKey}`)
+        // Clear loading state
+        docLoadingStates.delete(cacheKey)
+        docsCurrentlyLoading.delete(cacheKey)
+      }).catch((error: any) => {
+        console.error(`[LOAD] Failed to load ${docKey}:`, error)
+        loadState.initialLoadComplete = true
+        console.log(`[LOAD] Set initialLoadComplete=true for ${docKey} after error`)
+        // Clear loading state even on error
+        docLoadingStates.delete(cacheKey)
+        docsCurrentlyLoading.delete(cacheKey)
+      })
+      
+      // Store the loading promise so components can wait for it
+      docLoadingStates.set(cacheKey, loadPromise)
+    } else {
+      // No persistence available
+      console.log(`[SETUP] No persistence available for ${docKey}`)
+      loadState.initialLoadComplete = true
+    }
+  } catch (error) {
+    console.warn(`[SETUP] Enhanced provider not available for persistence setup for ${docKey}:`, error)
+    loadState.initialLoadComplete = true
+  }
+}
+
 // Get or create Y.Doc for a specific panel's editor
 export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
   // Create a composite key that includes both note ID and panel ID
   const cacheKey = noteId ? `${noteId}-${panelId}` : panelId
+  const docKey = `${noteId || 'default'}-panel-${panelId}`
+  
+  console.log(`[getEditorYDoc] Getting doc for panelId: ${panelId}, noteId: ${noteId}, cacheKey: ${cacheKey}, docKey: ${docKey}`)
   
   // Check if we already have a cached doc for this note+panel combination
   if (editorDocs.has(cacheKey)) {
+    console.log(`[getEditorYDoc] Found cached doc for ${cacheKey}`)
     // Update last access time
     editorDocsLastAccess.set(cacheKey, Date.now())
     
@@ -120,7 +278,18 @@ export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
       // Ignore if module not available
     }
     
-    return editorDocs.get(cacheKey)!
+    const cachedDoc = editorDocs.get(cacheKey)!
+    console.log(`[getEditorYDoc] Cached doc has ${Object.keys(cachedDoc._observers || {}).length} observers`)
+    
+    // Only set up persistence handler if not already loading or set up
+    if (!docsCurrentlyLoading.has(cacheKey) && !docsWithPersistenceHandlers.has(cachedDoc)) {
+      console.log(`[getEditorYDoc] Setting up persistence for cached doc ${cacheKey}`)
+      setupPersistenceHandler(cachedDoc, docKey, cacheKey)
+    } else {
+      console.log(`[getEditorYDoc] Skipping persistence setup for cached ${cacheKey} - already set up or loading`)
+    }
+    
+    return cachedDoc
   }
 
   // Try to get from enhanced provider first for PostgreSQL persistence
@@ -131,10 +300,14 @@ export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
     // Get the subdoc synchronously - create if it doesn't exist
     if (enhancedProvider.mainDoc) {
       const editors = enhancedProvider.mainDoc.getMap('editors')
-      if (!editors.has(panelId)) {
+      if (!editors.has(cacheKey)) {
+        console.log(`[getEditorYDoc] Creating new subdoc for ${cacheKey}`)
         // Create subdoc with composite guid including note ID
         const subdocGuid = noteId ? `editor-${noteId}-${panelId}` : `editor-${panelId}`
         const subdoc = new Y.Doc({ guid: subdocGuid })
+        
+        // Initialize prosemirror fragment for TipTap
+        subdoc.getXmlFragment('prosemirror')
         
         // Store in cache first to prevent duplicates with composite key
         editorDocs.set(cacheKey, subdoc)
@@ -143,75 +316,30 @@ export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
         // Clean up old entries if cache is getting too large
         cleanupEditorDocsCache()
         
-        // Then store in main doc
-        enhancedProvider.mainDoc.getMap('editors').set(panelId, subdoc)
+        // Then store in main doc with composite key
+        enhancedProvider.mainDoc.getMap('editors').set(cacheKey, subdoc)
         
-        // Flag to track if initial content has been loaded
-        let initialLoadComplete = false
-        let updateCount = 0
-        const docKey = `${noteId || 'default'}-panel-${panelId}`
-        
-        // Add update handler but don't persist until after initial load
-        subdoc.on('update', async (update: Uint8Array, origin: any) => {
-          // Skip if initial load not complete or if this is a persistence update
-          if (!initialLoadComplete || origin === 'persistence') {
-            return
-          }
-          
-          // Persist the update
-          if (enhancedProvider.persistence) {
-            try {
-              await enhancedProvider.persistence.persist(docKey, update)
-              updateCount++
-              
-              // Auto-compact after 50 updates to prevent accumulation
-              if (updateCount > 50) {
-                console.log(`Auto-compacting ${docKey} after ${updateCount} updates`)
-                await enhancedProvider.persistence.compact(docKey)
-                updateCount = 0
-              }
-            } catch (error) {
-              console.error(`Failed to persist panel ${panelId}:`, error)
-            }
-          }
-        })
-        
-        // Load existing updates immediately when doc is created
-        if (enhancedProvider.persistence) {
-          // Track loading state for external components to wait
-          const { docLoadingStates } = require('./yjs-utils')
-          
-          const loadPromise = enhancedProvider.persistence.load(docKey).then((data: Uint8Array | null) => {
-            if (data && data.length > 0) {
-              // Apply the loaded state with 'persistence' origin to skip re-persisting
-              Y.applyUpdate(subdoc, data, 'persistence')
-              console.log(`Loaded content for panel ${panelId}, size: ${data.length} bytes`)
-            }
-            // Set flag after applying to ensure future updates are persisted
-            initialLoadComplete = true
-            // Clear loading state
-            docLoadingStates.delete(cacheKey)
-          }).catch((error: any) => {
-            console.error(`Failed to load panel ${panelId}:`, error)
-            initialLoadComplete = true
-            // Clear loading state even on error
-            docLoadingStates.delete(cacheKey)
-          })
-          
-          // Store the loading promise so components can wait for it
-          docLoadingStates.set(cacheKey, loadPromise)
-        } else {
-          initialLoadComplete = true
-        }
+        console.log(`[getEditorYDoc] Created new subdoc, setting up persistence handler`)
+        // Set up persistence handler
+        setupPersistenceHandler(subdoc, docKey, cacheKey)
         
         return subdoc
       }
       
       // Doc exists in main doc, get it and cache it with composite key
-      const existingDoc = editors.get(panelId) as Y.Doc
+      const existingDoc = editors.get(cacheKey) as Y.Doc
       editorDocs.set(cacheKey, existingDoc)
       editorDocsLastAccess.set(cacheKey, Date.now())
       cleanupEditorDocsCache()
+      
+      // Only set up persistence handler if not already loading or set up
+      if (!docsCurrentlyLoading.has(cacheKey) && !docsWithPersistenceHandlers.has(existingDoc)) {
+        console.log(`[getEditorYDoc] Setting up persistence for existing doc ${cacheKey}`)
+        setupPersistenceHandler(existingDoc, docKey, cacheKey)
+      } else {
+        console.log(`[getEditorYDoc] Skipping persistence setup for ${cacheKey} - already set up or loading`)
+      }
+      
       return existingDoc
     }
   } catch (error) {
@@ -221,6 +349,10 @@ export function getEditorYDoc(panelId: string, noteId?: string): Y.Doc {
   // Fallback to standalone doc with composite guid
   const docGuid = noteId ? `editor-${noteId}-${panelId}` : `editor-${panelId}`
   const doc = new Y.Doc({ guid: docGuid })
+  
+  // Initialize prosemirror fragment for TipTap
+  doc.getXmlFragment('prosemirror')
+  
   editorDocs.set(cacheKey, doc)
   editorDocsLastAccess.set(cacheKey, Date.now())
   cleanupEditorDocsCache()
@@ -253,6 +385,10 @@ function cleanupEditorDocsCache(): void {
         // Doc is not actively being used, safe to remove
         editorDocs.delete(key)
         editorDocsLastAccess.delete(key)
+        docsWithPersistence.delete(key)
+        // Also remove from WeakMap (will happen automatically when doc is GC'd)
+        // but we can be explicit about it
+        docsWithPersistenceHandlers.delete(doc)
       }
     }
   }
@@ -559,18 +695,18 @@ export class CollaborationProvider {
     // Clean up document structure
     this.documentStructures.delete(noteId)
     
-    // Clean up editor docs for this note (with composite keys)
-    const keysToDelete: string[] = []
+    // DO NOT destroy editor docs when switching notes
+    // The composite key system (noteId-panelId) already isolates docs between notes
+    // and the smart cache management handles memory efficiently
+    // This allows content to load immediately when switching back to a note
+    
+    // Optional: Mark editor docs from this note as older for cleanup priority
+    const now = Date.now()
     editorDocs.forEach((doc, key) => {
-      // Check if the key contains this noteId (format: noteId-panelId)
-      if (key.startsWith(`${noteId}-`) || key === noteId) {
-        doc.destroy()
-        keysToDelete.push(key)
+      if (key.startsWith(`${noteId}-`)) {
+        // Age the entry by 2 minutes to prioritize it for cleanup if needed
+        editorDocsLastAccess.set(key, now - (2 * 60 * 1000))
       }
-    })
-    keysToDelete.forEach(key => {
-      editorDocs.delete(key)
-      editorDocsLastAccess.delete(key)
     })
   }
 
@@ -589,6 +725,7 @@ export class CollaborationProvider {
     editorDocs.forEach(doc => doc.destroy())
     editorDocs.clear()
     editorDocsLastAccess.clear()
+    docsWithPersistence.clear()
     
     this.currentNoteId = null
   }

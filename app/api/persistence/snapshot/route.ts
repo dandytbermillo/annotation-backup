@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Snapshot API error:', error)
     return NextResponse.json(
-      { error: error.message || 'Failed to save snapshot' },
+      { error: error instanceof Error ? error.message : 'Failed to save snapshot' },
       { status: 500 }
     )
   }

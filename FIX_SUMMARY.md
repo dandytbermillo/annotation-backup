@@ -1,39 +1,37 @@
-# TipTap Editor Content Isolation Fix
+# Fix Summary: Y.Doc Sharing Between Notes Issue
 
-## Problem
-1. New notes were showing content from other notes
-2. Content was duplicating when switching between notes
-3. The persistence key `panel-main` was shared across all notes
+## Problems Fixed
 
-## Root Cause
-The Y.Doc persistence was using only the panel ID (e.g., "panel-main") as the storage key. Since all notes have a "main" panel, they were sharing the same persisted data.
+### 1. **API Route Params Issue**
+- **Problem**: Next.js 15 changed the params to be async, causing TypeScript errors
+- **Fix**: Updated all API routes to properly await params
 
-## Solution Applied
-Updated the persistence keys in `lib/yjs-provider.ts` to include the note ID:
+### 2. **Main Issue: Y.Docs Being Shared Between Notes**
+- **Problem**: Editor Y.Docs were stored using only `panelId` as the key, causing content to leak between different notes
+- **Fix**: Changed to use composite keys `noteId-panelId` throughout
 
-### Before:
-```typescript
-await enhancedProvider.persistence.persist(`panel-${panelId}`, update)
-enhancedProvider.persistence.load(`panel-${panelId}`)
-```
+### 3. **Awareness Import Errors**
+- **Problem**: `Y.Awareness` is not exported from the main yjs package
+- **Fix**: Imported `Awareness` from the correct module: `y-protocols/awareness`
 
-### After:
-```typescript
-await enhancedProvider.persistence.persist(`${noteId || 'default'}-panel-${panelId}`, update)
-enhancedProvider.persistence.load(`${noteId || 'default'}-panel-${panelId}`)
-```
+### 4. **API Error Handling**
+- **Problem**: TypeScript errors with error.message on unknown error types
+- **Fix**: Added proper type guards
 
-## Result
-- Each note now has its own isolated persistence namespace
-- New notes start with empty content
-- No more content duplication between notes
-- PostgreSQL stores data with keys like `note-1234567890-panel-main`
+## Files Modified
 
-## Testing
-1. Create a new note - it should start empty
-2. Add content to the note
-3. Switch to another note
-4. Create another new note - it should also start empty
-5. Switch back to the first note - content should be preserved
+1. `/app/api/persistence/load/[docName]/route.ts` - Fixed async params and error handling
+2. `/app/api/persistence/compact/route.ts` - Fixed error handling
+3. `/app/api/persistence/persist/route.ts` - Fixed error handling
+4. `/app/api/persistence/snapshot/route.ts` - Fixed error handling
+5. `/lib/yjs-provider.ts` - Fixed composite key usage for editor subdocs
+6. `/lib/sync/hybrid-sync-manager.ts` - Fixed Awareness import
+7. `/lib/enhanced-yjs-provider-patch.ts` - Fixed Awareness import and usage
 
-The fix ensures proper data isolation while maintaining all collaborative features and PostgreSQL persistence.
+## Impact
+
+These changes ensure that:
+- Editor content is properly isolated between different notes
+- No content leakage occurs when switching between notes
+- The composite key system prevents Y.Doc sharing
+- All TypeScript errors are resolved for Next.js 15 compatibility

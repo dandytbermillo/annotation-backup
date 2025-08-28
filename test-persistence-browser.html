@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Y.js Persistence Debug Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .editor {
+            min-height: 100px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            margin: 10px 0;
+            white-space: pre-wrap;
+        }
+        .log {
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Y.js Persistence Debug Test</h1>
+    
+    <div class="container">
+        <h2>Test Controls</h2>
+        <button onclick="testBasicPersistence()">Test Basic Persistence</button>
+        <button onclick="testReloadPersistence()">Test Reload Persistence</button>
+        <button onclick="clearPersistence()">Clear All Persistence</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <div class="container">
+        <h2>Editor 1 (Panel: test-panel-1)</h2>
+        <div id="editor1" class="editor" contenteditable="true">Type here...</div>
+        <div>Doc State: <span id="state1">Not initialized</span></div>
+    </div>
+
+    <div class="container">
+        <h2>Editor 2 (Panel: test-panel-2)</h2>
+        <div id="editor2" class="editor" contenteditable="true">Type here...</div>
+        <div>Doc State: <span id="state2">Not initialized</span></div>
+    </div>
+
+    <div class="container">
+        <h2>Debug Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+        import * as Y from 'https://unpkg.com/yjs@13/dist/yjs.mjs';
+        
+        window.Y = Y;
+        
+        // Simple logging
+        const logElement = document.getElementById('log');
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+            const prefix = type === 'error' ? '❌' : type === 'success' ? '✅' : '📝';
+            logElement.textContent += `[${timestamp}] ${prefix} ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+        
+        window.clearLog = function() {
+            logElement.textContent = '';
+        };
+        
+        // Mock persistence adapter
+        class MockPersistenceAdapter {
+            constructor() {
+                this.storage = new Map();
+                log('MockPersistenceAdapter initialized');
+            }
+            
+            async persist(docName, update) {
+                const existing = this.storage.get(docName) || [];
+                existing.push(Array.from(update));
+                this.storage.set(docName, existing);
+                log(`Persisted update for ${docName}, total updates: ${existing.length}`);
+            }
+            
+            async load(docName) {
+                const updates = this.storage.get(docName);
+                if (!updates || updates.length === 0) {
+                    log(`No updates found for ${docName}`);
+                    return null;
+                }
+                // Merge all updates
+                const doc = new Y.Doc();
+                updates.forEach(update => {
+                    Y.applyUpdate(doc, new Uint8Array(update));
+                });
+                const merged = Y.encodeStateAsUpdate(doc);
+                log(`Loaded ${updates.length} updates for ${docName}, merged size: ${merged.length} bytes`);
+                return merged;
+            }
+            
+            async clearUpdates(docName) {
+                this.storage.delete(docName);
+                log(`Cleared updates for ${docName}`);
+            }
+        }
+        
+        const persistence = new MockPersistenceAdapter();
+        
+        // Setup persistence handler similar to the real code
+        function setupPersistenceHandler(doc, docKey, editor, stateElement) {
+            const loadState = {
+                initialLoadComplete: false,
+                updateCount: 0
+            };
+            
+            log(`Setting up persistence for ${docKey}`);
+            
+            // Update handler
+            const updateHandler = async (update, origin) => {
+                log(`Update triggered for ${docKey}, initialLoadComplete: ${loadState.initialLoadComplete}, origin: ${origin}`);
+                
+                if (!loadState.initialLoadComplete || origin === 'persistence') {
+                    log(`Skipping update for ${docKey}`);
+                    return;
+                }
+                
+                try {
+                    await persistence.persist(docKey, update);
+                    loadState.updateCount++;
+                    stateElement.textContent = `Active - ${loadState.updateCount} updates persisted`;
+                    log(`Persisted update ${loadState.updateCount} for ${docKey}`, 'success');
+                } catch (error) {
+                    log(`Failed to persist ${docKey}: ${error}`, 'error');
+                }
+            };
+            
+            doc.on('update', updateHandler);
+            
+            // Load existing data
+            persistence.load(docKey).then(data => {
+                if (data && data.length > 0) {
+                    Y.applyUpdate(doc, data, 'persistence');
+                    log(`Applied loaded data to ${docKey}`, 'success');
+                    
+                    // Update editor content
+                    const text = doc.getText('content');
+                    editor.textContent = text.toString();
+                }
+                
+                loadState.initialLoadComplete = true;
+                log(`Initial load complete for ${docKey}`);
+                stateElement.textContent = 'Active - Ready for updates';
+            }).catch(error => {
+                log(`Failed to load ${docKey}: ${error}`, 'error');
+                loadState.initialLoadComplete = true;
+            });
+            
+            // Bind editor to Y.Text
+            const text = doc.getText('content');
+            
+            // Editor -> Y.Doc
+            editor.addEventListener('input', () => {
+                const content = editor.textContent;
+                doc.transact(() => {
+                    text.delete(0, text.length);
+                    text.insert(0, content);
+                });
+            });
+            
+            // Y.Doc -> Editor (for external updates)
+            text.observe(() => {
+                if (editor.textContent !== text.toString()) {
+                    editor.textContent = text.toString();
+                }
+            });
+            
+            return { doc, loadState };
+        }
+        
+        // Test functions
+        let editor1State = null;
+        let editor2State = null;
+        
+        window.testBasicPersistence = function() {
+            log('\n=== Testing Basic Persistence ===', 'info');
+            
+            // Setup editor 1
+            const doc1 = new Y.Doc();
+            const editor1 = document.getElementById('editor1');
+            const state1 = document.getElementById('state1');
+            editor1State = setupPersistenceHandler(doc1, 'test-panel-1', editor1, state1);
+            
+            // Setup editor 2
+            const doc2 = new Y.Doc();
+            const editor2 = document.getElementById('editor2');
+            const state2 = document.getElementById('state2');
+            editor2State = setupPersistenceHandler(doc2, 'test-panel-2', editor2, state2);
+            
+            log('Basic persistence test initialized', 'success');
+        };
+        
+        window.testReloadPersistence = function() {
+            log('\n=== Testing Reload Persistence ===', 'info');
+            
+            // Clear existing states
+            if (editor1State) {
+                editor1State.doc.destroy();
+                editor1State = null;
+            }
+            if (editor2State) {
+                editor2State.doc.destroy();
+                editor2State = null;
+            }
+            
+            // Simulate reload by creating new docs
+            setTimeout(() => {
+                log('Simulating page reload...', 'info');
+                
+                // Re-setup editors
+                const doc1 = new Y.Doc();
+                const editor1 = document.getElementById('editor1');
+                const state1 = document.getElementById('state1');
+                editor1State = setupPersistenceHandler(doc1, 'test-panel-1', editor1, state1);
+                
+                const doc2 = new Y.Doc();
+                const editor2 = document.getElementById('editor2');
+                const state2 = document.getElementById('state2');
+                editor2State = setupPersistenceHandler(doc2, 'test-panel-2', editor2, state2);
+                
+                log('Reload simulation complete', 'success');
+            }, 100);
+        };
+        
+        window.clearPersistence = function() {
+            log('\n=== Clearing All Persistence ===', 'info');
+            persistence.clearUpdates('test-panel-1');
+            persistence.clearUpdates('test-panel-2');
+            log('All persistence cleared', 'success');
+        };
+        
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('Page loaded, ready for testing', 'info');
+        });
+    </script>
+</body>
+</html>
