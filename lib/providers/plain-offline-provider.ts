@@ -156,35 +156,42 @@ export class PlainOfflineProvider extends EventEmitter {
   async loadDocument(noteId: string, panelId: string): Promise<ProseMirrorJSON | HtmlString | null> {
     const cacheKey = this.getCacheKey(noteId, panelId)
     
-    console.log(`[PlainOfflineProvider] Loading document for ${cacheKey}`)
+    console.log(`[PlainOfflineProvider] Loading document for noteId: ${noteId}, panelId: ${panelId}, cacheKey: ${cacheKey}`)
     
     // Fix #10: Check if already loading
     if (this.loadingStates.has(cacheKey)) {
       console.log(`[PlainOfflineProvider] Already loading ${cacheKey}, waiting...`)
       await this.loadingStates.get(cacheKey)
-      return this.documents.get(cacheKey) || null
+      const cachedContent = this.documents.get(cacheKey)
+      console.log(`[PlainOfflineProvider] After loading wait, cached content:`, cachedContent)
+      return cachedContent || null
     }
     
     // Check cache first
     if (this.documents.has(cacheKey)) {
-      console.log(`[PlainOfflineProvider] Found cached document for ${cacheKey}`)
+      const cachedContent = this.documents.get(cacheKey)
+      console.log(`[PlainOfflineProvider] Found cached document for ${cacheKey}:`, cachedContent)
       this.updateLastAccess(cacheKey)
-      return this.documents.get(cacheKey) || null
+      return cachedContent || null
     }
     
     // Create loading promise
     const loadPromise = this.adapter.loadDocument(noteId, panelId)
       .then(result => {
         if (result) {
-          console.log(`[PlainOfflineProvider] Loaded document for ${cacheKey}, version: ${result.version}`)
-          this.documents.set(cacheKey, result.content)
-          this.documentVersions.set(cacheKey, result.version)
-          this.updateLastAccess(cacheKey)
+          console.log(`[PlainOfflineProvider] Loaded document for ${cacheKey}, version: ${result.version}, content:`, result.content)
           
           // Fix #1: Clear empty content
           if (this.isEmptyContent(result.content)) {
-            console.log(`[PlainOfflineProvider] Clearing empty content for ${cacheKey}`)
-            this.documents.set(cacheKey, { type: 'doc', content: [] })
+            console.log(`[PlainOfflineProvider] Content is empty, using empty doc for ${cacheKey}`)
+            const emptyDoc = { type: 'doc', content: [] }
+            this.documents.set(cacheKey, emptyDoc)
+            this.documentVersions.set(cacheKey, result.version)
+            this.updateLastAccess(cacheKey)
+          } else {
+            this.documents.set(cacheKey, result.content)
+            this.documentVersions.set(cacheKey, result.version)
+            this.updateLastAccess(cacheKey)
           }
         } else {
           console.log(`[PlainOfflineProvider] No document found for ${cacheKey}`)
@@ -215,7 +222,7 @@ export class PlainOfflineProvider extends EventEmitter {
   async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, skipPersist = false): Promise<void> {
     const cacheKey = this.getCacheKey(noteId, panelId)
     
-    console.log(`[PlainOfflineProvider] Saving document for ${cacheKey}`)
+    console.log(`[PlainOfflineProvider] Saving document for noteId: ${noteId}, panelId: ${panelId}, cacheKey: ${cacheKey}, content:`, content)
     
     // Update local cache
     this.documents.set(cacheKey, content)

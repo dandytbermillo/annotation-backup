@@ -112,24 +112,39 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
   ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, placeholder, provider, onCreateAnnotation }, ref) => {
     // Fix #3: Track loading state
     const [isContentLoading, setIsContentLoading] = useState(true)
+    const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
     
-    // Fix #10: Memoize content loading
-    const initialContent = useMemo(() => {
-      if (!provider || !noteId) return content || ''
+    // Load content from provider when noteId/panelId changes
+    useEffect(() => {
+      if (!provider || !noteId) {
+        setIsContentLoading(false)
+        return
+      }
+      
+      console.log(`[TiptapEditorPlain] Loading content for noteId: ${noteId}, panelId: ${panelId}`)
+      setIsContentLoading(true)
       
       // Load content from provider asynchronously
-      provider.loadDocument(noteId, panelId).then(loadedContent => {
-        if (loadedContent && editor) {
-          editor.commands.setContent(loadedContent)
-          setIsContentLoading(false)
+      provider.loadDocument(noteId, panelId).then(loadedDoc => {
+        console.log(`[TiptapEditorPlain] Loaded document:`, loadedDoc)
+        if (loadedDoc) {
+          // loadDocument returns the content directly (ProseMirrorJSON or HtmlString)
+          setLoadedContent(loadedDoc)
+        } else {
+          // No content found, use empty document
+          setLoadedContent({ type: 'doc', content: [] })
         }
+        setIsContentLoading(false)
       }).catch(error => {
         console.error('[TiptapEditorPlain] Failed to load content:', error)
+        setLoadedContent({ type: 'doc', content: [] })
         setIsContentLoading(false)
       })
-      
-      return content || ''
-    }, [noteId, panelId]) // Only reload when noteId or panelId changes
+    }, [provider, noteId, panelId])
+    
+    // Don't use any initial content if we're loading from provider
+    // This prevents the editor from being initialized with empty content
+    const initialContent = isContentLoading && provider ? undefined : (loadedContent || content || '')
     
     const editor = useEditor({
       extensions: [
@@ -150,12 +165,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       content: initialContent,
       editable: isEditable,
       onCreate: ({ editor }) => {
-        // Fix #1: Prevent duplicate "Start writing..."
-        const currentContent = editor.getHTML()
-        if (!currentContent || currentContent === '<p></p>' || currentContent.trim() === '') {
-          editor.commands.clearContent()
+        // Don't clear content or set loading false here if we're still loading
+        if (!isContentLoading) {
+          // Fix #1: Prevent duplicate "Start writing..."
+          const currentContent = editor.getHTML()
+          if (!currentContent || currentContent === '<p></p>' || currentContent.trim() === '') {
+            editor.commands.clearContent()
+          }
         }
-        setIsContentLoading(false)
       },
       onUpdate: ({ editor }) => {
         // Get content as JSON for plain mode
@@ -239,9 +256,24 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       }
     }, [editor, isEditable])
 
+    // Update editor content when loaded content changes
+    useEffect(() => {
+      if (editor && loadedContent && !isContentLoading) {
+        console.log('[TiptapEditorPlain] Setting loaded content in editor:', loadedContent)
+        // Use a slight delay to ensure editor is fully ready
+        setTimeout(() => {
+          if (editor && !editor.isDestroyed) {
+            editor.commands.setContent(loadedContent, false)
+            // Force a view update
+            editor.view.updateState(editor.view.state)
+          }
+        }, 0)
+      }
+    }, [editor, loadedContent, isContentLoading])
+
     // Fix #2 & #5: Handle content updates with composite key awareness
     useEffect(() => {
-      if (editor && !isContentLoading && content !== undefined) {
+      if (editor && !isContentLoading && !loadedContent && content !== undefined) {
         const currentJSON = editor.getJSON()
         const newContent = typeof content === 'string' 
           ? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: content }] }] }
@@ -252,7 +284,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           editor.commands.setContent(newContent)
         }
       }
-    }, [editor, content, isContentLoading])
+    }, [editor, content, isContentLoading, loadedContent])
 
     // Add styles for annotations and decorations (same as Yjs version)
     useEffect(() => {

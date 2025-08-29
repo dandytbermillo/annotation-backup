@@ -207,7 +207,7 @@ describe('Annotation Workflow - Plain Mode', () => {
         )
       }
       
-      const { container } = render(<TestComponent />)
+      const { container } = render(React.createElement(TestComponent))
       
       // Set up canvas context with selected text
       const { dispatch } = (window as any).__canvasContext = {

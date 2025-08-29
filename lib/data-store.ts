@@ -1,4 +1,6 @@
-export class DataStore {
+import { EventEmitter } from './event-emitter'
+
+export class DataStore extends EventEmitter {
   private data = new Map<string, any>()
 
   get(key: string) {
@@ -7,6 +9,7 @@ export class DataStore {
 
   set(key: string, value: any) {
     this.data.set(key, value)
+    this.emit('set', key)
   }
 
   has(key: string) {
@@ -16,6 +19,7 @@ export class DataStore {
   update(key: string, updates: any) {
     const existing = this.get(key) || {}
     this.set(key, { ...existing, ...updates })
+    this.emit('update', key)
   }
 
   forEach(callback: (value: any, key: string) => void) {
@@ -23,6 +27,10 @@ export class DataStore {
   }
 
   delete(key: string) {
-    return this.data.delete(key)
+    const result = this.data.delete(key)
+    if (result) {
+      this.emit('delete', key)
+    }
+    return result
   }
 }

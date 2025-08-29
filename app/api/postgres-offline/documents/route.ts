@@ -26,6 +26,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { noteId, panelId, content, version } = body
     
+    console.log('[POST Document] Request:', { noteId, panelId, version, contentType: typeof content })
+    
     if (!noteId || !panelId || !content || version === undefined) {
       return NextResponse.json(
         { error: 'Missing required fields: noteId, panelId, content, version' },
@@ -47,17 +49,21 @@ export async function POST(request: NextRequest) {
       : content
     
     const normalizedPanelId = normalizePanelId(noteId, panelId)
+    console.log('[POST Document] Normalized panelId:', normalizedPanelId)
     
-    await pool.query(
+    const result = await pool.query(
       `INSERT INTO document_saves 
        (note_id, panel_id, content, version, created_at)
        VALUES ($1, $2, $3::jsonb, $4, NOW())
        ON CONFLICT (note_id, panel_id, version)
-       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+       RETURNING id`,
       [noteId, normalizedPanelId, JSON.stringify(contentJson), version]
     )
     
-    return NextResponse.json({ success: true })
+    console.log('[POST Document] Save successful, document ID:', result.rows[0]?.id)
+    
+    return NextResponse.json({ success: true, id: result.rows[0]?.id })
   } catch (error) {
     console.error('[POST /api/postgres-offline/documents] Error:', error)
     return NextResponse.json(

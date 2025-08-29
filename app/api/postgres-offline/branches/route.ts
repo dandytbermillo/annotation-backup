@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { 
+      id,
       noteId = '', 
       parentId = '', 
       type = 'note', 
@@ -18,16 +19,24 @@ export async function POST(request: NextRequest) {
       anchors 
     } = body
     
+    // Accept only real UUIDs for primary key; otherwise let DB generate one
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+    const idOrNull = id && uuidRegex.test(String(id).trim()) ? String(id).trim() : null
+    
+    // parentId: TEXT column; keep non-empty values ("main", "branch-...") and coalesce blanks to null
+    const parentIdOrNull = parentId && String(parentId).trim() ? String(parentId).trim() : null
+    
     const result = await pool.query(
       `INSERT INTO branches 
-       (note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, NOW(), NOW())
+       (id, note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
+       VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW(), NOW())
        RETURNING id, note_id as "noteId", parent_id as "parentId", 
                  type, original_text as "originalText", metadata, anchors, 
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
+        idOrNull,
         noteId, 
-        parentId, 
+        parentIdOrNull, 
         type, 
         originalText, 
         JSON.stringify(metadata), 
@@ -38,8 +47,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result.rows[0])
   } catch (error) {
     console.error('[POST /api/postgres-offline/branches] Error:', error)
+    console.error('Request body:', { id, noteId, parentId, type, originalText, anchors })
     return NextResponse.json(
-      { error: 'Failed to create branch' },
+      { error: 'Failed to create branch', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }
@@ -64,6 +74,7 @@ export async function GET(request: NextRequest) {
               created_at as "createdAt", updated_at as "updatedAt"
        FROM branches 
        WHERE note_id = $1
+         AND deleted_at IS NULL
        ORDER BY created_at ASC`,
       [noteId]
     )

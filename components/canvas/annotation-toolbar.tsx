@@ -39,15 +39,17 @@ export function AnnotationToolbar() {
     
     if (isPlainMode && plainProvider && noteId) {
       // Plain mode: Create annotation in database
+      // Use raw UUID for database ID, but keep branch-xxx format for UI
       plainProvider.createBranch({
-        id: branchId,
+        id: annotationId, // Use raw UUID for database
         noteId: noteId,
-        parentId: panel,
+        parentId: panel,  // Keep as-is: 'main', 'branch-xxx', or UUID
         type: type,
         originalText: text,
         metadata: {
           annotationType: type,
-          annotationId: annotationId
+          annotationId: annotationId,
+          displayId: branchId // Store the UI ID in metadata
         },
         anchors: state.selectedRange ? {
           start: state.selectedRange.startOffset,

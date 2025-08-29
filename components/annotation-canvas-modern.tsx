@@ -180,9 +180,10 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       setTimeout(() => {
         const getPanelPosition = (id: string) => {
           if (isPlainMode) {
-            // In plain mode, we need to get position from somewhere
-            // For now, return a default position
-            return { x: 2000 + Math.random() * 500, y: 1500 + Math.random() * 500 }
+            // In plain mode, use dataStore position
+            const dataStore = (window as any).canvasDataStore
+            const panel = dataStore?.get(id)
+            return panel?.position || { x: 2000, y: 1500 }
           } else {
             const panel = CollaborationProvider.getInstance().getBranchesMap().get(id)
             return panel?.position || null
@@ -307,31 +308,11 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             )}
 
             {/* Panels */}
-            {panels.map(panelId => {
-              const provider = CollaborationProvider.getInstance()
-              provider.setCurrentNote(noteId)
-              const branchesMap = provider.getBranchesMap()
-              const branch = branchesMap.get(panelId)
-              
-              if (!branch) {
-                console.warn(`Branch ${panelId} not found`)
-                return null
-              }
-              
-              // Ensure position exists
-              const position = branch.position || { x: 2000, y: 1500 }
-              
-              return (
-                <CanvasPanel
-                  key={panelId}
-                  panelId={panelId}
-                  branch={branch}
-                  position={position}
-                  noteId={noteId}
-                  onClose={panelId !== 'main' ? () => handlePanelClose(panelId) : undefined}
-                />
-              )
-            })}
+            <PanelsRenderer
+              noteId={noteId}
+              panels={panels}
+              onClose={handlePanelClose}
+            />
           </div>
         </div>
 
@@ -343,5 +324,50 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 })
 
 ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
+
+// Renders panels using plain dataStore in plain mode, Yjs map otherwise
+function PanelsRenderer({
+  noteId,
+  panels,
+  onClose,
+}: {
+  noteId: string
+  panels: string[]
+  onClose: (id: string) => void
+}) {
+  const { dataStore } = useCanvas()
+  const plainProvider = getPlainProvider()
+  const isPlainMode = !!plainProvider
+  
+  // Yjs access only when not in plain mode
+  const provider = CollaborationProvider.getInstance()
+  if (!isPlainMode) {
+    provider.setCurrentNote(noteId)
+  }
+  const branchesMap = !isPlainMode ? provider.getBranchesMap() : null
+  
+  return (
+    <>
+      {panels.map((panelId) => {
+        const branch = isPlainMode ? dataStore.get(panelId) : branchesMap?.get(panelId)
+        if (!branch) {
+          console.warn(`[PanelsRenderer] Branch ${panelId} not found in ${isPlainMode ? 'plain' : 'yjs'} store`)
+          return null
+        }
+        const position = branch.position || { x: 2000, y: 1500 }
+        return (
+          <CanvasPanel
+            key={panelId}
+            panelId={panelId}
+            branch={branch}
+            position={position}
+            noteId={noteId}
+            onClose={panelId !== 'main' ? () => onClose(panelId) : undefined}
+          />
+        )
+      })}
+    </>
+  )
+}
 
 export default ModernAnnotationCanvas 

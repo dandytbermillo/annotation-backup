@@ -27,6 +27,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
+  const [plainProvider, setPlainProvider] = useState<PlainOfflineProvider | null>(null)
   
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
@@ -45,15 +46,29 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   })
 
   // Get appropriate provider based on mode
-  let plainProvider: PlainOfflineProvider | null = null
   let ydoc = null
   const provider = UnifiedProvider.getInstance()
   
-  if (isPlainMode) {
-    // Plain mode: Get the initialized provider
-    const { getPlainProvider } = require('@/lib/provider-switcher')
-    plainProvider = getPlainProvider()
-  } else {
+  // Load plain provider when in plain mode
+  useEffect(() => {
+    if (isPlainMode) {
+      // Poll for plain provider initialization
+      const checkProvider = () => {
+        const { getPlainProvider } = require('@/lib/provider-switcher')
+        const provider = getPlainProvider()
+        if (provider) {
+          console.log('[CanvasPanel] Plain provider initialized')
+          setPlainProvider(provider)
+        } else {
+          // Retry after a short delay
+          setTimeout(checkProvider, 100)
+        }
+      }
+      checkProvider()
+    }
+  }, [isPlainMode])
+  
+  if (!isPlainMode) {
     // Yjs mode: Use enhanced provider to get subdoc with PostgreSQL persistence
     // IMPORTANT: Only import and use Yjs components when NOT in plain mode
     ydoc = useMemo(() => {
@@ -378,7 +393,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const showToolbar = isMainPanel || isEditing
 
   // Filter branches based on active filter
-  const allBranches = provider.getBranches ? provider.getBranches(panelId) : [] // Get branches safely
+  // In plain mode, get branches from dataStore; otherwise use provider
+  const allBranches = isPlainMode 
+    ? (dataStore.get(panelId)?.branches || [])
+    : (provider.getBranches ? provider.getBranches(panelId) : [])
   const filteredBranches = allBranches.filter((branchId: string) => {
     if (activeFilter === 'all') return true
     
@@ -397,11 +415,25 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
   // Force re-render when branches change
   useEffect(() => {
-    // Skip Yjs observation in plain mode
+    // In plain mode, listen for dataStore updates
     if (isPlainMode) {
-      // In plain mode, we don't have reactive updates
-      // Changes will be reflected on reload or manual refresh
-      return
+      // Set up listener for dataStore changes
+      const handleDataStoreUpdate = (updatedPanelId: string) => {
+        // If this panel or its branches were updated, force re-render
+        if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
+          setLastBranchUpdate(Date.now())
+          forceUpdate()
+        }
+      }
+      
+      // Listen for dataStore updates
+      dataStore.on('update', handleDataStoreUpdate)
+      dataStore.on('set', handleDataStoreUpdate)
+      
+      return () => {
+        dataStore.off('update', handleDataStoreUpdate)
+        dataStore.off('set', handleDataStoreUpdate)
+      }
     }
     
     // Check if branchesMap has observe method (Yjs Map)
@@ -416,13 +448,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         setLastBranchUpdate(Date.now())
       }
       
-      forceUpdate({})
+      forceUpdate()
     }
     
     // Listen for changes to the YJS native structure
     const branchesArrayUpdateHandler = () => {
       setLastBranchUpdate(Date.now())
-      forceUpdate({})
+      forceUpdate()
     }
     
     // Listen for any changes to the branches map (legacy)
@@ -642,17 +674,28 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   Loading content...
                 </div>
               ) : isPlainMode ? (
-                <TiptapEditorPlain
-                  ref={editorRef as any}
-                  content={currentBranch.content}
-                  isEditable={isEditing}
-                  noteId={currentNoteId || ''}
-                  panelId={panelId}
-                  onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
-                  onSelectionChange={handleSelectionChange}
-                  placeholder={isEditing ? "Start typing..." : ""}
-                  provider={plainProvider || undefined}
-                />
+                plainProvider ? (
+                  <TiptapEditorPlain
+                    ref={editorRef as any}
+                    content={currentBranch.content}
+                    isEditable={isEditing}
+                    noteId={currentNoteId || ''}
+                    panelId={panelId}
+                    onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
+                    onSelectionChange={handleSelectionChange}
+                    placeholder={isEditing ? "Start typing..." : ""}
+                    provider={plainProvider}
+                  />
+                ) : (
+                  <div style={{
+                    padding: '40px',
+                    textAlign: 'center',
+                    color: '#666',
+                    fontSize: '14px'
+                  }}>
+                    Initializing plain mode provider...
+                  </div>
+                )
               ) : (
                 <TiptapEditor
                   ref={editorRef as any}
