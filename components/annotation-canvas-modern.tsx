@@ -1,13 +1,15 @@
 "use client"
 
 import { useEffect, useState, forwardRef, useImperativeHandle } from "react"
-import { CanvasProvider } from "./canvas/canvas-context"
+import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { CollaborationProvider, clearEditorDocsForNote } from "@/lib/yjs-provider"
 import { CanvasControls } from "./canvas/canvas-controls"
 import { Minimap } from "./canvas/minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
+import { panToPanel } from "@/lib/canvas/pan-animations"
+import { getPlainProvider } from "@/lib/provider-switcher"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -143,24 +145,63 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   }
 
   const handleCreatePanel = (panelId: string) => {
+    console.log('[AnnotationCanvas] Creating panel:', panelId)
+    
+    // Check if we're in plain mode
+    const plainProvider = getPlainProvider()
+    const isPlainMode = !!plainProvider
+    
     setPanels(prev => {
       // Only add if not already present
       if (prev.includes(panelId)) {
         return prev
       }
       
-      // Ensure the provider knows about the current note
-      const provider = CollaborationProvider.getInstance()
-      provider.setCurrentNote(noteId)
-      
-      // Get the panel data from YJS
-      const branchesMap = provider.getBranchesMap()
-      const panelData = branchesMap.get(panelId)
-      
-      if (!panelData) {
-        console.warn(`No data found for panel ${panelId}`)
-        return prev
+      if (isPlainMode) {
+        // Plain mode: Check if panel data exists
+        // Note: We'll need to get dataStore from context provider
+        console.log('[Plain mode] Creating panel:', panelId)
+      } else {
+        // Ensure the provider knows about the current note
+        const provider = CollaborationProvider.getInstance()
+        provider.setCurrentNote(noteId)
+        
+        // Get the panel data from YJS
+        const branchesMap = provider.getBranchesMap()
+        const panelData = branchesMap.get(panelId)
+        
+        if (!panelData) {
+          console.warn(`No data found for panel ${panelId}`)
+          return prev
+        }
       }
+      
+      // After adding panel, smoothly pan to it
+      setTimeout(() => {
+        const getPanelPosition = (id: string) => {
+          if (isPlainMode) {
+            // In plain mode, we need to get position from somewhere
+            // For now, return a default position
+            return { x: 2000 + Math.random() * 500, y: 1500 + Math.random() * 500 }
+          } else {
+            const panel = CollaborationProvider.getInstance().getBranchesMap().get(id)
+            return panel?.position || null
+          }
+        }
+        
+        panToPanel(
+          panelId,
+          getPanelPosition,
+          canvasState,
+          (updates) => setCanvasState(prev => ({ ...prev, ...updates })),
+          {
+            duration: 600,
+            callback: () => {
+              console.log('[AnnotationCanvas] Finished panning to panel:', panelId)
+            }
+          }
+        )
+      }, 100) // Small delay to ensure panel is rendered
       
       return [...prev, panelId]
     })

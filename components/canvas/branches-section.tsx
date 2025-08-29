@@ -4,6 +4,7 @@ import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import { BranchItem } from "./branch-item"
 import { CollaborationProvider } from "@/lib/yjs-provider"
+import { getPlainProvider } from "@/lib/provider-switcher"
 import { useEffect, useState } from "react"
 
 interface BranchesSectionProps {
@@ -48,10 +49,23 @@ Features:
   }
 
   const getFilteredBranches = () => {
-    // Get branch data from CollaborationProvider
-    const provider = CollaborationProvider.getInstance()
-    const branchesMap = provider.getBranchesMap()
-    const currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
+    // Check if we're in plain mode
+    const plainProvider = getPlainProvider()
+    const isPlainMode = !!plainProvider
+    
+    let currentBranch
+    let branchesMap
+    
+    if (isPlainMode) {
+      // Plain mode: Get data from dataStore
+      currentBranch = dataStore.get(panelId) || branch
+      branchesMap = dataStore
+    } else {
+      // Yjs mode: Get branch data from CollaborationProvider
+      const provider = CollaborationProvider.getInstance()
+      branchesMap = provider.getBranchesMap()
+      currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
+    }
     
     if (!currentBranch.branches || currentBranch.branches.length === 0) return []
 

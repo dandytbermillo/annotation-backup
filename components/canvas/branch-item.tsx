@@ -2,6 +2,7 @@
 
 import { useCanvas } from "./canvas-context"
 import { CollaborationProvider } from "@/lib/yjs-provider"
+import { getPlainProvider } from "@/lib/provider-switcher"
 
 interface BranchItemProps {
   branchId: string
@@ -11,10 +12,24 @@ interface BranchItemProps {
 export function BranchItem({ branchId, parentId }: BranchItemProps) {
   const { dataStore, dispatch, state } = useCanvas()
   
-  // Get branch data from CollaborationProvider
-  const provider = CollaborationProvider.getInstance()
-  const branchesMap = provider.getBranchesMap()
-  const branch = branchesMap.get(branchId) || dataStore.get(branchId)
+  // Check if we're in plain mode
+  const plainProvider = getPlainProvider()
+  const isPlainMode = !!plainProvider
+  
+  // Get branch data based on mode
+  let branch
+  let branchesMap
+  
+  if (isPlainMode) {
+    // Plain mode: Get from dataStore
+    branch = dataStore.get(branchId)
+    branchesMap = dataStore
+  } else {
+    // Yjs mode: Get from CollaborationProvider
+    const provider = CollaborationProvider.getInstance()
+    branchesMap = provider.getBranchesMap()
+    branch = branchesMap.get(branchId) || dataStore.get(branchId)
+  }
 
   if (!branch) return null
 
@@ -50,9 +65,18 @@ export function BranchItem({ branchId, parentId }: BranchItemProps) {
       return
     }
     
-    // Use YJS native types to get the accurate sibling count
-    const allSiblings = provider.getBranches(parentId)
-    const siblingCount = allSiblings.length
+    // Get sibling count based on mode
+    let siblingCount
+    if (isPlainMode) {
+      const parent = dataStore.get(parentId)
+      const siblings = parent?.branches || []
+      siblingCount = siblings.length
+    } else {
+      // Use YJS native types to get the accurate sibling count
+      const provider = CollaborationProvider.getInstance()
+      const allSiblings = provider.getBranches(parentId)
+      siblingCount = allSiblings.length
+    }
 
     const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
     const targetY = parentBranch.position.y + siblingCount * 650 // PANEL_SPACING_Y

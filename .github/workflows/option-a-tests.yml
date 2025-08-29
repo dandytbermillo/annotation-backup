@@ -87,12 +87,23 @@ jobs:
       - name: Check for Yjs imports in plain mode files
         run: |
           echo "Checking for Yjs imports in plain mode files..."
-          if grep -r "from 'yjs'\|from 'y-" lib/providers/plain-offline-provider.ts lib/adapters/*-offline-adapter.ts; then
+          if grep -r "from 'yjs'\|from 'y-" lib/providers/plain-offline-provider.ts lib/adapters/*-offline-adapter.ts components/canvas/tiptap-editor-plain.tsx lib/utils/text-anchoring.ts lib/models/annotation.ts; then
             echo "ERROR: Found Yjs imports in plain mode files"
             exit 1
           else
             echo "✓ No Yjs imports found in plain mode files"
           fi
+          
+      - name: Run unit tests for plain mode
+        run: npm test -- __tests__/plain-mode/ --passWithNoTests
+        env:
+          NEXT_PUBLIC_COLLAB_MODE: plain
+          
+      - name: Test 10 TipTap fixes preservation
+        run: npm test -- __tests__/plain-mode/ten-fixes-preservation.test.ts --passWithNoTests
+        
+      - name: Test annotation workflow
+        run: npm test -- __tests__/plain-mode/annotation-workflow.test.ts --passWithNoTests
 
       - name: Local sound notification (best-effort)
         if: always()

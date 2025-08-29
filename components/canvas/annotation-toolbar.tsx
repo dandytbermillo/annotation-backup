@@ -3,6 +3,8 @@
 import { useCanvas } from "./canvas-context"
 import { v4 as uuidv4 } from "uuid"
 import { CollaborationProvider } from "@/lib/yjs-provider"
+import { getPlainProvider } from "@/lib/provider-switcher"
+import { createAnnotationBranch } from "@/lib/models/annotation"
 
 export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()
@@ -20,47 +22,75 @@ export function AnnotationToolbar() {
     const annotationId = uuidv4()
     const branchId = `branch-${annotationId}`
 
-    // Create the branch data
+    // Check if we're in plain mode
+    const plainProvider = getPlainProvider()
+    const isPlainMode = !!plainProvider
+    
+    // Create the branch data with proper quoted content
     const branchData = {
       id: branchId,
-      title: `${type.charAt(0).toUpperCase() + type.slice(1)} on "${text.substring(0, 30)}${text.length > 30 ? '...' : ''}"`,
-      content: `<p>Start writing your ${type} here...</p>`, // Default content for new branches
-      type: type,
-      parentId: panel,
-      originalText: text,
+      ...createAnnotationBranch(type, panel, noteId || '', text, { x: 0, y: 0 }),
       branches: [],
-      position: { x: 0, y: 0 },
       isEditable: true,
     }
 
-    // Add the branch to both data stores
+    // Add the branch to data store
     dataStore.set(branchId, branchData)
     
-    // Use new YJS native types approach via CollaborationProvider
-    const provider = CollaborationProvider.getInstance()
-    if (noteId) {
-      provider.setCurrentNote(noteId)
-    }
-    
-    // Use the new addBranch method that handles YJS native types properly
-    provider.addBranch(panel, branchId, branchData)
-    
-    // Update DataStore for backward compatibility
-    const parentPanel = dataStore.get(panel)
-    if (parentPanel) {
-      // Get current branches using the new YJS method (this will be consistent)
-      const currentBranches = provider.getBranches(panel)
-      dataStore.update(panel, { branches: currentBranches })
-    } else {
-      // If parent doesn't exist in dataStore, create minimal entry
-      dataStore.set(panel, { 
-        branches: provider.getBranches(panel),
-        position: { x: 2000, y: 1500 } // Default position
+    if (isPlainMode && plainProvider && noteId) {
+      // Plain mode: Create annotation in database
+      plainProvider.createBranch({
+        id: branchId,
+        noteId: noteId,
+        parentId: panel,
+        type: type,
+        originalText: text,
+        metadata: {
+          annotationType: type,
+          annotationId: annotationId
+        },
+        anchors: state.selectedRange ? {
+          start: state.selectedRange.startOffset,
+          end: state.selectedRange.endOffset,
+          context: text
+        } : undefined
+      }).catch(error => {
+        console.error('[AnnotationToolbar] Failed to create branch:', error)
       })
+      
+      // Update parent's branches list
+      const parentPanel = dataStore.get(panel)
+      if (parentPanel) {
+        const branches = parentPanel.branches || []
+        dataStore.update(panel, { branches: [...branches, branchId] })
+      }
+    } else {
+      // Yjs mode: Use collaboration provider
+      const provider = CollaborationProvider.getInstance()
+      if (noteId) {
+        provider.setCurrentNote(noteId)
+      }
+      
+      // Use the new addBranch method that handles YJS native types properly
+      provider.addBranch(panel, branchId, branchData)
+      
+      // Update DataStore for backward compatibility
+      const parentPanel = dataStore.get(panel)
+      if (parentPanel) {
+        // Get current branches using the new YJS method (this will be consistent)
+        const currentBranches = provider.getBranches(panel)
+        dataStore.update(panel, { branches: currentBranches })
+      } else {
+        // If parent doesn't exist in dataStore, create minimal entry
+        dataStore.set(panel, { 
+          branches: provider.getBranches(panel),
+          position: { x: 2000, y: 1500 } // Default position
+        })
+      }
     }
 
     // Calculate position for new panel
-    const branchesMap = provider.getBranchesMap()
+    const branchesMap = isPlainMode ? new Map() : CollaborationProvider.getInstance().getBranchesMap()
     const parentBranch = branchesMap.get(panel) || dataStore.get(panel)
     
     if (!parentBranch || !parentBranch.position) {
@@ -73,8 +103,10 @@ export function AnnotationToolbar() {
         branchData.position = defaultPosition
       }
     } else {
-      // Count siblings using the new YJS native branches method
-      const currentBranches = provider.getBranches(panel)
+      // Count siblings
+      const currentBranches = isPlainMode 
+        ? (dataStore.get(panel)?.branches || [])
+        : CollaborationProvider.getInstance().getBranches(panel)
       const siblingCount = currentBranches.length - 1 // Subtract 1 because we just added this branch
 
       const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
