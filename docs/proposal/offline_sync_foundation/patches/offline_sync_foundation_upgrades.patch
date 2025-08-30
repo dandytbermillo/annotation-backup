@@ -1,0 +1,272 @@
+*** Begin Patch
+*** Update File: docs/proposal/offline_sync_foundation/IMPLEMENTATION_PLAN.md
+@@
+ 
+ ## Phase 2: Full-Text Search (Week 2)
+ 
++## Queue Engine Upgrades (Reliability & Control)
+ 
++### 1) Operation Envelope (Conflict-Aware)
++- Fields added to each queued op (and IPC/API payloads):
+  - idempotency_key: string (UUIDv4 recommended). Unique per logical operation; prevents duplicate processing on retries.
+  - origin_device_id: string. Useful for multi-device reconciliation/telemetry.
+  - schema_version: integer (default 1). Enables forward-compatible evolution of payload shape.
+  - base_version: integer | null. Last known server version for the target entity.
+  - base_hash: text | null. Hash of last known server content for fast drift detection.
+  - created_at: timestamp. Operation creation time on client.
+
+Envelope example (renderer → IPC):
+```json
+{
+  "idempotency_key": "9c9f5c42-3bde-4a1d-9b70-58b4dbe3bd2b",
+  "origin_device_id": "macbook-pro-dandy",
+  "schema_version": 1,
+  "type": "update",
+  "table_name": "document_saves",
+  "entity_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+  "base_version": 7,
+  "base_hash": "sha256:3f0d…",
+  "data": { "content": {/* ProseMirror JSON */}, "noteId":"…", "panelId":"…" },
+  "created_at": "2025-08-30T06:55:00Z"
+}
+```
+
+Server-side conflict check (pseudocode):
+```sql
+-- Fail fast if base_version or base_hash mismatches server
+-- (Application enforces; DB may optionally re-check with constraints in advanced setups)
+```
+
+### 2) Queue Table Enhancements
+- Columns to add to offline_queue:
+  - idempotency_key TEXT UNIQUE NOT NULL
+  - origin_device_id TEXT
+  - schema_version INTEGER DEFAULT 1 NOT NULL
+  - priority SMALLINT DEFAULT 0 NOT NULL     -- higher value = higher priority
+  - expires_at TIMESTAMPTZ                    -- TTL for stale ops
+  - group_id UUID                             -- group related ops for ordering
+  - depends_on UUID[]                         -- ensure processing order (create → update)
+
+Indexes:
+- Unique: (idempotency_key)
+- Processing helpers: (status, priority DESC, created_at ASC), (table_name, entity_id, status)
+
+### 3) Coalescing & Batching
+- Coalescing (pre-flush): For multiple updates to same (table_name, entity_id), keep the last write or merge patches.
+- Batching: Flush in small batches per table to preserve local ordering and reduce roundtrips; wrap per-batch in a transaction.
+
+### 4) Backoff, Dead-Letter, TTL
+- Exponential backoff with jitter; cap retries (e.g., 5).
+- On exceeding retries, move to offline_dead_letter (see SQL below).
+- Drop or demote ops past expires_at to avoid queue bloat.
+
+### 5) Web Mode Export Package (No Durable Storage)
+- Provide “Export Offline Package”:
+  - JSON file with queued operations and metadata (idempotency_key, device, timestamps).
+  - “Import Package” endpoint to enqueue on reconnect in a trusted context (Electron or server).
+
+## Conflict Policy (No Yjs)
+- Early detection:
+  - base_version mismatch → conflict flag.
+  - base_hash mismatch → likely conflict; faster than deep diff.
+- Merge strategy (ProseMirror JSON aware):
+  - Different blocks → auto-merge.
+  - Same block: attempt text-range merge; formatting-only changes auto-merge.
+  - Hard conflicts → UI dialog (keep local, keep remote, block-wise merge).
+- Last-write-wins only with explicit user confirmation for unresolved conflicts.
+
+## Observability & Ops
+- Metrics (SQL View or API):
+  - pending_count, failed_count, avg_retry_count, p50/p95 processing time.
+- Dead-letter triage UI:
+  - Inspect error_message, requeue/discard with reason.
+- Cleanup:
+  - Purge processed items older than N days; apply backpressure warnings when queue grows.
+
+## Testing
+- Chaos tests: Simulate network loss mid-flush; random server failures.
+- Property-based tests: Validate coalescing rules & dependency ordering.
+- Migration guardrails: Dry-run analyzers to ensure FTS additions don’t lock tables long.
+
+## Implementation Steps (Addenda)
+1. Extend IPC to accept envelope fields (idempotency_key, base_version, base_hash, etc.).
+2. Add coalescing pass before flush (Electron only).
+3. Implement exponential backoff + dead-letter move.
+4. Add metrics endpoint/view; wire to dev/admin UI.
+5. Provide “Export Offline Package”/“Import Package” flows for Web mode contingencies.
+
+*** Add File: docs/proposal/offline_sync_foundation/sql/011_document_saves_fts.up.sql
+-- Enable required extensions (safe if already enabled)
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Flatten ProseMirror JSON into searchable text (IMMUTABLE for generated columns)
+CREATE OR REPLACE FUNCTION pm_extract_text(doc JSONB)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  acc TEXT := '';
+  node JSONB;
+  child JSONB;
+  t TEXT;
+BEGIN
+  IF doc IS NULL THEN
+    RETURN '';
+  END IF;
+  -- Concatenate all "text" fields encountered in the tree
+  FOR node IN SELECT * FROM jsonb_path_query(doc, '$.** ? (@.text != null)') LOOP
+    t := (node->>'text');
+    IF t IS NOT NULL AND length(t) > 0 THEN
+      acc := acc || ' ' || t;
+    END IF;
+  END LOOP;
+  RETURN trim(both from acc);
+END
+$$;
+
+-- Add derived columns and indexes to document_saves
+ALTER TABLE document_saves
+  ADD COLUMN IF NOT EXISTS document_text TEXT
+    GENERATED ALWAYS AS (pm_extract_text(content)) STORED,
+  ADD COLUMN IF NOT EXISTS search_vector TSVECTOR
+    GENERATED ALWAYS AS (
+      to_tsvector('english', unaccent(coalesce(document_text, '')))
+    ) STORED;
+
+-- GIN index for FTS
+CREATE INDEX IF NOT EXISTS idx_document_saves_search
+  ON document_saves
+  USING GIN (search_vector);
+
+-- Trigram index for fuzzy matching
+CREATE INDEX IF NOT EXISTS idx_document_saves_trgm
+  ON document_saves
+  USING GIN (document_text gin_trgm_ops);
+
+COMMENT ON FUNCTION pm_extract_text(jsonb)
+  IS 'Extracts concatenated text from ProseMirror JSON for FTS';
+COMMENT ON COLUMN document_saves.document_text
+  IS 'Flattened text extracted from ProseMirror JSON for search';
+COMMENT ON COLUMN document_saves.search_vector
+  IS 'tsvector built from unaccented extracted text for FTS';
+
+*** Add File: docs/proposal/offline_sync_foundation/sql/011_document_saves_fts.down.sql
+DROP INDEX IF EXISTS idx_document_saves_trgm;
+DROP INDEX IF EXISTS idx_document_saves_search;
+ALTER TABLE document_saves
+  DROP COLUMN IF EXISTS search_vector,
+  DROP COLUMN IF EXISTS document_text;
+DROP FUNCTION IF EXISTS pm_extract_text(jsonb);
+
+*** Add File: docs/proposal/offline_sync_foundation/sql/012_offline_queue_reliability.up.sql
+-- Extend queue for reliability and control
+ALTER TABLE offline_queue
+  ADD COLUMN IF NOT EXISTS idempotency_key TEXT,
+  ADD COLUMN IF NOT EXISTS origin_device_id TEXT,
+  ADD COLUMN IF NOT EXISTS schema_version INTEGER DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS priority SMALLINT DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS group_id UUID,
+  ADD COLUMN IF NOT EXISTS depends_on UUID[];
+
+-- Backfill idempotency_key for existing rows (synthetic)
+UPDATE offline_queue
+SET idempotency_key = coalesce(idempotency_key, encode(gen_random_bytes(16), 'hex'))
+WHERE idempotency_key IS NULL;
+
+-- Enforce uniqueness after backfill
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'offline_queue_idempotency_key_uniq'
+  ) THEN
+    ALTER TABLE offline_queue
+      ADD CONSTRAINT offline_queue_idempotency_key_uniq
+      UNIQUE (idempotency_key);
+  END IF;
+END$$;
+
+-- Helper indexes for scheduling
+CREATE INDEX IF NOT EXISTS idx_offline_queue_status_priority_created
+  ON offline_queue (status, priority DESC, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_offline_queue_entity_status
+  ON offline_queue (table_name, entity_id, status);
+
+-- Dead-letter table
+CREATE TABLE IF NOT EXISTS offline_dead_letter (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  queue_id UUID,                        -- original queue item (if retained)
+  idempotency_key TEXT,
+  type VARCHAR(20) NOT NULL,
+  table_name VARCHAR(50) NOT NULL,
+  entity_id UUID NOT NULL,
+  data JSONB NOT NULL,
+  error_message TEXT,
+  retry_count INTEGER DEFAULT 0,
+  last_error_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  archived BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_created
+  ON offline_dead_letter (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dead_letter_idempotency
+  ON offline_dead_letter (idempotency_key);
+
+COMMENT ON TABLE offline_dead_letter
+  IS 'Stores operations that exceeded retry limits for manual triage';
+
+-- Optional: procedure to move failed ops after N retries
+CREATE OR REPLACE FUNCTION move_to_dead_letter(max_retries INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  moved_count INTEGER := 0;
+BEGIN
+  WITH to_move AS (
+    SELECT *
+    FROM offline_queue
+    WHERE status = 'failed' AND retry_count >= max_retries
+    FOR UPDATE SKIP LOCKED
+  )
+  INSERT INTO offline_dead_letter (queue_id, idempotency_key, type, table_name, entity_id, data, error_message, retry_count, last_error_at)
+  SELECT id, idempotency_key, type, table_name, entity_id, data, error_message, retry_count, NOW()
+  FROM to_move;
+
+  DELETE FROM offline_queue
+  WHERE status = 'failed' AND retry_count >= max_retries;
+
+  GET DIAGNOSTICS moved_count = ROW_COUNT;
+  RETURN moved_count;
+END
+$$;
+
+*** Add File: docs/proposal/offline_sync_foundation/sql/012_offline_queue_reliability.down.sql
+DROP FUNCTION IF EXISTS move_to_dead_letter(INTEGER);
+DROP TABLE IF EXISTS offline_dead_letter;
+DROP INDEX IF EXISTS idx_offline_queue_entity_status;
+DROP INDEX IF EXISTS idx_offline_queue_status_priority_created;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'offline_queue_idempotency_key_uniq'
+  ) THEN
+    ALTER TABLE offline_queue
+      DROP CONSTRAINT offline_queue_idempotency_key_uniq;
+  END IF;
+END$$;
+ALTER TABLE offline_queue
+  DROP COLUMN IF EXISTS depends_on,
+  DROP COLUMN IF EXISTS group_id,
+  DROP COLUMN IF EXISTS expires_at,
+  DROP COLUMN IF EXISTS priority,
+  DROP COLUMN IF EXISTS schema_version,
+  DROP COLUMN IF EXISTS origin_device_id,
+  DROP COLUMN IF EXISTS idempotency_key;
+*** End Patch
+

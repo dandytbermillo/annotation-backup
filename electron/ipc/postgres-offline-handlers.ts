@@ -310,19 +310,84 @@ const handlers = {
         document: 'document_saves'
       }
       
-      const tableName = tableNameMap[op.entityType] || op.entityType
+      const tableName = tableNameMap[op.entityType] || op.table_name || op.entityType
+      const type = op.operation || op.type
+      const entityId = op.entityId || op.entity_id
+      const data = op.payload || op.data
+      
+      // Enhanced fields from operation envelope
+      const idempotency_key = op.idempotency_key || require('crypto').randomUUID()
+      const origin_device_id = op.origin_device_id || require('os').hostname()
+      const schema_version = op.schema_version || 1
+      const priority = op.priority || 0
+      const expires_at = op.expires_at || null
+      const group_id = op.group_id || null
+      const depends_on = op.depends_on || null
       
       await pool.query(
         `INSERT INTO offline_queue 
-         (type, table_name, entity_id, data, status, created_at)
-         VALUES ($1, $2, $3, $4::jsonb, 'pending', NOW())`,
-        [op.operation, tableName, op.entityId, JSON.stringify(op.payload)]
+         (type, table_name, entity_id, data, status, 
+          idempotency_key, origin_device_id, schema_version,
+          priority, expires_at, group_id, depends_on,
+          created_at, updated_at)
+         VALUES ($1, $2, $3, $4::jsonb, 'pending', $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
+         ON CONFLICT (idempotency_key) DO NOTHING`,
+        [
+          type, tableName, entityId, JSON.stringify(data),
+          idempotency_key, origin_device_id, schema_version,
+          priority, expires_at, group_id, depends_on
+        ]
       )
       
-      console.log(`[postgres-offline:enqueueOffline] Enqueued offline operation: ${op.operation} ${op.entityType} ${op.entityId}`)
-      return { success: true }
+      console.log(`[postgres-offline:enqueueOffline] Enqueued: ${type} ${tableName} ${entityId} (key: ${idempotency_key})`)
+      return { success: true, idempotency_key }
     } catch (error: any) {
       console.error('[postgres-offline:enqueueOffline] Error:', error)
+      return { success: false, error: error.message }
+    }
+  },
+  
+  'postgres-offline:queueStatus': async (event: any) => {
+    const pool = getPool()
+    try {
+      // Get queue statistics
+      const result = await pool.query(
+        `SELECT 
+          status, 
+          COUNT(*) as count,
+          MIN(created_at) as oldest,
+          MAX(created_at) as newest
+        FROM offline_queue
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+        GROUP BY status`
+      )
+      
+      // Get expired items count
+      const expiredResult = await pool.query(
+        `SELECT COUNT(*) as count
+        FROM offline_queue
+        WHERE expires_at IS NOT NULL 
+          AND expires_at < NOW()
+          AND status = 'pending'`
+      )
+      
+      // Get dead letter count
+      const deadLetterResult = await pool.query(
+        `SELECT COUNT(*) as count
+        FROM offline_dead_letter
+        WHERE archived = false`
+      )
+      
+      return { 
+        success: true, 
+        data: {
+          byStatus: result.rows,
+          expired: expiredResult.rows[0]?.count || 0,
+          deadLetter: deadLetterResult.rows[0]?.count || 0
+        }
+      }
+    } catch (error: any) {
+      console.error('[postgres-offline:queueStatus] Error:', error)
       return { success: false, error: error.message }
     }
   },
@@ -333,16 +398,39 @@ const handlers = {
     
     let processed = 0
     let failed = 0
+    let expired = 0
     
     try {
       await client.query('BEGIN')
       
-      // Get all pending operations
+      // First, expire stale operations
+      const expireResult = await client.query(
+        `UPDATE offline_queue 
+         SET status = 'failed', 
+             error_message = 'Operation expired',
+             updated_at = NOW()
+         WHERE status = 'pending' 
+           AND expires_at IS NOT NULL 
+           AND expires_at < NOW()
+         RETURNING id`
+      )
+      expired = expireResult.rowCount || 0
+      
+      // Get pending operations ordered by priority and creation time
+      // Skip operations with unmet dependencies
       const result = await client.query(
-        `SELECT id, type, table_name, entity_id, data
+        `SELECT id, type, table_name, entity_id, data, 
+                idempotency_key, depends_on, retry_count
          FROM offline_queue
          WHERE status = 'pending'
-         ORDER BY created_at ASC
+           AND (expires_at IS NULL OR expires_at > NOW())
+           AND NOT EXISTS (
+             SELECT 1 FROM unnest(depends_on) dep_id
+             WHERE dep_id::text IN (
+               SELECT id::text FROM offline_queue WHERE status IN ('pending', 'failed')
+             )
+           )
+         ORDER BY priority DESC, created_at ASC
          FOR UPDATE`
       )
       
@@ -363,16 +451,38 @@ const handlers = {
         } catch (error: any) {
           console.error(`[postgres-offline:flushQueue] Failed to process queue item ${row.id}:`, error)
           
-          // Mark as failed
-          await client.query(
+          // Increment retry count and check if should move to dead letter
+          const retryResult = await client.query(
             `UPDATE offline_queue 
              SET status = 'failed', 
                  error_message = $2,
                  retry_count = retry_count + 1,
                  updated_at = NOW()
-             WHERE id = $1`,
+             WHERE id = $1
+             RETURNING retry_count, idempotency_key, type, table_name, entity_id, data`,
             [row.id, String(error)]
           )
+          
+          // Move to dead letter if exceeded max retries (5)
+          if (retryResult.rows[0] && retryResult.rows[0].retry_count >= 5) {
+            const deadRow = retryResult.rows[0]
+            await client.query(
+              `INSERT INTO offline_dead_letter 
+               (queue_id, idempotency_key, type, table_name, entity_id, data, error_message, retry_count)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [
+                row.id, deadRow.idempotency_key, deadRow.type, 
+                deadRow.table_name, deadRow.entity_id, deadRow.data,
+                String(error), deadRow.retry_count
+              ]
+            )
+            
+            // Delete from queue after moving to dead letter
+            await client.query(
+              `DELETE FROM offline_queue WHERE id = $1`,
+              [row.id]
+            )
+          }
           
           failed++
         }
@@ -392,8 +502,8 @@ const handlers = {
       client.release()
     }
     
-    console.log(`[postgres-offline:flushQueue] Queue flush complete: processed=${processed}, failed=${failed}`)
-    return { success: true, data: { processed, failed } }
+    console.log(`[postgres-offline:flushQueue] Queue flush complete: processed=${processed}, failed=${failed}, expired=${expired}`)
+    return { success: true, data: { processed, failed, expired } }
   }
 }
 
