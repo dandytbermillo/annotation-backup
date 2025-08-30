@@ -9,6 +9,10 @@
  */
 
 import { EventEmitter } from 'events'
+import { PlainBatchManager, BatchOperation } from '../batching/plain-batch-manager'
+import { PlainOfflineQueue } from '../batching/plain-offline-queue'
+import { getPlainBatchConfig, mergeConfig } from '../batching/plain-batch-config'
+import type { PlainBatchConfig } from '../batching/plain-batch-config'
 
 // Types for plain mode - compatible with future Yjs structures
 export interface ProseMirrorJSON {
@@ -84,6 +88,14 @@ export interface PlainCrudAdapter {
 }
 
 /**
+ * Options for PlainOfflineProvider
+ */
+export interface PlainOfflineProviderOptions {
+  enableBatching?: boolean
+  batchConfig?: Partial<PlainBatchConfig>
+}
+
+/**
  * PlainOfflineProvider - Manages state without Yjs
  * Implements all 10 critical fixes from the Yjs implementation
  */
@@ -112,10 +124,27 @@ export class PlainOfflineProvider extends EventEmitter {
   private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
   
   private adapter: PlainCrudAdapter
+  
+  // Batching components
+  private batchManager?: PlainBatchManager
+  private offlineQueue?: PlainOfflineQueue
+  private batchingEnabled: boolean
 
-  constructor(adapter: PlainCrudAdapter) {
+  constructor(adapter: PlainCrudAdapter, options?: PlainOfflineProviderOptions) {
     super()
     this.adapter = adapter
+    
+    // Initialize batching if enabled
+    this.batchingEnabled = options?.enableBatching ?? true
+    
+    if (this.batchingEnabled) {
+      const config = mergeConfig(options?.batchConfig)
+      this.batchManager = new PlainBatchManager(this, config)
+      this.offlineQueue = new PlainOfflineQueue(config)
+      
+      this.setupBatchingListeners()
+    }
+    
     this.initialize()
   }
 
@@ -126,6 +155,46 @@ export class PlainOfflineProvider extends EventEmitter {
     console.log('[PlainOfflineProvider] Initializing...')
     this.persistenceState.initialized = true
     this.emit('initialized')
+  }
+  
+  /**
+   * Setup batching event listeners
+   */
+  private setupBatchingListeners(): void {
+    if (!this.batchManager || !this.offlineQueue) return
+    
+    // Set execute operation for offline queue
+    this.offlineQueue.setExecuteOperation(async (operation: BatchOperation) => {
+      await this.batchExecute(operation.entityType, [operation])
+    })
+    
+    // Forward offline events
+    this.offlineQueue.on('offline', () => {
+      console.log('[PlainOfflineProvider] Switching to offline mode')
+      this.emit('offline')
+    })
+    
+    this.offlineQueue.on('online', () => {
+      console.log('[PlainOfflineProvider] Back online, processing queue')
+      this.emit('online')
+    })
+    
+    // Monitor batch operations
+    if (this.batchManager) {
+      this.batchManager.on('batch-flushed', ({ queueKey, count, originalCount, duration }) => {
+        console.debug(`[Batch] Flushed ${count} operations (from ${originalCount}) for ${queueKey} in ${duration}ms`)
+      })
+      
+      this.batchManager.on('batch-error', ({ operations, error }) => {
+        console.error('[Batch] Error processing batch:', error)
+        // Queue failed operations for retry
+        operations.forEach((op: BatchOperation) => {
+          this.offlineQueue?.enqueue(op).catch(err => 
+            console.error('[Batch] Failed to queue operation:', err)
+          )
+        })
+      })
+    }
   }
 
   /**
@@ -219,14 +288,22 @@ export class PlainOfflineProvider extends EventEmitter {
   /**
    * Save document with version tracking
    */
-  async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, skipPersist = false): Promise<void> {
+  async saveDocument(
+    noteId: string, 
+    panelId: string, 
+    content: ProseMirrorJSON | HtmlString, 
+    skipPersist = false,
+    options?: { skipBatching?: boolean }
+  ): Promise<void> {
     const cacheKey = this.getCacheKey(noteId, panelId)
     
     console.log(`[PlainOfflineProvider] Saving document for noteId: ${noteId}, panelId: ${panelId}, cacheKey: ${cacheKey}, content:`, content)
     
-    // Update local cache
+    // Update local cache; bump version only if content changed
+    const prev = this.documents.get(cacheKey)
+    const changed = JSON.stringify(prev) !== JSON.stringify(content)
     this.documents.set(cacheKey, content)
-    const currentVersion = (this.documentVersions.get(cacheKey) || 0) + 1
+    const currentVersion = (this.documentVersions.get(cacheKey) || 0) + (changed ? 1 : 0)
     this.documentVersions.set(cacheKey, currentVersion)
     this.updateLastAccess(cacheKey)
     
@@ -236,25 +313,48 @@ export class PlainOfflineProvider extends EventEmitter {
     
     // Persist to adapter unless skipped (for initial loads)
     if (!skipPersist) {
-      try {
-        await this.adapter.saveDocument(noteId, panelId, content, currentVersion)
-        console.log(`[PlainOfflineProvider] Persisted document for ${cacheKey}, version: ${currentVersion}`)
-        
-        // Auto-cleanup if update count is high
-        if (this.persistenceState.updateCount > 50) {
-          console.log(`[PlainOfflineProvider] Auto-cleanup after ${this.persistenceState.updateCount} updates`)
-          this.cleanupCache()
-          this.persistenceState.updateCount = 0
-        }
-      } catch (error) {
-        console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
-        // Queue for offline sync
-        await this.adapter.enqueueOffline({
-          operation: 'update',
+      // Use batching if enabled and not explicitly skipped
+      if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
+        await this.batchManager.enqueue({
           entityType: 'document',
-          entityId: cacheKey,
-          payload: { noteId, panelId, content, version: currentVersion }
+          entityId: `${noteId}:${panelId}`,
+          operation: 'update',
+          data: { noteId, panelId, content, version: currentVersion }
         })
+        console.log(`[PlainOfflineProvider] Document queued for batching: ${cacheKey}`)
+      } else {
+        // Direct save without batching
+        try {
+          await this.adapter.saveDocument(noteId, panelId, content, currentVersion)
+          console.log(`[PlainOfflineProvider] Persisted document for ${cacheKey}, version: ${currentVersion}`)
+          
+          // Auto-cleanup if update count is high
+          if (this.persistenceState.updateCount > 50) {
+            console.log(`[PlainOfflineProvider] Auto-cleanup after ${this.persistenceState.updateCount} updates`)
+            this.cleanupCache()
+            this.persistenceState.updateCount = 0
+          }
+        } catch (error) {
+          console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
+          // Queue for offline sync
+          if (this.offlineQueue) {
+            await this.offlineQueue.enqueue({
+              id: this.generateId(),
+              entityType: 'document',
+              entityId: cacheKey,
+              operation: 'update',
+              data: { noteId, panelId, content, version: currentVersion },
+              timestamp: Date.now()
+            })
+          } else {
+            await this.adapter.enqueueOffline({
+              operation: 'update',
+              entityType: 'document',
+              entityId: cacheKey,
+              payload: { noteId, panelId, content, version: currentVersion }
+            })
+          }
+        }
       }
     }
     
@@ -264,7 +364,7 @@ export class PlainOfflineProvider extends EventEmitter {
   /**
    * Branch operations
    */
-  async createBranch(branch: Partial<Branch>): Promise<Branch> {
+  async createBranch(branch: Partial<Branch>, options?: { skipBatching?: boolean }): Promise<Branch> {
     const newBranch: Branch = {
       id: branch.id || this.generateId(),
       noteId: branch.noteId || '',
@@ -279,6 +379,17 @@ export class PlainOfflineProvider extends EventEmitter {
     
     this.branches.set(newBranch.id, newBranch)
     
+    if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
+      await this.batchManager.enqueue({
+        entityType: 'branch',
+        entityId: newBranch.id,
+        operation: 'create',
+        data: newBranch
+      })
+      this.emit('branch:created', newBranch)
+      return newBranch
+    }
+    
     try {
       const created = await this.adapter.createBranch(newBranch)
       this.branches.set(created.id, created)
@@ -286,22 +397,44 @@ export class PlainOfflineProvider extends EventEmitter {
       return created
     } catch (error) {
       console.error('[PlainOfflineProvider] Failed to create branch:', error)
-      await this.adapter.enqueueOffline({
-        operation: 'create',
-        entityType: 'branch',
-        entityId: newBranch.id,
-        payload: newBranch
-      })
+      if (this.offlineQueue) {
+        await this.offlineQueue.enqueue({
+          id: this.generateId(),
+          entityType: 'branch',
+          entityId: newBranch.id,
+          operation: 'create',
+          data: newBranch,
+          timestamp: Date.now()
+        })
+      } else {
+        await this.adapter.enqueueOffline({
+          operation: 'create',
+          entityType: 'branch',
+          entityId: newBranch.id,
+          payload: newBranch
+        })
+      }
       return newBranch
     }
   }
 
-  async updateBranch(id: string, updates: Partial<Branch>): Promise<Branch | null> {
+  async updateBranch(id: string, updates: Partial<Branch>, options?: { skipBatching?: boolean }): Promise<Branch | null> {
     const branch = this.branches.get(id)
     if (!branch) return null
     
     const updated = { ...branch, ...updates, updatedAt: new Date() }
     this.branches.set(id, updated)
+    
+    if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
+      await this.batchManager.enqueue({
+        entityType: 'branch',
+        entityId: id,
+        operation: 'update',
+        data: updated
+      })
+      this.emit('branch:updated', updated)
+      return updated
+    }
     
     try {
       const result = await this.adapter.updateBranch(id, { ...updates, version: 1 })
@@ -310,12 +443,23 @@ export class PlainOfflineProvider extends EventEmitter {
       return result
     } catch (error) {
       console.error('[PlainOfflineProvider] Failed to update branch:', error)
-      await this.adapter.enqueueOffline({
-        operation: 'update',
-        entityType: 'branch',
-        entityId: id,
-        payload: updated
-      })
+      if (this.offlineQueue) {
+        await this.offlineQueue.enqueue({
+          id: this.generateId(),
+          entityType: 'branch',
+          entityId: id,
+          operation: 'update',
+          data: updated,
+          timestamp: Date.now()
+        })
+      } else {
+        await this.adapter.enqueueOffline({
+          operation: 'update',
+          entityType: 'branch',
+          entityId: id,
+          payload: updated
+        })
+      }
       return updated
     }
   }
@@ -435,5 +579,182 @@ export class PlainOfflineProvider extends EventEmitter {
    */
   getPersistenceState() {
     return { ...this.persistenceState }
+  }
+  
+  /**
+   * Batch execution method for batched operations
+   */
+  async batchExecute(entityType: string, operations: BatchOperation[]): Promise<void> {
+    // Group operations by type
+    const creates = operations.filter(op => op.operation === 'create')
+    const updates = operations.filter(op => op.operation === 'update')
+    const deletes = operations.filter(op => op.operation === 'delete')
+    
+    try {
+      // Execute creates
+      if (creates.length > 0) {
+        await this.batchCreate(entityType, creates)
+      }
+      
+      // Execute updates
+      if (updates.length > 0) {
+        await this.batchUpdate(entityType, updates)
+      }
+      
+      // Execute deletes
+      if (deletes.length > 0) {
+        await this.batchDelete(entityType, deletes)
+      }
+    } catch (error) {
+      console.error(`[PlainOfflineProvider] Batch execute failed for ${entityType}:`, error)
+      throw error
+    }
+  }
+  
+  private async batchCreate(entityType: string, operations: BatchOperation[]): Promise<void> {
+    const endpoint = this.getEndpoint(entityType)
+    
+    const response = await fetch(`${endpoint}/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operations: operations.map(op => ({
+          ...op.data,
+          idempotencyKey: op.idempotencyKey
+        }))
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Batch create failed: ${response.statusText}`)
+    }
+    
+    const result = await response.json()
+    console.debug(`[PlainOfflineProvider] Batch created ${operations.length} ${entityType}s`)
+  }
+  
+  private async batchUpdate(entityType: string, operations: BatchOperation[]): Promise<void> {
+    const endpoint = this.getEndpoint(entityType)
+    
+    const response = await fetch(`${endpoint}/batch`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operations: operations.map(op => ({
+          id: op.entityId,
+          data: op.data,
+          idempotencyKey: op.idempotencyKey
+        }))
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Batch update failed: ${response.statusText}`)
+    }
+    
+    const result = await response.json()
+    console.debug(`[PlainOfflineProvider] Batch updated ${operations.length} ${entityType}s`)
+  }
+  
+  private async batchDelete(entityType: string, operations: BatchOperation[]): Promise<void> {
+    const endpoint = this.getEndpoint(entityType)
+    
+    const response = await fetch(`${endpoint}/batch`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ids: operations.map(op => op.entityId)
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Batch delete failed: ${response.statusText}`)
+    }
+    
+    console.debug(`[PlainOfflineProvider] Batch deleted ${operations.length} ${entityType}s`)
+  }
+  
+  private getEndpoint(entityType: string): string {
+    const base = '/api/postgres-offline'
+    
+    switch (entityType) {
+      case 'document':
+        return `${base}/documents`
+      case 'branch':
+        return `${base}/branches`
+      case 'panel':
+        return `${base}/panels`
+      default:
+        throw new Error(`Unknown entity type: ${entityType}`)
+    }
+  }
+  
+  /**
+   * Panel operations with batching support
+   */
+  async savePanel(panel: Partial<Panel>, options?: { skipBatching?: boolean }): Promise<void> {
+    if (!panel.id) {
+      throw new Error('Panel ID is required')
+    }
+    
+    const fullPanel: Panel = {
+      id: panel.id,
+      noteId: panel.noteId || '',
+      position: panel.position || { x: 0, y: 0 },
+      dimensions: panel.dimensions || { width: 400, height: 300 },
+      state: panel.state || 'active',
+      lastAccessed: new Date()
+    }
+    
+    this.panels.set(fullPanel.id, fullPanel)
+    
+    if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
+      await this.batchManager.enqueue({
+        entityType: 'panel',
+        entityId: fullPanel.id,
+        operation: 'update',
+        data: fullPanel
+      })
+      this.emit('panel:saved', fullPanel)
+      return
+    }
+    
+    // Direct save without batching
+    this.emit('panel:saved', fullPanel)
+  }
+  
+  /**
+   * Batching control methods
+   */
+  setBatchingEnabled(enabled: boolean): void {
+    this.batchingEnabled = enabled
+    if (this.batchManager) {
+      this.batchManager.setEnabled(enabled)
+    }
+    console.log(`[PlainOfflineProvider] Batching ${enabled ? 'enabled' : 'disabled'}`)
+  }
+  
+  isBatchingEnabled(): boolean {
+    return this.batchingEnabled
+  }
+  
+  getBatchManager(): PlainBatchManager | undefined {
+    return this.batchManager
+  }
+  
+  getOfflineQueue(): PlainOfflineQueue | undefined {
+    return this.offlineQueue
+  }
+  
+  async flushBatches(): Promise<void> {
+    if (this.batchManager) {
+      await this.batchManager.flushAll()
+    }
+  }
+  
+  updateBatchConfig(config: Partial<PlainBatchConfig>): void {
+    if (this.batchManager) {
+      this.batchManager.updateConfig(config)
+    }
   }
 }

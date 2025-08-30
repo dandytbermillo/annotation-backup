@@ -175,19 +175,28 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
       },
       onUpdate: ({ editor }) => {
-        // Get content as JSON for plain mode
         const json = editor.getJSON()
-        console.log(`[TiptapEditorPlain] onUpdate fired for noteId: ${noteId}, panelId: ${panelId}`)
-        
-        // Save to provider if available
-        if (provider && noteId) {
-          provider.saveDocument(noteId, panelId, json).catch(error => {
-            console.error('[TiptapEditorPlain] Failed to save content:', error)
-          })
-        }
-        
-        // Notify parent component
-        onUpdate?.(json)
+        // Hash current content to detect real changes
+        const contentStr = JSON.stringify(json)
+        ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
+        const key = `${noteId}:${panelId}`
+        const prev = (window as any).__lastContentHash.get(key)
+        if (prev === contentStr) return
+        (window as any).__lastContentHash.set(key, contentStr)
+
+        // Debounce saves to reduce version churn
+        ;(window as any).__debouncedSave = (window as any).__debouncedSave || new Map()
+        const existing = (window as any).__debouncedSave.get(key)
+        if (existing) clearTimeout(existing)
+        const timer = setTimeout(() => {
+          if (provider && noteId) {
+            provider.saveDocument(noteId, panelId, json).catch(err => {
+              console.error('[TiptapEditorPlain] Failed to save content:', err)
+            })
+          }
+          onUpdate?.(json)
+        }, 800) // 800ms idle before saving
+        ;(window as any).__debouncedSave.set(key, timer)
       },
       onSelectionUpdate: ({ editor }) => {
         const { from, to } = editor.state.selection
