@@ -129,6 +129,13 @@ export async function GET(request: NextRequest) {
     
     // Fuzzy search using trigrams for better typo tolerance
     if (type === 'fuzzy') {
+      // Set session threshold for trigram similarity to stabilize results
+      const raw = searchParams.get('similarity')
+      let threshold = Number(raw)
+      if (!Number.isFinite(threshold)) threshold = 0.45
+      threshold = Math.min(1, Math.max(0, threshold))
+      await pool.query('SELECT set_limit($1)', [threshold])
+      
       const fuzzyResult = await pool.query(
         `SELECT 
           ds.id,

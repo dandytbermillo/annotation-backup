@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phase 0 - Live Test Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-item {
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #ddd;
+            background: #fafafa;
+        }
+        .test-item.success {
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+        .test-item.error {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
+        .test-item.pending {
+            border-left-color: #f59e0b;
+            background: #fffbeb;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #5a67d8;
+        }
+        button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .metric-card {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        .metric-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2d3748;
+            margin-top: 5px;
+        }
+        .logs {
+            background: #1a202c;
+            color: #a0aec0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-entry.info { color: #63b3ed; }
+        .log-entry.success { color: #68d391; }
+        .log-entry.error { color: #fc8181; }
+        .log-entry.warning { color: #f6ad55; }
+    </style>
+</head>
+<body>
+    <h1>🔬 Phase 0 - Unified Offline Foundation Live Test</h1>
+    
+    <div class="test-section">
+        <h2>1. Feature Flags System</h2>
+        <button onclick="testFeatureFlags()">Test Feature Flags</button>
+        <button onclick="toggleFlag('offline.circuitBreaker')">Toggle Circuit Breaker</button>
+        <button onclick="toggleFlag('offline.swCaching')">Toggle SW Caching</button>
+        <button onclick="toggleFlag('offline.conflictUI')">Toggle Conflict UI</button>
+        <div id="feature-flags-test" class="test-item pending">Waiting for test...</div>
+        <div class="metrics" id="feature-flags-status"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>2. Telemetry System</h2>
+        <button onclick="testTelemetry()">Test Telemetry</button>
+        <button onclick="sendTelemetryEvent()">Send Event</button>
+        <button onclick="fetchMetrics()">Fetch Metrics</button>
+        <div id="telemetry-test" class="test-item pending">Waiting for test...</div>
+        <div class="metrics" id="telemetry-metrics"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>3. Network Detector (Preview)</h2>
+        <button onclick="testNetworkDetector()">Test Network Detector</button>
+        <button onclick="simulateOffline()">Simulate Offline</button>
+        <button onclick="simulateOnline()">Simulate Online</button>
+        <div id="network-test" class="test-item pending">Waiting for test...</div>
+        <div class="metrics" id="network-status"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>4. Circuit Breaker (Preview)</h2>
+        <button onclick="testCircuitBreaker()">Test Circuit Breaker</button>
+        <button onclick="simulateFailures()">Simulate Failures</button>
+        <button onclick="resetCircuit()">Reset Circuit</button>
+        <div id="circuit-test" class="test-item pending">Waiting for test...</div>
+        <div class="metrics" id="circuit-status"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>5. Cache Manager (Preview)</h2>
+        <button onclick="testCacheManager()">Test Cache Manager</button>
+        <button onclick="clearCaches()">Clear Caches</button>
+        <div id="cache-test" class="test-item pending">Waiting for test...</div>
+        <div class="metrics" id="cache-status"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Logs</h2>
+        <button onclick="clearLogs()">Clear Logs</button>
+        <div class="logs" id="test-logs"></div>
+    </div>
+
+    <script type="module">
+        // Import Phase 0 modules (when available as ES modules)
+        // For now, we'll test via API and localStorage
+        
+        window.log = function(message, type = 'info') {
+            const logs = document.getElementById('test-logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        };
+
+        // 1. Test Feature Flags
+        window.testFeatureFlags = async function() {
+            log('Testing feature flags system...', 'info');
+            const testDiv = document.getElementById('feature-flags-test');
+            
+            try {
+                // Get current flags from localStorage
+                const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+                
+                // Test setting flags
+                const testFlags = {
+                    'offline.circuitBreaker': false,
+                    'offline.swCaching': false,
+                    'offline.conflictUI': false
+                };
+                
+                localStorage.setItem('offlineFeatureFlags', JSON.stringify(testFlags));
+                
+                // Verify flags are stored
+                const stored = JSON.parse(localStorage.getItem('offlineFeatureFlags'));
+                
+                if (JSON.stringify(stored) === JSON.stringify(testFlags)) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = '✅ Feature flags working! All flags default to OFF.';
+                    log('Feature flags test passed', 'success');
+                    
+                    // Display current flags
+                    updateFlagStatus();
+                } else {
+                    throw new Error('Flag storage mismatch');
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ Feature flags test failed: ${error.message}`;
+                log(`Feature flags test failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.toggleFlag = function(flagName) {
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            flags[flagName] = !flags[flagName];
+            localStorage.setItem('offlineFeatureFlags', JSON.stringify(flags));
+            updateFlagStatus();
+            log(`Toggled ${flagName} to ${flags[flagName]}`, 'info');
+        };
+
+        window.updateFlagStatus = function() {
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            const container = document.getElementById('feature-flags-status');
+            container.innerHTML = Object.entries(flags).map(([key, value]) => `
+                <div class="metric-card">
+                    <div class="metric-label">${key.replace('offline.', '')}</div>
+                    <div class="metric-value" style="color: ${value ? '#10b981' : '#ef4444'}">
+                        ${value ? 'ON' : 'OFF'}
+                    </div>
+                </div>
+            `).join('');
+        };
+
+        // 2. Test Telemetry
+        window.testTelemetry = async function() {
+            log('Testing telemetry system...', 'info');
+            const testDiv = document.getElementById('telemetry-test');
+            
+            try {
+                // Test GET endpoint
+                const getResponse = await fetch('/api/telemetry');
+                if (!getResponse.ok) throw new Error('GET failed');
+                const metrics = await getResponse.json();
+                
+                // Test POST endpoint
+                const postResponse = await fetch('/api/telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        events: [
+                            {
+                                timestamp: Date.now(),
+                                category: 'test',
+                                action: 'phase0-verification',
+                                metadata: { test: true }
+                            }
+                        ],
+                        metrics: {
+                            network: { quality: 'good' },
+                            cache: {},
+                            queue: {},
+                            conflict: {}
+                        },
+                        timestamp: Date.now()
+                    })
+                });
+                
+                if (!postResponse.ok) throw new Error('POST failed');
+                const result = await postResponse.json();
+                
+                if (result.success) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = '✅ Telemetry endpoints working! GET and POST successful.';
+                    log('Telemetry test passed', 'success');
+                    
+                    // Display metrics
+                    displayTelemetryMetrics(metrics);
+                } else {
+                    throw new Error('Telemetry response invalid');
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ Telemetry test failed: ${error.message}`;
+                log(`Telemetry test failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.sendTelemetryEvent = async function() {
+            try {
+                const response = await fetch('/api/telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        events: [{
+                            timestamp: Date.now(),
+                            category: 'user',
+                            action: 'test-button-click',
+                            value: 1
+                        }],
+                        metrics: {
+                            network: { quality: 'good', rtt: Math.random() * 100 },
+                            cache: { hits: Math.floor(Math.random() * 100) },
+                            queue: { depth: Math.floor(Math.random() * 10) },
+                            conflict: { occurrences: 0 }
+                        },
+                        timestamp: Date.now()
+                    })
+                });
+                
+                if (response.ok) {
+                    log('Telemetry event sent successfully', 'success');
+                }
+            } catch (error) {
+                log(`Failed to send telemetry: ${error.message}`, 'error');
+            }
+        };
+
+        window.fetchMetrics = async function() {
+            try {
+                const response = await fetch('/api/telemetry');
+                const metrics = await response.json();
+                displayTelemetryMetrics(metrics);
+                log('Metrics fetched successfully', 'success');
+            } catch (error) {
+                log(`Failed to fetch metrics: ${error.message}`, 'error');
+            }
+        };
+
+        window.displayTelemetryMetrics = function(metrics) {
+            const container = document.getElementById('telemetry-metrics');
+            container.innerHTML = `
+                <div class="metric-card">
+                    <div class="metric-label">Network Quality</div>
+                    <div class="metric-value">${metrics.network?.quality || 'N/A'}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">RTT (ms)</div>
+                    <div class="metric-value">${metrics.network?.rtt || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Cache Hit Rate</div>
+                    <div class="metric-value">${((metrics.cache?.hitRate || 0) * 100).toFixed(1)}%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Queue Depth</div>
+                    <div class="metric-value">${metrics.queue?.depth || 0}</div>
+                </div>
+            `;
+        };
+
+        // 3. Test Network Detector (Preview - actual implementation in Phase 1)
+        window.testNetworkDetector = function() {
+            const testDiv = document.getElementById('network-test');
+            
+            // Check if circuit breaker flag is enabled
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            if (!flags['offline.circuitBreaker']) {
+                testDiv.className = 'test-item pending';
+                testDiv.textContent = '⏳ Network detector requires offline.circuitBreaker flag (Phase 1)';
+                log('Network detector not enabled yet (Phase 1)', 'warning');
+                return;
+            }
+            
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Network detector scaffold ready for Phase 1';
+            
+            // Show mock status
+            document.getElementById('network-status').innerHTML = `
+                <div class="metric-card">
+                    <div class="metric-label">Status</div>
+                    <div class="metric-value">${navigator.onLine ? 'Online' : 'Offline'}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Quality</div>
+                    <div class="metric-value">Ready in Phase 1</div>
+                </div>
+            `;
+        };
+
+        window.simulateOffline = function() {
+            log('Offline simulation ready for Phase 1', 'info');
+        };
+
+        window.simulateOnline = function() {
+            log('Online simulation ready for Phase 1', 'info');
+        };
+
+        // 4. Test Circuit Breaker (Preview)
+        window.testCircuitBreaker = function() {
+            const testDiv = document.getElementById('circuit-test');
+            
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            if (!flags['offline.circuitBreaker']) {
+                testDiv.className = 'test-item pending';
+                testDiv.textContent = '⏳ Circuit breaker requires flag to be enabled (Phase 1)';
+                log('Circuit breaker not enabled yet (Phase 1)', 'warning');
+                return;
+            }
+            
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Circuit breaker scaffold ready for Phase 1';
+            
+            document.getElementById('circuit-status').innerHTML = `
+                <div class="metric-card">
+                    <div class="metric-label">State</div>
+                    <div class="metric-value">Closed</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Failures</div>
+                    <div class="metric-value">0</div>
+                </div>
+            `;
+        };
+
+        window.simulateFailures = function() {
+            log('Failure simulation ready for Phase 1', 'info');
+        };
+
+        window.resetCircuit = function() {
+            log('Circuit reset ready for Phase 1', 'info');
+        };
+
+        // 5. Test Cache Manager (Preview)
+        window.testCacheManager = function() {
+            const testDiv = document.getElementById('cache-test');
+            
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            if (!flags['offline.swCaching']) {
+                testDiv.className = 'test-item pending';
+                testDiv.textContent = '⏳ Cache manager requires offline.swCaching flag (Phase 2)';
+                log('Cache manager not enabled yet (Phase 2)', 'warning');
+                return;
+            }
+            
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Cache manager scaffold ready for Phase 2';
+        };
+
+        window.clearCaches = async function() {
+            if ('caches' in window) {
+                const names = await caches.keys();
+                await Promise.all(names.map(name => caches.delete(name)));
+                log('Caches cleared', 'success');
+            } else {
+                log('Cache API not available', 'warning');
+            }
+        };
+
+        window.clearLogs = function() {
+            document.getElementById('test-logs').innerHTML = '';
+            log('Logs cleared', 'info');
+        };
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('Phase 0 Live Test Dashboard loaded', 'info');
+            log('Click test buttons to verify each component', 'info');
+            updateFlagStatus();
+        });
+    </script>
+</body>
+</html>

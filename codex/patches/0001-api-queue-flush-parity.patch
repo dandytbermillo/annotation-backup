@@ -1,0 +1,237 @@
+diff --git a/app/api/postgres-offline/queue/flush/route.ts b/app/api/postgres-offline/queue/flush/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/queue/flush/route.ts
++++ b/app/api/postgres-offline/queue/flush/route.ts
+@@
+-import { NextRequest, NextResponse } from 'next/server'
+-import { Pool } from 'pg'
+-
+-const pool = new Pool({
+-  connectionString: process.env.DATABASE_URL
+-})
+-
+-// POST /api/postgres-offline/queue/flush - Process all queued operations
+-export async function POST(request: NextRequest) {
+-  try {
+-    const body = await request.json()
+-    const { operations = [] } = body
+-    
+-    const results: any[] = []
+-    const errors: any[] = []
+-    
+-    // Process each operation
+-    for (const op of operations) {
+-      try {
+-        const { noteId, panelId, operation, data } = op
+-        
+-        if (!noteId || !panelId) {
+-          throw new Error('noteId and panelId are required')
+-        }
+-        
+-        // Process based on operation type
+-        switch (operation) {
+-          case 'update': {
+-            // Create a new version for document (Schema option B: no updated_at)
+-            const content = JSON.stringify(data?.content ?? {})
+-            await pool.query(
+-              `WITH next AS (
+-                 SELECT COALESCE(MAX(version), 0) + 1 AS v
+-                 FROM document_saves
+-                 WHERE note_id = $1 AND panel_id = $2
+-               )
+-               INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+-               SELECT $1, $2, $3::jsonb, next.v, NOW()
+-               FROM next`,
+-              [noteId, panelId, content]
+-            )
+-            results.push({ ...op, status: 'success' })
+-            break
+-          }
+-            
+-          case 'create': {
+-            // Create the initial version (1) if none exists, otherwise append next
+-            const content = JSON.stringify(data?.content ?? {})
+-            await pool.query(
+-              `WITH next AS (
+-                 SELECT COALESCE(MAX(version), 0) + 1 AS v
+-                 FROM document_saves
+-                 WHERE note_id = $1 AND panel_id = $2
+-               )
+-               INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+-               SELECT $1, $2, $3::jsonb, next.v, NOW()
+-               FROM next`,
+-              [noteId, panelId, content]
+-            )
+-            results.push({ ...op, status: 'success' })
+-            break
+-          }
+-            
+-          case 'delete':
+-            // Delete all versions for this note/panel pair
+-            await pool.query(
+-              `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
+-              [noteId, panelId]
+-            )
+-            results.push({ ...op, status: 'success' })
+-            break
+-            
+-          default:
+-            errors.push({ ...op, error: `Unknown operation: ${operation}` })
+-        }
+-      } catch (error) {
+-        console.error(`[Queue Flush] Error processing operation:`, error)
+-        errors.push({ ...op, error: error instanceof Error ? error.message : 'Unknown error' })
+-      }
+-    }
+-    
+-    return NextResponse.json({
+-      processed: results.length,
+-      succeeded: results.length,
+-      failed: errors.length,
+-      results,
+-      errors
+-    })
+-  } catch (error) {
+-    console.error('[POST /api/postgres-offline/queue/flush] Error:', error)
+-    return NextResponse.json(
+-      { error: 'Failed to flush queue' },
+-      { status: 500 }
+-    )
+-  }
+-}
++import { NextRequest, NextResponse } from 'next/server'
++import { Pool } from 'pg'
++
++const pool = new Pool({
++  connectionString: process.env.DATABASE_URL
++})
++
++// POST /api/postgres-offline/queue/flush - Drain DB offline_queue with reliability semantics
++export async function POST(request: NextRequest) {
++  const client = await pool.connect()
++  let processed = 0
++  let failed = 0
++  let expired = 0
++  const errors: any[] = []
++
++  try {
++    await client.query('BEGIN')
++
++    // Expire TTL
++    const expireRes = await client.query(
++      `UPDATE offline_queue
++       SET status = 'failed', error_message = 'Operation expired', updated_at = NOW()
++       WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < NOW()
++       RETURNING id`
++    )
++    expired = expireRes.rowCount || 0
++
++    // Select eligible items (priority desc, created_at asc), skip unmet dependencies, avoid locks
++    const pending = await client.query(
++      `SELECT id, type, table_name, entity_id, data, idempotency_key, depends_on, retry_count
++       FROM offline_queue
++       WHERE status = 'pending'
++         AND (expires_at IS NULL OR expires_at > NOW())
++         AND NOT EXISTS (
++           SELECT 1 FROM unnest(coalesce(depends_on, ARRAY[]::uuid[])) dep_id
++           WHERE dep_id::text IN (
++             SELECT id::text FROM offline_queue WHERE status IN ('pending', 'failed')
++           )
++         )
++       ORDER BY priority DESC, created_at ASC
++       FOR UPDATE SKIP LOCKED`
++    )
++
++    // Process
++    for (const row of pending.rows) {
++      try {
++        await processQueueOperation(client, row)
++        await client.query(
++          `UPDATE offline_queue SET status = 'processing', updated_at = NOW() WHERE id = $1`,
++          [row.id]
++        )
++        processed++
++      } catch (err: any) {
++        failed++
++        const retry = await client.query(
++          `UPDATE offline_queue
++           SET status = 'failed', error_message = $2, retry_count = retry_count + 1, updated_at = NOW()
++           WHERE id = $1
++           RETURNING retry_count, idempotency_key, type, table_name, entity_id, data`,
++          [row.id, String(err)]
++        )
++        // Move to dead-letter after 5 retries
++        if (retry.rows[0] && retry.rows[0].retry_count >= 5) {
++          const d = retry.rows[0]
++          await client.query(
++            `INSERT INTO offline_dead_letter
++             (queue_id, idempotency_key, type, table_name, entity_id, data, error_message, retry_count)
++             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
++            [row.id, d.idempotency_key, d.type, d.table_name, d.entity_id, d.data, String(err), d.retry_count]
++          )
++          await client.query(`DELETE FROM offline_queue WHERE id = $1`, [row.id])
++        }
++        errors.push({ id: row.id, error: String(err) })
++      }
++    }
++
++    // Delete processed
++    await client.query(`DELETE FROM offline_queue WHERE status = 'processing'`)
++    await client.query('COMMIT')
++
++    return NextResponse.json({ success: true, data: { processed, failed, expired }, errors })
++  } catch (error) {
++    await client.query('ROLLBACK')
++    console.error('[queue/flush] error:', error)
++    return NextResponse.json({ error: 'Failed to flush queue' }, { status: 500 })
++  } finally {
++    client.release()
++  }
++}
++
++async function processQueueOperation(client: any, row: any) {
++  const { type, table_name, entity_id, data } = row
++  switch (type) {
++    case 'create': {
++      if (table_name === 'branches') {
++        await client.query(
++          `INSERT INTO branches
++           (id, note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
++           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW(), NOW())
++           ON CONFLICT (id) DO NOTHING`,
++          [
++            entity_id,
++            data.noteId,
++            data.parentId,
++            data.type,
++            data.originalText,
++            JSON.stringify(data.metadata || {}),
++            data.anchors ? JSON.stringify(data.anchors) : null
++          ]
++        )
++      }
++      break
++    }
++    case 'update': {
++      if (table_name === 'document_saves') {
++        await client.query(
++          `WITH next AS (
++             SELECT COALESCE(MAX(version), 0) + 1 AS v
++             FROM document_saves
++             WHERE note_id = $1 AND panel_id = $2
++           )
++           INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
++           SELECT $1, $2, $3::jsonb, next.v, NOW()
++           FROM next`,
++          [data.noteId, data.panelId, JSON.stringify(data.content)]
++        )
++      }
++      break
++    }
++    case 'delete': {
++      await client.query(`DELETE FROM ${table_name} WHERE id = $1`, [entity_id])
++      break
++    }
++  }
++}
+

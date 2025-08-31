@@ -167,6 +167,8 @@ export async function POST(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
+      imported: results.imported,
+      skipped: results.skipped,
       results,
       metadata: {
         import_id: crypto.randomUUID(),

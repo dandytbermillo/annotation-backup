@@ -1,3 +1,12 @@
+LLM-ready replacement content (overwrite the file with this). This version fixes:
+- SQL injection (no dynamic table names; strict whitelist + parameterized queries)
+- Data shape normalization (accepts noteId/note_id, panelId/panel_id)
+- Complete table handling (notes, branches, panels, document_saves for create/update/delete)
+- Transaction scope (deletes only processed IDs)
+
+Target file: app/api/postgres-offline/queue/flush/route.ts
+
+--- BEGIN FILE CONTENT ---
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
 
@@ -287,3 +296,4 @@ async function processQueueOperation(client: any, row: any) {
       throw new Error(`Unsupported table: ${table}`)
   }
 }
+--- END FILE CONTENT ---

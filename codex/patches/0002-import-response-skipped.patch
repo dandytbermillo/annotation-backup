@@ -1,0 +1,28 @@
+LLM-ready patch (Find and Replace)
+
+Target file: app/api/offline-queue/import/route.ts
+
+Find this return block (right after the console.log line):
+  return NextResponse.json({
+    success: true,
+    results,
+    metadata: {
+      import_id: crypto.randomUUID(),
+      imported_at: new Date().toISOString(),
+      package_id: metadata?.export_id
+    }
+  })
+
+Replace with this:
+  // Include top-level imported/skipped for clients/tests that expect flat fields
+  return NextResponse.json({
+    success: true,
+    imported: results.imported,
+    skipped: results.skipped,
+    results,
+    metadata: {
+      import_id: crypto.randomUUID(),
+      imported_at: new Date().toISOString(),
+      package_id: metadata?.export_id
+    }
+  })

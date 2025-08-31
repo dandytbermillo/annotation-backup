@@ -99,7 +99,7 @@ runtime code and any test pages/scripts created in this feature workspace.
 - If docs/proposal/<FEATURE_SLUG>/ does not exist, agents MUST create it
 before adding any feature artifacts.
 - Create subfolders only as needed; if a required subfolder (e.g.,
-fixing_doc, test_pages, test_scripts, supporting_files) does not exist, create
+fixing_doc, test_pages, test_scripts, supporting_files,reports) does not exist, create
 it before writing files into it.
 - Do not write feature artifacts outside docs/proposal/<FEATURE_SLUG>/. If
 creation is blocked (permissions/CI), stop and report instead of scattering
@@ -122,7 +122,7 @@ this structure is optional.
 2. Add IMPLEMENTATION_PLAN.md (or a README.md) inside the folder; start with
 the slug and a short description.
 3. Add subfolders only as needed: fixing_doc, test_pages, test_scripts,
-supporting_files.
+supporting_files,reports.
 4. Save implementation/validation reports in fixing_doc with dated
 filenames.
 5. Link these docs from PR descriptions and cross‑reference changed runtime
@@ -135,6 +135,7 @@ files.
     - test_pages/editor-batching-demo.html
     - test_scripts/sql-verify-document_saves.js
     - supporting_files/ADDING_BATCH_SAVE_IMPLEMENTATION_SUMMARY.md
+    - reports/README_VERIFICATION_REPORT.md
 
 
 Future phase (Option B — Yjs collaboration):
