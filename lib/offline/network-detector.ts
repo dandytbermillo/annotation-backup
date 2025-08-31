@@ -43,13 +43,19 @@ export class NetworkDetector {
   private currentQuality: NetworkQuality = 'good';
   private listeners: Set<(quality: NetworkQuality) => void> = new Set();
   private isProbing = false;
+  private backoffMs = 1000; // Start at 1s
+  private consecutiveFailures = 0;
 
   constructor(config: Partial<NetworkDetectorConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     
     // Listen to browser online/offline events
     if (typeof window !== 'undefined') {
-      window.addEventListener('online', () => this.probe());
+      window.addEventListener('online', () => {
+        this.consecutiveFailures = 0;
+        this.backoffMs = 1000;
+        this.probe();
+      });
       window.addEventListener('offline', () => this.updateQuality('offline'));
     }
   }
@@ -79,7 +85,7 @@ export class NetworkDetector {
   }
 
   /**
-   * Perform a network probe
+   * Perform a network probe with exponential backoff
    */
   async probe(): Promise<NetworkQuality> {
     if (this.isProbing) {
@@ -92,29 +98,55 @@ export class NetworkDetector {
     try {
       // Check browser online status first
       if (typeof window !== 'undefined' && !navigator.onLine) {
+        this.consecutiveFailures++;
+        this.applyBackoff();
         this.updateQuality('offline');
         return 'offline';
       }
       
-      // Active probe to health endpoint
+      // Active probe to health endpoint with 1-2s timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(
         () => controller.abort(),
         this.config.probeTimeout
       );
       
-      const response = await fetch(this.config.healthEndpoint, {
-        method: 'HEAD', // Lightweight
-        signal: controller.signal,
-        cache: 'no-store', // Bypass cache
-      });
+      // Try both HEAD and GET (HEAD preferred, GET as fallback)
+      let response: Response;
+      try {
+        response = await fetch(this.config.healthEndpoint, {
+          method: 'HEAD',
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      } catch (headError) {
+        // HEAD failed, try GET
+        response = await fetch(this.config.healthEndpoint, {
+          method: 'GET',
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      }
       
       clearTimeout(timeoutId);
       
       if (!response.ok) {
+        this.consecutiveFailures++;
+        this.applyBackoff();
         this.updateQuality('degraded');
+        
+        telemetry.trackNetwork({
+          quality: 'degraded',
+          probeSuccessRate: 0.5,
+          lastProbeTime: Date.now(),
+        });
+        
         return 'degraded';
       }
+      
+      // Success - reset backoff
+      this.consecutiveFailures = 0;
+      this.backoffMs = 1000;
       
       // Calculate RTT
       const rtt = performance.now() - startTime;
@@ -146,6 +178,8 @@ export class NetworkDetector {
       return quality;
     } catch (error) {
       // Network error or timeout
+      this.consecutiveFailures++;
+      this.applyBackoff();
       this.updateQuality('offline');
       
       telemetry.trackNetwork({
@@ -158,6 +192,29 @@ export class NetworkDetector {
     } finally {
       this.isProbing = false;
     }
+  }
+
+  /**
+   * Apply exponential backoff (1→2→4→8s, cap 30s)
+   */
+  private applyBackoff(): void {
+    this.backoffMs = Math.min(this.backoffMs * 2, 30000); // Cap at 30s
+    
+    // Schedule next probe with backoff
+    if (this.probeTimer) {
+      clearTimeout(this.probeTimer);
+    }
+    
+    this.probeTimer = setTimeout(() => {
+      this.probe();
+    }, this.backoffMs);
+    
+    telemetry.track({
+      category: 'network',
+      action: 'backoff',
+      value: this.backoffMs,
+      metadata: { consecutiveFailures: this.consecutiveFailures }
+    });
   }
 
   /**

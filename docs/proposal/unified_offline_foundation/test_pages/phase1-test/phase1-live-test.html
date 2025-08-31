@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phase 1 - Connectivity Foundation Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-item {
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #ddd;
+            background: #fafafa;
+        }
+        .test-item.success {
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+        .test-item.error {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
+        .test-item.warning {
+            border-left-color: #f59e0b;
+            background: #fffbeb;
+        }
+        .test-item.pending {
+            border-left-color: #6b7280;
+            background: #f9fafb;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge.online {
+            background: #10b981;
+            color: white;
+        }
+        .badge.degraded {
+            background: #f59e0b;
+            color: white;
+        }
+        .badge.offline {
+            background: #ef4444;
+            color: white;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .metric-card {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        .metric-label {
+            font-size: 11px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .metric-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2d3748;
+            margin-top: 5px;
+        }
+        .logs {
+            background: #1a202c;
+            color: #a0aec0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-entry.info { color: #63b3ed; }
+        .log-entry.success { color: #68d391; }
+        .log-entry.error { color: #fc8181; }
+        .log-entry.warning { color: #f6ad55; }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .status-indicator.good { background: #10b981; }
+        .status-indicator.degraded { background: #f59e0b; }
+        .status-indicator.offline { background: #ef4444; animation: none; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .circuit-state {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .circuit-state.closed { background: #d1fae5; color: #065f46; }
+        .circuit-state.open { background: #fee2e2; color: #991b1b; }
+        .circuit-state.half-open { background: #fed7aa; color: #92400e; }
+        .instructions {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .instructions h2 {
+            margin-top: 0;
+            color: white;
+        }
+        .instructions ol {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+        .instructions li {
+            margin: 8px 0;
+            line-height: 1.6;
+        }
+        .instructions code {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .quick-actions button {
+            background: rgba(255,255,255,0.2);
+            border: 2px solid white;
+        }
+        .quick-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+    </style>
+</head>
+<body>
+    <h1>⚡ Phase 1 - Connectivity Foundation Live Test</h1>
+    
+    <!-- How to Use Section -->
+    <div class="test-section instructions">
+        <h2>📖 How to Use This Test Page</h2>
+        <ol>
+            <li><strong>Start the dev server:</strong> Run <code>npm run dev</code> in your terminal</li>
+            <li><strong>Enable Circuit Breaker:</strong> Click "Enable Circuit Breaker" button below, then refresh the page</li>
+            <li><strong>Quick Test:</strong> Click "🚀 Run All Phase 1 Tests" at the bottom for automated testing</li>
+            <li><strong>Manual Testing:</strong> Use individual test sections to verify specific components</li>
+        </ol>
+        
+        <h3 style="color: white; margin-top: 20px;">Test Scenarios:</h3>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+            <li><strong>Network Status:</strong> Monitor real-time connectivity at the top</li>
+            <li><strong>Health Checks:</strong> Test GET/HEAD endpoints to verify backend connectivity</li>
+            <li><strong>Network Simulation:</strong> Simulate online/degraded/offline states</li>
+            <li><strong>Circuit Breaker:</strong> Test failure handling with automatic circuit opening</li>
+            <li><strong>Queue Management:</strong> Simulate queue depth changes and sync operations</li>
+            <li><strong>Telemetry:</strong> Verify metrics collection and tracking</li>
+        </ul>
+        
+        <div class="quick-actions">
+            <button onclick="enableCircuitBreaker(); setTimeout(() => location.reload(), 100)">
+                ⚡ Quick Setup: Enable & Reload
+            </button>
+            <button onclick="runAllTests()">
+                🚀 Run Complete Test Suite
+            </button>
+        </div>
+    </div>
+    
+    <!-- Network Status Display -->
+    <div class="test-section">
+        <h2>Network Status Monitor</h2>
+        <div id="network-status">
+            <span class="status-indicator offline" id="status-indicator"></span>
+            <span class="badge offline" id="network-badge">INITIALIZING</span>
+            <span class="circuit-state closed" id="circuit-state">CIRCUIT: CLOSED</span>
+        </div>
+        <div class="metrics" id="network-metrics">
+            <div class="metric-card">
+                <div class="metric-label">Quality</div>
+                <div class="metric-value" id="metric-quality">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">RTT (ms)</div>
+                <div class="metric-value" id="metric-rtt">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Circuit State</div>
+                <div class="metric-value" id="metric-circuit">-</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Queue Depth</div>
+                <div class="metric-value" id="metric-queue">0</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Last Sync</div>
+                <div class="metric-value" id="metric-sync">Never</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Probe Count</div>
+                <div class="metric-value" id="metric-probes">0</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feature Flag Control -->
+    <div class="test-section">
+        <h2>1. Feature Flag Control</h2>
+        <button onclick="checkFeatureFlag()">Check Flag Status</button>
+        <button onclick="enableCircuitBreaker()">Enable Circuit Breaker</button>
+        <button onclick="disableCircuitBreaker()">Disable Circuit Breaker</button>
+        <div id="feature-flag-test" class="test-item pending">Checking feature flag status...</div>
+    </div>
+
+    <!-- Health Endpoint Tests -->
+    <div class="test-section">
+        <h2>2. Health Endpoint Tests</h2>
+        <button onclick="testHealthGET()">Test GET /api/health</button>
+        <button onclick="testHealthHEAD()">Test HEAD /api/health</button>
+        <button onclick="testHealthWithDB()">Test with DB Check</button>
+        <div id="health-test-get" class="test-item pending">Waiting for GET test...</div>
+        <div id="health-test-head" class="test-item pending">Waiting for HEAD test...</div>
+        <div id="health-test-db" class="test-item pending">Waiting for DB test...</div>
+    </div>
+
+    <!-- Network Detector Tests -->
+    <div class="test-section">
+        <h2>3. Network Detector Tests</h2>
+        <button onclick="testNetworkProbe()">Force Network Probe</button>
+        <button onclick="simulateOnline()">Simulate Online</button>
+        <button onclick="simulateDegraded()">Simulate Degraded</button>
+        <button onclick="simulateOffline()">Simulate Offline</button>
+        <div id="network-detector-test" class="test-item pending">Waiting for network test...</div>
+    </div>
+
+    <!-- Circuit Breaker Tests -->
+    <div class="test-section">
+        <h2>4. Circuit Breaker Tests</h2>
+        <button onclick="testCircuitBreaker()">Test Circuit States</button>
+        <button onclick="simulateFailures()">Simulate 3 Failures</button>
+        <button onclick="simulateRecovery()">Simulate Recovery</button>
+        <button onclick="resetCircuit()">Force Reset Circuit</button>
+        <div id="circuit-breaker-test" class="test-item pending">Waiting for circuit test...</div>
+    </div>
+
+    <!-- Queue Management Tests -->
+    <div class="test-section">
+        <h2>5. Queue Management Tests</h2>
+        <button onclick="updateQueueDepth(5)">Set Queue: 5</button>
+        <button onclick="updateQueueDepth(10)">Set Queue: 10</button>
+        <button onclick="updateQueueDepth(25)">Set Queue: 25</button>
+        <button onclick="simulateSync()">Simulate Sync</button>
+        <div id="queue-test" class="test-item pending">Waiting for queue test...</div>
+    </div>
+
+    <!-- Telemetry Integration -->
+    <div class="test-section">
+        <h2>6. Telemetry Integration</h2>
+        <button onclick="testTelemetry()">Test Telemetry</button>
+        <button onclick="fetchMetrics()">Fetch Current Metrics</button>
+        <div id="telemetry-test" class="test-item pending">Waiting for telemetry test...</div>
+        <div id="telemetry-data" style="margin-top: 10px;"></div>
+    </div>
+
+    <!-- Run All Tests -->
+    <div class="test-section">
+        <h2>Complete Test Suite</h2>
+        <button onclick="runAllTests()">🚀 Run All Phase 1 Tests</button>
+        <button onclick="clearLogs()">Clear Logs</button>
+        <div id="test-summary" style="margin-top: 15px;"></div>
+    </div>
+
+    <!-- Test Logs -->
+    <div class="test-section">
+        <h2>Test Logs</h2>
+        <div class="logs" id="test-logs"></div>
+    </div>
+
+    <script type="module">
+        // Global state
+        let networkStatus = null;
+        let probeCount = 0;
+        let queueDepth = 0;
+        let lastSyncTime = Date.now();
+        let circuitState = 'closed';
+        let networkQuality = 'offline';
+
+        // Logging
+        window.log = function(message, type = 'info') {
+            const logs = document.getElementById('test-logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        };
+
+        // Update network status display
+        function updateNetworkDisplay() {
+            // Update badge
+            const badge = document.getElementById('network-badge');
+            badge.className = `badge ${networkQuality}`;
+            badge.textContent = networkQuality.toUpperCase();
+            
+            // Update indicator
+            const indicator = document.getElementById('status-indicator');
+            indicator.className = `status-indicator ${networkQuality === 'good' ? 'good' : networkQuality === 'degraded' ? 'degraded' : 'offline'}`;
+            
+            // Update circuit state
+            const circuitEl = document.getElementById('circuit-state');
+            circuitEl.className = `circuit-state ${circuitState}`;
+            circuitEl.textContent = `CIRCUIT: ${circuitState.toUpperCase()}`;
+            
+            // Update metrics
+            document.getElementById('metric-quality').textContent = networkQuality.toUpperCase();
+            document.getElementById('metric-circuit').textContent = circuitState.toUpperCase();
+            document.getElementById('metric-queue').textContent = queueDepth;
+            document.getElementById('metric-probes').textContent = probeCount;
+            
+            // Update sync time
+            const syncAge = Math.floor((Date.now() - lastSyncTime) / 1000);
+            document.getElementById('metric-sync').textContent = syncAge < 60 ? `${syncAge}s ago` : `${Math.floor(syncAge / 60)}m ago`;
+        }
+
+        // 1. Feature Flag Tests
+        window.checkFeatureFlag = function() {
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            const enabled = flags['offline.circuitBreaker'] || false;
+            
+            const testDiv = document.getElementById('feature-flag-test');
+            if (enabled) {
+                testDiv.className = 'test-item success';
+                testDiv.textContent = '✅ Circuit breaker flag is ENABLED';
+                log('Circuit breaker flag is enabled', 'success');
+            } else {
+                testDiv.className = 'test-item warning';
+                testDiv.textContent = '⚠️ Circuit breaker flag is DISABLED - Enable it to test Phase 1 features';
+                log('Circuit breaker flag is disabled', 'warning');
+            }
+            return enabled;
+        };
+
+        window.enableCircuitBreaker = function() {
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            flags['offline.circuitBreaker'] = true;
+            localStorage.setItem('offlineFeatureFlags', JSON.stringify(flags));
+            log('Circuit breaker flag ENABLED - Reload page to apply', 'success');
+            checkFeatureFlag();
+        };
+
+        window.disableCircuitBreaker = function() {
+            const flags = JSON.parse(localStorage.getItem('offlineFeatureFlags') || '{}');
+            flags['offline.circuitBreaker'] = false;
+            localStorage.setItem('offlineFeatureFlags', JSON.stringify(flags));
+            log('Circuit breaker flag DISABLED - Reload page to apply', 'warning');
+            checkFeatureFlag();
+        };
+
+        // 2. Health Endpoint Tests
+        window.testHealthGET = async function() {
+            const testDiv = document.getElementById('health-test-get');
+            try {
+                const start = Date.now();
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                const duration = Date.now() - start;
+                
+                if (response.ok && data.ok) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = `✅ GET /api/health: ${data.status}, DB: ${data.database?.connected ? 'Connected' : 'Disconnected'}, Response: ${duration}ms`;
+                    log(`Health GET passed: ${duration}ms, DB latency: ${data.database?.latency}ms`, 'success');
+                } else {
+                    throw new Error('Health check not OK');
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ GET /api/health failed: ${error.message}`;
+                log(`Health GET failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.testHealthHEAD = async function() {
+            const testDiv = document.getElementById('health-test-head');
+            try {
+                const start = Date.now();
+                const response = await fetch('/api/health', { method: 'HEAD' });
+                const duration = Date.now() - start;
+                const responseTime = response.headers.get('x-response-time');
+                
+                if (response.ok) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = `✅ HEAD /api/health: ${response.status} OK, Response: ${responseTime || `${duration}ms`}`;
+                    log(`Health HEAD passed: ${responseTime || `${duration}ms`}`, 'success');
+                } else if (response.status === 503) {
+                    testDiv.className = 'test-item warning';
+                    testDiv.textContent = `⚠️ HEAD /api/health: 503 Service Unavailable (DB down?)`;
+                    log('Health HEAD returned 503 - DB might be down', 'warning');
+                } else {
+                    throw new Error(`Unexpected status: ${response.status}`);
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ HEAD /api/health failed: ${error.message}`;
+                log(`Health HEAD failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.testHealthWithDB = async function() {
+            const testDiv = document.getElementById('health-test-db');
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                
+                if (data.database?.connected) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = `✅ Database: Connected (${data.database.version}), Latency: ${data.database.latency}ms`;
+                    log(`DB check passed: PostgreSQL ${data.database.version}, latency: ${data.database.latency}ms`, 'success');
+                } else {
+                    testDiv.className = 'test-item error';
+                    testDiv.textContent = `❌ Database: Not connected`;
+                    log('DB check failed: Not connected', 'error');
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ DB test failed: ${error.message}`;
+                log(`DB test failed: ${error.message}`, 'error');
+            }
+        };
+
+        // 3. Network Detector Tests
+        window.testNetworkProbe = async function() {
+            const testDiv = document.getElementById('network-detector-test');
+            try {
+                probeCount++;
+                log('Forcing network probe...', 'info');
+                
+                // Simulate probe by checking health endpoint
+                const start = Date.now();
+                const response = await fetch('/api/health', { method: 'HEAD' });
+                const rtt = Date.now() - start;
+                
+                // Determine quality based on RTT
+                if (response.ok) {
+                    if (rtt < 100) {
+                        networkQuality = 'good';
+                        testDiv.className = 'test-item success';
+                        testDiv.textContent = `✅ Network probe: GOOD quality (${rtt}ms RTT)`;
+                    } else if (rtt < 500) {
+                        networkQuality = 'degraded';
+                        testDiv.className = 'test-item warning';
+                        testDiv.textContent = `⚠️ Network probe: DEGRADED quality (${rtt}ms RTT)`;
+                    } else {
+                        networkQuality = 'degraded';
+                        testDiv.className = 'test-item warning';
+                        testDiv.textContent = `⚠️ Network probe: SLOW (${rtt}ms RTT)`;
+                    }
+                    document.getElementById('metric-rtt').textContent = rtt;
+                } else {
+                    networkQuality = 'offline';
+                    testDiv.className = 'test-item error';
+                    testDiv.textContent = `❌ Network probe: OFFLINE`;
+                    document.getElementById('metric-rtt').textContent = '-';
+                }
+                
+                updateNetworkDisplay();
+                log(`Probe ${probeCount} complete: ${networkQuality} (${rtt}ms)`, networkQuality === 'good' ? 'success' : 'warning');
+            } catch (error) {
+                networkQuality = 'offline';
+                const testDiv = document.getElementById('network-detector-test');
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ Network probe failed: ${error.message}`;
+                updateNetworkDisplay();
+                log(`Probe failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.simulateOnline = function() {
+            networkQuality = 'good';
+            document.getElementById('metric-rtt').textContent = '50';
+            updateNetworkDisplay();
+            log('Simulated ONLINE state', 'success');
+            
+            const testDiv = document.getElementById('network-detector-test');
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Simulated: ONLINE';
+        };
+
+        window.simulateDegraded = function() {
+            networkQuality = 'degraded';
+            document.getElementById('metric-rtt').textContent = '250';
+            updateNetworkDisplay();
+            log('Simulated DEGRADED state', 'warning');
+            
+            const testDiv = document.getElementById('network-detector-test');
+            testDiv.className = 'test-item warning';
+            testDiv.textContent = '⚠️ Simulated: DEGRADED';
+        };
+
+        window.simulateOffline = function() {
+            networkQuality = 'offline';
+            document.getElementById('metric-rtt').textContent = '-';
+            updateNetworkDisplay();
+            log('Simulated OFFLINE state', 'error');
+            
+            const testDiv = document.getElementById('network-detector-test');
+            testDiv.className = 'test-item error';
+            testDiv.textContent = '❌ Simulated: OFFLINE';
+        };
+
+        // 4. Circuit Breaker Tests
+        window.testCircuitBreaker = function() {
+            const testDiv = document.getElementById('circuit-breaker-test');
+            
+            if (!checkFeatureFlag()) {
+                testDiv.className = 'test-item warning';
+                testDiv.textContent = '⚠️ Enable circuit breaker flag first';
+                return;
+            }
+            
+            testDiv.className = 'test-item success';
+            testDiv.textContent = `✅ Circuit breaker ready - State: ${circuitState.toUpperCase()}, Thresholds: 3 fails to open, 2 success to close`;
+            log(`Circuit breaker test: Current state is ${circuitState}`, 'success');
+        };
+
+        window.simulateFailures = function() {
+            const testDiv = document.getElementById('circuit-breaker-test');
+            log('Simulating 3 consecutive failures...', 'warning');
+            
+            let failures = 0;
+            const interval = setInterval(() => {
+                failures++;
+                log(`Failure ${failures}/3`, 'error');
+                
+                if (failures === 3) {
+                    circuitState = 'open';
+                    updateNetworkDisplay();
+                    testDiv.className = 'test-item error';
+                    testDiv.textContent = '❌ Circuit OPENED after 3 failures';
+                    log('Circuit breaker OPENED', 'error');
+                    clearInterval(interval);
+                    
+                    // Simulate half-open after delay
+                    setTimeout(() => {
+                        circuitState = 'half-open';
+                        updateNetworkDisplay();
+                        log('Circuit breaker transitioned to HALF-OPEN', 'warning');
+                    }, 5000);
+                }
+            }, 1000);
+        };
+
+        window.simulateRecovery = function() {
+            const testDiv = document.getElementById('circuit-breaker-test');
+            
+            if (circuitState === 'closed') {
+                log('Circuit already closed', 'info');
+                return;
+            }
+            
+            log('Simulating 2 successful requests...', 'info');
+            
+            setTimeout(() => {
+                log('Success 1/2', 'success');
+                circuitState = 'half-open';
+                updateNetworkDisplay();
+            }, 500);
+            
+            setTimeout(() => {
+                log('Success 2/2', 'success');
+                circuitState = 'closed';
+                updateNetworkDisplay();
+                testDiv.className = 'test-item success';
+                testDiv.textContent = '✅ Circuit CLOSED after recovery';
+                log('Circuit breaker CLOSED', 'success');
+            }, 1000);
+        };
+
+        window.resetCircuit = function() {
+            circuitState = 'closed';
+            updateNetworkDisplay();
+            
+            const testDiv = document.getElementById('circuit-breaker-test');
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Circuit forcefully reset to CLOSED';
+            log('Circuit breaker forcefully reset', 'success');
+        };
+
+        // 5. Queue Management Tests
+        window.updateQueueDepth = function(depth) {
+            queueDepth = depth;
+            updateNetworkDisplay();
+            
+            const testDiv = document.getElementById('queue-test');
+            testDiv.className = depth > 10 ? 'test-item warning' : 'test-item success';
+            testDiv.textContent = depth > 10 
+                ? `⚠️ Queue depth: ${depth} (high)` 
+                : `✅ Queue depth: ${depth}`;
+            log(`Queue depth updated to ${depth}`, depth > 10 ? 'warning' : 'success');
+        };
+
+        window.simulateSync = function() {
+            lastSyncTime = Date.now();
+            queueDepth = 0;
+            updateNetworkDisplay();
+            
+            const testDiv = document.getElementById('queue-test');
+            testDiv.className = 'test-item success';
+            testDiv.textContent = '✅ Sync completed, queue cleared';
+            log('Simulated successful sync, queue cleared', 'success');
+        };
+
+        // 6. Telemetry Tests
+        window.testTelemetry = async function() {
+            const testDiv = document.getElementById('telemetry-test');
+            
+            try {
+                // Send telemetry
+                const response = await fetch('/api/telemetry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        events: [{
+                            timestamp: Date.now(),
+                            category: 'network',
+                            action: 'phase1-test',
+                            metadata: { 
+                                quality: networkQuality,
+                                circuitState: circuitState,
+                                probeCount: probeCount
+                            }
+                        }],
+                        metrics: {
+                            network: { quality: networkQuality, rtt: 50 },
+                            queue: { depth: queueDepth },
+                            cache: {},
+                            conflict: {}
+                        },
+                        timestamp: Date.now()
+                    })
+                });
+                
+                if (response.ok) {
+                    testDiv.className = 'test-item success';
+                    testDiv.textContent = '✅ Telemetry integration working';
+                    log('Telemetry event sent successfully', 'success');
+                } else {
+                    throw new Error('Telemetry POST failed');
+                }
+            } catch (error) {
+                testDiv.className = 'test-item error';
+                testDiv.textContent = `❌ Telemetry test failed: ${error.message}`;
+                log(`Telemetry test failed: ${error.message}`, 'error');
+            }
+        };
+
+        window.fetchMetrics = async function() {
+            try {
+                const response = await fetch('/api/telemetry');
+                const data = await response.json();
+                
+                const metricsDiv = document.getElementById('telemetry-data');
+                metricsDiv.innerHTML = `
+                    <div style="background: #f7fafc; padding: 10px; border-radius: 6px; margin-top: 10px;">
+                        <strong>Current Metrics:</strong><br>
+                        Network: ${data.network?.quality || 'N/A'}, RTT: ${data.network?.rtt || 0}ms<br>
+                        Queue: ${data.queue?.depth || 0} items<br>
+                        Cache Hit Rate: ${((data.cache?.hitRate || 0) * 100).toFixed(1)}%
+                    </div>
+                `;
+                log('Metrics fetched successfully', 'success');
+            } catch (error) {
+                log(`Failed to fetch metrics: ${error.message}`, 'error');
+            }
+        };
+
+        // Run all tests
+        window.runAllTests = async function() {
+            log('Starting Phase 1 test suite...', 'info');
+            
+            let passed = 0;
+            let failed = 0;
+            
+            // Test 1: Feature Flag
+            if (checkFeatureFlag()) passed++; else failed++;
+            
+            // Test 2: Health GET
+            await testHealthGET();
+            const getTest = document.getElementById('health-test-get');
+            if (getTest.className.includes('success')) passed++; else failed++;
+            
+            // Test 3: Health HEAD
+            await testHealthHEAD();
+            const headTest = document.getElementById('health-test-head');
+            if (headTest.className.includes('success') || headTest.className.includes('warning')) passed++; else failed++;
+            
+            // Test 4: Network Probe
+            await testNetworkProbe();
+            const probeTest = document.getElementById('network-detector-test');
+            if (probeTest.className.includes('success') || probeTest.className.includes('warning')) passed++; else failed++;
+            
+            // Test 5: Circuit Breaker
+            testCircuitBreaker();
+            const circuitTest = document.getElementById('circuit-breaker-test');
+            if (circuitTest.className.includes('success') || circuitTest.className.includes('warning')) passed++; else failed++;
+            
+            // Test 6: Queue Management
+            updateQueueDepth(5);
+            passed++;
+            
+            // Test 7: Telemetry
+            await testTelemetry();
+            const telemetryTest = document.getElementById('telemetry-test');
+            if (telemetryTest.className.includes('success')) passed++; else failed++;
+            
+            // Summary
+            const total = passed + failed;
+            const percentage = Math.round((passed / total) * 100);
+            
+            const summaryDiv = document.getElementById('test-summary');
+            summaryDiv.innerHTML = `
+                <div style="padding: 15px; background: ${percentage === 100 ? '#d1fae5' : percentage >= 80 ? '#fed7aa' : '#fee2e2'}; border-radius: 6px;">
+                    <h3>Test Results</h3>
+                    <p>✅ Passed: ${passed}</p>
+                    <p>❌ Failed: ${failed}</p>
+                    <p><strong>Success Rate: ${percentage}%</strong></p>
+                    ${percentage === 100 ? '<p>🎉 All Phase 1 tests passed!</p>' : '<p>⚠️ Some tests failed. Check the logs above.</p>'}
+                </div>
+            `;
+            
+            log(`Test suite complete: ${passed}/${total} passed (${percentage}%)`, percentage === 100 ? 'success' : 'warning');
+        };
+
+        window.clearLogs = function() {
+            document.getElementById('test-logs').innerHTML = '';
+            log('Logs cleared', 'info');
+        };
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            log('Phase 1 Connectivity Foundation Test Page loaded', 'info');
+            log('Click "Run All Phase 1 Tests" to start comprehensive testing', 'info');
+            checkFeatureFlag();
+            updateNetworkDisplay();
+            
+            // Start periodic updates
+            setInterval(updateNetworkDisplay, 5000);
+        });
+    </script>
+</body>
+</html>

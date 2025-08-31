@@ -1,0 +1,176 @@
+/**
+ * Offline Queue Status Endpoint
+ * Phase 2: OFF-P2-BE-001
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev',
+});
+
+export async function GET(request: NextRequest) {
+  try {
+    // Get queue counts by status
+    const result = await pool.query(`
+      SELECT 
+        status,
+        COUNT(*) as count,
+        MIN(created_at) as oldest,
+        MAX(created_at) as newest,
+        AVG(retry_count) as avg_retries
+      FROM offline_queue
+      GROUP BY status
+    `);
+
+    // Get total count
+    const totalResult = await pool.query(`
+      SELECT COUNT(*) as total FROM offline_queue
+    `);
+
+    // Get counts by operation type
+    const typeResult = await pool.query(`
+      SELECT 
+        operation->>'method' as method,
+        COUNT(*) as count
+      FROM offline_queue
+      WHERE status = 'pending'
+      GROUP BY operation->>'method'
+    `);
+
+    // Get failed operations with high retry count
+    const failedResult = await pool.query(`
+      SELECT 
+        id,
+        operation->>'url' as url,
+        operation->>'method' as method,
+        retry_count,
+        error_message,
+        created_at
+      FROM offline_queue
+      WHERE status = 'failed' OR retry_count >= 3
+      ORDER BY created_at DESC
+      LIMIT 10
+    `);
+
+    const response = {
+      summary: {
+        total: parseInt(totalResult.rows[0]?.total || '0'),
+        byStatus: result.rows.reduce((acc, row) => {
+          acc[row.status] = {
+            count: parseInt(row.count),
+            oldest: row.oldest,
+            newest: row.newest,
+            avgRetries: parseFloat(row.avg_retries || '0'),
+          };
+          return acc;
+        }, {} as Record<string, any>),
+        byMethod: typeResult.rows.reduce((acc, row) => {
+          acc[row.method || 'unknown'] = parseInt(row.count);
+          return acc;
+        }, {} as Record<string, number>),
+      },
+      failedOperations: failedResult.rows.map(row => ({
+        id: row.id,
+        url: row.url,
+        method: row.method,
+        retryCount: row.retry_count,
+        error: row.error_message,
+        createdAt: row.created_at,
+      })),
+      timestamp: new Date().toISOString(),
+    };
+
+    return NextResponse.json(response);
+  } catch (error) {
+    console.error('Failed to get queue status:', error);
+    return NextResponse.json(
+      { error: 'Failed to get queue status' },
+      { status: 500 }
+    );
+  }
+}
+
+// Requeue a failed operation
+export async function POST(request: NextRequest) {
+  try {
+    const { id } = await request.json();
+    
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Operation ID required' },
+        { status: 400 }
+      );
+    }
+
+    // Reset status to pending and clear error
+    const result = await pool.query(`
+      UPDATE offline_queue
+      SET 
+        status = 'pending',
+        retry_count = 0,
+        error_message = NULL,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+
+    if (result.rowCount === 0) {
+      return NextResponse.json(
+        { error: 'Operation not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      operation: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Failed to requeue operation:', error);
+    return NextResponse.json(
+      { error: 'Failed to requeue operation' },
+      { status: 500 }
+    );
+  }
+}
+
+// Delete an operation from queue
+export async function DELETE(request: NextRequest) {
+  try {
+    const url = new URL(request.url);
+    const id = url.searchParams.get('id');
+    
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Operation ID required' },
+        { status: 400 }
+      );
+    }
+
+    const result = await pool.query(`
+      DELETE FROM offline_queue
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+
+    if (result.rowCount === 0) {
+      return NextResponse.json(
+        { error: 'Operation not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted: result.rows[0],
+    });
+  } catch (error) {
+    console.error('Failed to delete operation:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete operation' },
+      { status: 500 }
+    );
+  }
+}
