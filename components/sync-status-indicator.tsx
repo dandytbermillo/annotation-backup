@@ -323,6 +323,20 @@ export function SyncStatusIndicator() {
           </Tooltip>
         )}
         
+        {queueStatus?.expired > 0 && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Badge variant="warning" className="gap-1">
+                <Clock className="w-3 h-3" />
+                {queueStatus.expired} expired
+              </Badge>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Operations that expired before syncing</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+        
         {queueStatus?.deadLetter > 0 && (
           <Tooltip>
             <TooltipTrigger asChild>

@@ -9,9 +9,15 @@ const pool = new Pool({
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const query = searchParams.get('q')
-  const type = searchParams.get('type') || 'all'
+  let type = searchParams.get('type') || 'all'
+  const fuzzy = searchParams.get('fuzzy') === 'true'
   const limit = parseInt(searchParams.get('limit') || '20')
   const offset = parseInt(searchParams.get('offset') || '0')
+  
+  // Handle fuzzy parameter as alias for type=fuzzy
+  if (fuzzy && type === 'all') {
+    type = 'fuzzy'
+  }
   
   if (!query || query.trim().length === 0) {
     return NextResponse.json({ error: 'Query parameter is required' }, { status: 400 })
@@ -33,19 +39,19 @@ export async function GET(request: NextRequest) {
         `SELECT 
           id, 
           title, 
-          COALESCE(content::text, '') as content,
+          COALESCE(content_text, '') as content,
           ts_rank(search_vector, ${tsquery}) as rank,
           ts_headline(
             'english', 
-            COALESCE(content::text, ''), 
+            COALESCE(content_text, title, ''), 
             ${tsquery}, 
             'StartSel=<mark>, StopSel=</mark>, MaxWords=30, MinWords=15'
           ) as excerpt,
-          created_at,
-          updated_at
+          created_at
         FROM notes
         WHERE search_vector @@ ${tsquery}
-        ORDER BY rank DESC, updated_at DESC
+          OR title ILIKE '%' || $1 || '%'
+        ORDER BY rank DESC, created_at DESC
         LIMIT $2 OFFSET $3`,
         [query, limit, offset]
       )
@@ -72,12 +78,11 @@ export async function GET(request: NextRequest) {
             ${tsquery},
             'StartSel=<mark>, StopSel=</mark>, MaxWords=30, MinWords=15'
           ) as excerpt,
-          ds.created_at,
-          ds.updated_at
+          ds.created_at
         FROM document_saves ds
         LEFT JOIN notes n ON ds.note_id = n.id
         WHERE ds.search_vector @@ ${tsquery}
-        ORDER BY rank DESC, ds.updated_at DESC
+        ORDER BY rank DESC, ds.created_at DESC
         LIMIT $2 OFFSET $3`,
         [query, limit, offset]
       )
@@ -107,12 +112,11 @@ export async function GET(request: NextRequest) {
             ${tsquery},
             'StartSel=<mark>, StopSel=</mark>, MaxWords=30, MinWords=15'
           ) as excerpt,
-          b.created_at,
-          b.updated_at
+          b.created_at
         FROM branches b
         LEFT JOIN notes n ON b.note_id = n.id
         WHERE to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
-        ORDER BY rank DESC, b.updated_at DESC
+        ORDER BY rank DESC, b.created_at DESC
         LIMIT $2 OFFSET $3`,
         [query, limit, offset]
       )
@@ -133,8 +137,7 @@ export async function GET(request: NextRequest) {
           n.title as note_title,
           similarity(ds.document_text, $1) as similarity,
           SUBSTRING(ds.document_text, 1, 200) as excerpt,
-          ds.created_at,
-          ds.updated_at
+          ds.created_at
         FROM document_saves ds
         LEFT JOIN notes n ON ds.note_id = n.id
         WHERE ds.document_text % $1
@@ -155,6 +158,11 @@ export async function GET(request: NextRequest) {
       totalCount += results.results[key].count || 0
     }
     results.totalCount = totalCount
+    
+    // Also add fuzzy flag if it was a fuzzy search
+    if (type === 'fuzzy') {
+      results.fuzzy = true
+    }
     
     return NextResponse.json(results)
   } catch (error) {
@@ -239,8 +247,7 @@ export async function POST(request: NextRequest) {
           plainto_tsquery($1),
           'StartSel=<mark>, StopSel=</mark>, MaxWords=50, MinWords=20'
         ) as excerpt,
-        created_at,
-        updated_at
+        created_at
       FROM document_saves
       ${whereClause}
       ${orderClause}`,

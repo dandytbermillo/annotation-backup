@@ -12,6 +12,14 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get('status') || 'pending'
   const includeMetadata = searchParams.get('metadata') === 'true'
   
+  // Minimal auth guard
+  const adminKey = process.env.ADMIN_API_KEY
+  const providedKey = request.headers.get('x-admin-key') || ''
+  
+  if (adminKey && providedKey !== adminKey) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  
   try {
     // Fetch queue items
     const result = await pool.query(
@@ -86,12 +94,14 @@ export async function GET(request: NextRequest) {
       exportPackage.metadata.dead_letter_count = parseInt(deadLetterResult.rows[0]?.count || '0')
     }
     
-    // Calculate checksum for integrity
+    // Calculate checksum for integrity - always include
     const checksum = crypto
       .createHash('sha256')
       .update(JSON.stringify(exportPackage.operations))
       .digest('hex')
     
+    // Add checksum at both levels for compatibility
+    exportPackage.checksum = checksum
     exportPackage.metadata.checksum = checksum
     
     // Return as downloadable JSON
@@ -113,6 +123,13 @@ export async function GET(request: NextRequest) {
 
 // POST /api/offline-queue/export - Export specific operations
 export async function POST(request: NextRequest) {
+  // Minimal auth guard
+  const adminKey = process.env.ADMIN_API_KEY
+  const providedKey = request.headers.get('x-admin-key') || ''
+  if (adminKey && providedKey !== adminKey) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  
   try {
     const body = await request.json()
     const { operation_ids, filters = {} } = body

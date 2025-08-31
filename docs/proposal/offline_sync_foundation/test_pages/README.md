@@ -1,162 +1,187 @@
-# Offline Sync Foundation - Test Suite
+# Test Pages
 
-## Overview
-This directory contains comprehensive test pages, scripts, and validation tools for verifying the offline_sync_foundation implementation.
+This folder contains manual test materials for the offline sync foundation feature.
+Canonical path (per CLAUDE.md): this folder is the source of truth for manual test pages and runbooks.
+If a sibling folder named test_page/ exists, treat it as a legacy mirror and prefer this folder for updates.
+## Contents
 
-## Test Files Created
+- **offline-sync-smoke.md**: Manual smoke test page with scenarios and coverage checklist
+- **offline-sync-test.html**: Interactive browser-based test suite with visual dashboard
+- **README.md**: This file
 
-### 1. Manual Test Page (`offline-sync-smoke.md`)
-- **Purpose**: Step-by-step manual testing checklist
-- **Coverage**: Queue reliability, FTS, conflicts, platform-specific features
-- **Usage**: Follow the checklist for manual validation during development
+## Quick Start (Recommended)
 
-### 2. API Smoke Test Script (`../test_scripts/api-smoke-test.js`)
-- **Purpose**: Automated API endpoint validation
-- **Coverage**: All offline sync API endpoints (search, versions, queue export/import)
-- **Usage**: 
-  ```bash
-  # Start dev server first
-  npm run dev
-  
-  # Run API tests
-  node docs/proposal/offline_sync_foundation/test_scripts/api-smoke-test.js
-  ```
-
-### 3. SQL Validation Snippets (`../test_scripts/sql-validation.sql`)
-- **Purpose**: Database schema and data integrity checks
-- **Coverage**: Schema validation, queue monitoring, performance metrics
-- **Usage**:
-  ```bash
-  # Run all validations
-  docker exec -i annotation_postgres psql -U postgres -d annotation_dev < docs/proposal/offline_sync_foundation/test_scripts/sql-validation.sql
-  
-  # Or copy specific queries to run individually
-  ```
-
-### 4. Integration Helper Script (`../test_scripts/integration-helper.sh`)
-- **Purpose**: Automated test environment setup and teardown
-- **Features**:
-  - Database setup with migrations
-  - Test data insertion
-  - All test types execution
-  - Queue monitoring
-  - Cleanup utilities
-- **Usage**:
-  ```bash
-  # Interactive mode
-  ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh
-  
-  # Command mode
-  ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh setup
-  ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh test all
-  ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh cleanup
-  ```
-
-### 5. Queue Reliability Test (`../test_scripts/test-queue-reliability.js`)
-- **Purpose**: Comprehensive queue feature testing
-- **Coverage**: Idempotency, priority, TTL, dead-letter, dependencies
-- **Usage**:
-  ```bash
-  node docs/proposal/offline_sync_foundation/test_scripts/test-queue-reliability.js
-  ```
-
-### 6. Validation Script (`../test_scripts/validate-offline-sync.sh`)
-- **Purpose**: Full implementation validation
-- **Coverage**: Prerequisites, migrations, schema, APIs, components
-- **Usage**:
-  ```bash
-  ./docs/proposal/offline_sync_foundation/test_scripts/validate-offline-sync.sh
-  ```
-
-## Quick Start Testing
-
-### 1. Basic Validation
+### 1) Start services
 ```bash
-# Setup and validate everything
-./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh setup
-./docs/proposal/offline_sync_foundation/test_scripts/validate-offline-sync.sh
+docker compose up -d postgres
+npm run dev  # and npm run electron:dev for IPC/Electron tests
 ```
 
-### 2. API Testing
+### 2) Apply migrations and seed
 ```bash
-# Start dev server
-npm run dev
+./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh setup
+```
 
-# Run API tests
+### 3) Set admin auth (if using protected endpoints)
+```bash
+export ADMIN_API_KEY=your-secure-admin-key
+```
+
+### 4) Health check
+```bash
+curl -s http://localhost:3000/api/health | jq -e '.ok == true'
+```
+
+### 5) Run API smoke tests (optional headless)
+```bash
 node docs/proposal/offline_sync_foundation/test_scripts/api-smoke-test.js
 ```
 
-### 3. Queue Testing
+### 6) Follow offline-sync-smoke.md step-by-step and mark results
+
+### 7) Or use the interactive HTML test page
 ```bash
-# Test queue reliability features
-node docs/proposal/offline_sync_foundation/test_scripts/test-queue-reliability.js
-
-# Monitor queue in real-time
-./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh monitor
+# Open in browser (after npm run dev is running)
+open http://localhost:3000/docs/proposal/offline_sync_foundation/test_pages/offline-sync-test.html
 ```
 
-### 4. Manual Testing
-- Open `offline-sync-smoke.md`
-- Follow the test scenarios
-- Mark each test as Pass/Fail
-- Document any issues found
+## Interactive HTML Test Page
 
-## Test Coverage Matrix
+The `offline-sync-test.html` provides a visual, browser-based test suite with:
 
-| Component | Manual | API | SQL | Integration | Queue |
-|-----------|--------|-----|-----|------------|-------|
-| Queue Reliability | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FTS Search | ✓ | ✓ | ✓ | ✓ | - |
-| Conflict Detection | ✓ | - | ✓ | ✓ | - |
-| Version History | ✓ | ✓ | ✓ | ✓ | - |
-| Export/Import | ✓ | ✓ | - | ✓ | - |
-| Platform Modes | ✓ | - | - | ✓ | - |
-| Dead Letter | ✓ | - | ✓ | ✓ | ✓ |
+### Features
+- **Real-time Status Indicators** - Online/offline detection with visual badges
+- **Test Progress Dashboard** - Live counters, progress bar, success rate
+- **Interactive Test Runner** - Run individual tests or full suites
+- **Detailed Logging** - Color-coded, timestamped test execution log
+- **Response Time Monitoring** - Track API performance metrics
 
-## CI Integration
+### How to Use
+1. Open the HTML file in a browser (see command above)
+2. Click **"Run All Tests"** to execute the complete test suite
+3. Or run individual test groups:
+   - Test Offline Queue
+   - Test Search
+   - Test Versions
+4. View results in real-time with color-coded status indicators
+5. Check the test log for detailed execution information
 
-These tests can be integrated into CI pipelines:
+### Keyboard Shortcuts
+- `Ctrl/Cmd + R` - Run all tests
+- `Ctrl/Cmd + L` - Clear results
+- `Ctrl/Cmd + E` - Open export/import modal
 
-```yaml
-# Example GitHub Actions workflow
-- name: Setup Database
-  run: ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh setup
-  
-- name: Run All Tests
-  run: ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh test all
-  
-- name: Validate Implementation
-  run: ./docs/proposal/offline_sync_foundation/test_scripts/validate-offline-sync.sh
+## Cleanup
+```bash
+./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh cleanup
 ```
+
+## Test Coverage Areas
+
+- **Offline Queue**: Idempotency, priority ordering, TTL expiry, dependency chains
+- **Full-Text Search**: ProseMirror extraction, fuzzy matching, highlights
+- **Version History**: Auto-increment, compare/diff, restore
+- **Conflict Detection**: Version mismatch, resolution UI
+- **Platform-Specific**: Electron offline mode, Web export/import
+- **Dead-Letter**: Requeue/discard admin operations
+- **Performance**: Response times, queue processing speed
+
+## Key Commands Reference
+
+### API Testing
+```bash
+# Set API base
+export API=http://localhost:3000/api
+
+# Health check
+curl -s $API/health | jq
+
+# Export queue (with auth)
+curl -s -H "x-admin-key: $ADMIN_API_KEY" "$API/offline-queue/export?status=pending" | jq
+
+# Import validation
+curl -s -X POST -H "x-admin-key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  $API/offline-queue/import -d '{"version":2,"operations":[],"validate_only":true}' | jq
+```
+
+### Database Verification
+```sql
+-- Check extensions
+SELECT extname FROM pg_extension WHERE extname IN ('unaccent','pg_trgm');
+
+-- Verify document_saves schema
+\d+ document_saves
+
+-- Check indexes
+SELECT indexname FROM pg_indexes WHERE tablename='document_saves';
+
+-- Verify queue constraints
+SELECT conname FROM pg_constraint WHERE conrelid='offline_queue'::regclass;
+
+-- Check queue status enum (should be: pending, processing, failed)
+SELECT enumlabel FROM pg_enum WHERE enumtypid = 'offline_operation_status'::regtype;
+```
+
+### Performance Testing
+```bash
+# Search performance
+time curl -s "$API/search?q=test&type=documents" > /dev/null
+
+# Queue flush performance
+time curl -s -X POST "$API/postgres-offline/queue/flush" \
+  -H "Content-Type: application/json" -d '{"operations":[]}' > /dev/null
+```
+
+## Expected Test Results
+
+### Queue Status Flow
+- ✅ `pending` → `processing` → **DELETE** (not "completed")
+- ❌ Failed operations → `failed` status → dead-letter after max retries
+
+### Dead-Letter Schema
+- ✅ Uses `error_message` column (not "reason")
+- ✅ Has `retry_count` and `last_error_at`
+
+### Duplicate Detection
+- ✅ Based on `idempotency_key` uniqueness
+- ✅ Same key = duplicate (skipped)
+- ❌ Different key = new operation (processed)
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **PostgreSQL not running**
-   ```bash
-   docker compose up -d postgres
-   ```
+1. **"completed" status error**
+   - The queue only has: `pending`, `processing`, `failed`
+   - Successful operations are DELETED, not marked "completed"
 
-2. **Migrations not applied**
-   ```bash
-   ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh reset
-   ```
+2. **"reason" column not found**
+   - Dead-letter uses `error_message` column
+   - Update tests to use correct column name
 
-3. **Test data conflicts**
-   ```bash
-   ./docs/proposal/offline_sync_foundation/test_scripts/integration-helper.sh cleanup
-   ```
+3. **Foreign key constraint errors**
+   - Seed valid notes/panels before operations
+   - Use real UUIDs, not test strings
 
-4. **Port conflicts**
-   - Check if port 3000 (Next.js) or 5432 (PostgreSQL) are in use
-   - Stop conflicting services or change ports
+4. **Duplicate not detected**
+   - Must use SAME `idempotency_key`
+   - Different keys = different operations
 
-## Next Steps
+## Sign-off Checklist
 
-After successful testing:
-1. Review test results in manual test page
-2. Check performance metrics from SQL validations
-3. Monitor queue processing in production
-4. Set up automated CI/CD with these tests
-5. Create additional test scenarios as needed
+Before marking test complete:
+- [ ] All preflight checks passed
+- [ ] Database migrations applied
+- [ ] Extensions verified (unaccent, pg_trgm)
+- [ ] API endpoints responding
+- [ ] Queue operations tested
+- [ ] Search functionality verified
+- [ ] Version history working
+- [ ] Performance metrics recorded
+
+## Support
+
+For issues or questions:
+- Check `docs/proposal/offline_sync_foundation/fixing_doc/` for known fixes
+- Review implementation plan in `IMPLEMENTATION_PLAN.md`
+- Consult `CLAUDE.md` for project conventions

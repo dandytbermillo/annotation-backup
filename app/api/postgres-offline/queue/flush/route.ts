@@ -17,40 +17,55 @@ export async function POST(request: NextRequest) {
     // Process each operation
     for (const op of operations) {
       try {
-        const { noteId, panelId, operation, data, timestamp } = op
+        const { noteId, panelId, operation, data } = op
+        
+        if (!noteId || !panelId) {
+          throw new Error('noteId and panelId are required')
+        }
         
         // Process based on operation type
         switch (operation) {
-          case 'update':
-            // Update document_saves table
+          case 'update': {
+            // Create a new version for document (Schema option B: no updated_at)
+            const content = JSON.stringify(data?.content ?? {})
             await pool.query(
-              `INSERT INTO document_saves (panel_id, content, version, updated_at)
-               VALUES ($1, $2::text, $3, NOW())
-               ON CONFLICT (panel_id) 
-               DO UPDATE SET 
-                 content = $2::text,
-                 version = document_saves.version + 1,
-                 updated_at = NOW()`,
-              [panelId, JSON.stringify(data.content || ''), data.version || 1]
+              `WITH next AS (
+                 SELECT COALESCE(MAX(version), 0) + 1 AS v
+                 FROM document_saves
+                 WHERE note_id = $1 AND panel_id = $2
+               )
+               INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+               SELECT $1, $2, $3::jsonb, next.v, NOW()
+               FROM next`,
+              [noteId, panelId, content]
             )
             results.push({ ...op, status: 'success' })
             break
+          }
             
-          case 'create':
-            // Create new entry
+          case 'create': {
+            // Create the initial version (1) if none exists, otherwise append next
+            const content = JSON.stringify(data?.content ?? {})
             await pool.query(
-              `INSERT INTO document_saves (panel_id, content, version, updated_at)
-               VALUES ($1, $2::text, $3, NOW())`,
-              [panelId, JSON.stringify(data.content || ''), data.version || 1]
+              `WITH next AS (
+                 SELECT COALESCE(MAX(version), 0) + 1 AS v
+                 FROM document_saves
+                 WHERE note_id = $1 AND panel_id = $2
+               )
+               INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+               SELECT $1, $2, $3::jsonb, next.v, NOW()
+               FROM next`,
+              [noteId, panelId, content]
             )
             results.push({ ...op, status: 'success' })
             break
+          }
             
           case 'delete':
-            // Delete entry
+            // Delete all versions for this note/panel pair
             await pool.query(
-              `DELETE FROM document_saves WHERE panel_id = $1`,
-              [panelId]
+              `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
+              [noteId, panelId]
             )
             results.push({ ...op, status: 'success' })
             break

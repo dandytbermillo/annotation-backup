@@ -41,13 +41,13 @@ export async function POST(request: NextRequest) {
     // Fetch both versions
     const [v1Result, v2Result] = await Promise.all([
       pool.query(
-        `SELECT version, content, document_text, created_at, updated_at
+        `SELECT version, content, document_text, created_at
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
         [noteId, panelId, version1]
       ),
       pool.query(
-        `SELECT version, content, document_text, created_at, updated_at
+        `SELECT version, content, document_text, created_at
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
         [noteId, panelId, version2]
@@ -135,13 +135,13 @@ export async function POST(request: NextRequest) {
         version1: {
           version: v1.version,
           created_at: v1.created_at,
-          updated_at: v1.updated_at,
+          created_at: v1.created_at,
           text_length: text1.length
         },
         version2: {
           version: v2.version,
           created_at: v2.created_at,
-          updated_at: v2.updated_at,
+          created_at: v2.created_at,
           text_length: text2.length
         }
       },

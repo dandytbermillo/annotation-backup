@@ -128,12 +128,12 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Insert test document saves with versions
-INSERT INTO document_saves (panel_id, content, version, document_text, updated_at)
+INSERT INTO document_saves (note_id, panel_id, content, version, document_text, created_at)
 VALUES 
-    ('test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 1"}]}]}', 1, 'Version 1', NOW() - INTERVAL '2 hours'),
-    ('test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 2 with changes"}]}]}', 2, 'Version 2 with changes', NOW() - INTERVAL '1 hour'),
-    ('test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 3 latest"}]}]}', 3, 'Version 3 latest', NOW())
-ON CONFLICT (panel_id, version) DO NOTHING;
+    ('test-note-001', 'test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 1"}]}]}', 1, 'Version 1', NOW() - INTERVAL '2 hours'),
+    ('test-note-001', 'test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 2 with changes"}]}]}', 2, 'Version 2 with changes', NOW() - INTERVAL '1 hour'),
+    ('test-note-001', 'test-panel-001', '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Version 3 latest"}]}]}', 3, 'Version 3 latest', NOW())
+ON CONFLICT (note_id, panel_id, version) DO NOTHING;
 
 -- Update search vectors
 UPDATE document_saves 

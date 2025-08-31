@@ -11,11 +11,19 @@ export async function POST(request: NextRequest) {
   const client = await pool.connect()
   
   try {
+    // Minimal auth guard
+    const adminKey = process.env.ADMIN_API_KEY
+    const providedKey = request.headers.get('x-admin-key') || ''
+    if (adminKey && providedKey !== adminKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    
     const body = await request.json()
     const { 
       version,
       operations,
       metadata,
+      checksum, // Accept checksum at top level too
       validate_only = false,
       skip_duplicates = true,
       override_priority = null
@@ -29,16 +37,19 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Validate checksum if provided
-    if (metadata?.checksum) {
+    // Validate checksum if provided (accept at top level or in metadata)
+    const providedChecksum = checksum || metadata?.checksum
+    if (providedChecksum) {
       const calculatedChecksum = crypto
         .createHash('sha256')
         .update(JSON.stringify(operations))
         .digest('hex')
       
-      if (calculatedChecksum !== metadata.checksum) {
+      if (calculatedChecksum !== providedChecksum) {
         return NextResponse.json(
-          { error: 'Checksum mismatch - package may be corrupted' },
+          { error: 'Checksum mismatch - package may be corrupted', 
+            expected: providedChecksum, 
+            calculated: calculatedChecksum },
           { status: 400 }
         )
       }

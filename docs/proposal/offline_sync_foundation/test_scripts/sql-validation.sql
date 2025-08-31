@@ -125,8 +125,8 @@ SELECT
     COUNT(*) as total_failed,
     COUNT(DISTINCT entity_id) as unique_entities,
     AVG(retry_count) as avg_retries,
-    MIN(failed_at) as oldest_failure,
-    MAX(failed_at) as recent_failure
+    MIN(last_error_at) as oldest_failure,
+    MAX(last_error_at) as recent_failure
 FROM offline_dead_letter
 WHERE archived = false;
 
@@ -147,11 +147,11 @@ SELECT
     type,
     retry_count,
     error_message,
-    failed_at
+    last_error_at
 FROM offline_dead_letter
 WHERE archived = false
     AND retry_count < 5
-ORDER BY failed_at DESC
+ORDER BY last_error_at DESC
 LIMIT 10;
 
 -- ============================================
@@ -260,15 +260,15 @@ LIMIT 10;
 -- 8. PERFORMANCE METRICS
 -- ============================================
 
--- Queue processing performance
+-- Queue activity by hour (processed items are deleted; no 'completed' state)
 SELECT 
-    DATE_TRUNC('hour', processed_at) as hour,
-    COUNT(*) as operations_processed,
-    AVG(EXTRACT(EPOCH FROM (processed_at - created_at))) as avg_processing_time_seconds
+    DATE_TRUNC('hour', created_at) as hour,
+    COUNT(*) FILTER (WHERE status = 'pending') as pending,
+    COUNT(*) FILTER (WHERE status = 'processing') as processing,
+    COUNT(*) FILTER (WHERE status = 'failed') as failed
 FROM offline_queue
-WHERE status = 'completed'
-    AND processed_at IS NOT NULL
-GROUP BY DATE_TRUNC('hour', processed_at)
+WHERE created_at > NOW() - INTERVAL '24 hours'
+GROUP BY DATE_TRUNC('hour', created_at)
 ORDER BY hour DESC
 LIMIT 24;
 
@@ -328,17 +328,14 @@ ORDER BY schema_version;
 -- 10. CLEANUP QUERIES
 -- ============================================
 
--- Archive old completed operations (dry run - SELECT first)
-SELECT COUNT(*) as operations_to_archive
-FROM offline_queue
-WHERE status = 'completed'
-    AND processed_at < NOW() - INTERVAL '7 days';
+-- Archive old completed operations: N/A (processed items are deleted)
+SELECT 0 as operations_to_archive;
 
 -- Archive old dead letter entries (dry run)
 SELECT COUNT(*) as dead_letter_to_archive
 FROM offline_dead_letter
 WHERE archived = false
-    AND failed_at < NOW() - INTERVAL '30 days';
+    AND last_error_at < NOW() - INTERVAL '30 days';
 
 -- Identify candidates for FTS vector rebuild
 SELECT 
@@ -355,12 +352,11 @@ LIMIT 10;
 -- 11. USEFUL DIAGNOSTIC QUERIES
 -- ============================================
 
--- Recent queue activity timeline
+-- Recent queue activity timeline (no 'completed' state)
 SELECT 
     DATE_TRUNC('minute', created_at) as minute,
     COUNT(*) FILTER (WHERE status = 'pending') as pending,
     COUNT(*) FILTER (WHERE status = 'processing') as processing,
-    COUNT(*) FILTER (WHERE status = 'completed') as completed,
     COUNT(*) FILTER (WHERE status = 'failed') as failed
 FROM offline_queue
 WHERE created_at > NOW() - INTERVAL '1 hour'

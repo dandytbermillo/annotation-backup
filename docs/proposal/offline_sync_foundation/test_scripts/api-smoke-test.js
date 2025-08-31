@@ -77,8 +77,9 @@ const tests = [
       const res = await makeRequest('/search?q=test&limit=10');
       if (res.status !== 200) throw new Error(`Status ${res.status}`);
       if (!res.data.query) throw new Error('Missing query in response');
-      if (!Array.isArray(res.data.results)) throw new Error('Results not an array');
-      return `Found ${res.data.results.length} results`;
+      if (typeof res.data.results !== 'object') throw new Error('Results should be an object by type');
+      if (typeof res.data.totalCount !== 'number') throw new Error('totalCount missing');
+      return `Total results ${res.data.totalCount}`;
     }
   },
 
@@ -104,8 +105,8 @@ const tests = [
   {
     name: 'Version History API - List Versions',
     async test() {
-      const noteId = `test-${Date.now()}`;
-      const panelId = `panel-${Date.now()}`;
+      const noteId = 'test-note-001';
+      const panelId = 'test-panel-001';
       const res = await makeRequest(`/versions/${noteId}/${panelId}`);
       if (res.status !== 200) throw new Error(`Status ${res.status}`);
       if (!Array.isArray(res.data.versions)) throw new Error('Versions not an array');
@@ -119,8 +120,8 @@ const tests = [
       const res = await makeRequest('/versions/compare', {
         method: 'POST',
         body: {
-          noteId: 'test-note',
-          panelId: 'test-panel',
+          noteId: 'test-note-001',
+          panelId: 'test-panel-001',
           version1: 1,
           version2: 2
         }
@@ -137,8 +138,8 @@ const tests = [
       const res = await makeRequest('/versions/compare', {
         method: 'POST',
         body: {
-          noteId: 'test',
-          panelId: 'test',
+          noteId: 'test-note-001',
+          panelId: 'test-panel-001',
           version1: -1,
           version2: 'invalid'
         }

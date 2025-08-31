@@ -57,7 +57,7 @@ Migration hygiene:
 - `notes`: id, title, content, metadata, created_at, updated_at
 - `annotations`: id, note_id, type, anchors (jsonb/plain for Option A), anchors_fallback (jsonb), metadata, order, version
 - `panels`: id, note_id, position (jsonb), dimensions (jsonb), state, last_accessed
-- `document_saves` (Option A): panel_id, content (json/jsonb or text for HTML), version, updated_at
+- `document_saves` (Option A): note_id, panel_id, content (json/jsonb or text for HTML), version, created_at
 - `snapshots` (Option B): id, note_id, snapshot (bytea), created_at
 - `presence` (Option B): **NOT persisted** (awareness is ephemeral)
 
@@ -78,9 +78,9 @@ Current phase (Option A — offline, no Yjs):
 - Subfolders (create only as needed, to reduce clutter):
     - docs/proposal/<FEATURE_SLUG>/fixing_doc: Implementation reports,
 validation reports, decisions, post‑mortems.
-    - docs/proposal/<FEATURE_SLUG>/test_page: Manual test pages (HTML/
+    - docs/proposal/<FEATURE_SLUG>/test_pages: Manual test pages (HTML/
 Markdown), screenshots or assets for visual checks.
-    - docs/proposal/<FEATURE_SLUG>/test_script: Helper scripts, SQL
+    - docs/proposal/<FEATURE_SLUG>/test_scripts: Helper scripts, SQL
 snippets, shell commands for local/integration checks.
     - docs/proposal/<FEATURE_SLUG>/supporting_files: Reference code/
 diagrams/fixtures (non‑runtime).
@@ -99,7 +99,7 @@ runtime code and any test pages/scripts created in this feature workspace.
 - If docs/proposal/<FEATURE_SLUG>/ does not exist, agents MUST create it
 before adding any feature artifacts.
 - Create subfolders only as needed; if a required subfolder (e.g.,
-fixing_doc, test_page, test_script, supporting_files) does not exist, create
+fixing_doc, test_pages, test_scripts, supporting_files) does not exist, create
 it before writing files into it.
 - Do not write feature artifacts outside docs/proposal/<FEATURE_SLUG>/. If
 creation is blocked (permissions/CI), stop and report instead of scattering
@@ -121,7 +121,7 @@ this structure is optional.
 1. Choose a <FEATURE_SLUG> and create docs/proposal/<FEATURE_SLUG>/.
 2. Add IMPLEMENTATION_PLAN.md (or a README.md) inside the folder; start with
 the slug and a short description.
-3. Add subfolders only as needed: fixing_doc, test_page, test_script,
+3. Add subfolders only as needed: fixing_doc, test_pages, test_scripts,
 supporting_files.
 4. Save implementation/validation reports in fixing_doc with dated
 filenames.
@@ -132,8 +132,8 @@ files.
 
 - adding_batch_save → docs/proposal/adding_batch_save/…
     - fixing_doc/2025-08-30-implementation-report.md
-    - test_page/editor-batching-demo.html
-    - test_script/sql-verify-document_saves.js
+    - test_pages/editor-batching-demo.html
+    - test_scripts/sql-verify-document_saves.js
     - supporting_files/ADDING_BATCH_SAVE_IMPLEMENTATION_SUMMARY.md
 
 

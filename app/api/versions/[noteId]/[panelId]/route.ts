@@ -9,9 +9,9 @@ const pool = new Pool({
 // GET /api/versions/[noteId]/[panelId] - Get all versions
 export async function GET(
   request: NextRequest,
-  { params }: { params: { noteId: string; panelId: string } }
+  { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
-  const { noteId, panelId } = params
+  const { noteId, panelId } = await params
   const { searchParams } = new URL(request.url)
   const limit = parseInt(searchParams.get('limit') || '50')
   const offset = parseInt(searchParams.get('offset') || '0')
@@ -24,7 +24,7 @@ export async function GET(
         `SELECT 
           id, note_id, panel_id, content, version,
           document_text,
-          created_at, updated_at
+          created_at
         FROM document_saves
         WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
         [noteId, panelId, parseInt(version)]
@@ -55,7 +55,7 @@ export async function GET(
       `SELECT 
         id, version, 
         pg_column_size(content::text) as size_bytes,
-        created_at, updated_at,
+        created_at,
         CASE 
           WHEN version = (SELECT MAX(version) FROM document_saves WHERE note_id = $1 AND panel_id = $2)
           THEN true 
@@ -77,7 +77,7 @@ export async function GET(
     
     // Get current version details
     const currentResult = await pool.query(
-      `SELECT version, content, updated_at
+      `SELECT version, content, created_at
        FROM document_saves
        WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
@@ -99,7 +99,7 @@ export async function GET(
       current: currentVersion ? {
         version: currentVersion.version,
         hash: currentHash,
-        updated_at: currentVersion.updated_at
+        created_at: currentVersion.created_at
       } : null,
       limit,
       offset
@@ -116,9 +116,9 @@ export async function GET(
 // POST /api/versions/[noteId]/[panelId] - Restore a version or save new version
 export async function POST(
   request: NextRequest,
-  { params }: { params: { noteId: string; panelId: string } }
+  { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
-  const { noteId, panelId } = params
+  const { noteId, panelId } = await params
   
   try {
     const body = await request.json()
@@ -168,8 +168,8 @@ export async function POST(
       // Create new version with restored content
       const insertResult = await pool.query(
         `INSERT INTO document_saves 
-         (note_id, panel_id, content, version, created_at, updated_at)
-         VALUES ($1, $2, $3::jsonb, $4, NOW(), NOW())
+         (note_id, panel_id, content, version, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, NOW())
          RETURNING *`,
         [noteId, panelId, JSON.stringify(restoredContent), nextVersion]
       )
@@ -256,8 +256,8 @@ export async function POST(
       // Save new version
       const insertResult = await pool.query(
         `INSERT INTO document_saves 
-         (note_id, panel_id, content, version, created_at, updated_at)
-         VALUES ($1, $2, $3::jsonb, $4, NOW(), NOW())
+         (note_id, panel_id, content, version, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, NOW())
          RETURNING *`,
         [noteId, panelId, JSON.stringify(content), nextVersion]
       )
@@ -292,9 +292,9 @@ export async function POST(
 // DELETE /api/versions/[noteId]/[panelId] - Delete old versions
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { noteId: string; panelId: string } }
+  { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
-  const { noteId, panelId } = params
+  const { noteId, panelId } = await params
   const { searchParams } = new URL(request.url)
   const keepLast = parseInt(searchParams.get('keep') || '10')
   
