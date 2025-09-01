@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
 import { diffLines, diffWords } from 'diff'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Helper to extract text from ProseMirror JSON
 function extractTextFromProseMirror(content: any): string {
@@ -38,19 +43,23 @@ export async function POST(request: NextRequest) {
       )
     }
     
+    // Coerce IDs to DB UUIDs (accept slugs or UUIDs)
+    const noteKey = coerceEntityId(noteId)
+    const panelKey = coerceEntityId(panelId)
+    
     // Fetch both versions
     const [v1Result, v2Result] = await Promise.all([
       pool.query(
         `SELECT version, content, document_text, created_at
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
-        [noteId, panelId, version1]
+        [noteKey, panelKey, version1]
       ),
       pool.query(
         `SELECT version, content, document_text, created_at
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
-        [noteId, panelId, version2]
+        [noteKey, panelKey, version2]
       )
     ])
     
@@ -128,6 +137,15 @@ export async function POST(request: NextRequest) {
     // Check if versions are identical
     const identical = stats.changes === 0 && stats.additions === 0 && stats.deletions === 0
     
+    // Calculate hashes for both versions
+    const crypto = require('crypto')
+    const hash1 = crypto.createHash('sha256')
+      .update(JSON.stringify(v1.content))
+      .digest('hex')
+    const hash2 = crypto.createHash('sha256')
+      .update(JSON.stringify(v2.content))
+      .digest('hex')
+    
     return NextResponse.json({
       noteId,
       panelId,
@@ -135,16 +153,18 @@ export async function POST(request: NextRequest) {
         version1: {
           version: v1.version,
           created_at: v1.created_at,
-          created_at: v1.created_at,
-          text_length: text1.length
+          text_length: text1.length,
+          hash: hash1
         },
         version2: {
           version: v2.version,
           created_at: v2.created_at,
-          created_at: v2.created_at,
-          text_length: text2.length
+          text_length: text2.length,
+          hash: hash2
         }
       },
+      version1Content: v1.content,
+      version2Content: v2.content,
       identical,
       stats,
       diff,

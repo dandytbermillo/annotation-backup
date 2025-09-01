@@ -47,6 +47,10 @@ interface ConflictMetrics {
   resolutionType: 'mine' | 'theirs' | 'merge' | 'force';
   successRate: number;
   repeatConflicts: number;
+  forceSaveCount: number;
+  keepMineCount: number;
+  useLatestCount: number;
+  mergeCount: number;
 }
 
 class TelemetryService {
@@ -86,6 +90,10 @@ class TelemetryService {
     resolutionType: 'mine',
     successRate: 1,
     repeatConflicts: 0,
+    forceSaveCount: 0,
+    keepMineCount: 0,
+    useLatestCount: 0,
+    mergeCount: 0,
   };
 
   constructor() {
@@ -171,11 +179,36 @@ class TelemetryService {
    */
   trackConflict(action: string, metadata?: Record<string, any>): void {
     this.conflictMetrics.occurrences++;
+    
+    // Track resolution type counts for force-save rate calculation
+    const resolutionAction = metadata?.action || action;
+    if (resolutionAction === 'force' || resolutionAction === 'resolved-test' && metadata?.action === 'force') {
+      this.conflictMetrics.forceSaveCount++;
+      this.conflictMetrics.resolutionType = 'force';
+    } else if (resolutionAction === 'keep-mine' || resolutionAction === 'resolved-test' && metadata?.action === 'keep-mine') {
+      this.conflictMetrics.keepMineCount++;
+      this.conflictMetrics.resolutionType = 'mine';
+    } else if (resolutionAction === 'use-latest' || resolutionAction === 'resolved-test' && metadata?.action === 'use-latest') {
+      this.conflictMetrics.useLatestCount++;
+      this.conflictMetrics.resolutionType = 'theirs';
+    } else if (resolutionAction === 'merge' || resolutionAction === 'resolved-test' && metadata?.action === 'merge') {
+      this.conflictMetrics.mergeCount++;
+      this.conflictMetrics.resolutionType = 'merge';
+    }
+    
     this.track({
       category: 'conflict',
       action,
       metadata,
     });
+  }
+  
+  /**
+   * Get force-save rate
+   */
+  getForceSaveRate(): number {
+    if (this.conflictMetrics.occurrences === 0) return 0;
+    return (this.conflictMetrics.forceSaveCount / this.conflictMetrics.occurrences) * 100;
   }
 
   /**
@@ -314,6 +347,12 @@ export const telemetry = {
   
   trackConflict: (action: string, metadata?: Record<string, any>) => 
     getTelemetry().trackConflict(action, metadata),
+  
+  getForceSaveRate: () => 
+    getTelemetry().getForceSaveRate(),
+  
+  getConflictMetrics: () => 
+    getTelemetry().conflictMetrics,
   
   track: (event: Omit<TelemetryEvent, 'timestamp'>) => 
     getTelemetry().track(event),

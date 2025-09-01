@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
 import crypto from 'crypto'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // GET /api/versions/[noteId]/[panelId] - Get all versions
 export async function GET(
@@ -12,14 +17,20 @@ export async function GET(
   { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
   const { noteId, panelId } = await params
+  const noteKey = coerceEntityId(noteId)
+  const panelKey = coerceEntityId(panelId)
   const { searchParams } = new URL(request.url)
-  const limit = parseInt(searchParams.get('limit') || '50')
-  const offset = parseInt(searchParams.get('offset') || '0')
-  const version = searchParams.get('version')
+  const limit = parseInt(searchParams.get('limit') || '50', 10)
+  const offset = parseInt(searchParams.get('offset') || '0', 10)
+  const versionParam = searchParams.get('version')
   
   try {
     // If specific version requested
-    if (version) {
+    if (versionParam) {
+      const vnum = parseInt(versionParam, 10)
+      if (!Number.isFinite(vnum)) {
+        return NextResponse.json({ error: 'Invalid version parameter' }, { status: 400 })
+      }
       const result = await pool.query(
         `SELECT 
           id, note_id, panel_id, content, version,
@@ -27,7 +38,7 @@ export async function GET(
           created_at
         FROM document_saves
         WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
-        [noteId, panelId, parseInt(version)]
+        [noteKey, panelKey, vnum]
       )
       
       if (result.rows.length === 0) {
@@ -65,14 +76,14 @@ export async function GET(
       WHERE note_id = $1 AND panel_id = $2
       ORDER BY version DESC
       LIMIT $3 OFFSET $4`,
-      [noteId, panelId, limit, offset]
+      [noteKey, panelKey, limit, offset]
     )
     
     // Get total count
     const countResult = await pool.query(
       `SELECT COUNT(*) as total FROM document_saves 
        WHERE note_id = $1 AND panel_id = $2`,
-      [noteId, panelId]
+      [noteKey, panelKey]
     )
     
     // Get current version details
@@ -82,7 +93,7 @@ export async function GET(
        WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
        LIMIT 1`,
-      [noteId, panelId]
+      [noteKey, panelKey]
     )
     
     const currentVersion = currentResult.rows[0]
@@ -119,6 +130,8 @@ export async function POST(
   { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
   const { noteId, panelId } = await params
+  const noteKey = coerceEntityId(noteId)
+  const panelKey = coerceEntityId(panelId)
   
   try {
     const body = await request.json()
@@ -144,7 +157,7 @@ export async function POST(
       const versionResult = await pool.query(
         `SELECT content FROM document_saves
          WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
-        [noteId, panelId, version]
+        [noteKey, panelKey, version]
       )
       
       if (versionResult.rows.length === 0) {
@@ -159,7 +172,7 @@ export async function POST(
         `SELECT COALESCE(MAX(version), 0) + 1 as next_version
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2`,
-        [noteId, panelId]
+        [noteKey, panelKey]
       )
       
       const nextVersion = nextVersionResult.rows[0].next_version
@@ -171,7 +184,7 @@ export async function POST(
          (note_id, panel_id, content, version, created_at)
          VALUES ($1, $2, $3::jsonb, $4, NOW())
          RETURNING *`,
-        [noteId, panelId, JSON.stringify(restoredContent), nextVersion]
+        [noteKey, panelKey, JSON.stringify(restoredContent), nextVersion]
       )
       
       return NextResponse.json({
@@ -198,7 +211,7 @@ export async function POST(
            WHERE note_id = $1 AND panel_id = $2
            ORDER BY version DESC
            LIMIT 1`,
-          [noteId, panelId]
+          [noteKey, panelKey]
         )
         
         if (currentResult.rows.length > 0) {
@@ -248,7 +261,7 @@ export async function POST(
         `SELECT COALESCE(MAX(version), 0) + 1 as next_version
          FROM document_saves
          WHERE note_id = $1 AND panel_id = $2`,
-        [noteId, panelId]
+        [noteKey, panelKey]
       )
       
       const nextVersion = nextVersionResult.rows[0].next_version
@@ -259,7 +272,7 @@ export async function POST(
          (note_id, panel_id, content, version, created_at)
          VALUES ($1, $2, $3::jsonb, $4, NOW())
          RETURNING *`,
-        [noteId, panelId, JSON.stringify(content), nextVersion]
+        [noteKey, panelKey, JSON.stringify(content), nextVersion]
       )
       
       const newHash = crypto
@@ -295,8 +308,10 @@ export async function DELETE(
   { params }: { params: Promise<{ noteId: string; panelId: string }> }
 ) {
   const { noteId, panelId } = await params
+  const noteKey = coerceEntityId(noteId)
+  const panelKey = coerceEntityId(panelId)
   const { searchParams } = new URL(request.url)
-  const keepLast = parseInt(searchParams.get('keep') || '10')
+  const keepLast = Math.max(1, parseInt(searchParams.get('keep') || '10', 10))
   
   try {
     // Delete old versions, keeping the most recent N
@@ -310,7 +325,7 @@ export async function DELETE(
            LIMIT 1 OFFSET $3
          )
        RETURNING id, version`,
-      [noteId, panelId, keepLast - 1]
+      [noteKey, panelKey, keepLast - 1]
     )
     
     return NextResponse.json({

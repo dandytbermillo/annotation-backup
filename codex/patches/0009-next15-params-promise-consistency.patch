@@ -1,0 +1,12 @@
+diff --git a/app/api/postgres-offline/branches/[id]/route.ts b/app/api/postgres-offline/branches/[id]/route.ts
+--- a/app/api/postgres-offline/branches/[id]/route.ts
++++ b/app/api/postgres-offline/branches/[id]/route.ts
+@@
+ export async function PATCH(
+   request: NextRequest,
+-  { params }: { params: { id: string } }
++  { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
+-    const { id } = params
++    const { id } = await params

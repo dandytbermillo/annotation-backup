@@ -1,0 +1,29 @@
+From: Claude Code <claude@anthropic.com>
+Date: 2025-09-01
+Subject: [PATCH] Fix Next.js 15 params typing for all dynamic routes
+
+This patch fixes the params typing to be compatible with Next.js 15, where
+dynamic route params are Promises that must be awaited. This resolves the
+warnings about sync dynamic APIs.
+
+---
+ app/api/postgres-offline/branches/[id]/route.ts | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/app/api/postgres-offline/branches/[id]/route.ts b/app/api/postgres-offline/branches/[id]/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/branches/[id]/route.ts
++++ b/app/api/postgres-offline/branches/[id]/route.ts
+@@ -8,10 +8,10 @@ const pool = new Pool({
+ // PATCH /api/postgres-offline/branches/[id] - Update a branch
+ export async function PATCH(
+   request: NextRequest,
+-  { params }: { params: { id: string } }
++  { params }: { params: Promise<{ id: string }> }
+ ) {
+   try {
+-    const { id } = params
++    const { id } = await params
+     const body = await request.json()
+     const { type, originalText, metadata, anchors, version } = body
+     

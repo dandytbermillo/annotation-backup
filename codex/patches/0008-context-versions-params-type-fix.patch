@@ -1,0 +1,70 @@
+diff --git a/app/api/versions/[noteId]/[panelId]/route.ts b/app/api/versions/[noteId]/[panelId]/route.ts
+index 0000000..0000000 100644
+--- a/app/api/versions/[noteId]/[panelId]/route.ts
++++ b/app/api/versions/[noteId]/[panelId]/route.ts
+@@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { Pool } from 'pg'
+ import crypto from 'crypto'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+ const pool = new Pool({
+   connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
+ })
+ 
+ // Deterministic mapping for non-UUID IDs (slugs) → UUID
+ const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+ const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
+ 
+ // GET /api/versions/[noteId]/[panelId] - Get all versions
+-export async function GET(
+-  request: NextRequest,
+-  { params }: { params: Promise<{ noteId: string; panelId: string }> }
+-) {
+-  const { noteId, panelId } = await params
++export async function GET(
++  request: NextRequest,
++  { params }: { params: { noteId: string; panelId: string } }
++) {
++  const { noteId, panelId } = params
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+   const { searchParams } = new URL(request.url)
+   const limit = parseInt(searchParams.get('limit') || '50', 10)
+   const offset = parseInt(searchParams.get('offset') || '0', 10)
+   const versionParam = searchParams.get('version')
+@@
+ // POST /api/versions/[noteId]/[panelId] - Restore a version or save new version
+-export async function POST(
+-  request: NextRequest,
+-  { params }: { params: Promise<{ noteId: string; panelId: string }> }
+-) {
+-  const { noteId, panelId } = await params
++export async function POST(
++  request: NextRequest,
++  { params }: { params: { noteId: string; panelId: string } }
++) {
++  const { noteId, panelId } = params
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+  
+   try {
+     const body = await request.json()
+@@
+ // DELETE /api/versions/[noteId]/[panelId] - Delete old versions
+-export async function DELETE(
+-  request: NextRequest,
+-  { params }: { params: Promise<{ noteId: string; panelId: string }> }
+-) {
+-  const { noteId, panelId } = await params
++export async function DELETE(
++  request: NextRequest,
++  { params }: { params: { noteId: string; panelId: string } }
++) {
++  const { noteId, panelId } = params
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+   const { searchParams } = new URL(request.url)
+   const keepLast = Math.max(1, parseInt(searchParams.get('keep') || '10', 10))
+  
+   try {

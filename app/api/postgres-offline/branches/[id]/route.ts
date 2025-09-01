@@ -8,10 +8,10 @@ const pool = new Pool({
 // PATCH /api/postgres-offline/branches/[id] - Update a branch
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { type, originalText, metadata, anchors, version } = body
     
