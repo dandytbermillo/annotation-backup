@@ -305,6 +305,21 @@ const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NA
 [12:58:48 PM] SUCCESS: Conflict resolved: force
 ```
 
+### Test Execution Log (Post-Patch 0010b)
+```
+[2:29:52 PM] INFO: Phase 3 Test Page loaded. Flag: ENABLED
+[2:29:52 PM] SUCCESS: Test documents initialized
+[2:29:54 PM] INFO: Testing version API endpoints...
+[2:29:54 PM] SUCCESS: GET /api/versions: 0 versions found
+[2:29:54 PM] INFO: Seeding versions for compare test
+[2:29:54 PM] SUCCESS: POST /api/versions/compare: Success (now with seeded data)
+[2:29:56 PM] SUCCESS: Conflict dialog triggered
+[2:29:59 PM] SUCCESS: Conflict resolved: keep-mine
+[2:30:02 PM] SUCCESS: Conflict resolved: use-latest
+[2:30:08 PM] SUCCESS: Conflict resolved: merge
+[2:30:11 PM] SUCCESS: Conflict resolved: force
+```
+
 ### Telemetry Verification
 - All conflict events captured correctly
 - Each resolution type tracked with metadata
@@ -319,6 +334,17 @@ Phase 3 Conflict Resolution UI is **FUNCTIONALLY COMPLETE** after applying exper
 - **Postgres-offline endpoints**: Still require UUID noteId (will 400 on slugs) - future work needed
 - **Next.js 15 params**: Current async implementation is correct for Next.js 15 (patch 0008 would break it)
 - **Success metrics**: Runtime-dependent, not statically verifiable from code
+
+### Final Patches Applied (2025-09-01 Evening)
+1. **Patch 0009-next15-params-promise-consistency.patch**: ✅ Applied
+   - Fixed `/api/postgres-offline/branches/[id]/route.ts` to use Promise params
+   - Resolved all Next.js 15 dynamic route warnings
+   
+2. **Patch 0010b-phase3-test-compare-robust.patch**: ✅ Applied with fixes
+   - Enhanced test page to auto-seed versions when empty
+   - Uses dynamic version numbers from API response
+   - Fixes 404 on compare endpoint when no versions exist
+   - Fixed variable scoping issue (v1/v2 declared at function scope)
 
 ## Artifacts
 
@@ -343,7 +369,10 @@ Phase 3 Conflict Resolution UI is **FUNCTIONALLY COMPLETE** after applying exper
    - `components/offline/conflict-resolution-dialog.tsx` - Added test mode, instructions, reset button
 
 4. **Test Page**:
-   - `app/phase3-test/page.tsx` - Enhanced with detailed dialog usage guide
+   - `app/phase3-test/page.tsx` - Enhanced with detailed dialog usage guide + patch 0010b (robust compare test)
+
+5. **Next.js 15 Params Fix** (2025-09-01 Update):
+   - `app/api/postgres-offline/branches/[id]/route.ts` - Fixed params to use Promise type per Next.js 15
 
 ---
 

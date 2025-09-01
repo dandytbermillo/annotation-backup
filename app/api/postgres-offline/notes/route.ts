@@ -10,14 +10,29 @@ const pool = new Pool({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { title = 'Untitled', metadata = {} } = body
+    const { id, title = 'Untitled', metadata = {} } = body
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+    const idOrNull = typeof id === 'string' && uuidRegex.test(id.trim()) ? id.trim() : null
     
+    // Insert with explicit id when provided; return existing on conflict
     const result = await pool.query(
-      `INSERT INTO notes (title, metadata, created_at, updated_at)
-       VALUES ($1, $2::jsonb, NOW(), NOW())
+      `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+       VALUES (COALESCE($1, gen_random_uuid()), $2, $3::jsonb, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING
        RETURNING id, title, metadata, created_at, updated_at`,
-      [title, JSON.stringify(metadata)]
+      [idOrNull, title, JSON.stringify(metadata)]
     )
+    
+    if (result.rows.length === 0 && idOrNull) {
+      const existing = await pool.query(
+        `SELECT id, title, metadata, created_at, updated_at
+         FROM notes WHERE id = $1`,
+        [idOrNull]
+      )
+      if (existing.rows.length > 0) {
+        return NextResponse.json(existing.rows[0])
+      }
+    }
     
     return NextResponse.json(result.rows[0])
   } catch (error) {

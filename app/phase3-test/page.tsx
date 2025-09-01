@@ -5,6 +5,7 @@ import { ConflictResolutionDialog } from '@/components/offline/conflict-resoluti
 import { conflictDetector, ConflictEnvelope } from '@/lib/offline/conflict-detector';
 import { getFeatureFlag, setFeatureFlag } from '@/lib/offline/feature-flags';
 import { calculateHash } from '@/lib/offline/prosemirror-diff-merge';
+import { v5 as uuidv5 } from 'uuid';
 
 export default function Phase3TestPage() {
   const [logs, setLogs] = useState<string[]>([]);
@@ -161,16 +162,87 @@ export default function Phase3TestPage() {
 
   const testVersionAPI = async () => {
     addLog('Testing version API endpoints...', 'info');
+    
+    // Declare version variables at function scope
+    let v1 = 1;
+    let v2 = 2;
 
     try {
       // Test GET /api/versions/[noteId]/[panelId]
       const getResponse = await fetch('/api/versions/test-note/test-panel');
       if (getResponse.ok) {
         const data = await getResponse.json();
-        addLog(`GET /api/versions: ${data.versions ? data.versions.length : 0} versions found`, 'success');
+        let versions = Array.isArray(data.versions) ? data.versions : [];
+        let count = versions.length;
+        addLog(`GET /api/versions: ${count} versions found`, 'success');
         if (data.current?.hash) {
           addLog(`Current version hash: ${data.current.hash.substring(0, 8)}...`, 'info');
         }
+        
+        // If fewer than 2 versions, seed and re-fetch to determine actual version numbers
+        if (count < 2) {
+          // Ensure test docs are available
+          if (!baseDoc || !testDoc1) {
+            addLog('Docs not initialized; initializing now', 'info');
+            initializeTestDocuments();
+          }
+          
+          // First, ensure the note exists in the database
+          // Use the same namespace as the versions API
+          const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a';
+          const noteId = uuidv5('test-note', ID_NAMESPACE);
+          const createNoteRes = await fetch('/api/postgres-offline/notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: noteId,
+              title: 'Test Note for Phase 3',
+              content: { type: 'doc', content: [] },
+              metadata: { test: true }
+            })
+          });
+          
+          if (!createNoteRes.ok && createNoteRes.status !== 409) {
+            // 409 means note already exists, which is fine
+            addLog('Note creation failed (may already exist)', 'info');
+          }
+          
+          const seed1 = await fetch('/api/versions/test-note/test-panel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', content: baseDoc })
+          });
+          if (!seed1.ok) {
+            const error = await seed1.text();
+            addLog(`Seeding v1 failed: ${seed1.status}`, 'warning');
+          } else {
+            addLog('Seeded v1 successfully', 'success');
+          }
+          
+          const seed2 = await fetch('/api/versions/test-note/test-panel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'save', content: testDoc1 })
+          });
+          if (!seed2.ok) {
+            const error = await seed2.text();
+            addLog(`Seeding v2 failed: ${seed2.status}`, 'warning');
+          } else {
+            addLog('Seeded v2 successfully', 'success');
+          }
+          
+          // Re-fetch to get actual version numbers
+          const refetch = await fetch('/api/versions/test-note/test-panel');
+          if (refetch.ok) {
+            const refData = await refetch.json();
+            versions = Array.isArray(refData.versions) ? refData.versions : [];
+            count = versions.length;
+          }
+        }
+        
+        // Pick two most recent version numbers (API returns DESC)
+        v2 = versions?.[0]?.version ?? 2;
+        v1 = versions?.[1]?.version ?? 1;
       } else {
         addLog(`GET /api/versions failed: ${getResponse.status}`, 'warning');
       }
@@ -182,8 +254,8 @@ export default function Phase3TestPage() {
         body: JSON.stringify({
           noteId: 'test-note',
           panelId: 'test-panel',
-          version1: 0,
-          version2: 1
+          version1: v1,
+          version2: v2
         })
       });
 

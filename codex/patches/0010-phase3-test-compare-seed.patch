@@ -1,0 +1,55 @@
+diff --git a/app/phase3-test/page.tsx b/app/phase3-test/page.tsx
+--- a/app/phase3-test/page.tsx
++++ b/app/phase3-test/page.tsx
+@@
+   const testVersionAPI = async () => {
+     addLog('Testing version API endpoints...', 'info');
+ 
+     try {
+       // Test GET /api/versions/[noteId]/[panelId]
+       const getResponse = await fetch('/api/versions/test-note/test-panel');
+       if (getResponse.ok) {
+-        const data = await getResponse.json();
+-        addLog(`GET /api/versions: ${data.versions ? data.versions.length : 0} versions found`, 'success');
+-        if (data.current?.hash) {
+-          addLog(`Current version hash: ${data.current.hash.substring(0, 8)}...`, 'info');
+-        }
++        const data = await getResponse.json();
++        const count = data.versions ? data.versions.length : 0;
++        addLog(`GET /api/versions: ${count} versions found`, 'success');
++        if (data.current?.hash) {
++          addLog(`Current version hash: ${data.current.hash.substring(0, 8)}...`, 'info');
++        }
++        // If no versions exist yet, seed two versions so compare will succeed
++        if (count < 2) {
++          const seed1 = await fetch('/api/versions/test-note/test-panel', {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body: JSON.stringify({ action: 'save', content: baseDoc })
++          });
++          if (!seed1.ok) addLog('Seeding v1 failed', 'warning');
++          const seed2 = await fetch('/api/versions/test-note/test-panel', {
++            method: 'POST',
++            headers: { 'Content-Type': 'application/json' },
++            body: JSON.stringify({ action: 'save', content: testDoc1 })
++          });
++          if (!seed2.ok) addLog('Seeding v2 failed', 'warning');
++          addLog('Seeded versions v1 and v2 for compare test', 'success');
++        }
+       } else {
+         addLog(`GET /api/versions failed: ${getResponse.status}`, 'warning');
+       }
+ 
+       // Test POST /api/versions/compare
+       const compareResponse = await fetch('/api/versions/compare', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           noteId: 'test-note',
+           panelId: 'test-panel',
+-          version1: 0,
+-          version2: 1
++          version1: 1,
++          version2: 2
+         })
+       });
