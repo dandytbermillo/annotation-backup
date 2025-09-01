@@ -1,0 +1,45 @@
+LLM-ready patch: Use UnifiedProvider and avoid Yjs in plain mode
+
+Target file: components/annotation-canvas-modern.tsx
+
+1) Replace Yjs import with UnifiedProvider
+Find:
+  import { CollaborationProvider, clearEditorDocsForNote } from "@/lib/yjs-provider"
+Replace with:
+  import { UnifiedProvider } from "@/lib/provider-switcher"
+
+2) Add collaboration mode flags inside the component
+Immediately after the useState for canvasState, insert:
+  const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
+  const isPlainMode = collabMode === 'plain'
+
+3) Initialize provider only when NOT plain mode
+Find in the first useEffect (note initialization) the block:
+  // Initialize the note with YJS persistence providers
+  // This will either restore from persistence or create with defaults
+  provider.initializeDefaultData(noteId, defaultData)
+Replace with:
+  // Initialize based on collaboration mode (skip in plain mode)
+  if (!isPlainMode) {
+    try {
+      const provider = UnifiedProvider.getInstance()
+      provider.initializeDefaultData(noteId, defaultData)
+    } catch (e) {
+      console.error('[AnnotationCanvas] Provider initialization failed:', e)
+    }
+  } else {
+    console.log('[AnnotationCanvas] Plain mode active — skipping YJS provider init')
+  }
+
+4) Replace direct CollaborationProvider usage when retrieving branches
+Find in getPanelPosition (inside setTimeout panning callback):
+  const panel = CollaborationProvider.getInstance().getBranchesMap().get(id)
+Replace with:
+  const provider = UnifiedProvider.getInstance()
+  const panel = provider.getBranchesMap().get(id)
+
+5) Replace any other direct CollaborationProvider calls similarly with UnifiedProvider.getInstance()
+
+Notes:
+- Do NOT import or reference clearEditorDocsForNote in Option A.
+- This change prevents Yjs codepaths from loading in plain mode, unblocking the dynamic import and initial render.

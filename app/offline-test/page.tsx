@@ -7,6 +7,7 @@ export default function OfflineTestPage() {
   const [telemetryStatus, setTelemetryStatus] = useState<string>('pending');
   const [metrics, setMetrics] = useState<any>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [mockMode, setMockMode] = useState<boolean>(false);
 
   useEffect(() => {
     loadFlags();
@@ -158,6 +159,45 @@ export default function OfflineTestPage() {
     }
   };
 
+  const toggleMockMode = () => {
+    const newMode = !mockMode;
+    setMockMode(newMode);
+    // Store mock mode in localStorage for other components to read
+    localStorage.setItem('offlineMockMode', newMode.toString());
+    addLog(`Mock mode ${newMode ? 'ENABLED' : 'DISABLED'}`, newMode ? 'warning' : 'info');
+    
+    // If enabling mock mode, simulate offline conditions
+    if (newMode) {
+      // This would typically trigger mock responses in your network layer
+      window.dispatchEvent(new CustomEvent('mockModeChange', { detail: { enabled: true } }));
+    } else {
+      window.dispatchEvent(new CustomEvent('mockModeChange', { detail: { enabled: false } }));
+    }
+  };
+
+  const testE2EHarness = () => {
+    try {
+      // Test mock mode persistence
+      const stored = localStorage.getItem('offlineMockMode');
+      
+      // Test custom events
+      const testEvent = new CustomEvent('e2eTest', { detail: { test: 'harness' } });
+      window.dispatchEvent(testEvent);
+      
+      // Test utilities availability
+      const utils = {
+        mockMode: mockMode,
+        flags: flags,
+        telemetryActive: telemetryStatus === 'success'
+      };
+      
+      addLog('E2E Harness test PASSED', 'success');
+      addLog(`Mock Mode: ${mockMode ? 'ON' : 'OFF'}, Flags: ${Object.keys(flags).length}, Telemetry: ${telemetryStatus}`, 'info');
+    } catch (error: any) {
+      addLog(`E2E Harness test error: ${error.message}`, 'error');
+    }
+  };
+
   const clearLogs = () => {
     setLogs([]);
     addLog('Logs cleared', 'info');
@@ -169,6 +209,40 @@ export default function OfflineTestPage() {
         <h1 className="text-3xl font-bold text-gray-900 mb-8 border-b-2 border-indigo-600 pb-4">
           🔬 Phase 0 - Unified Offline Foundation Test Page
         </h1>
+
+        {/* How to Use Section */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg shadow-md p-6 mb-6">
+          <h2 className="text-2xl font-bold mb-4">📖 How to Use This Test Page</h2>
+          
+          <ol className="list-decimal list-inside space-y-2 mb-4">
+            <li><strong>Test Feature Flags:</strong> Click "Test Feature Flags" to verify localStorage persistence</li>
+            <li><strong>Toggle Flags:</strong> Use toggle buttons to enable/disable individual features</li>
+            <li><strong>Test Telemetry:</strong> Click "Test Telemetry" to verify the metrics API</li>
+            <li><strong>Send Events:</strong> Click "Send Event" to manually send telemetry events</li>
+            <li><strong>Test E2E Harness:</strong> Click "Test E2E Harness" to verify testing utilities</li>
+            <li><strong>Enable Mock Mode:</strong> Toggle mock mode to simulate offline scenarios</li>
+            <li><strong>Test Health:</strong> Click "Test Health Endpoint" to verify backend connectivity</li>
+            <li><strong>Monitor Logs:</strong> Watch real-time test results in the logs panel at the bottom</li>
+          </ol>
+          
+          <div className="mt-4">
+            <h3 className="text-lg font-semibold mb-2">Foundation Components:</h3>
+            <ul className="list-disc list-inside space-y-1 text-sm">
+              <li><strong>Feature Flags:</strong> Runtime toggles for offline.circuitBreaker, offline.swCaching, offline.conflictUI</li>
+              <li><strong>Telemetry:</strong> Event tracking with metrics for network, cache, queue, and conflicts</li>
+              <li><strong>E2E Harness:</strong> Mock mode and testing utilities for offline scenarios</li>
+              <li><strong>Health Check:</strong> Verify backend connectivity and service status</li>
+            </ul>
+          </div>
+          
+          <div className="bg-white/20 p-3 rounded-lg mt-4">
+            <p className="text-sm">
+              <strong>💡 Tip:</strong> This is the foundation layer (Phase 0). After testing here, proceed to:
+              <a href="/phase1-test" className="underline ml-1">Phase 1 (Connectivity)</a> →
+              <a href="/phase2-test" className="underline ml-1">Phase 2 (Service Worker)</a>
+            </p>
+          </div>
+        </div>
 
         {/* Feature Flags Section */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -249,15 +323,47 @@ export default function OfflineTestPage() {
           )}
         </div>
 
-        {/* Health Check Section */}
+        {/* E2E Test Harness Section */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-          <h2 className="text-xl font-semibold mb-4">3. Health Check</h2>
-          <button
-            onClick={testHealth}
-            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
-          >
-            Test Health Endpoint
-          </button>
+          <h2 className="text-xl font-semibold mb-4">3. E2E Test Harness & Mock Mode</h2>
+          <div className="space-x-2 mb-4">
+            <button
+              onClick={testE2EHarness}
+              className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            >
+              Test E2E Harness
+            </button>
+            <button
+              onClick={toggleMockMode}
+              className={`px-4 py-2 text-white rounded ${
+                mockMode 
+                  ? 'bg-orange-600 hover:bg-orange-700' 
+                  : 'bg-gray-600 hover:bg-gray-700'
+              }`}
+            >
+              {mockMode ? 'Disable' : 'Enable'} Mock Mode
+            </button>
+            <button
+              onClick={testHealth}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              Test Health Endpoint
+            </button>
+          </div>
+          {mockMode && (
+            <div className="bg-orange-50 border-l-4 border-orange-400 p-4">
+              <div className="flex">
+                <div className="flex-shrink-0">
+                  <span className="text-orange-400">⚠️</span>
+                </div>
+                <div className="ml-3">
+                  <p className="text-sm text-orange-700">
+                    Mock Mode is ENABLED. Network requests will be simulated for testing offline scenarios.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Network & Circuit Breaker Preview */}

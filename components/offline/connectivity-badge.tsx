@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { NetworkStatus, networkService } from '@/lib/offline/network-service';
+import { getFeatureFlag } from '@/lib/offline/feature-flags';
 
 interface ConnectivityBadgeProps {
   className?: string;
@@ -13,6 +14,14 @@ export function ConnectivityBadge({ className = '', showDetails = true }: Connec
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
+    // Check if circuit breaker is enabled
+    const isEnabled = getFeatureFlag('offline.circuitBreaker');
+    
+    if (!isEnabled) {
+      // Feature disabled, don't start network service
+      return;
+    }
+
     // Get initial status
     const currentStatus = networkService.getStatus();
     setStatus(currentStatus);
@@ -22,7 +31,7 @@ export function ConnectivityBadge({ className = '', showDetails = true }: Connec
       setStatus(newStatus);
     });
 
-    // Start network service
+    // Start network service only if feature is enabled
     networkService.start();
 
     return () => {

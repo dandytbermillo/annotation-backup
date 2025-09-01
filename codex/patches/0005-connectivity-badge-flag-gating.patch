@@ -1,0 +1,22 @@
+LLM-ready patch: Gate ConnectivityBadge by feature flag and avoid starting network when disabled
+
+Target file: components/offline/connectivity-badge.tsx
+
+1) Add feature flag import
+Insert at top after existing imports:
+  import { getFeatureFlag } from '@/lib/offline/feature-flags'
+
+2) Short-circuit render when flag is OFF
+At the start of the component function (after hooks), add:
+  const flagEnabled = getFeatureFlag('offline.circuitBreaker')
+  if (!flagEnabled) return null
+
+3) Only start network service when flag is ON
+In the useEffect where networkService.start() is called, wrap it:
+  // Start network service
+  if (getFeatureFlag('offline.circuitBreaker')) {
+    networkService.start();
+  }
+
+Notes:
+- networkService.start() already checks the flag, but this avoids any setup and renders no badge when disabled.

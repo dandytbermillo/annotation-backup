@@ -32,19 +32,19 @@ export async function GET(request: NextRequest) {
     // Get counts by operation type
     const typeResult = await pool.query(`
       SELECT 
-        operation->>'method' as method,
+        type as method,
         COUNT(*) as count
       FROM offline_queue
       WHERE status = 'pending'
-      GROUP BY operation->>'method'
+      GROUP BY type
     `);
 
     // Get failed operations with high retry count
     const failedResult = await pool.query(`
       SELECT 
         id,
-        operation->>'url' as url,
-        operation->>'method' as method,
+        table_name as url,
+        type as method,
         retry_count,
         error_message,
         created_at

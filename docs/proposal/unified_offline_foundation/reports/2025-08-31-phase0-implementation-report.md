@@ -114,10 +114,25 @@ Flags can be toggled via:
 - **Queue**: Depth, processed, failed, expired, dead-letter count
 - **Conflict**: Occurrences, resolution type, success rate
 
-## Test Commands
+## Test Pages and Commands
+
+### Interactive Test Page
+- **URL**: http://localhost:3000/offline-test
+- **File**: `app/offline-test/page.tsx`
+- **Purpose**: Interactive testing of Phase 0 components
+- **Features**:
+  - Feature flag toggles (offline.circuitBreaker, offline.swCaching, offline.conflictUI)
+  - Telemetry event testing
+  - Mock mode toggle for E2E testing
+  - Real-time status display
+
+### Verification Commands
 
 ```bash
-# Verify Phase 0 implementation
+# Access the interactive test page
+open http://localhost:3000/offline-test
+
+# Verify Phase 0 implementation via script
 node docs/proposal/unified_offline_foundation/test_scripts/verify-phase0.js
 
 # Run E2E tests (when Playwright is installed)

@@ -52,8 +52,8 @@ interface ConflictMetrics {
 class TelemetryService {
   private events: TelemetryEvent[] = [];
   private maxEvents = 1000; // Circular buffer size
-  private batchSize = 50;
-  private flushInterval = 30000; // 30 seconds
+  private batchSize = process.env.NODE_ENV === 'development' ? 500 : 50; // Higher in dev to reduce noise
+  private flushInterval = process.env.NODE_ENV === 'development' ? 45000 : 30000; // 45s in dev, 30s in prod
   private flushTimer?: NodeJS.Timeout;
   private endpoint = '/api/telemetry';
   
@@ -199,9 +199,13 @@ class TelemetryService {
    * Update metrics from event
    */
   private updateMetrics(event: TelemetryEvent): void {
-    // Log to console in dev mode
+    // Log to console in dev mode (only noteworthy events)
     if (process.env.NODE_ENV === 'development') {
-      console.log('[Telemetry]', event);
+      // Only log errors or network backoff events to reduce noise
+      if (event.category === 'error' || 
+          (event.category === 'network' && event.action === 'backoff')) {
+        console.log('[Telemetry]', event);
+      }
     }
   }
 

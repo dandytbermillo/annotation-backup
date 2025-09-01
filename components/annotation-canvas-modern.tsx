@@ -4,12 +4,11 @@ import { useEffect, useState, forwardRef, useImperativeHandle } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
-import { CollaborationProvider, clearEditorDocsForNote } from "@/lib/yjs-provider"
+import { UnifiedProvider, getPlainProvider } from "@/lib/provider-switcher"
 import { CanvasControls } from "./canvas/canvas-controls"
 import { Minimap } from "./canvas/minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
 import { panToPanel } from "@/lib/canvas/pan-animations"
-import { getPlainProvider } from "@/lib/provider-switcher"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -46,24 +45,30 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     // The composite key system (noteId-panelId) already isolates docs between notes
     // This allows content to load immediately when switching back to a previously viewed note
     
-    // Initialize collaboration provider with YJS persistence
-    const provider = CollaborationProvider.getInstance()
+    // Check if we're in plain mode
+    const plainProvider = getPlainProvider()
+    const isPlainMode = !!plainProvider
     
-    // Define default data for new notes
-    const defaultData = {
-      'main': {
-        title: 'New Document',
-        type: 'main',
-        content: '', // Start with empty content instead of placeholder
-        branches: [],
-        position: { x: 2000, y: 1500 },
-        isEditable: true
+    if (!isPlainMode) {
+      // Initialize collaboration provider with YJS persistence
+      const provider = UnifiedProvider.getInstance()
+      
+      // Define default data for new notes
+      const defaultData = {
+        'main': {
+          title: 'New Document',
+          type: 'main',
+          content: '', // Start with empty content instead of placeholder
+          branches: [],
+          position: { x: 2000, y: 1500 },
+          isEditable: true
+        }
       }
-    }
 
-    // Initialize the note with YJS persistence providers
-    // This will either restore from persistence or create with defaults
-    provider.initializeDefaultData(noteId, defaultData)
+      // Initialize the note with YJS persistence providers
+      // This will either restore from persistence or create with defaults
+      provider.initializeDefaultData(noteId, defaultData)
+    }
     
     // Set main panel as the initial panel
     setPanels(['main'])
@@ -163,7 +168,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         console.log('[Plain mode] Creating panel:', panelId)
       } else {
         // Ensure the provider knows about the current note
-        const provider = CollaborationProvider.getInstance()
+        const provider = UnifiedProvider.getInstance()
         provider.setCurrentNote(noteId)
         
         // Get the panel data from YJS
@@ -185,7 +190,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             const panel = dataStore?.get(id)
             return panel?.position || { x: 2000, y: 1500 }
           } else {
-            const panel = CollaborationProvider.getInstance().getBranchesMap().get(id)
+            const panel = UnifiedProvider.getInstance().getBranchesMap().get(id)
             return panel?.position || null
           }
         }
@@ -340,7 +345,7 @@ function PanelsRenderer({
   const isPlainMode = !!plainProvider
   
   // Yjs access only when not in plain mode
-  const provider = CollaborationProvider.getInstance()
+  const provider = UnifiedProvider.getInstance()
   if (!isPlainMode) {
     provider.setCurrentNote(noteId)
   }

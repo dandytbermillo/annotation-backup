@@ -1,0 +1,27 @@
+LLM-ready patch: Reduce telemetry flood in development
+
+Target file: lib/offline/telemetry.ts
+
+1) Increase batch size and adjust flush interval in development
+Find:
+  private batchSize = 50;
+  private flushInterval = 30000; // 30 seconds
+Replace with:
+  private batchSize = process.env.NODE_ENV === 'development' ? 500 : 100;
+  private flushInterval = process.env.NODE_ENV === 'development' ? 45000 : 30000; // 45s dev, 30s prod
+
+2) Avoid per-event console logs in development except for notable events
+Find the updateMetrics method body where it logs:
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Telemetry]', event);
+  }
+Replace with:
+  if (process.env.NODE_ENV === 'development') {
+    const noteworthy = event.category === 'error' || (event.category === 'network' && event.action === 'backoff');
+    if (noteworthy) {
+      console.log('[Telemetry]', event);
+    }
+  }
+
+Notes:
+- This reduces server console spam by fewer client flushes and less verbose client-side logging.

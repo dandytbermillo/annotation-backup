@@ -114,7 +114,7 @@ Phase 3 — Conflict Resolution UI (≈1.5–2 weeks)
   - Advanced semantic merges beyond minimal first pass (can iterate later).
 - Work Items (tickets)
   - OFF-P3-FE-001: Conflict detection integration (intercept 409; collect base/current versions). Owner: FE. Est: 2d. Dep: P2.
-  - OFF-P3-FE-002: ConflictResolutionDialog UI (diff view, actions, confirmation for force). Owner: FE. Est: 3–4d. Dep: P3-FE-001.
+- OFF-P3-FE-002: ConflictResolutionDialog UI (diff view, actions, confirmation for force). Owner: FE. Est: 3–4d. Dep: P3-FE-001.
   - OFF-P3-FE-003: Simple three‑way merge for ProseMirror JSON (fallback to textual diff if not feasible). Owner: FE. Est: 2–3d. Dep: P3-FE-001, P3-FE-005.
   - OFF-P3-FE-004: Wire “force” save (set `force: true` on version POST); post-merge save workflow. Owner: FE. Est: 1–2d. Dep: P3-FE-002.
   - OFF-P3-FE-005: Diff/Merge utility library for ProseMirror JSON (helpers, adapters). Owner: FE. Est: 1–2d. Dep: P3-FE-001.
