@@ -1,0 +1,50 @@
+Subject: docs(guide): minimal Active vs Deprecated split to resolve contradictions now
+Date: 2025-09-02
+
+This minimal patch makes the guide immediately usable by adding an "ACTIVE RULES"
+banner with the current v1.4 rules and a small "DEPRECATED (Do Not Use)" note,
+then treating the rest of the file as historical reference. It avoids Rule IDs,
+YAML headers, and heavy CI — focusing solely on removing contradictions fast.
+
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@
+ # Documentation Process Guide for Feature Implementation and Bug Fixes
+ 
+ **Version**: 1.4.0  
+ **Last Updated**: 2025-09-02  
+ **Changes**: 
+@@
+ **Purpose**: Standardize documentation practices for all feature implementations and bug fixes
+ 
++## ACTIVE RULES (Authoritative — follow these only)
++
++These are the only rules to use today. Ignore any conflicting guidance below; it is historical.
++
++1) Directory Structure
++- Feature dirs use: `reports/` (single main Implementation-Report), `implementation-details/`, and `post-implementation-fixes/` with `README.md` index and severity subfolders.
++- Do not use `reports/.../fixes/`.
++
++2) Main Implementation Report (TOC/dashboard)
++- Links-only; no inline code/commands/diffs; 2–3 sentence Executive Summary.
++- Include: Scope of Implementation, Key Metrics table, Code Changes (counts + links), Acceptance Criteria (checkmarks only).
++- Include explicit `---` phase boundary; add "Post-Implementation Fixes" section with links only.
++
++3) Post-Implementation Fixes
++- All fixes AFTER Status: COMPLETE go under `post-implementation-fixes/<severity>/` with full details there.
++- Main report contains links to fixes only; no severity counts in the main report.
++
++4) Inline Content and Artifacts
++- Main implementation report: no inline commands/diffs/logs.
++- Fix reports: short inline snippets OK; long outputs go to `.../artifacts/`.
++
++---
++
++## DEPRECATED (Do Not Use)
++
++- "Inline artifacts for <10 LOC" in the main implementation report (legacy v1.1 guidance).
++- Any `reports/.../fixes/` paths — use `post-implementation-fixes/<severity>/`.
++
++---
++
++Note: The sections below are historical/background and may include examples that do not conform to Active Rules.

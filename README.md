@@ -287,6 +287,9 @@ npm run lint
 
 # Option A integration tests
 ./scripts/test-plain-mode.sh
+
+# E2E tests (placeholder)
+npm run test:e2e
 ```
 
 ### Electron Testing
@@ -306,6 +309,14 @@ Electron-specific tests must be run locally as they require an Electron environm
 If you only have TypeScript files (`.ts`), you'll need to either:
 1. Build the project first: `npm run build`
 2. Set up ts-node with Electron for direct TypeScript execution
+
+### Electron Development
+
+For a local Electron run (builds the app, then launches Electron):
+
+```bash
+npm run electron:dev
+```
 
 ### CI/CD
 
@@ -346,6 +357,7 @@ For issues and support, please create an issue in the GitHub repository.
 
 - Previous sessions, executive summaries, and changelog:
   - See `codex/previous-sessions/README.md` for purpose, usage, and examples.
+ - Documentation Process Guide: docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
 
 ## 📝 Proposals
 

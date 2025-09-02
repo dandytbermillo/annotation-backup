@@ -1,0 +1,59 @@
+diff --git a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+index 0000000..0000000 100644
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@
+ ### Example Structure
+ ```
+ docs/proposal/Example_Feature/
+ ├── Example-Feature.md                           # Implementation Plan
+-└── reports/
+-    ├── Example-Feature-Implementation-Report.md # Main Report (clear naming)
+-    # OR
+-    ├── 2025-09-02-implementation-report.md      # Main Report (with header link)
+-    └── fixes/
+-        └── critical/
+-            └── 2025-09-02-specific-fix.md       # Sub-report for fixes
++├── reports/
++│   ├── Example-Feature-Implementation-Report.md # Main Report (clear naming)
++│   └── 2025-09-02-implementation-report.md      # Main Report (with header link)
++└── post-implementation-fixes/
++    └── critical/
++        └── 2025-09-02-specific-fix.md           # Sub-report for fixes
+ ```
+@@
+ ## Simplified Structure for Minor Fixes
+
+-For features with both major and minor fixes, prefer a shallow structure:
+ +For low-severity fixes, keep documentation concise but in the canonical location:
+ 
+ ```
+ docs/proposal/<feature_slug>/
+-├── reports/
+-│   ├── YYYY-MM-DD-implementation.md  # main
+-│   └── fixes/
+-│       ├── critical/                 # full artifacts for major issues
+-│       └── minor/                    # short markdown notes; inline artifacts allowed
++├── post-implementation-fixes/
++│   ├── critical/                     # full artifacts for major issues
++│   ├── high/
++│   ├── medium/
++│   └── low/                          # short notes allowed; inline artifacts OK
+ ```
+ 
+-This reduces nesting for small corrections while preserving depth where it matters.
++This keeps a single, consistent structure while allowing brevity for low-severity items.
+@@
+ ### 2. Bug Fix/Enhancement Template
+ 
+-File: `reports/YYYY-MM-DD-<report-name>/YYYY-MM-DD-<fix-name>.md`
++File: `post-implementation-fixes/<severity>/YYYY-MM-DD-<fix-name>.md`
+@@
+ ## Expert Review Process
+@@
+-2. Create a detailed fix report in `reports/fixes/<severity>/` 
++2. Create a detailed fix report in `post-implementation-fixes/<severity>/` 
+@@
+-- If additional artifacts are produced, add them under `reports/<date>/fixes/critical|minor`, avoiding deep nesting unless necessary.
++- If additional artifacts are produced, add them under `post-implementation-fixes/<severity>/`, avoiding deep nesting unless necessary.
+

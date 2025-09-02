@@ -1,0 +1,296 @@
+Subject: docs: add merged Item 2 Single Source of Truth proposal
+Date: 2025-09-02
+
+This patch adds a merged proposal for Item 2 (Contradictory Version Rules —
+Single Source of Truth). It combines rule IDs, Active Rules vs. Appendix
+separation, Effective As Of markers, YAML headers for machine readability,
+doc‑lint checks, migration map, and a PR checklist. Applying this patch will
+create a new planning document under docs/proposal/temp.
+
+--- /dev/null
++++ b/docs/proposal/temp/ITEM_2_Single_Source_of_Truth_Proposal_MERGED.md
+@@
++# Documentation Guide v1.4 — Item 2: Single Source of Truth Proposal (Merged)
+
+---
+proposal: Item 2 Single Source of Truth (Merged)
+version: 1.0
+intended_guide_version: 1.4.0
+effective_as_of: "<set commit/tag on merge>"
+authors: ["Docs WG", "Reviewers TBD"]
+---
+
+## Problem
+Multiple guide versions (v1.1–v1.4) coexist inside one document, creating contradictory instructions. Humans and LLMs cannot reliably choose the correct rule when legacy and current guidance conflict.
+
+### Actual Contradictions in Current Guide
+```markdown
+Line 127: "inline artifacts for small (<10 LOC) changes" (v1.1 rule)
+Line 138: "no inline fixes regardless of severity" (v1.4 rule)
+Line 226: "No inline content" (100% compliance checklist)
+Lines 320-340: Shows inline code examples that violate the checklist
+```
+Impact: LLM sees "use inline" AND "never use inline" — cannot compute!
+
+## Objectives
+- One normative section only: Active Rules.
+- Quarantine all history into an Appendix (never overrides Active Rules).
+- Precise traceability via Rule IDs (R.DOMAIN.N) and “Effective As Of”.
+- Machine‑readable headers to enable tooling and CI.
+- Lightweight doc‑lint to block regressions.
+
+## Guide Structure (Normative vs Historical)
+```markdown
+# Documentation Process Guide
+Version: vX.Y.Z
+Last Updated: YYYY-MM-DD
+Effective As Of: <commit SHA or tag>
+Rule Set ID: DRG-vX.Y.Z
+
+## Active Rules
+R.DIR.1 — Directory structure and phase boundary
+R.NAM.2 — Naming & linking (Plan ↔ Main Report)
+R.REP.4 — Implementation report shape (TOC/dashboard)
+R.FIX.5 — Fix placement (post-implementation-fixes/)
+R.SEV.3 — Severity & fix documentation requirements
+R.SAFE.6 — LLM safety guardrails & STOP conditions
+R.PROC.7 — Process steps (Implementation → Fixes)
+R.VAL.8 — Validation checklist
+
+---
+
+## Appendix: Rule History & Deprecations
+- Deprecated rules (with reason, replacement, migration)
+- Rule Evolution Table
+- Real incident examples
+```
+
+## Rule Identification and Traceability
+- Stable IDs: `R.<DOMAIN>.<N>` (e.g., `R.DIR.1`, `R.REP.4`, `R.FIX.5`).
+- Each Active Rule begins with an ID + a one‑sentence mandate, followed by 1–3 lines of details and a Rationale.
+
+Example:
+```markdown
+R.FIX.5 — Post‑implementation fixes MUST live under post-implementation-fixes/<severity>/ with a mandatory README index.
+Details: Main implementation report contains links only; no inline fix content.
+Rationale: Single location enables reliable indexing and CI enforcement.
+```
+
+## Optional: Simplify by Removing Rule IDs (Recommended)
+
+If Rule IDs add cognitive overhead, an equivalent, simpler structure can be used:
+
+Instead of:
+```markdown
+R.DIR.1 — Directory structure and phase boundary
+R.NAM.2 — Naming & linking (Plan ↔ Main Report)
+R.REP.4 — Implementation report shape (TOC/dashboard)
+```
+
+Use clear section headers:
+```markdown
+### Directory Structure
+- Feature directories must follow the standard structure
+- Phase boundary at Status: COMPLETE
+
+### Naming & Linking
+- Main report links to the implementation plan
+- Use descriptive names or date‑based naming with header link
+
+### Implementation Report Shape
+- Main reports are TOC/dashboard style (links only)
+- No inline code or commands in the main report
+```
+
+Why remove Rule IDs?
+- Adds cognitive overhead for humans (mapping IDs)
+- LLMs do not inherently benefit from IDs
+- Clear headers and concise mandates are sufficient for navigation and compliance
+
+Bottom Line:
+- This simplification is OPTIONAL. The primary blocker is the contradictory rules; the contradiction examples above make the urgency explicit. Keeping or removing IDs does not change the Active Rules themselves.
+
+## Versioning Semantics
+- Major: Breaking changes to Active Rules (paths, boundaries, templates).
+- Minor: Clarifications/additions that keep prior compliant docs valid.
+- Patch: Typos/formatting/non‑behavioral clarifications.
+- “Effective As Of”: Commit or tag where rules become binding for new work.
+- Migration banner for Major changes, linking to steps below.
+
+## Deprecation Workflow (Appendix)
+Each deprecated rule entry includes: Deprecated In, Replacement (R.ID), Migration, Removal timeline (optional).
+
+Example:
+```markdown
+Deprecated In: v1.4.0
+Old: reports/fixes/…
+Replacement: R.FIX.5 — post-implementation-fixes/<severity>/
+Migration: Move reports/fixes/* → post-implementation-fixes/<severity>/* and add README index.
+```
+
+## Guide Change Record (Appendix)
+Append‑only record of guide edits: Date, Version, Change Type (Major/Minor/Patch), Rules Affected (IDs), Summary, Author, PR/commit link.
+
+## Enforcement & CI Signals
+CI‑friendly checks to prevent regressions:
+- Single Active Rules section: exactly one `## Active Rules` heading.
+- Legacy bans: No `reports/fixes/` in Active Rules; required presence of `post-implementation-fixes/`.
+- Rule ID coverage: All first‑level Active Rules begin with `R.` IDs.
+- Effective marker: “Effective As Of:” present and non‑empty.
+
+Doc‑lint (grep/rg, examples):
+```bash
+# Active Rules presence
+rg -n "^## Active Rules$" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md | wc -l | xargs test 1 -eq
+
+# No version references in Active Rules
+rg -n "^## Active Rules$" -n docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md | true
+! rg -n "v1\\.[0-9]|since v|previously" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md | rg -n "^## Active Rules$" -B 200 -A 200
+
+# Legacy path banned in Active Rules
+! rg -n "reports/fixes/" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md | rg -n "^## Active Rules$" -B 200 -A 200
+
+# Required current path in Active Rules
+rg -n "post-implementation-fixes/" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md | rg -n "^## Active Rules$" -B 200 -A 200
+
+# Rule ID coverage
+rg -n "^R\\.[A-Z]+\\.[0-9]+\\b" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+
+# Effective marker present
+rg -n "^Effective As Of:\\s+\\S+" docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+```
+
+## Main Report & Fix Compliance (Doc‑lint rules)
+- Main report (reports/*Implementation-Report*.md):
+  - MUST contain: “Status: ✅ COMPLETE”, “## Executive Summary”, “## Scope of Implementation”, a `---` boundary, “## Post‑Implementation Fixes” linking to README.
+  - MUST NOT contain: inline code blocks below “## Post‑Implementation Fixes”, lines matching `^\s*````, or long command outputs.
+  - SHOULD contain: metrics table header `| Metric | Before | After |`.
+- Fix placement:
+  - MUST NOT match `reports/.*/fixes/` anywhere.
+  - MUST match `post-implementation-fixes/<severity>/` for fix docs.
+- Artifacts:
+  - Implementation artifacts under `implementation-details/artifacts/`.
+  - Fix artifacts under `post-implementation-fixes/<severity>/*-artifacts/`.
+
+## Migration Map (v1.1/1.2/1.3 → v1.4)
+1) Directory normalization
+   - Replace any `reports/.*/fixes` with `post-implementation-fixes/`.
+   - Add `post-implementation-fixes/README.md` with severity counts and links.
+2) Main report cleanup
+   - Enforce TOC/dashboard: links‑only after `---` boundary.
+   - Add Scope of Implementation; keep Executive Summary ≤ 3 sentences.
+3) Artifacts relocation
+   - Implementation: `implementation-details/artifacts/`.
+   - Fixes: `post-implementation-fixes/<severity>/…-artifacts/`.
+4) Version headers
+   - Add YAML headers: `active_version`, `compliance`, `last_validated`.
+5) Verification
+   - Run doc‑lint and resolve findings.
+
+## YAML Headers (Machine‑readable)
+Guide header example:
+```yaml
+---
+guide: Documentation Process Guide
+active_version: 1.4.0
+last_updated: YYYY-MM-DD
+effective_as_of: <commit-or-tag>
+---
+```
+
+Main implementation report header:
+```yaml
+---
+guide_active_version: 1.4.0
+compliance: true
+last_validated: YYYY-MM-DD
+---
+```
+
+## Minimal Templates
+Active Rules entry:
+```markdown
+R.<DOMAIN>.<N> — <One‑sentence mandate>
+Details: <1–3 lines with exact paths/names>
+Rationale: <Why this must be true>
+```
+
+Deprecation entry (Appendix):
+```markdown
+Deprecated In: vX.Y.Z
+Replaces: <legacy rule>
+Replacement: <R.DOMAIN.N>
+Migration: <Concrete steps>
+Removal Timeline: <Optional date/version>
+```
+
+## PR Checklist
+- [ ] Main report follows TOC/dashboard and includes Scope of Implementation.
+- [ ] All fixes live under `post-implementation-fixes/<severity>/` and README index updated.
+- [ ] Artifacts placed correctly (implementation vs. fixes).
+- [ ] YAML headers present; `compliance: true` set after validation.
+
+## Governance
+
+### CODEOWNERS
+```
+/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md @doc-team @arch-lead
+/docs/proposal/*/reports/ @doc-team
+/scripts/doc-lint.sh @ci-team
+```
+
+### GitHub Action (Doc‑Lint)
+```yaml
+name: Documentation Lint
+on: [push, pull_request]
+jobs:
+  doc-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Run doc-lint
+        run: |
+          chmod +x scripts/doc-lint.sh
+          ./scripts/doc-lint.sh
+```
+
+## Success Metrics
+
+| Metric | Current | Week 1 | Week 2 | Week 4 |
+|--------|---------|--------|--------|--------|
+| Contradicting rules | 15+ | 5 | 1 | 0 |
+| Version refs in Active | 20+ | 5 | 1 | 0 |
+| Legacy paths | Many | Some | Few | 0 |
+| Doc‑lint failures | N/A | 50+ | 10 | 0 |
+| Stability score | 2/10 | 5/10 | 7/10 | 9/10 |
+
+## Implementation Timeline
+
+### Immediate (Day 0)
+- Publish merged Item 2 proposal for review/approval.
+
+### Week 1: Guide Restructuring
+- Add Active Rules with R.IDs; move legacy to Appendix.
+- Remove version references from Active Rules.
+- Update templates to match Active Rules; add YAML headers.
+
+### Week 2: Path Normalization & Migrations
+- Replace any `reports/.*/fixes` with `post-implementation-fixes/`.
+- Create `post-implementation-fixes/README.md` indexes.
+- Migrate top 3 active feature folders.
+
+### Week 3: Validation
+- Enable doc‑lint in warn mode and address violations.
+- Ensure main reports include Scope of Implementation and phase boundary.
+
+### Week 4: Enforcement
+- Enforce doc‑lint in CI (blocking).
+- Mark `compliance: true` in headers after validation.
+
+---
+
+This merged proposal confines normative truth to Active Rules with stable IDs,
+pushes history into an Appendix, adds machine‑readable headers, and wires in
+CI‑friendly checks so contradictions cannot creep back.
+@@
+ +++

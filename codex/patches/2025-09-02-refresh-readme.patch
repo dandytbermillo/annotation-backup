@@ -1,0 +1,57 @@
+Subject: docs(readme): add TL;DR, docs links, and mode guidance
+Date: 2025-09-02
+
+This patch refreshes the top-level README with a concise TL;DR quick start for
+Option A, explicit documentation links (process guide v1.4), and clearer mode
+switch guidance. No code changes.
+
+--- a/README.md
++++ b/README.md
+@@
+# Dual-Mode Annotation System
+
+A modern annotation system built with Next.js and TipTap that supports both offline single-user mode (Option A) and real-time collaborative editing (Option B). This application provides a canvas-based interface for creating and managing annotations with flexible deployment options.
+
+## TL;DR (Option A: Plain Mode)
+
+- Prereqs: Node 18+, PostgreSQL 14+ (or Docker)
+- Configure: copy `.env.example` → `.env.local`, set `NEXT_PUBLIC_COLLAB_MODE=plain`
+- Database: `docker compose up -d postgres` or create `annotation_dev`
+- Migrations: `npm run db:migrate`
+- Run: `npm run dev` → open http://localhost:3000
+- Switch modes: change `NEXT_PUBLIC_COLLAB_MODE` and restart dev server
+
+Quick scripts
+- Bench API: `bash codex/scripts/bench-api.sh` (outputs to `codex/benchout/`)
+- E2E (if configured): `npx playwright test`
+
+Documentation
+- Process guide (v1.4, Active Rules): `docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md`
+- Feature docs/proposals: `docs/proposal/`
+- Previous sessions: `codex/previous-sessions/README.md`
+@@
+## 🛠️ Tech Stack
+@@
+## 📦 Installation
+@@
+### Setup Steps
+@@
+   CREATE DATABASE annotation_dev;
+   ```
+
+5. **Run database migrations**
+   ```bash
+   npm run db:migrate
+   ```
+@@
+7. **Open in browser**
+   Open [http://localhost:3000](http://localhost:3000) to view the application.
+@@
+## ⚡ Option A (Plain Mode) Quick Start
+@@
+- Note: Switching between modes requires a restart of the dev server.
+
+### Documentation & Conventions
+- Main reports are navigation dashboards (links-only) per v1.4 guide
+- Fixes live under `post-implementation-fixes/<severity>/` with a README index
+- See `docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md` for templates and rules

@@ -1,0 +1,87 @@
+Subject: docs: align DOCUMENTATION_PROCESS_GUIDE.md with v1.4 Section 4 (TOC main report, fixes location)
+Date: 2025-09-02
+
+This patch makes the documentation guide fully consistent with Improvement #4
+(Implementation Report Content Structure) by:
+- Keeping main reports as dashboards (links-only after COMPLETE)
+- Moving all fix reports under post-implementation-fixes/<severity>/
+- Adding a "Scope of Implementation" section to the main report template
+- Fixing remaining path and example inconsistencies
+
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@
+ ### Legacy Paths Clarification
+-- Always place new implementation and fix reports under reports/.
++- Always place new implementation reports under reports/. Place all post-implementation fixes under post-implementation-fixes/.
+@@
+ ### Main Report Identification
+ - Each feature MUST have exactly ONE main implementation report
+-- Additional reports for fixes/updates go in subdirectories or use clear suffixes
++- Additional fix reports go under post-implementation-fixes/; the main implementation report remains the single source of overall status
+ - The main report tracks overall implementation status and links to sub-reports
+@@
+-### Example Structure
+-```
+-docs/proposal/Example_Feature/
+-├── Example-Feature.md                           # Implementation Plan
+-└── reports/
+-    ├── Example-Feature-Implementation-Report.md # Main Report (clear naming)
+-    # OR
+-    ├── 2025-09-02-implementation-report.md      # Main Report (with header link)
+-    └── fixes/
+-        └── critical/
+-            └── 2025-09-02-specific-fix.md       # Sub-report for fixes
+-```
++### Example Structure
++```
++docs/proposal/Example_Feature/
++├── Example-Feature.md                           # Implementation Plan
++├── reports/
++│   ├── Example-Feature-Implementation-Report.md # Main Report (clear naming)
++│   # OR
++│   ├── 2025-09-02-implementation-report.md      # Main Report (with header link)
++└── post-implementation-fixes/
++    └── critical/
++        └── 2025-09-02-specific-fix.md           # Fix report (full details)
++```
+@@
+ ### 1. Main Implementation Report Template (Table of Contents Style)
+@@
+ ## Executive Summary
+ [2-3 sentences maximum. No more.]
++
++## Scope of Implementation
++- What Was Planned: [bullet points]
++- What Was Delivered: [checkmarks]
+@@
+ ### 2. Bug Fix/Enhancement Template
+ 
+-File: `reports/YYYY-MM-DD-<report-name>/YYYY-MM-DD-<fix-name>.md`
++File: `post-implementation-fixes/<severity>/YYYY-MM-DD-<fix-name>.md`
+@@
+-If additional artifacts are produced, add them under `reports/<date>/fixes/critical|minor`, avoiding deep nesting unless necessary.
++If additional artifacts are produced, add them under `post-implementation-fixes/<severity>/YYYY-MM-DD-<fix-name>-artifacts/`, keeping artifacts co-located with the fix.
+@@
+ ### Pull Request References
+@@
+ ## Documentation
+ - Implementation Report: `docs/proposal/<feature>/reports/...`
+ - Test Results: [Link to specific test section]
+-- Known Issues: [Link to fixes subfolder]
++- Known Issues: `docs/proposal/<feature>/post-implementation-fixes/`
+@@
+ ### Good Documentation Example
+@@
+-[→ Details](./2025-09-01-phase3-implementation-report/2025-09-02-uuid-coercion-fix.md)
++[→ Details](../post-implementation-fixes/medium/2025-09-02-uuid-coercion-fix.md)
+@@
+ ### File Structure Checklist
+ - [ ] Feature folder exists: `docs/proposal/<feature_slug>/`
+ - [ ] Reports folder exists: `reports/`
+ - [ ] Main implementation report created
+-- [ ] Fixes subfolder created (when needed)
++- [ ] post-implementation-fixes/ exists with README index
+ - [ ] Test scripts documented
+ - [ ] Test pages created
+

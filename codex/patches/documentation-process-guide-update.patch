@@ -1,0 +1,97 @@
+diff --git a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+index 0000000..0000000 100644
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@
+ ## Directory Structure
+ 
+ ### Feature Workspace Structure
+```
+docs/proposal/<feature_slug>/
+├── IMPLEMENTATION_PLAN.md (or INITIAL.md serving as the plan)
+├── reports/
+│   ├── YYYY-MM-DD-<phase>-implementation-report.md
+│   └── YYYY-MM-DD-<phase>-implementation-report/
+│       ├── YYYY-MM-DD-<fix-name>.md
+│       ├── YYYY-MM-DD-<fix-name>-artifacts/
+│       │   ├── 01-original-error-report.md
+│       │   ├── 02-terminal-output.txt
+│       │   ├── 03-screenshot-description.md
+│       │   └── INDEX.md
+│       └── YYYY-MM-DD-<enhancement-name>.md
+├── test_scripts/
+├── test_pages/
+├── supporting_files/
+└── fixing_doc/ (legacy - use reports subfolder instead)
+```
+
+### Legacy Paths Clarification
+- fixing_doc is deprecated. Do not use for new documentation.
+- Always place new implementation and fix reports under reports/.
+- When updating older work found in fixing_doc, prefer moving or linking it from reports/ and note the migration in the updated report.
+
+## Documentation Requirements by Severity
+
+Use the smallest viable documentation footprint based on impact:
+
+- Critical (e.g., >50% CPU, data loss): Full implementation report + dedicated fix report + artifacts folder (logs, outputs, diffs).
+- High (e.g., memory leak, missing core functionality): Brief fix report with key artifacts; link in main implementation report.
+- Medium (e.g., perf or UX regression): Single fix note inside the main implementation report; optional inline artifacts.
+- Low (e.g., typos, formatting, <10 LOC trivial fixes): Commit message only; no separate report required.
+
+Examples of acceptable minimal forms are provided below in “Inline Artifacts Guidance”.
+
+## Simplified Structure for Minor Fixes
+
+For features with both major and minor fixes, prefer a shallow structure:
+
+```
+docs/proposal/<feature_slug>/
+├── reports/
+│   ├── YYYY-MM-DD-implementation.md  # main
+│   └── fixes/
+│       ├── critical/                 # full artifacts for major issues
+│       └── minor/                    # short markdown notes; inline artifacts allowed
+```
+
+This reduces nesting for small corrections while preserving depth where it matters.
+
+## Expert Review Process
+
+When external review identifies issues or discrepancies:
+
+1. Create expert-review/feedback.md under the same feature folder, or add an “Expert Review” section to the existing main report.
+2. Capture reviewer findings, decisions, and follow-ups.
+3. Prefer updating the original report in-place with an “Expert Review” section and links to any corrections, rather than spawning a new report tree.
+4. For small corrections (<10 LOC), update the existing fix note and add a short “Correction” subsection rather than a new dated report.
+
+## Inline Artifacts Guidance (for small changes)
+
+For fixes under ~10 LOC, embed evidence directly in the report to avoid redundant files:
+
+```markdown
+### Inline Artifacts
+
+Before
+```diff
+- setInterval(...)
++ cleanupProcessedKeys(); // lazy sweep on request
+```
+
+After
+```bash
+rg -n "setInterval\(" app/api/postgres-offline
+# No results
+```
+```
+
+If more evidence is needed (e.g., multi-command sessions), promote to an artifacts subfolder.
+
+## Iterative Updates
+
+When claims and implementation diverge, or after reviewer feedback:
+
+- Update the original report with a “Corrections” or “Expert Review” section, linking to the exact commit or patch.
+- If additional artifacts are produced, add them under reports/<date>/fixes/critical|minor, avoiding deep nesting unless necessary.
+- Clearly mark superseded statements and provide the corrected snippet.
+
