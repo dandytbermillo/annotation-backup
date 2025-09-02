@@ -1,0 +1,101 @@
+diff --git a/app/api/postgres-offline/panels/batch/route.ts b/app/api/postgres-offline/panels/batch/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/panels/batch/route.ts
++++ b/app/api/postgres-offline/panels/batch/route.ts
+@@
+-// Idempotency tracking (in production, use Redis or database)
+-const processedKeys = new Map<string, { timestamp: number; result: any }>()
+-const IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000 // 24 hours
+-
+-// Clean up old idempotency keys periodically
+-setInterval(() => {
+-  const now = Date.now()
+-  for (const [key, value] of processedKeys.entries()) {
+-    if (now - value.timestamp > IDEMPOTENCY_TTL) {
+-      processedKeys.delete(key)
+-    }
+-  }
+-}, 60 * 60 * 1000) // Every hour
++// Idempotency tracking (in production, use Redis or database)
++type ProcessedEntry = { timestamp: number; result: any }
++const IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000 // 24 hours
++const IDEMPOTENCY_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
++
++function getProcessedStore(): { map: Map<string, ProcessedEntry>; lastSweep: number } {
++  const g = globalThis as any
++  if (!g.__batchPanelsStore) {
++    g.__batchPanelsStore = { map: new Map<string, ProcessedEntry>(), lastSweep: 0 }
++  }
++  return g.__batchPanelsStore
++}
++
++function cleanupProcessedKeys(): void {
++  const store = getProcessedStore()
++  const now = Date.now()
++  if (now - store.lastSweep < IDEMPOTENCY_SWEEP_INTERVAL) return
++  for (const [key, value] of store.map.entries()) {
++    if (now - value.timestamp > IDEMPOTENCY_TTL) store.map.delete(key)
++  }
++  store.lastSweep = now
++}
+@@
+ export async function POST(request: NextRequest) {
+   const client = await pool.connect()
+   
+   try {
++    // Lazy cleanup of idempotency cache; no background timers
++    cleanupProcessedKeys()
++    const store = getProcessedStore()
+     const { operations } = await request.json()
+@@
+-      if (op.idempotencyKey && processedKeys.has(op.idempotencyKey)) {
+-        const cached = processedKeys.get(op.idempotencyKey)
++      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
++        const cached = store.map.get(op.idempotencyKey)
+         results.push({ ...cached?.result, cached: true })
+         continue
+       }
+@@
+-        if (op.idempotencyKey) {
+-          processedKeys.set(op.idempotencyKey, {
+-            timestamp: Date.now(),
+-            result: operationResult
+-          })
+-        }
++        if (op.idempotencyKey) {
++          store.map.set(op.idempotencyKey, {
++            timestamp: Date.now(),
++            result: operationResult
++          })
++        }
+@@
+ export async function PUT(request: NextRequest) {
+   const client = await pool.connect()
+   
+   try {
++    // Lazy cleanup of idempotency cache; no background timers
++    cleanupProcessedKeys()
++    const store = getProcessedStore()
+     const { operations } = await request.json()
+@@
+-      if (op.idempotencyKey && processedKeys.has(op.idempotencyKey)) {
+-        const cached = processedKeys.get(op.idempotencyKey)
++      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
++        const cached = store.map.get(op.idempotencyKey)
+         results.push({ ...cached?.result, cached: true })
+         continue
+       }
+@@
+-            if (op.idempotencyKey) {
+-              processedKeys.set(op.idempotencyKey, {
+-                timestamp: Date.now(),
+-                result: operationResult
+-              })
+-            }
++            if (op.idempotencyKey) {
++              store.map.set(op.idempotencyKey, {
++                timestamp: Date.now(),
++                result: operationResult
++              })
++            }
+

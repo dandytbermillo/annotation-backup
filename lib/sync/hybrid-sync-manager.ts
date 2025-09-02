@@ -36,6 +36,7 @@ export class HybridSyncManager {
   private activeStrategy: string | null = null
   private metricsCollector: MetricsCollector
   private latency: number = 0
+  private qualityInterval: NodeJS.Timeout | null = null
   
   constructor(private doc: Y.Doc, private roomId: string) {
     this.metricsCollector = new MetricsCollector()
@@ -148,7 +149,10 @@ export class HybridSyncManager {
   }
   
   private startQualityMonitoring(): void {
-    setInterval(async () => {
+    if (this.qualityInterval) {
+      clearInterval(this.qualityInterval)
+    }
+    this.qualityInterval = setInterval(async () => {
       if (this.activeStrategy && this.activeStrategy !== 'local') {
         const strategy = this.strategies.get(this.activeStrategy)
         if (strategy && strategy.provider) {
@@ -205,5 +209,9 @@ export class HybridSyncManager {
         strategy.provider.destroy()
       }
     })
+    if (this.qualityInterval) {
+      clearInterval(this.qualityInterval)
+      this.qualityInterval = null
+    }
   }
 } 

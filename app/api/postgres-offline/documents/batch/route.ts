@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
+// Ensure Node.js runtime (pg requires Node)
+export const runtime = 'nodejs'
+
 // Create connection pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
@@ -12,18 +15,27 @@ const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable acros
 const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Idempotency tracking (in production, use Redis or database)
-const processedKeys = new Map<string, { timestamp: number; result: any }>()
+type ProcessedEntry = { timestamp: number; result: any }
 const IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000 // 24 hours
+const IDEMPOTENCY_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
 
-// Clean up old idempotency keys periodically
-setInterval(() => {
-  const now = Date.now()
-  for (const [key, value] of processedKeys.entries()) {
-    if (now - value.timestamp > IDEMPOTENCY_TTL) {
-      processedKeys.delete(key)
-    }
+function getProcessedStore(): { map: Map<string, ProcessedEntry>; lastSweep: number } {
+  const g = globalThis as any
+  if (!g.__batchDocumentsStore) {
+    g.__batchDocumentsStore = { map: new Map<string, ProcessedEntry>(), lastSweep: 0 }
   }
-}, 60 * 60 * 1000) // Every hour
+  return g.__batchDocumentsStore
+}
+
+function cleanupProcessedKeys(): void {
+  const store = getProcessedStore()
+  const now = Date.now()
+  if (now - store.lastSweep < IDEMPOTENCY_SWEEP_INTERVAL) return
+  for (const [key, value] of store.map.entries()) {
+    if (now - value.timestamp > IDEMPOTENCY_TTL) store.map.delete(key)
+  }
+  store.lastSweep = now
+}
 
 // Normalize panelId helper (same as in regular documents route)
 const normalizePanelId = (noteId: string, panelId: string): string => {
@@ -36,6 +48,10 @@ export async function POST(request: NextRequest) {
   const client = await pool.connect()
   
   try {
+    // Lazy cleanup of idempotency cache; no background timers
+    cleanupProcessedKeys()
+    const store = getProcessedStore()
+    
     const { operations } = await request.json()
     
     if (!Array.isArray(operations) || operations.length === 0) {
@@ -56,8 +72,8 @@ export async function POST(request: NextRequest) {
     
     for (const op of operations) {
       // Check idempotency
-      if (op.idempotencyKey && processedKeys.has(op.idempotencyKey)) {
-        const cached = processedKeys.get(op.idempotencyKey)
+      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+        const cached = store.map.get(op.idempotencyKey)
         results.push({ ...cached?.result, cached: true })
         continue
       }
@@ -135,7 +151,7 @@ export async function POST(request: NextRequest) {
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)
           if (idempotencyKey) {
-            processedKeys.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
+            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
           }
           inserted = true
         } catch (e: any) {
@@ -177,6 +193,10 @@ export async function PUT(request: NextRequest) {
   const client = await pool.connect()
   
   try {
+    // Lazy cleanup of idempotency cache; no background timers
+    cleanupProcessedKeys()
+    const store = getProcessedStore()
+    
     const { operations } = await request.json()
     
     if (!Array.isArray(operations) || operations.length === 0) {
@@ -197,8 +217,8 @@ export async function PUT(request: NextRequest) {
     
     for (const op of operations) {
       // Check idempotency
-      if (op.idempotencyKey && processedKeys.has(op.idempotencyKey)) {
-        const cached = processedKeys.get(op.idempotencyKey)
+      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+        const cached = store.map.get(op.idempotencyKey)
         results.push({ ...cached?.result, cached: true })
         continue
       }
@@ -274,7 +294,7 @@ export async function PUT(request: NextRequest) {
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)
           if (idempotencyKey) {
-            processedKeys.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
+            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
           }
           inserted = true
         } catch (e: any) {

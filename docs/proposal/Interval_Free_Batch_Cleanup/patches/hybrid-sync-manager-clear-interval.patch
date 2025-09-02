@@ -1,0 +1,46 @@
+diff --git a/lib/sync/hybrid-sync-manager.ts b/lib/sync/hybrid-sync-manager.ts
+index 0000000..0000000 100644
+--- a/lib/sync/hybrid-sync-manager.ts
++++ b/lib/sync/hybrid-sync-manager.ts
+@@
+ export class HybridSyncManager {
+   private strategies: Map<string, SyncStrategy> = new Map()
+   private activeStrategy: string | null = null
+   private metricsCollector: MetricsCollector
+   private latency: number = 0
++  private qualityInterval: NodeJS.Timeout | null = null
+@@
+-  private startQualityMonitoring(): void {
+-    setInterval(async () => {
++  private startQualityMonitoring(): void {
++    if (this.qualityInterval) {
++      clearInterval(this.qualityInterval)
++    }
++    this.qualityInterval = setInterval(async () => {
+       if (this.activeStrategy && this.activeStrategy !== 'local') {
+         const strategy = this.strategies.get(this.activeStrategy)
+         if (strategy && strategy.provider) {
+           const latency = await this.testStrategyLatency(strategy)
+           this.latency = latency
+           
+           if (latency > 500) {
+             await this.selectOptimalStrategy()
+           }
+         }
+       }
+-    }, 30000)
++    }, 30000)
+   }
+@@
+   public disconnect(): void {
+     this.strategies.forEach(strategy => {
+       if (strategy.provider && strategy.provider.destroy) {
+         strategy.provider.destroy()
+       }
+     })
++    if (this.qualityInterval) {
++      clearInterval(this.qualityInterval)
++      this.qualityInterval = null
++    }
+   }
+

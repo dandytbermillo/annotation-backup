@@ -1,0 +1,72 @@
+==========================================
+BEFORE FIX - High CPU Usage
+==========================================
+
+$ ps aux | grep next
+dandy  1936  147.6  3.4 35459088 574224   ??  R     1:11PM  29:39.06 node next dev -p 3001
+
+$ top | grep -A 3 PID
+PID    COMMAND      %CPU TIME     #TH  #WQ  #PORT MEM    PURG  CMPR  PGRP  PPID  STATE
+1936   node         147.6 29:39.06 28   0    156   574M   0B    118M  1936  1935  running
+
+==========================================
+AFTER FIX - Normal CPU Usage
+==========================================
+
+$ ps aux | grep -E 'node|next' | grep -v grep | awk '{print $2, $3, $11}' | head -10
+5947 0.1 next-server
+5935 0.0 node
+
+$ grep -r "setInterval" app/api/postgres-offline/
+# No output - all setInterval removed
+
+==========================================
+ENDPOINT TESTS
+==========================================
+
+$ curl -X POST http://localhost:3001/api/postgres-offline/documents/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [{
+      "noteId": "test-note-interval-free",
+      "panelId": "test-panel-interval-free",
+      "content": {"html": "Testing interval-free implementation"},
+      "idempotencyKey": "interval-free-test-1"
+    }]
+  }'
+
+Response:
+{
+    "success": true,
+    "results": [
+        {
+            "success": true,
+            "id": "8e436e68-3953-4549-b3c6-78081a4c6c19",
+            "noteId": "test-note-interval-free",
+            "panelId": "10619193-61cf-550c-a382-60ffacb8a905",
+            "version": 1
+        }
+    ],
+    "processed": 1,
+    "skipped": 0,
+    "failed": 0
+}
+
+# Second request with same idempotencyKey
+Response:
+{
+    "success": true,
+    "results": [
+        {
+            "success": true,
+            "id": "8e436e68-3953-4549-b3c6-78081a4c6c19",
+            "noteId": "test-note-interval-free",
+            "panelId": "10619193-61cf-550c-a382-60ffacb8a905",
+            "version": 1,
+            "cached": true
+        }
+    ],
+    "processed": 1,
+    "skipped": 0,
+    "failed": 0
+}

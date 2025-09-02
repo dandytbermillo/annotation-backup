@@ -1,0 +1,29 @@
+========================================
+CODE AFTER FIX
+lib/sync/hybrid-sync-manager.ts:206-216
+========================================
+
+  public disconnect(): void {
+    this.strategies.forEach(strategy => {
+      if (strategy.provider && strategy.provider.destroy) {
+        strategy.provider.destroy()
+      }
+    })
+    if (this.qualityInterval) {
+      clearInterval(this.qualityInterval)
+      this.qualityInterval = null
+    }
+  }
+}
+
+========================================
+FIX APPLIED
+========================================
+Added interval cleanup (lines 212-215):
++ Checks if qualityInterval exists
++ Clears the interval using clearInterval()
++ Sets qualityInterval to null to prevent reuse
++ Prevents memory leak when disconnect() is called
+
+This ensures that when a HybridSyncManager instance is destroyed or disconnected,
+all associated intervals are properly cleaned up.

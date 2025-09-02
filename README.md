@@ -252,10 +252,7 @@ docker run -p 3000:3000 annotation-system
 ```
 
 ### Static Export
-```bash
-npm run build
-npm run export
-```
+Static export is not supported due to server API routes and dynamic features (database-backed Option A, telemetry endpoint, and batch APIs). Deploy as a Node/Vercel server app.
 
 ## 🔄 Migration Guide
 
@@ -349,3 +346,7 @@ For issues and support, please create an issue in the GitHub repository.
 
 - Previous sessions, executive summaries, and changelog:
   - See `codex/previous-sessions/README.md` for purpose, usage, and examples.
+
+## 📝 Proposals
+
+- Interval-Free Batch Cleanup: docs/proposal/Interval_Free_Batch_Cleanup/Interval-Free-Batch-Cleanup.md

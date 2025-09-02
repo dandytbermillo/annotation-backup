@@ -11,6 +11,7 @@
  - If desired, approve implementing the above API and adapter hardening patches.
  - Generate Phase 3 report/test scaffolding under `docs/proposal/unified_offline_foundation/` (as previews in `codex/` for review).
  - Use `codex/scripts/bench-api.sh` to baseline API timings pre/post changes.
+ - Surface AGENTS.md in PRs (add PR template referencing AGENTS.md and codex/POLICY.md).
 
 - Recent patches added:
  - codex/patches/0001-api-queue-flush-parity.patch

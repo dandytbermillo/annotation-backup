@@ -1,0 +1,35 @@
+diff --git a/app/api/postgres-offline/documents/batch/route.ts b/app/api/postgres-offline/documents/batch/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/documents/batch/route.ts
++++ b/app/api/postgres-offline/documents/batch/route.ts
+@@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { Pool } from 'pg'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+ // Ensure Node.js runtime (pg requires Node)
+ export const runtime = 'nodejs'
+ 
+diff --git a/app/api/postgres-offline/branches/batch/route.ts b/app/api/postgres-offline/branches/batch/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/branches/batch/route.ts
++++ b/app/api/postgres-offline/branches/batch/route.ts
+@@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { Pool } from 'pg'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+ // Ensure Node.js runtime (pg requires Node)
+ export const runtime = 'nodejs'
+ 
+diff --git a/app/api/postgres-offline/panels/batch/route.ts b/app/api/postgres-offline/panels/batch/route.ts
+index 0000000..0000000 100644
+--- a/app/api/postgres-offline/panels/batch/route.ts
++++ b/app/api/postgres-offline/panels/batch/route.ts
+@@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { Pool } from 'pg'
+ 
+ // Ensure Node.js runtime (pg requires Node)
+ export const runtime = 'nodejs'
+
