@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 // Create connection pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Idempotency tracking (in production, use Redis or database)
 const processedKeys = new Map<string, { timestamp: number; result: any }>()
@@ -58,6 +63,21 @@ export async function POST(request: NextRequest) {
           continue
         }
         
+        // Coerce noteId to UUID if it's a slug
+        const noteKey = coerceEntityId(noteId)
+        
+        // Validate branch ID - if not a valid UUID, generate a new one
+        const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+        const branchId = (id && uuidRegex.test(String(id).trim())) ? String(id).trim() : uuidv5(`branch:${id || Date.now()}`, ID_NAMESPACE)
+        
+        // Ensure the note exists (auto-create if missing)
+        await client.query(
+          `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+           VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [noteKey]
+        )
+        
         const result = await client.query(
           `INSERT INTO branches 
            (id, note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
@@ -71,8 +91,8 @@ export async function POST(request: NextRequest) {
              updated_at = NOW()
            RETURNING id`,
           [
-            id,
-            noteId,
+            branchId,
+            noteKey,
             parentId || null,
             type || 'note',
             originalText || '',

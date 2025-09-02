@@ -85,3 +85,9 @@ fi
 
 echo "[new-session] Done. Edit the scaffolded files to fill details."
 
+# Refresh the RESUME pointer if helper exists
+if [[ -x "$ROOT_DIR/codex/scripts/refresh-resume.sh" ]]; then
+  (cd "$ROOT_DIR" && ./codex/scripts/refresh-resume.sh || true)
+else
+  echo "[new-session] Tip: run ./codex/scripts/refresh-resume.sh to update RESUME.md"
+fi

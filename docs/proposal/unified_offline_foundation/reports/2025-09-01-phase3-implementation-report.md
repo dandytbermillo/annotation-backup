@@ -374,6 +374,65 @@ Phase 3 Conflict Resolution UI is **FUNCTIONALLY COMPLETE** after applying exper
 5. **Next.js 15 Params Fix** (2025-09-01 Update):
    - `app/api/postgres-offline/branches/[id]/route.ts` - Fixed params to use Promise type per Next.js 15
 
+### Post-Implementation Fixes (2025-09-02)
+
+#### UUID Coercion for Postgres-Offline Endpoints
+
+**Problem**: After reverting changes, annotation persistence failed with repeated errors:
+- `invalid input syntax for type uuid: "note-1755925277292"` in branches/batch endpoint
+- `insert or update on table "document_saves" violates foreign key constraint` 
+- Autosave kept retrying with same non-existent note_id, causing infinite error loops
+
+**Root Cause Analysis**:
+1. The `/api/postgres-offline/branches/batch` endpoint was missing UUID coercion
+2. The `/api/postgres-offline/documents/batch` endpoint didn't auto-create missing notes
+3. The `/api/postgres-offline/documents/[noteId]/[panelId]` endpoint rejected slug IDs
+
+**Solution Applied**:
+
+1. **Added UUID coercion to all postgres-offline endpoints**:
+```typescript
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
+```
+
+2. **Implemented auto-create pattern for missing notes**:
+```typescript
+// Ensure the note exists (auto-create if missing)
+await client.query(
+  `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+   VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+   ON CONFLICT (id) DO NOTHING`,
+  [noteKey]
+)
+```
+
+3. **Files Modified**:
+   - `app/api/postgres-offline/branches/route.ts` - Added UUID coercion for noteId
+   - `app/api/postgres-offline/branches/batch/route.ts` - Added UUID coercion for both branch ID and noteId, plus auto-create
+   - `app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts` - Added UUID coercion for params
+   - `app/api/postgres-offline/documents/batch/route.ts` - Added UUID coercion and auto-create for notes
+
+**Verification**:
+```bash
+# Test branches with slug IDs
+curl -X POST http://localhost:3001/api/postgres-offline/branches/batch \
+  -d '{"operations": [{"id": "branch-test", "noteId": "note-slug", ...}]}'
+# Result: SUCCESS (auto-generates UUID for branch, coerces note slug)
+
+# Test documents with slug IDs  
+curl -X PUT http://localhost:3001/api/postgres-offline/documents/batch \
+  -d '{"operations": [{"data": {"noteId": "note-slug", "panelId": "panel-slug", ...}}]}'
+# Result: SUCCESS (auto-creates note if missing, saves document)
+```
+
+**Key Learnings**:
+- All postgres-offline endpoints must handle both UUIDs and slug IDs
+- Use deterministic UUID generation (UUIDv5) for consistent slug→UUID mapping
+- Auto-create parent entities to prevent FK violations during autosave
+- The same namespace must be used across all services for consistency
+
 ---
 
 *Phase 3 implementation complete with all expert-identified issues resolved. The Unified Offline Foundation now has production-ready conflict resolution with >95% success rate and full acceptance criteria compliance.*

@@ -1,0 +1,25 @@
+{
+  "mode": "read-only-advisory",
+  "run_policy": {
+    "allow_writes": false,
+    "safe_read_commands_only": true,
+    "allowed_write_paths": ["codex/"],
+    "allowed_read_paths": ["codex/"],
+    "allow_network": false
+  },
+  "approval_flow": {
+    "require_explicit": true,
+    "approval_phrases": ["Approved", "Implement now"]
+  },
+  "startup": {
+    "auto_read_resume": true,
+    "resume_path": "codex/previous-sessions/RESUME.md",
+    "auto_read_policy": true,
+    "policy_path": "codex/POLICY.md"
+  },
+  "proposals": {
+    "default": "diff-preview",
+    "apply_patch_allowed": false
+  }
+}
+

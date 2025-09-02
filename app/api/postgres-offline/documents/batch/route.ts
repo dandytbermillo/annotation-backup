@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
-import { v5 as uuidv5 } from 'uuid'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 // Create connection pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Idempotency tracking (in production, use Redis or database)
 const processedKeys = new Map<string, { timestamp: number; result: any }>()
@@ -86,12 +90,24 @@ export async function POST(request: NextRequest) {
     
     // Persist one row per (noteId, panelId) with server-computed version
     for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
+      // Coerce slugs to UUIDs
+      const noteKey = coerceEntityId(noteId)
+      const panelKey = coerceEntityId(panelId)
+      
+      // Ensure the note exists (auto-create if missing)
+      await client.query(
+        `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [noteKey]
+      )
+      
       // Skip if content equals latest (content-based coalescing)
       const latest = await client.query(
         `SELECT content, version FROM document_saves
          WHERE note_id = $1 AND panel_id = $2
          ORDER BY version DESC LIMIT 1`,
-        [noteId, panelId]
+        [noteKey, panelKey]
       )
       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
@@ -105,7 +121,7 @@ export async function POST(request: NextRequest) {
           `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
            FROM document_saves
            WHERE note_id = $1 AND panel_id = $2`,
-          [noteId, panelId]
+          [noteKey, panelKey]
         )
         const nextVersion = nextVersionRow.rows[0].next_version
         try {
@@ -114,7 +130,7 @@ export async function POST(request: NextRequest) {
              (note_id, panel_id, content, version, created_at)
              VALUES ($1, $2, $3::jsonb, $4, NOW())
              RETURNING id`,
-            [noteId, panelId, JSON.stringify(contentJson), nextVersion]
+            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion]
           )
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)
@@ -216,11 +232,23 @@ export async function PUT(request: NextRequest) {
     
     // Persist one row per (noteId, panelId) with server-computed version
     for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
+      // Coerce slugs to UUIDs
+      const noteKey = coerceEntityId(noteId)
+      const panelKey = coerceEntityId(panelId)
+      
+      // Ensure the note exists (auto-create if missing)
+      await client.query(
+        `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [noteKey]
+      )
+      
       const latest = await client.query(
         `SELECT content, version FROM document_saves
          WHERE note_id = $1 AND panel_id = $2
          ORDER BY version DESC LIMIT 1`,
-        [noteId, panelId]
+        [noteKey, panelKey]
       )
       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
@@ -232,7 +260,7 @@ export async function PUT(request: NextRequest) {
         const nextVersionRow = await client.query(
           `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
            FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
-          [noteId, panelId]
+          [noteKey, panelKey]
         )
         const nextVersion = nextVersionRow.rows[0].next_version
         try {
@@ -241,7 +269,7 @@ export async function PUT(request: NextRequest) {
              (note_id, panel_id, content, version, created_at)
              VALUES ($1, $2, $3::jsonb, $4, NOW())
              RETURNING id`,
-            [noteId, panelId, JSON.stringify(contentJson), nextVersion]
+            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion]
           )
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)
@@ -309,9 +337,13 @@ export async function DELETE(request: NextRequest) {
     // Delete all documents in batch
     for (const { noteId, panelId } of deletions) {
       if (noteId && panelId) {
+        // Coerce slugs to UUIDs
+        const noteKey = coerceEntityId(noteId)
+        const panelKey = coerceEntityId(panelId)
+        
         await client.query(
           'DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2',
-          [noteId, panelId]
+          [noteKey, panelKey]
         )
       }
     }

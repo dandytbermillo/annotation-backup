@@ -71,3 +71,5 @@ Best Practices
 Examples
 - See: `2025-09-01-session-summary.md`, `2025-09-01-exec-summary.md`, and `CHANGELOG.md` in this folder.
 
+Further Reading
+- See `GUIDE.md` for end-to-end workflows, script usage, and troubleshooting.

@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
-import { v5 as uuidv5 } from 'uuid'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 // Create connection pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Check if a string is a valid UUID
 const isUuid = (s: string): boolean => {
@@ -28,16 +32,11 @@ export async function GET(
     const { noteId, panelId } = await params
     console.log('[GET Document] Raw params:', { noteId, panelId })
     
-    // Validate noteId is a UUID
-    if (!isUuid(noteId)) {
-      return NextResponse.json(
-        { error: 'Invalid noteId: must be a valid UUID' },
-        { status: 400 }
-      )
-    }
+    // Coerce noteId slug to UUID if needed
+    const noteKey = coerceEntityId(noteId)
     
-    const normalizedPanelId = normalizePanelId(noteId, panelId)
-    console.log('[GET Document] Normalized panelId:', normalizedPanelId)
+    const normalizedPanelId = normalizePanelId(noteKey, panelId)
+    console.log('[GET Document] Coerced noteId:', noteKey, 'Normalized panelId:', normalizedPanelId)
     
     const result = await pool.query(
       `SELECT content, version 
@@ -45,7 +44,7 @@ export async function GET(
        WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
        LIMIT 1`,
-      [noteId, normalizedPanelId]
+      [noteKey, normalizedPanelId]
     )
     
     if (result.rows.length === 0) {

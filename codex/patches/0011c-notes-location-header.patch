@@ -1,0 +1,16 @@
+diff --git a/app/api/postgres-offline/notes/route.ts b/app/api/postgres-offline/notes/route.ts
+--- a/app/api/postgres-offline/notes/route.ts
++++ b/app/api/postgres-offline/notes/route.ts
+@@
+-    // Fresh insert path
+-    return NextResponse.json(result.rows[0], { status: 201 })
+ +    // Fresh insert path — include Location header
+ +    const created = result.rows[0]
+ +    const baseUrl = new URL(request.url)
+ +    const notesPath = baseUrl.pathname.replace(/\/$/, '')
+ +    const locationUrl = new URL(baseUrl.toString())
+ +    locationUrl.pathname = `${notesPath}/${created.id}`
+ +    return NextResponse.json(created, {
+ +      status: 201,
+ +      headers: { Location: locationUrl.toString() }
+ +    })
