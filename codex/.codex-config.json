@@ -3,8 +3,14 @@
   "run_policy": {
     "allow_writes": false,
     "safe_read_commands_only": true,
-    "allowed_write_paths": ["codex/"],
-    "allowed_read_paths": ["codex/"],
+    "allowed_write_paths": [
+      "codex/",
+      "/Users/dandy/Downloads/annotation_project/annotation-backup/codex"
+    ],
+    "allowed_read_paths": [
+      "codex/",
+      "/Users/dandy/Downloads/annotation_project/annotation-backup/codex"
+    ],
     "allow_network": false
   },
   "approval_flow": {
@@ -22,4 +28,3 @@
     "apply_patch_allowed": false
   }
 }
-

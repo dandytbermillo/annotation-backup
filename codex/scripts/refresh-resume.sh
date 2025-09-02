@@ -28,8 +28,19 @@ fi
 # Collect recent patches (last 10)
 RECENT_PATCHES=$(ls -1 "${PATCH_DIR}"/*.patch 2>/dev/null | sort | tail -n 10 || true)
 
+# Preserve README Summary status if present; default to 'stale'
+README_STATUS="stale"
+if [[ -f "${RESUME}" ]]; then
+  if grep -q "^- README Summary: fresh$" "${RESUME}"; then
+    README_STATUS="fresh"
+  fi
+fi
+
 {
   echo "# Resume Here"
+  echo
+  echo "- Operating Mode: Read-only advisory. Writes allowed only in \`codex/\` with explicit approval."
+  echo "- README Summary: ${README_STATUS}"
   echo
   echo "- Latest summaries:"
   [[ -n "${LATEST_EXEC}" ]] && echo "  - Executive: ${LATEST_EXEC}"
@@ -56,4 +67,3 @@ RECENT_PATCHES=$(ls -1 "${PATCH_DIR}"/*.patch 2>/dev/null | sort | tail -n 10 ||
 } > "${RESUME}"
 
 echo "[refresh-resume] Updated ${RESUME}"
-

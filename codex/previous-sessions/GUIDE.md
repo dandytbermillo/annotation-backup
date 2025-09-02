@@ -15,13 +15,19 @@ What’s Included
   - codex/scripts/refresh-resume.sh: Regenerates RESUME.md from latest summaries and patches.
 
 Quick Start
-- Start new day: bash codex/scripts/new-session.sh 2025-09-01 "Optional Title"
-- Refresh pointers only: bash codex/scripts/refresh-resume.sh
-- Resume after restart: Open codex/previous-sessions/RESUME.md, then continue with “Next steps”.
+- No shell required (chat):
+  - Resume: say “Resume from RESUME.md”
+  - Refresh pointers: say “Refresh RESUME.md”
+  - Read docs: say “resume readme.md” or “open guide.md”
+  - Refresh README summary: say “Refresh readme.md”
+- Shell (optional):
+  - Start new day: bash codex/scripts/new-session.sh 2025-09-01 "Optional Title"
+  - Refresh pointers only: bash codex/scripts/refresh-resume.sh
+  - Manual: open codex/previous-sessions/RESUME.md
 
 Daily Workflow
 - Start of day:
-  - Run new-session.sh to create today’s summaries and refresh RESUME.md.
+  - Chat: “Start session YYYY-MM-DD 'Title'” (I’ll propose the files; approve to save), or run new-session.sh.
   - Fill “Context” and initial “Next Suggested Steps” in session summary.
 - During session:
   - Record approvals (“Approved: codex/patches/XXXX.patch”).
@@ -38,6 +44,15 @@ Approvals & Read-only Flow (Codex)
 - Edits outside codex/ require explicit approval.
 - Patches are proposed under codex/patches/ as previews; you respond “Approved” to save them.
 - Summaries/RESUME live under codex/previous-sessions/ and are safe to create/update via scripts.
+
+Assistant Chat Commands (no shell)
+- Resume: “Resume from RESUME.md”, “resume”
+- Refresh RESUME: “Refresh RESUME.md”
+- Read docs: “resume readme.md”, “open guide.md”
+- Refresh README: “Refresh readme.md”
+- Start: “Start session YYYY-MM-DD 'Title'”
+- Append logs: “Append these logs to today: …”
+- See also: codex/previous-sessions/COMMANDS.md
 
 Script Reference
 - new-session.sh
@@ -96,6 +111,12 @@ Integration Tips
 - Copy “Next Steps” into sprint planning/issue trackers.
 - Consider archiving older months into CHANGELOG-ARCHIVE/YYYY-MM.md to keep CHANGELOG concise.
 
+End-of-session Checklist
+- Refresh RESUME.md to capture latest Next Steps and recent patches.
+- Refresh README.md summary so newcomers see current guidance.
+- Ensure “Next Suggested Steps” in today’s session summary are up to date.
+- (Optional) Commit or back up the codex/ folder.
+
 FAQ
 - Q: Does this depend on Codex being active?
   - A: No. Scripts and files are plain text; they work offline and outside Codex.
@@ -109,4 +130,3 @@ Glossary
 - Session Summary: Detailed, engineer-focused log of a working session.
 - RESUME.md: Stable pointer for rapid rehydration after restarts.
 - Patch preview: A diff proposed under codex/patches/ awaiting approval.
-

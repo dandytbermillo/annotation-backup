@@ -73,3 +73,18 @@ Examples
 
 Further Reading
 - See `GUIDE.md` for end-to-end workflows, script usage, and troubleshooting.
+
+Chat Commands Quickstart
+- Resume: say “Resume from RESUME.md” (or “resume”)
+- Refresh RESUME: say “Refresh RESUME.md”
+ - Read docs: say “resume readme.md” or “open guide.md”
+ - Refresh README: say “Refresh readme.md”
+- Full list: see `COMMANDS.md`
+
+Recent Updates — 2025-09-02
+- Added `COMMANDS.md` with supported chat phrases (resume/refresh/readme/end session).
+- Updated `GUIDE.md` with no-shell Quick Start and end-of-session checklist.
+- Expanded `POLICY.md` with Authoritative User Policy, supported commands, and closing reminders.
+- Added `scripts/refresh-resume.sh` and wired `new-session.sh` to auto-refresh RESUME.
+- Enhanced `RESUME.md` with Operating Mode and README Summary freshness marker.
+- Saved patch previews: `0011b-notes-explicit-id-hardened.patch`, `0011c-notes-location-header.patch` (not applied to app code).

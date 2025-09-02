@@ -1,6 +1,7 @@
 # Resume Here
 
 - Operating Mode: Read-only advisory. Writes allowed only in `codex/` with explicit approval.
+ - README Summary: fresh
 
 - Latest summaries:
   - Executive: codex/previous-sessions/2025-09-01-exec-summary.md
@@ -31,5 +32,6 @@
 
 - Tips:
   - Run `codex/scripts/bench-api.sh` to baseline key endpoints.
+  - Say “Refresh readme.md” to update README with today’s summary.
 
 Updated by `codex/scripts/refresh-resume.sh`.
