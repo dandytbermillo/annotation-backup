@@ -1,0 +1,14 @@
+diff --git a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+index current..proposed 100644
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@ -19,8 +19,8 @@
+ These are the only rules to use today. Ignore any conflicting guidance below; it is historical.
+ 
+ 1) Directory Structure
+-- Feature dirs use: `reports/` (single main Implementation-Report), `implementation-details/`, and `post-implementation-fixes/` with `README.md` index and severity subfolders.
++- Feature dirs use: `reports/` (single main Implementation-Report with README.md index), `implementation-details/` (with README.md index), and `post-implementation-fixes/` (with README.md index and severity subfolders).
+ - Do not use `reports/.../fixes/`.
++- Each standard folder MUST have a README.md index for navigation and LLM discovery.
+ 
+ 2) Main Implementation Report (TOC/dashboard)

@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/dev-with-docker.js",
+    "dev:next": "next dev",
+    "dev:check": "node scripts/check-docker.js && next dev",
+    "dev:docker": "docker-compose up -d postgres && next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

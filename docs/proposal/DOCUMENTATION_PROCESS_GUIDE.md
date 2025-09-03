@@ -1,12 +1,17 @@
 # Documentation Process Guide for Feature Implementation and Bug Fixes
 
-**Version**: 1.4.0  
-**Last Updated**: 2025-09-02  
+**Version**: 1.4.5  
+**Last Updated**: 2025-09-03  
 **Changes**: 
 - v1.1.0: Added severity-based documentation requirements, expert review process, inline artifacts guidance, and simplified structure for minor fixes
 - v1.2.0: Added Implementation Plan and Report Relationship section, clarified naming conventions for main reports
 - v1.3.0: Standardized Post-Implementation Fixes structure - all fixes in subdirectories with links from main report
-- v1.4.0: Implemented Table of Contents style reports - main reports as navigation hubs with 100% compliance checklist  
+- v1.4.0: Implemented Table of Contents style reports - main reports as navigation hubs with 100% compliance checklist
+- v1.4.1: Added objective severity criteria with measurable thresholds, environment multipliers, and severity classification checklist to bug fix template
+- v1.4.2: Added comprehensive README.md template for post-implementation-fixes, classification examples table, FAQ, quick reference card, and detailed metric definitions
+- v1.4.3: Added Process Documentation rule to clarify where meta-documentation belongs, formalized existing convention
+- v1.4.4: Added Implementation Status Values rule with minimal three-status system including BLOCKED status for visibility
+- v1.4.5: Added Patches Directory rule with simplified structure and clear usage guidelines  
 **Purpose**: Standardize documentation practices for all feature implementations and bug fixes
 
 ## ACTIVE RULES (Authoritative — follow these only)
@@ -29,6 +34,39 @@ These are the only rules to use today. Ignore any conflicting guidance below; it
 4) Inline Content and Artifacts
 - Main implementation report: no inline commands/diffs/logs.
 - Fix reports: short inline snippets OK; long outputs go to `.../artifacts/`.
+
+5) Severity Classification (Objective Criteria)
+- **Critical**: Data loss, security (any env), prod failure, >50% perf degradation (p95 1-hour)
+- **High**: Memory leak >25%/24h, 25-50% perf, >10% users affected (per hour)
+- **Medium**: 10-25% perf degradation, UX disrupted, non-critical broken
+- **Low**: <10% perf impact, cosmetic, code quality, dev-only (except security)
+- **Environment Multiplier**: Production (as-is), Staging (-1 level), Dev (-2 levels)
+- **EXCEPTION**: Security issues always Critical regardless of environment
+- **Measurement Windows**: Performance: 1-hour p95 | Memory: 24-hour | User impact: per-hour
+- **Classification Examples**: 147% CPU in Dev = Medium (Critical -2), SQL injection in Dev = Critical (exception)
+- Document specific metrics in fix reports (%, time windows, user counts)
+
+6) Process Documentation
+- Documentation about the documentation process goes in: `docs/documentation_process_guide/`
+- Documentation about specific features goes in: `docs/proposal/<feature>/`
+- The main Documentation Process Guide stays at `docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md` (for compatibility)
+- This rule ensures clean separation with minimal disruption
+
+7) Implementation Status Values
+- 🚧 IN PROGRESS - Active work on the feature (default for all work)
+- ✅ COMPLETE - All criteria met, implementation phase ends (cannot go backward)
+- ❌ BLOCKED - Cannot proceed, requires human intervention (must include reason)
+
+8) Patches Directory (Optional)
+- Location: `docs/proposal/<feature_slug>/patches/` (flat directory per feature)
+- Purpose: Store proposed code changes as `git format-patch` files when direct edits are not appropriate
+- When to use (any of):
+  - Requires review/approval before merge (e.g., expert review)
+  - Risky or reversible change where a precise audit trail matters
+  - External contributor's change or cross-repo coordination
+- Naming: `YYYY-MM-DD-descriptive-name.patch` (e.g., `2025-09-03-fix-memory-leak.patch`)
+- Documentation: Maintain a single `patches/README.md` index explaining each patch (what/why/how to apply)
+- Linking: Reference the patch from the related implementation or fix report under **Related → Patch**
 
 ---
 
@@ -160,12 +198,65 @@ While v1.1.0 introduced inline artifacts for small (<10 LOC) changes, post-imple
 
 ## Documentation Requirements by Severity
 
-All post-implementation fixes go in `post-implementation-fixes/<severity>/` directories:
+All post-implementation fixes go in `post-implementation-fixes/<severity>/` directories based on objective criteria:
 
-- **Critical** (e.g., >50% CPU, data loss): Full fix report in `post-implementation-fixes/critical/` with artifacts folder
-- **High** (e.g., memory leak, missing core functionality): Fix report in `post-implementation-fixes/high/` with key artifacts
-- **Medium** (e.g., perf or UX regression): Fix report in `post-implementation-fixes/medium/`
-- **Low** (e.g., typos, formatting): Fix report in `post-implementation-fixes/low/` OR commit message only
+### 🔴 Critical (Immediate Action Required)
+- **Criteria**: Data loss/corruption, security vulnerabilities, complete prod failure, >50% performance degradation
+- **Response Time**: Immediate
+- **Documentation**: Full fix report in `post-implementation-fixes/critical/` with complete artifacts folder
+- **Example**: SQL injection, data corruption, production down
+
+### 🟠 High (Within 24 Hours)  
+- **Criteria**: Memory leak >25%/24h, 25-50% perf degradation, >10% users affected, core features broken
+- **Response Time**: Within 24 hours
+- **Documentation**: Fix report in `post-implementation-fixes/high/` with key artifacts
+- **Example**: Memory leak causing OOM in 48h, API latency +35%, 12% of users getting errors
+
+### 🟡 Medium (Within 1 Week)
+- **Criteria**: 10-25% perf degradation, UX workflow disrupted, non-critical features broken
+- **Response Time**: Within 1 week  
+- **Documentation**: Fix report in `post-implementation-fixes/medium/`
+- **Example**: Slow batch save, UI freezes for some users, browser compatibility issues
+
+### 🟢 Low (As Time Permits)
+- **Criteria**: <10% perf impact, cosmetic issues, code quality, dev-only issues (unless security)
+- **Response Time**: As time permits
+- **Documentation**: Fix report in `post-implementation-fixes/low/` OR commit message only
+- **Example**: Typos, formatting, deprecated dependencies, refactoring needs
+
+### Environment Multiplier
+Apply these adjustments based on where the issue occurs:
+- **Production**: Use severity as-is
+- **Staging**: Reduce by 1 level (Critical → High)  
+- **Development**: Reduce by 2 levels (Critical → Medium)
+- **EXCEPTION**: Security issues are ALWAYS Critical
+
+### Classification Examples
+
+| Issue | Environment | Metrics | Base Severity | Final Severity |
+|-------|-------------|---------|---------------|-----------------|
+| 147% CPU spike | Dev | >50% CPU | Critical | **Medium** (dev -2) |
+| API latency +35% | Prod | p95 +35% | High | **High** |
+| Memory leak | Prod | +30%/24h | High | **High** |
+| 12% users get errors | Prod | 12% sessions | High | **High** |
+| Missing button label | Prod | Cosmetic | Low | **Low** |
+| SQL injection found | Dev | Security | Critical | **Critical** (exception) |
+| Feature broken | Staging | Core feature | Critical | **High** (staging -1) |
+| Slow test suite | CI | +40% time | High | **Medium** (dev -2) |
+
+### Severity Classification FAQ
+
+**Q: What if we can't measure the exact percentage?**  
+A: Use best estimate and document uncertainty. Example: "Approximately 20-30% degradation based on user reports"
+
+**Q: How do we handle intermittent issues?**  
+A: Use worst-case measurement during incident. If it happens 50% of the time with 40% degradation, document as "40% degradation when occurring (50% of requests)"
+
+**Q: What about issues affecting specific customers?**  
+A: Consider business impact. One customer = Low, unless it's enterprise/critical customer, then treat as percentage of revenue affected
+
+**Q: Can we override the environment multiplier?**  
+A: Yes, with justification. Example: "Dev issue but blocking all development work = High"
 
 **Main report contains links only** - no inline fixes regardless of severity.
 
@@ -186,6 +277,58 @@ docs/proposal/<feature_slug>/
 ```
 
 Inline artifacts are allowed within fix report files, but NOT in the main implementation report.
+
+### Post-Implementation Fixes README.md Template
+
+**File**: `post-implementation-fixes/README.md` (MANDATORY)
+
+```markdown
+# Post-Implementation Fixes Index
+
+**Feature**: [Feature Name]
+**Last Updated**: YYYY-MM-DD
+**Total Fixes**: X
+**Severity Breakdown**: 🔴 Critical: 0 | 🟠 High: 1 | 🟡 Medium: 2 | 🟢 Low: 1
+
+## 🔴 Critical Issues (Immediate Action Required)
+*Definition: Data loss, security, prod down, >50% perf degradation*
+
+| Date | Issue | Environment | Metrics | Status | Link |
+|------|-------|-------------|---------|--------|------|
+| *No critical issues* | | | | | |
+
+## 🟠 High Priority (Within 24 Hours)
+*Definition: Memory leak >25%/day, 25-50% perf, >10% users affected*
+
+| Date | Issue | Environment | Metrics | Status | Link |
+|------|-------|-------------|---------|--------|------|
+| 2025-09-02 | Memory leak in HMR | Dev | 30%/24h growth | ✅ Fixed | [Details](./high/2025-09-02-memory-leak.md) |
+
+## 🟡 Medium Priority (Within 1 Week)
+*Definition: 10-25% perf degradation, UX disrupted, non-critical broken*
+
+| Date | Issue | Environment | Metrics | Status | Link |
+|------|-------|-------------|---------|--------|------|
+| 2025-09-03 | Slow batch save | Prod | 15% p95 latency | 🚧 In Progress | [Details](./medium/2025-09-03-batch-save.md) |
+| 2025-09-03 | UI freezes | Staging | 12% users affected | ⚠️ Blocked | [Details](./medium/2025-09-03-ui-freeze.md) |
+
+## 🟢 Low Priority (As Time Permits)
+*Definition: <10% perf impact, cosmetic, code quality*
+
+| Date | Issue | Environment | Metrics | Status | Link |
+|------|-------|-------------|---------|--------|------|
+| 2025-09-04 | Typo in error msg | Prod | Cosmetic | ✅ Fixed | [Details](./low/2025-09-04-typo.md) |
+
+## Fix Patterns & Lessons Learned
+- **Memory Leaks**: Most common in development with HMR (3 instances)
+- **Performance**: Environment-specific issues need multiplier consideration
+- **Security**: Always Critical regardless of environment (1 instance)
+
+## Statistics
+- **Average Time to Fix**: Critical: <2h | High: <24h | Medium: 3 days | Low: 1 week
+- **Most Affected Environment**: Development (60%), Production (30%), Staging (10%)
+- **Root Cause Distribution**: Code bugs (50%), Config (30%), Dependencies (20%)
+```
 
 ## Documentation Templates
 
@@ -278,13 +421,23 @@ File: `post-implementation-fixes/<severity>/YYYY-MM-DD-<fix-name>.md`
 **Severity**: [Critical | High | Medium | Low]  
 **Affected Version**: [Version/Phase identifier]  
 
+## Severity Classification
+- [ ] Performance impact measured: _____% (metric: _____, window: _____)
+- [ ] Environment identified: [Production | Staging | Development]  
+- [ ] Environment multiplier applied: [Yes | No | N/A-Security]
+- [ ] User impact quantified: _____% over _____ period
+- [ ] Security implications reviewed: [Yes - Critical | No]
+
+**Final Severity**: [Critical | High | Medium | Low]
+**Justification**: [1-2 sentences with specific metrics]
+
 ## Problem
 [One sentence summary of the issue]
 
 ### Detailed Symptoms
 - [Symptom 1 with exact error message]
 - [Symptom 2 with observed behavior]
-- [Impact on users/system]
+- [Impact on users/system with metrics]
 
 ## Root Cause Analysis
 1. **[Primary cause]**: [Explanation]
@@ -626,6 +779,37 @@ Fixed some database errors in the API endpoints.
 ```
 
 ## Appendix: Quick Reference
+
+### Severity Quick Reference Card
+
+```
+🔴 Critical: Data loss | Security | Prod down | >50% perf hit
+🟠 High: Memory leak >25%/day | 25-50% perf | >10% users
+🟡 Medium: 10-25% perf | UX disrupted | Non-critical broken
+🟢 Low: <10% perf | Cosmetic | Code quality
+
+Remember: Dev issues -2 levels (except security)
+```
+
+### Metric Definitions
+
+#### Performance Metrics
+- **p95 latency**: 95th percentile response time (95% of requests complete within this time)
+- **Throughput**: Requests/transactions per second
+- **CPU usage**: Average across all cores
+- **Memory usage**: RSS (Resident Set Size) or heap usage
+
+#### User Impact Metrics  
+- **Active users**: Unique users in time window
+- **Sessions**: Individual user sessions
+- **API requests**: Total API calls
+- **Error rate**: Failed requests / total requests
+
+#### Time Windows
+- **Immediate**: Within 5 minutes
+- **Urgent**: Within 1 hour
+- **Daily**: 24-hour rolling window
+- **Sustained**: Continuous for specified period
 
 ### File Structure Checklist
 - [ ] Feature folder exists: `docs/proposal/<feature_slug>/`

@@ -48,4 +48,4 @@
   - Read-only advisory by default; write only with explicit “Approved” and only inside `codex/`.
   - Safe reads only; no installs or destructive commands.
   - Startup routine: read `codex/previous-sessions/RESUME.md` and recap Next Steps.
-  - Supported chat commands include “Resume from RESUME.md”, “Refresh RESUME.md”, “Refresh readme.md”, and “End session”.
+  - Supported chat commands include “Resume from resume.md”, “Refresh readme.md”, “Refresh resume.md”, and “End session”.

@@ -52,12 +52,19 @@ Interpretation: “Do not use apply_patch” means by default; apply_patch may b
 
 Supported Chat Commands
 - Resume: “Resume from RESUME.md”, “resume”
-- Refresh RESUME: “Refresh RESUME.md”
+- Resume (alias): “Resume from readme.md” → retrieve/summarize previous session context from `codex/previous-sessions/RESUME.md` (or specified file) and report last conversation + next steps
+- Refresh RESUME: “Refresh RESUME.md”, “Refresh resume”
 - Read docs: “resume readme.md”, “open guide.md”, “show commands”
 - Refresh README: “Refresh readme.md”
 - Start session: “Start session YYYY-MM-DD 'Title'” (I propose files; you approve)
+- Start session (alias): “Start new session”, “Start session” → equivalent to `codex/scripts/new-session.sh` (I propose files; you approve)
 - Append logs: “Append these logs to today: …”
 - Draft patches: “Draft patch preview for X” (I propose diffs; you approve)
+
+Resume output format
+- Summary (top): 3–6 bullets covering purpose, key decisions, approvals, and next steps
+- Recent messages (verbatim): show the last 3–4 messages from the previous conversation, unsummarized
+- Pointers: link to the latest `YYYY-MM-DD-session-summary.md` and `YYYY-MM-DD-exec-summary.md` if present
 
 Closing reminders
 - When you say “End session”, I will remind you to Refresh RESUME and Refresh README, and propose both updates for approval.

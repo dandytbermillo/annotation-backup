@@ -1,0 +1,53 @@
+Subject: docs(sessions): capture Summary + Recent Messages in RESUME.md
+Date: 2025-09-02
+
+This patch updates RESUME.md to store a Summary block and a Recent Messages
+block (3–4 verbatim entries) and clarifies COMMANDS.md for Refresh/End session.
+
+Proposed edits
+
+1) codex/previous-sessions/RESUME.md (insert at top after title)
+
+```
+# Resume Here
+
+## Previous Session Summary
+- [Fill: 3–6 bullets covering purpose, key decisions, approvals, and next steps]
+
+## Recent Messages (verbatim)
+1) [Paste last message here]
+2) [Paste previous message here]
+3) [Paste previous message here]
+4) [Optional]
+
+- Operating Mode: Read-only advisory. Writes allowed only in `codex/` with explicit approval.
+- README Summary: fresh
+```
+
+Also, under “Next steps”, add:
+
+```
+- Keep the two blocks above current: update “Previous Session Summary” and “Recent Messages (verbatim)” during refresh/end-session
+```
+
+2) codex/previous-sessions/COMMANDS.md (clarify Refresh/End behavior)
+
+Change Refresh pointers section to:
+
+```
+- “Refresh RESUME.md” / “Refresh RESUME” / “refresh resume”
+- I read current files and propose a patch updating `RESUME.md`:
+  - Update “Previous Session Summary” (3–6 bullets)
+  - Update “Recent Messages (verbatim)” with the last 3–4 messages (unsummarized)
+  - Update “Next steps” and append recent patches
+- You say “Approved” to save.
+```
+
+Change End session line to:
+
+```
+- “End session” → I propose the closing checklist: Refresh RESUME (Summary + Recent Messages), Refresh README, and summarize changes. You say “Approved” to save; I then mark “README Summary: fresh” in RESUME.md.
+```
+
+Notes
+- This patch only updates docs; it does not auto-extract messages. During Refresh, paste the last 3–4 messages when prompted, or confirm I should use chat context if available.

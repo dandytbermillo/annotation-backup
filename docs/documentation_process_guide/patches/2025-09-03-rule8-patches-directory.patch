@@ -1,0 +1,36 @@
+diff --git a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+index 1234567..abcdef9 100644
+--- a/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
++++ b/docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md
+@@ -1,13 +1,14 @@
+ # Documentation Process Guide for Feature Implementation and Bug Fixes
+ 
+-**Version**: 1.4.4  
++**Version**: 1.4.5  
+ **Last Updated**: 2025-09-03  
+ **Changes**: 
+ - v1.1.0: Added severity-based documentation requirements, expert review process, inline artifacts guidance, and simplified structure for minor fixes
+ - v1.2.0: Added Implementation Plan and Report Relationship section, clarified naming conventions for main reports
+ - v1.3.0: Standardized Post-Implementation Fixes structure - all fixes in subdirectories with links from main report
+ - v1.4.0: Implemented Table of Contents style reports - main reports as navigation hubs with 100% compliance checklist
+ - v1.4.1: Added objective severity criteria with measurable thresholds, environment multipliers, and severity classification checklist to bug fix template
+ - v1.4.2: Added comprehensive README.md template for post-implementation-fixes, classification examples table, FAQ, quick reference card, and detailed metric definitions
+ - v1.4.3: Added Process Documentation rule to clarify where meta-documentation belongs, formalized existing convention
+ - v1.4.4: Added Implementation Status Values rule with minimal three-status system including BLOCKED status for visibility
++- v1.4.5: Added Patches Directory rule with simplified structure and clear usage guidelines  
+ **Purpose**: Standardize documentation practices for all feature implementations and bug fixes
+ 
+@@ -54,6 +55,12 @@
+ - ✅ COMPLETE - All criteria met, implementation phase ends (cannot go backward)
+ - ❌ BLOCKED - Cannot proceed, requires human intervention (must include reason)
+ 
++8) Patches Directory (Optional)
++- Location: `feature/patches/` - Simple flat directory
++- Purpose: Store proposed code changes as git-format patches when direct editing is not appropriate
++- When to use: Expert reviews, risky changes, or when changes need approval before applying
++- Naming: `YYYY-MM-DD-descriptive-name.patch` (e.g., `2025-09-03-fix-memory-leak.patch`)
++- Documentation: Each patch needs a README.md explaining what it does and why
++
+ ---
+ 
+ ## DEPRECATED (Do Not Use)

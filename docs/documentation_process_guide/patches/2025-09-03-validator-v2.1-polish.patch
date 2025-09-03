@@ -1,0 +1,61 @@
+diff --git a/scripts/validate-doc-structure.sh b/scripts/validate-doc-structure.sh
+index old..new 100644
+--- a/scripts/validate-doc-structure.sh
++++ b/scripts/validate-doc-structure.sh
+@@ -65,12 +65,17 @@ check_feature_structure() {
+     if [ -d "$feature_dir/reports" ]; then
+-        # Find implementation reports
++        # Find implementation reports (using -print0 for robustness)
+         local report_count=0
+         local first_report=""
++        local extra_reports=()
+-        while IFS= read -r report; do
++        while IFS= read -r -d '' report; do
+             if [ $report_count -eq 0 ]; then
+                 first_report="$report"
++            else
++                extra_reports+=("$(basename "$report")")
+             fi
+             report_count=$((report_count + 1))
+-        done < <(find "$feature_dir/reports" -maxdepth 1 \( -name "*Implementation-Report.md" -o -name "*implementation-report.md" \) -type f)
++        done < <(find "$feature_dir/reports" -maxdepth 1 \( -name "*Implementation-Report.md" -o -name "*implementation-report.md" \) -type f -print0)
+         
+         if [ $report_count -eq 0 ]; then
+@@ -79,6 +84,10 @@ check_feature_structure() {
+         elif [ $report_count -gt 1 ]; then
+             echo -e "${YELLOW}  ⚠ Multiple implementation reports found in reports/${NC}"
++            echo -e "${YELLOW}     Using: $(basename "$first_report")${NC}"
++            for extra in "${extra_reports[@]}"; do
++                echo -e "${YELLOW}     Extra: $extra${NC}"
++            done
+             WARNINGS=$((WARNINGS + 1))
+             main_report="$first_report"  # Use first one for further checks
+         else
+@@ -166,8 +175,11 @@ check_feature_structure() {
+     # Check for deprecated patterns
+     if [ -d "$feature_dir/reports" ]; then
+-        if find "$feature_dir/reports" -type d -name "fixes" 2>/dev/null | grep -q .; then
+-            echo -e "${RED}  ✗ Deprecated pattern found: reports/.../fixes/ (use post-implementation-fixes/)${NC}"
++        local deprecated_found=false
++        while IFS= read -r -d '' deprecated_dir; do
++            deprecated_found=true
++            echo -e "${RED}  ✗ Deprecated pattern found: $(basename "$(dirname "$deprecated_dir")")/fixes/ (use post-implementation-fixes/)${NC}"
+             ERRORS=$((ERRORS + 1))
+-        fi
++        done < <(find "$feature_dir/reports" -type d -name "fixes" -print0 2>/dev/null)
+     fi
+     
+@@ -195,8 +207,8 @@ fi
+-# Use while loop instead of mapfile for portability
++# Use while loop with -print0 for robust handling of all filenames
+ feature_count=0
+-while IFS= read -r feature_dir; do
++while IFS= read -r -d '' feature_dir; do
+     # Skip documentation_process_guide as it's meta-documentation (Rule 6)
+     if [[ "$feature_dir" == *"documentation_process_guide"* ]]; then
+@@ -204,7 +216,7 @@ while IFS= read -r feature_dir; do
+     fi
+     check_feature_structure "$feature_dir"
+     feature_count=$((feature_count + 1))
+-done < <(find docs/proposal -mindepth 1 -maxdepth 1 -type d ! -name ".*" 2>/dev/null)
++done < <(find docs/proposal -mindepth 1 -maxdepth 1 -type d ! -name ".*" -print0 2>/dev/null)
