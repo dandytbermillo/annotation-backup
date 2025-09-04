@@ -4,6 +4,44 @@ Validates a feature's documentation structure against the Documentation Process 
 
 ## Feature: $ARGUMENTS
 
+## Check for Help Flag
+
+```bash
+if [[ "$ARGUMENTS" == "--help" || "$ARGUMENTS" == "-h" ]]; then
+  cat << 'EOF'
+📋 Context-Validate Command Help
+════════════════════════════════════════════════════════════
+
+Purpose: Validate feature documentation against Process Guide v1.4.5
+
+Usage:
+  /context-validate                    # Validate all features
+  /context-validate <feature_slug>     # Validate specific feature
+  /context-validate <feature> --strict # Strict validation mode
+  /context-validate --help            # Show this help
+
+Examples:
+  /context-validate
+  /context-validate add_dark_mode
+  /context-validate unified_offline_foundation --strict
+
+What it checks:
+  ✓ Required directories (reports/, post-implementation-fixes/)
+  ✓ Implementation report exists
+  ✓ Status values (PLANNED, IN PROGRESS, COMPLETE, BLOCKED)
+  ✓ Phase boundaries and structure
+  ✓ Patch file naming conventions
+
+Exit codes:
+  0 - Validation passed
+  1 - Validation failed with errors
+
+For more info: npm run context:help
+EOF
+  exit 0
+fi
+```
+
 ## Validation Process
 
 1. **Check Arguments**

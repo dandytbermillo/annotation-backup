@@ -9,7 +9,7 @@ Display the current status of all Context-OS features according to the Documenta
 Execute the stable features router script that always rebuilds data before displaying:
 
 ```bash
-bash .claude/commands/features.sh $ARGUMENTS
+bash .claude/commands/context-features.sh $ARGUMENTS
 ```
 
 This command scans `docs/proposal/` for all features and displays their current status based on the Documentation Process Guide rules.

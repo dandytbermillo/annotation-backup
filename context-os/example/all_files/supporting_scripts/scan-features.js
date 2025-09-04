@@ -179,11 +179,11 @@ function scanFeature(slug, featurePath) {
     // Determine next actions based on status and validation issues
     let nextActions = null;
     if (status === 'UNKNOWN' || !hasReport) {
-      nextActions = `/context-fix --feature ${slug} --issue "Missing implementation report" --dry-run`;
+      nextActions = `/fix --feature ${slug} --issue "Missing implementation report" --dry-run`;
     } else if (validationIssues.length > 0) {
-      nextActions = `/context-validate ${slug} --strict`;
+      nextActions = `/validate ${slug} --strict`;
     } else if (status === 'BLOCKED') {
-      nextActions = `/context-fix --feature ${slug} --issue "Unblock feature" --apply`;
+      nextActions = `/fix --feature ${slug} --issue "Unblock feature" --apply`;
     }
     
     return {
@@ -209,7 +209,7 @@ function scanFeature(slug, featurePath) {
       path: `docs/proposal/${slug}`,
       hasReport: false,
       validationIssues: [`Scan error: ${error.message}`],
-      nextActions: `/context-validate ${slug}`,
+      nextActions: `/validate ${slug}`,
       error: error.message
     };
   }

@@ -11,22 +11,21 @@ const path = require('path');
 function displayHelp() {
   const commands = [
     {
-      command: '/context-features',
+      command: '/features',
       npm: 'npm run context:features',
       description: 'Show status of all Context-OS features',
-      usage: '/context-features [options]',
+      usage: '/features [feature_slug]',
       options: [
-        'No args - Show all features in table format',
-        '--feature <slug> - Show specific feature details',
-        '--format <type> - Output format: table, detailed, summary, json',
+        'No args - Show all features',
+        'feature_slug - Show specific feature details',
         '--refresh - Force refresh with confirmation'
       ]
     },
     {
-      command: '/context-execute',
+      command: '/execute',
       npm: 'npm run context:execute',
       description: 'Create a new feature with compliant structure',
-      usage: '/context-execute "Feature Name" [--plan path] [--slug name]',
+      usage: '/execute "Feature Name" [--plan path] [--slug name]',
       options: [
         '--plan <path> - Use existing draft plan',
         '--slug <name> - Pre-select feature slug',
@@ -34,10 +33,10 @@ function displayHelp() {
       ]
     },
     {
-      command: '/context-fix',
+      command: '/fix',
       npm: 'npm run context:fix',
       description: 'Create fix document for post-implementation issues',
-      usage: '/context-fix --feature <slug> --issue "Description" [--dry-run|--apply]',
+      usage: '/fix --feature <slug> --issue "Description" [--dry-run|--apply]',
       options: [
         '--dry-run - Preview without creating files',
         '--apply - Create actual fix documents',
@@ -45,10 +44,10 @@ function displayHelp() {
       ]
     },
     {
-      command: '/context-validate',
+      command: '/validate',
       npm: 'npm run doc:validate',
       description: 'Validate feature documentation structure',
-      usage: '/context-validate [feature_slug] [--strict]',
+      usage: '/validate [feature_slug] [--strict]',
       options: [
         'No args - Validate all features',
         'feature_slug - Validate specific feature',
@@ -154,10 +153,10 @@ function displayHelp() {
   console.log('⚡ Quick Start');
   console.log('─────────────────────────────────────────────────────────────────');
   console.log('');
-  console.log('  1. View all features:        /context-features');
-  console.log('  2. Create new feature:        /context-execute "Feature Name"');
-  console.log('  3. Fix an issue:             /context-fix --feature <slug> --issue "Bug"');
-  console.log('  4. Validate structure:        /context-validate');
+  console.log('  1. View all features:        npm run context:features');
+  console.log('  2. Create new feature:        /execute "Feature Name"');
+  console.log('  3. Fix an issue:             /fix --feature <slug> --issue "Bug"');
+  console.log('  4. Validate structure:        npm run doc:validate');
   console.log('');
 
   // Documentation Process Guide Rules
@@ -193,7 +192,7 @@ function displayHelp() {
   console.log('  Claude Code may cache slash command definitions. If a command shows');
   console.log('  old output, use the npm script version instead:');
   console.log('');
-  console.log('    Cached: /context-features');
+  console.log('    Cached: /features');
   console.log('    Fresh:  npm run context:features');
   console.log('');
 

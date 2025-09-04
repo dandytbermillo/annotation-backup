@@ -1,6 +1,6 @@
 {
   "schemaVersion": "2.0.0",
-  "generatedAt": "2025-09-04T14:49:38.351Z",
+  "generatedAt": "2025-09-04T15:52:06.382Z",
   "generatedBy": "context-os/scan-features",
   "features": [
     {
@@ -48,7 +48,7 @@
         "Missing post-implementation-fixes directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/validate Interval_Free_Batch_Cleanup --strict"
+      "nextActions": "/context-validate Interval_Free_Batch_Cleanup --strict"
     },
     {
       "slug": "unified_offline_foundation",
@@ -62,7 +62,7 @@
         "Missing post-implementation-fixes directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/validate unified_offline_foundation --strict"
+      "nextActions": "/context-validate unified_offline_foundation --strict"
     },
     {
       "slug": "adding_batch_save",
@@ -77,7 +77,7 @@
         "Missing reports directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/fix --feature adding_batch_save --issue \"Missing implementation report\" --dry-run"
+      "nextActions": "/context-fix --feature adding_batch_save --issue \"Missing implementation report\" --dry-run"
     },
     {
       "slug": "annotation_feature_no_yjs",
@@ -92,7 +92,7 @@
         "Missing post-implementation-fixes directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/fix --feature annotation_feature_no_yjs --issue \"Missing implementation report\" --dry-run"
+      "nextActions": "/context-fix --feature annotation_feature_no_yjs --issue \"Missing implementation report\" --dry-run"
     },
     {
       "slug": "claude_contextos_bridge",
@@ -107,7 +107,7 @@
         "Missing post-implementation-fixes directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/fix --feature claude_contextos_bridge --issue \"Missing implementation report\" --dry-run"
+      "nextActions": "/context-fix --feature claude_contextos_bridge --issue \"Missing implementation report\" --dry-run"
     },
     {
       "slug": "missing_branch_panel",
@@ -123,7 +123,7 @@
         "Missing reports directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/fix --feature missing_branch_panel --issue \"Missing implementation report\" --dry-run"
+      "nextActions": "/context-fix --feature missing_branch_panel --issue \"Missing implementation report\" --dry-run"
     },
     {
       "slug": "offline_sync_foundation",
@@ -137,7 +137,7 @@
         "Missing post-implementation-fixes directory",
         "Missing post-implementation-fixes directory"
       ],
-      "nextActions": "/fix --feature offline_sync_foundation --issue \"Missing implementation report\" --dry-run"
+      "nextActions": "/context-fix --feature offline_sync_foundation --issue \"Missing implementation report\" --dry-run"
     }
   ],
   "totalFeatures": 10,
