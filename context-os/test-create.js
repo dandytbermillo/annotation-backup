@@ -29,6 +29,13 @@ async function testCreate() {
   };
   
   try {
+    // Clean up any existing feature first
+    const targetDir = '../docs/proposal/center_note_window_on_click';
+    if (fs.existsSync(targetDir)) {
+      console.log('⚠️  Cleaning up existing feature...');
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+    
     await orchestrator.createFeature(
       'Center Note Window on Click',
       'drafts/center-note-window.md'
@@ -37,16 +44,16 @@ async function testCreate() {
     console.log('\n✅ Test completed successfully!');
     
     // Verify the structure was created
-    const targetDir = 'docs/proposal/center_note_window_on_click';
-    if (fs.existsSync(targetDir)) {
+    const verifyDir = '../docs/proposal/center_note_window_on_click';
+    if (fs.existsSync(verifyDir)) {
       console.log('\n📁 Created structure:');
       const dirs = [
-        targetDir,
-        `${targetDir}/implementation.md`,
-        `${targetDir}/reports`,
-        `${targetDir}/implementation-details`,
-        `${targetDir}/post-implementation-fixes/README.md`,
-        `${targetDir}/patches`
+        verifyDir,
+        `${verifyDir}/implementation.md`,
+        `${verifyDir}/reports`,
+        `${verifyDir}/implementation-details`,
+        `${verifyDir}/post-implementation-fixes/README.md`,
+        `${verifyDir}/patches`
       ];
       
       dirs.forEach(dir => {

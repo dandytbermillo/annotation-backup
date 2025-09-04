@@ -1,0 +1,1 @@
+{"timestamp":"2025-09-04T04:46:07.167Z","sessionId":"mf4xbcp2","command":"/analyze test1","route":"claude-only","claudeTools":["Task"],"contextOSExecuted":false,"tokenEstimate":2100,"duration":312,"exitStatus":"success","artifacts":[]}

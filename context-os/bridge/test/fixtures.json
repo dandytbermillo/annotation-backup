@@ -1,0 +1,162 @@
+{
+  "claudeResponses": {
+    "analyze_success": {
+      "status": "ok",
+      "findings": [
+        "Function calculateTotal lacks error handling",
+        "Unused variable 'tempData' in line 42",
+        "Complex nested loops could be simplified"
+      ],
+      "recommendations": [
+        "Add try-catch blocks for error handling",
+        "Remove unused variables",
+        "Refactor using array methods"
+      ],
+      "confidence": 0.85,
+      "metadata": {
+        "tokensUsed": 1250,
+        "toolsInvoked": ["Task", "Grep", "Read"],
+        "duration": 3500
+      }
+    },
+    
+    "analyze_error": {
+      "status": "error",
+      "error": "Task tool unavailable",
+      "logs": ["Failed to invoke Task tool", "Timeout after 30000ms"]
+    },
+    
+    "fix_analysis": {
+      "status": "ok",
+      "findings": [
+        "Root cause: Missing null check in onClick handler",
+        "Impact: Affects all users on mobile devices",
+        "Related code: components/NotePanel.tsx:145"
+      ],
+      "recommendations": [
+        "Add null safety check before accessing element",
+        "Implement error boundary for graceful degradation",
+        "Add unit test for edge case"
+      ],
+      "confidence": 0.92,
+      "metadata": {
+        "tokensUsed": 2100,
+        "toolsInvoked": ["Task", "Read"],
+        "duration": 4200
+      }
+    },
+    
+    "review_semantic": {
+      "status": "ok",
+      "findings": [
+        "Good separation of concerns",
+        "Consistent naming conventions",
+        "Missing JSDoc comments for public methods",
+        "Test coverage at 65%"
+      ],
+      "recommendations": [
+        "Add documentation for public API",
+        "Increase test coverage to 80%",
+        "Consider extracting utility functions"
+      ],
+      "confidence": 0.78
+    }
+  },
+  
+  "contextResults": {
+    "execute_success": {
+      "status": "ok",
+      "changes": [
+        "Created docs/proposal/new_feature/",
+        "Created implementation.md",
+        "Created 15 supporting files"
+      ],
+      "reportPath": "docs/proposal/new_feature/reports/implementation.md",
+      "logs": ["Structure validated", "All files created successfully"]
+    },
+    
+    "validate_fail": {
+      "status": "error",
+      "changes": [],
+      "logs": [
+        "Missing phase boundary marker (Rule 2)",
+        "Status not standardized (Rule 7)",
+        "6 errors, 12 warnings"
+      ]
+    },
+    
+    "fix_created": {
+      "status": "ok",
+      "changes": [
+        "Created fix document at post-implementation-fixes/high/2025-09-04-null-check.md",
+        "Updated README.md index"
+      ],
+      "patchPath": "patches/2025-09-04-fix-null-check.patch",
+      "reportPath": "post-implementation-fixes/high/2025-09-04-null-check.md",
+      "rollback": "git revert HEAD"
+    }
+  },
+  
+  "hybridScenarios": {
+    "fix_complete": {
+      "claudeInput": {
+        "task": "Analyze issue: 'Button not clicking' in feature 'dark_mode'",
+        "tools": ["Task", "Read"]
+      },
+      "claudeOutput": {
+        "status": "ok",
+        "findings": ["Missing event listener", "Scope issue in closure"],
+        "recommendations": ["Add click handler", "Bind correct context"],
+        "confidence": 0.88
+      },
+      "contextInput": {
+        "command": "/fix",
+        "args": ["dark_mode", "Button not clicking"],
+        "classification": "HIGH"
+      },
+      "contextOutput": {
+        "status": "ok",
+        "patchPath": "patches/fix-button.patch",
+        "reportPath": "fixes/high/button-fix.md"
+      },
+      "combinedExpected": {
+        "status": "ok",
+        "summary": "Claude found 2 items. Generated patch at patches/fix-button.patch",
+        "artifacts": {
+          "patch": "patches/fix-button.patch",
+          "report": "fixes/high/button-fix.md"
+        },
+        "findings": ["Missing event listener", "Scope issue in closure"],
+        "recommendations": ["Add click handler", "Bind correct context"]
+      }
+    },
+    
+    "review_parallel": {
+      "description": "Parallel Claude semantic review + Context-OS validation",
+      "expectedBehavior": "Both execute simultaneously, results merged",
+      "maxDuration": 5000
+    }
+  },
+  
+  "edgeCases": {
+    "claude_timeout": {
+      "scenario": "Claude takes longer than timeout",
+      "expectedBehavior": "Fallback to Context-OS only with degraded status"
+    },
+    
+    "budget_exceeded": {
+      "scenario": "Token usage exceeds budget",
+      "expectedBehavior": "Reject request with clear error message"
+    },
+    
+    "malformed_response": {
+      "scenario": "Claude returns unparseable JSON",
+      "expectedBehavior": "Log error, attempt Context-OS fallback"
+    },
+    
+    "write_without_apply": {
+      "scenario": "User runs /fix without --apply",
+      "expectedBehavior": "Execute in dry-run, return patch for review"
+    }
+  }
+}

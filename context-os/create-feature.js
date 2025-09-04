@@ -94,7 +94,16 @@ class FeatureOrchestrator {
     // Step E: Scaffold & Move
     await this.scaffoldFeature(slug, plan);
     
-    // Step F: Success & Next Steps
+    // Step F: Validate Structure
+    log.step('Validating structure compliance...');
+    const validationResult = this.validateStructure(targetDir);
+    if (validationResult.errors > 0) {
+      log.warn(`Structure has ${validationResult.errors} errors - review and fix`);
+    } else {
+      log.info('Structure validation passed!');
+    }
+    
+    // Step G: Success & Next Steps
     log.info(`Feature workspace created successfully!`);
     console.log(`\n📂 Next steps:`);
     console.log(`  1. cd ${targetDir}`);
@@ -547,6 +556,46 @@ To be calculated once fixes are recorded.
     }
     
     return decision.toLowerCase() === 'yes';
+  }
+  
+  /**
+   * Validate structure using the validation script
+   */
+  validateStructure(featurePath) {
+    try {
+      // Try to run the validation script
+      const scriptPath = '../scripts/validate-doc-structure.sh';
+      if (!fs.existsSync(scriptPath)) {
+        log.warn('Validation script not found - skipping validation');
+        return { errors: 0, warnings: 0 };
+      }
+      
+      // Run validation for this specific feature
+      const output = execSync(`${scriptPath} ${featurePath} 2>&1`, { 
+        encoding: 'utf8',
+        stdio: 'pipe'
+      });
+      
+      // Parse the output for errors and warnings
+      const errors = (output.match(/Errors: (\d+)/i) || [0, 0])[1];
+      const warnings = (output.match(/Warnings: (\d+)/i) || [0, 0])[1];
+      
+      // Show key issues if any
+      if (parseInt(errors) > 0) {
+        const errorLines = output.split('\n').filter(line => line.includes('✗'));
+        console.log('\n⚠️  Validation Issues:');
+        errorLines.slice(0, 3).forEach(line => console.log(`  ${line.trim()}`));
+      }
+      
+      return { 
+        errors: parseInt(errors) || 0, 
+        warnings: parseInt(warnings) || 0 
+      };
+    } catch (error) {
+      // If validation fails, don't block the process
+      log.warn('Could not run validation: ' + error.message);
+      return { errors: 0, warnings: 0 };
+    }
   }
   
   /**

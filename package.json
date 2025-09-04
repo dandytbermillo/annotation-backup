@@ -21,7 +21,14 @@
     "db:validate": "./scripts/validate-migrations.sh",
     "electron:dev": "npm run build && electron .",
     "pretest": "npm run type-check",
-    "test:all": "npm run test && npm run test:integration"
+    "test:all": "npm run test && npm run test:integration",
+    "context:execute": "node context-os/cli/execute-cli.js",
+    "context:fix": "node context-os/cli/fix-cli.js",
+    "context:validate": "node context-os/cli/validate-cli.js",
+    "context:classify": "node context-os/agents/classifier-agent.js",
+    "context:status": "node context-os/status-enforcer.js",
+    "doc:validate": "bash scripts/validate-doc-structure.sh",
+    "doc:validate:strict": "bash scripts/validate-doc-structure.sh --strict"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
