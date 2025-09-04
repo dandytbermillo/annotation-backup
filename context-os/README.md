@@ -9,17 +9,17 @@
 
 ```bash
 # Copy the template
-cp context-os/templates/INITIAL.md drafts/my-feature.md
+cp context-os/templates/INITIAL.md context-os/drafts/my-feature.md
 
 # Edit with your feature details
-vim drafts/my-feature.md
+vim context-os/drafts/my-feature.md
 ```
 
 ### Step 2: Create Feature Structure
 
 ```bash
 # Run Context-OS to create compliant structure
-node context-os/create-feature.js "My Feature Title" drafts/my-feature.md
+node context-os/create-feature.js "My Feature Title" context-os/drafts/my-feature.md
 
 # Or use the interactive mode (will prompt for missing info)
 node context-os/create-feature.js "My Feature Title"
@@ -105,7 +105,7 @@ Context-OS uses specialized agents for different tasks:
 
 ```bash
 # 1. Create your plan
-cat > drafts/user-auth.md << EOF
+cat > context-os/drafts/user-auth.md << EOF
 # User Authentication
 
 ## Objective
@@ -123,7 +123,7 @@ Add secure user login with JWT tokens
 EOF
 
 # 2. Create feature structure
-node context-os/create-feature.js "User Authentication" drafts/user-auth.md
+node context-os/create-feature.js "User Authentication" context-os/drafts/user-auth.md
 
 # 3. Start working
 cd docs/proposal/user_authentication

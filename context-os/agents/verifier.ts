@@ -2,7 +2,7 @@
  * VerifierAgent - Handles test execution and artifact collection
  */
 
-import { Agent, AgentContext, AgentResult, TestResult, ValidationResult } from '../core/types';
+import { Agent, AgentResult, TestResult, ValidationResult } from '../core/types';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs-extra';

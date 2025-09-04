@@ -8,7 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
+const StatusEnforcer = require('./status-enforcer');
 
 // Colors for output
 const colors = {
@@ -32,6 +33,7 @@ class FeatureOrchestrator {
       input: process.stdin,
       output: process.stdout
     });
+    this.statusEnforcer = new StatusEnforcer();
   }
 
   /**
@@ -40,9 +42,10 @@ class FeatureOrchestrator {
   async createFeature(description, draftPath) {
     console.log('\n🤖 Context-OS Feature Orchestrator\n');
     
-    // Step A: Parse & Propose
-    const slug = this.proposeSlug(description);
-    log.step(`Proposed feature slug: ${slug}`);
+    // Step A: Parse & Propose Multiple Slugs
+    const slugSuggestions = this.proposeSlugs(description);
+    const slug = await this.selectSlug(slugSuggestions);
+    log.step(`Selected feature slug: ${slug}`);
     
     // Step B: Locate Draft Plan
     const planPath = draftPath || 'drafts/implementation.md';
@@ -64,8 +67,18 @@ class FeatureOrchestrator {
       }
     }
     
+    // Step C.5: Check if feature already exists and status
+    const targetDir = `../docs/proposal/${slug}`;
+    if (fs.existsSync(targetDir)) {
+      // Check if it's COMPLETE
+      if (!this.statusEnforcer.enforceStatus(targetDir, 'create')) {
+        log.error('Cannot modify COMPLETE feature. Create a fix or reopen.');
+        this.rl.close();
+        return;
+      }
+    }
+    
     // Step D: Confirmation Gate
-    const targetDir = `docs/proposal/${slug}`;
     console.log('\n📋 Action Summary:');
     console.log(`  • Create feature at: ${targetDir}/`);
     console.log(`  • Move plan to: ${targetDir}/implementation.md`);
@@ -93,14 +106,69 @@ class FeatureOrchestrator {
   }
 
   /**
-   * Generate a slug from description
+   * Generate multiple slug suggestions from description
    */
-  proposeSlug(description) {
-    return description
+  proposeSlugs(description) {
+    const suggestions = [];
+    
+    // Strategy 1: Basic snake_case
+    const snake = description
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .substring(0, 50);
+    suggestions.push(snake);
+    
+    // Strategy 2: Short descriptive (first few words)
+    const words = description.toLowerCase().split(/\s+/);
+    const short = words.slice(0, 3).join('_').replace(/[^a-z0-9_]/g, '');
+    if (short && short !== snake) {
+      suggestions.push(short);
+    }
+    
+    // Strategy 3: Action-focused (verb + noun)
+    const actionWords = ['add', 'fix', 'update', 'create', 'implement', 'enhance', 'refactor'];
+    const firstWord = words[0];
+    if (actionWords.includes(firstWord)) {
+      const actionSlug = words.slice(0, 2).join('_').replace(/[^a-z0-9_]/g, '');
+      if (actionSlug && !suggestions.includes(actionSlug)) {
+        suggestions.push(actionSlug);
+      }
+    }
+    
+    // Ensure we have at least 3 unique suggestions
+    while (suggestions.length < 3) {
+      const suffix = suggestions.length === 1 ? '_feature' : '_impl';
+      const newSlug = suggestions[0] + suffix;
+      if (!suggestions.includes(newSlug)) {
+        suggestions.push(newSlug);
+      }
+    }
+    
+    return suggestions.slice(0, 3);
+  }
+  
+  /**
+   * Let user select from multiple slug options
+   */
+  async selectSlug(suggestions) {
+    console.log('\n📝 Select a feature slug:');
+    suggestions.forEach((slug, index) => {
+      console.log(`  ${index + 1}. ${slug}`);
+    });
+    console.log('  4. Enter custom slug');
+    
+    let choice;
+    do {
+      choice = await this.askUser('\nYour choice (1-4): ');
+    } while (!['1', '2', '3', '4'].includes(choice));
+    
+    if (choice === '4') {
+      const custom = await this.askUser('Enter custom slug (lowercase, underscore separated): ');
+      return custom.toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '');
+    }
+    
+    return suggestions[parseInt(choice) - 1];
   }
 
   /**
@@ -150,15 +218,17 @@ class FeatureOrchestrator {
     
     const missing = [];
     for (const field of required) {
-      const regex = new RegExp(`##?\\s*${field}`, 'i');
-      if (!regex.test(plan)) {
+      // Check for both metadata format (**Field**:) and header format (## Field)
+      const metadataRegex = new RegExp(`\\*\\*${field}\\*\\*:`, 'i');
+      const headerRegex = new RegExp(`##?\\s*${field}`, 'i');
+      if (!metadataRegex.test(plan) && !headerRegex.test(plan)) {
         missing.push(field);
         continue;
       }
       
       // Check if field has actual content (not just [TO BE FILLED])
       const lines = plan.split('\n');
-      const fieldIndex = lines.findIndex(l => regex.test(l));
+      const fieldIndex = lines.findIndex(l => metadataRegex.test(l) || headerRegex.test(l));
       const nextLines = lines.slice(fieldIndex + 1, fieldIndex + 5).join('\n');
       if (nextLines.includes('[TO BE FILLED]') || nextLines.trim().length < 10) {
         missing.push(field);
@@ -212,7 +282,7 @@ class FeatureOrchestrator {
    * Scaffold the feature structure
    */
   async scaffoldFeature(slug, plan) {
-    const baseDir = `docs/proposal/${slug}`;
+    const baseDir = `../docs/proposal/${slug}`;
     
     log.step('Creating directory structure...');
     
@@ -388,6 +458,118 @@ To be calculated once fixes are recorded.
     } while (line);
     return lines;
   }
+  
+  /**
+   * Create a patch for review
+   */
+  async createPatchForReview(slug, changes) {
+    const patchDir = `docs/proposal/${slug}/patches`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const patchFile = `${patchDir}/draft-${timestamp}.patch`;
+    
+    // Ensure patches directory exists
+    if (!fs.existsSync(patchDir)) {
+      fs.mkdirSync(patchDir, { recursive: true });
+    }
+    
+    // Generate patch content
+    const patchContent = this.generatePatchContent(changes);
+    fs.writeFileSync(patchFile, patchContent);
+    
+    return patchFile;
+  }
+  
+  /**
+   * Generate patch content from changes
+   */
+  generatePatchContent(changes) {
+    let patch = `# Context-OS Proposed Changes\n`;
+    patch += `# Generated: ${new Date().toISOString()}\n\n`;
+    
+    for (const change of changes) {
+      patch += `--- ${change.file}\n`;
+      patch += `+++ ${change.file}\n`;
+      patch += `@@ ${change.description} @@\n`;
+      
+      if (change.oldContent) {
+        change.oldContent.split('\n').forEach(line => {
+          patch += `- ${line}\n`;
+        });
+      }
+      
+      if (change.newContent) {
+        change.newContent.split('\n').forEach(line => {
+          patch += `+ ${line}\n`;
+        });
+      }
+      patch += '\n';
+    }
+    
+    return patch;
+  }
+  
+  /**
+   * Review patch before applying
+   */
+  async reviewPatch(patchFile) {
+    console.log('\n📄 Patch Review:');
+    console.log('─'.repeat(60));
+    
+    const content = fs.readFileSync(patchFile, 'utf8');
+    const lines = content.split('\n');
+    
+    // Color-code the diff
+    lines.forEach(line => {
+      if (line.startsWith('+')) {
+        console.log(`${colors.green}${line}${colors.reset}`);
+      } else if (line.startsWith('-')) {
+        console.log(`${colors.red}${line}${colors.reset}`);
+      } else if (line.startsWith('@@')) {
+        console.log(`${colors.blue}${line}${colors.reset}`);
+      } else {
+        console.log(line);
+      }
+    });
+    
+    console.log('─'.repeat(60));
+    
+    const decision = await this.askUser('\nApply this patch? (yes/no/edit): ');
+    
+    if (decision.toLowerCase() === 'edit') {
+      console.log('Opening patch in editor...');
+      // Try to open in default editor
+      try {
+        spawnSync(process.env.EDITOR || 'vi', [patchFile], { stdio: 'inherit' });
+        return await this.reviewPatch(patchFile); // Re-review after edit
+      } catch (e) {
+        log.warn('Could not open editor. Please edit manually: ' + patchFile);
+      }
+    }
+    
+    return decision.toLowerCase() === 'yes';
+  }
+  
+  /**
+   * Apply approved patches
+   */
+  async applyPatch(patchFile) {
+    try {
+      // For demonstration, we'll use git apply
+      execSync(`git apply --check ${patchFile} 2>/dev/null`);
+      execSync(`git apply ${patchFile}`);
+      log.info('Patch applied successfully!');
+      
+      // Archive the applied patch
+      const appliedDir = path.dirname(patchFile);
+      const appliedFile = patchFile.replace('draft-', 'applied-');
+      fs.renameSync(patchFile, appliedFile);
+      
+      return true;
+    } catch (error) {
+      log.error(`Failed to apply patch: ${error.message}`);
+      return false;
+    }
+  }
 }
 
 // Main execution
@@ -397,8 +579,9 @@ if (require.main === module) {
   const draftPath = args[1];
   
   if (!description || description === '--help') {
-    console.log('Usage: node create-feature.js "feature description" [draft-path]');
-    console.log('Example: node create-feature.js "Fix rapid typing updates" drafts/implementation.md');
+    console.log('Usage: node context-os/create-feature.js "feature description" [draft-path]');
+    console.log('Example: node context-os/create-feature.js "Fix rapid typing updates" context-os/drafts/implementation.md');
+    console.log('\nNote: Drafts should be created in context-os/drafts/ to maintain compliance');
     process.exit(0);
   }
   
