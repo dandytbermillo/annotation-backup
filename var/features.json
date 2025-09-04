@@ -1,0 +1,155 @@
+{
+  "schemaVersion": "2.0.0",
+  "generatedAt": "2025-09-04T14:49:38.351Z",
+  "generatedBy": "context-os/scan-features",
+  "features": [
+    {
+      "slug": "add_dark_mode",
+      "status": "📝 PLANNED",
+      "fileCount": 5,
+      "fixCount": 1,
+      "lastModified": "2025-09-04",
+      "path": "docs/proposal/add_dark_mode",
+      "hasReport": true,
+      "validationIssues": [],
+      "nextActions": null
+    },
+    {
+      "slug": "center_note_window_on_click",
+      "status": "📝 PLANNED",
+      "fileCount": 5,
+      "fixCount": 1,
+      "lastModified": "2025-09-04",
+      "path": "docs/proposal/center_note_window_on_click",
+      "hasReport": true,
+      "validationIssues": [],
+      "nextActions": null
+    },
+    {
+      "slug": "test_feature",
+      "status": "📝 PLANNED",
+      "fileCount": 5,
+      "fixCount": 1,
+      "lastModified": "2025-09-04",
+      "path": "docs/proposal/test_feature",
+      "hasReport": true,
+      "validationIssues": [],
+      "nextActions": null
+    },
+    {
+      "slug": "Interval_Free_Batch_Cleanup",
+      "status": "✅ COMPLETE",
+      "fileCount": 17,
+      "fixCount": 0,
+      "lastModified": "2025-09-02",
+      "path": "docs/proposal/Interval_Free_Batch_Cleanup",
+      "hasReport": true,
+      "validationIssues": [
+        "Missing post-implementation-fixes directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/validate Interval_Free_Batch_Cleanup --strict"
+    },
+    {
+      "slug": "unified_offline_foundation",
+      "status": "✅ COMPLETE",
+      "fileCount": 26,
+      "fixCount": 0,
+      "lastModified": "2025-09-01",
+      "path": "docs/proposal/unified_offline_foundation",
+      "hasReport": true,
+      "validationIssues": [
+        "Missing post-implementation-fixes directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/validate unified_offline_foundation --strict"
+    },
+    {
+      "slug": "adding_batch_save",
+      "status": "❓ UNKNOWN",
+      "fileCount": 18,
+      "fixCount": 0,
+      "lastModified": "2025-08-30",
+      "path": "docs/proposal/adding_batch_save",
+      "hasReport": true,
+      "validationIssues": [
+        "Missing post-implementation-fixes directory",
+        "Missing reports directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/fix --feature adding_batch_save --issue \"Missing implementation report\" --dry-run"
+    },
+    {
+      "slug": "annotation_feature_no_yjs",
+      "status": "❓ UNKNOWN",
+      "fileCount": 15,
+      "fixCount": 0,
+      "lastModified": null,
+      "path": "docs/proposal/annotation_feature_no_yjs",
+      "hasReport": false,
+      "validationIssues": [
+        "Missing implementation report",
+        "Missing post-implementation-fixes directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/fix --feature annotation_feature_no_yjs --issue \"Missing implementation report\" --dry-run"
+    },
+    {
+      "slug": "claude_contextos_bridge",
+      "status": "❓ UNKNOWN",
+      "fileCount": 1,
+      "fixCount": 0,
+      "lastModified": null,
+      "path": "docs/proposal/claude_contextos_bridge",
+      "hasReport": false,
+      "validationIssues": [
+        "Missing implementation report",
+        "Missing post-implementation-fixes directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/fix --feature claude_contextos_bridge --issue \"Missing implementation report\" --dry-run"
+    },
+    {
+      "slug": "missing_branch_panel",
+      "status": "❓ UNKNOWN",
+      "fileCount": 4,
+      "fixCount": 0,
+      "lastModified": null,
+      "path": "docs/proposal/missing_branch_panel",
+      "hasReport": false,
+      "validationIssues": [
+        "Missing implementation report",
+        "Missing post-implementation-fixes directory",
+        "Missing reports directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/fix --feature missing_branch_panel --issue \"Missing implementation report\" --dry-run"
+    },
+    {
+      "slug": "offline_sync_foundation",
+      "status": "❓ UNKNOWN",
+      "fileCount": 41,
+      "fixCount": 0,
+      "lastModified": "2025-08-30",
+      "path": "docs/proposal/offline_sync_foundation",
+      "hasReport": true,
+      "validationIssues": [
+        "Missing post-implementation-fixes directory",
+        "Missing post-implementation-fixes directory"
+      ],
+      "nextActions": "/fix --feature offline_sync_foundation --issue \"Missing implementation report\" --dry-run"
+    }
+  ],
+  "totalFeatures": 10,
+  "byStatus": {
+    "inProgress": 0,
+    "blocked": 0,
+    "planned": 3,
+    "complete": 2,
+    "unknown": 5
+  },
+  "validationSummary": {
+    "featuresWithIssues": 7,
+    "totalIssues": 19
+  }
+}
