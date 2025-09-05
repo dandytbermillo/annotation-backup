@@ -15,21 +15,33 @@ if [[ "$ARGUMENTS" == "--help" || "$ARGUMENTS" == "-h" ]]; then
 Purpose: Create a new feature with compliant documentation structure
 
 Usage:
-  /context-execute "Feature Name"                     # Basic usage
-  /context-execute "Feature Name" --plan <path>       # With draft plan
-  /context-execute "Feature Name" --slug <name>       # Custom slug
+  /context-execute "Feature Name" --create-initial    # Create INITIAL.md (NEW)
+  /context-execute feature_slug --create-prp          # Create PRP from INITIAL.md (NEW)
+  /context-execute "Feature Name" --interactive       # Create INITIAL.md (legacy, still works)
   /context-execute --help                            # Show this help
 
-Options:
-  --plan <path>   - Use existing draft plan file
-  --slug <name>   - Pre-select feature slug (default: auto-generated)
-  --confirm false - Skip confirmation prompts
-  --interactive   - Create INITIAL.md interactively first
+Options (NEW - Clearer):
+  --create-initial - Create INITIAL.md for new feature (replaces --interactive)
+  --create-prp     - Generate PRP from existing INITIAL.md
+  --create-impl    - Generate implementation plan (coming soon)
+  
+Options (Legacy - Still Supported):
+  --interactive    - Create INITIAL.md interactively (use --create-initial instead)
+  --plan <path>    - Use existing draft plan file
+  --slug <name>    - Pre-select feature slug (default: auto-generated)
+  --confirm false  - Skip confirmation prompts
 
-Examples:
-  /context-execute "Add Dark Mode"
-  /context-execute "User Auth" --slug user_authentication
-  /context-execute "Export Feature" --plan drafts/export.md
+Examples (NEW - Clearer Workflow):
+  Step 1: /context-execute "Add Dark Mode" --create-initial
+  Step 2: /context-execute add_dark_mode --create-prp
+  
+  Step 1: /context-execute "User Auth" --create-initial --slug auth_system
+  Step 2: /context-execute auth_system --create-prp
+
+Examples (Legacy):
+  /context-execute "Add Dark Mode" --interactive
+  /context-execute "User Auth" --interactive --slug user_authentication
+  /context-execute "Export Feature" --interactive --plan drafts/export.md
 
 What it creates:
   docs/proposal/<slug>/

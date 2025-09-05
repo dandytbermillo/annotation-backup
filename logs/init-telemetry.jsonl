@@ -14,3 +14,5 @@
 {"sessionId":"9716b06a-2aff-4b8f-b684-6ff62d6dcb92","turns":1,"jsonRetryCount":0,"durationMs":5,"schemaVersion":"1.0.0","outcome":"success","feature":"demo_feature2","timestamp":"2025-09-05T05:40:05.735Z"}
 {"sessionId":"ca0cc796-98e4-4831-b7fe-a3d1eb168b2b","turns":1,"jsonRetryCount":0,"durationMs":6,"schemaVersion":"1.0.0","outcome":"success","feature":"test_execute_demo","timestamp":"2025-09-05T05:46:24.196Z"}
 {"sessionId":"6617e156-d425-462a-a147-c4c1eea8b99e","turns":1,"jsonRetryCount":0,"durationMs":6,"schemaVersion":"1.0.0","outcome":"success","feature":"my_feature","timestamp":"2025-09-05T05:49:01.670Z"}
+{"sessionId":"2dbffdd2-73ec-4942-aab0-e99763cc6222","turns":1,"jsonRetryCount":0,"durationMs":6,"schemaVersion":"1.0.0","outcome":"success","feature":"test_clear_flags","timestamp":"2025-09-05T06:21:33.678Z"}
+{"sessionId":"b8c50192-1659-4713-97ab-abb0a333d196","turns":1,"jsonRetryCount":0,"durationMs":5,"schemaVersion":"1.0.0","outcome":"success","feature":"test_legacy","timestamp":"2025-09-05T06:22:20.036Z"}
