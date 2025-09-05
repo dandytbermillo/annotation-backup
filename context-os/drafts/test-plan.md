@@ -1,4 +1,4 @@
-# Test Feature (test)
+# Test Feature
 
 **Feature Slug**: test_feature
 **Status**: PLANNED
