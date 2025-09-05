@@ -62,6 +62,12 @@ export default function ContextOSPageV2() {
   // Refs for debouncing
   const saveTimeout = useRef<NodeJS.Timeout>();
   const validateTimeout = useRef<NodeJS.Timeout>();
+  const contentRef = useRef(content);
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
   
   // Initialize on mount
   useEffect(() => {
@@ -87,19 +93,25 @@ export default function ContextOSPageV2() {
   async function initializeSession() {
     try {
       // Get CSRF token first
-      const tokenRes = await fetch(`${COMPANION_URL}/api/csrf`);
+      const tokenRes = await fetch(`${COMPANION_URL}/api/csrf`, {
+        headers: { 'Origin': window.location.origin }
+      });
       const tokenData = await tokenRes.json();
+      console.log('CSRF token received:', tokenData.token);
       setCsrfToken(tokenData.token);
       
-      // Then load draft
-      await loadDraft();
+      // Then load draft with the token
+      await loadDraft(tokenData.token);
+      
+      return tokenData.token; // Return for immediate use
     } catch (err) {
       setError('Failed to connect to companion service');
       console.error(err);
+      return null;
     }
   }
   
-  async function loadDraft() {
+  async function loadDraft(tokenToUse?: string) {
     try {
       const res = await fetch(`${COMPANION_URL}/api/draft/${featureSlug}`, {
         headers: { 'Origin': 'http://localhost:3000' }
@@ -119,20 +131,37 @@ export default function ContextOSPageV2() {
   }
   
   async function saveDraft() {
-    if (!isDirty || !csrfToken) return;
+    if (!isDirty) return;
+    
+    // Use the current content from ref to avoid stale closure
+    const currentContent = contentRef.current;
+    
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for save, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        console.error('Failed to get CSRF token for save');
+        return;
+      }
+    }
     
     setIsSaving(true);
     setError(null);
+    
+    console.log('Saving draft with content length:', currentContent?.length);
+    console.log('First 200 chars of content:', currentContent?.substring(0, 200));
     
     try {
       const res = await fetch(`${COMPANION_URL}/api/draft/save`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Origin': 'http://localhost:3000',
-          'x-csrf-token': csrfToken
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
         },
-        body: JSON.stringify({ slug: featureSlug, content, etag })
+        body: JSON.stringify({ slug: featureSlug, content: currentContent, etag })
       });
       
       if (res.status === 409) {
@@ -164,15 +193,26 @@ export default function ContextOSPageV2() {
   }
   
   async function validateDraft() {
-    if (!csrfToken || !etag) return;
+    if (!etag) return;
+    
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        console.error('Failed to get CSRF token');
+        return;
+      }
+    }
     
     try {
       const res = await fetch(`${COMPANION_URL}/api/validate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Origin': 'http://localhost:3000',
-          'x-csrf-token': csrfToken
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
         },
         body: JSON.stringify({ slug: featureSlug, etag })
       });
@@ -187,6 +227,17 @@ export default function ContextOSPageV2() {
   }
   
   async function handleVerify() {
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for verify, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        setError('Failed to get CSRF token');
+        return;
+      }
+    }
+    
     setIsVerifying(true);
     setError(null);
     
@@ -195,8 +246,8 @@ export default function ContextOSPageV2() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Origin': 'http://localhost:3000',
-          'x-csrf-token': csrfToken
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
         },
         body: JSON.stringify({
           slug: featureSlug,
@@ -208,8 +259,13 @@ export default function ContextOSPageV2() {
       if (!res.ok) throw new Error('Verification failed');
       
       const card = await res.json();
-      setReportCard(card);
-      setActiveTab('report');
+      console.log('Report card received:', card);
+      if (card && typeof card === 'object') {
+        setReportCard(card);
+        setActiveTab('report');
+      } else {
+        throw new Error('Invalid report card format');
+      }
     } catch (err) {
       setError('LLM verification failed - using local validation');
       console.error(err);
@@ -219,7 +275,7 @@ export default function ContextOSPageV2() {
   }
   
   async function handleFill() {
-    if (!validationResult?.missing_fields?.length) {
+    if (!validationResult || !validationResult.missing_fields || validationResult.missing_fields.length === 0) {
       setError('No missing fields to fill');
       return;
     }
@@ -257,6 +313,17 @@ export default function ContextOSPageV2() {
       if (!proceed) return;
     }
     
+    // Ensure we have a CSRF token
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for PRP, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        setError('Failed to get CSRF token');
+        return;
+      }
+    }
+    
     setIsCreatingPRP(true);
     setError(null);
     
@@ -266,8 +333,8 @@ export default function ContextOSPageV2() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Origin': 'http://localhost:3000',
-          'x-csrf-token': csrfToken
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
         },
         body: JSON.stringify({
           slug: featureSlug,
@@ -445,8 +512,17 @@ export default function ContextOSPageV2() {
               <MonacoEditor
                 value={content}
                 onChange={(value) => {
+                  console.log('Monaco onChange fired, new value length:', value?.length);
+                  console.log('First 100 chars:', value?.substring(0, 100));
                   setContent(value || '');
                   setIsDirty(true);
+                }}
+                onMount={(editor, monaco) => {
+                  console.log('Monaco editor mounted');
+                  // Force update the model value in case of sync issues
+                  if (content) {
+                    editor.setValue(content);
+                  }
                 }}
                 language="markdown"
                 theme="vs-light"
@@ -487,29 +563,29 @@ export default function ContextOSPageV2() {
                         <div className="text-sm space-y-1">
                           <div className="flex justify-between">
                             <span>Status:</span>
-                            <Badge>{reportCard.header_meta.status}</Badge>
+                            <Badge>{reportCard?.header_meta?.status || 'unknown'}</Badge>
                           </div>
                           <div className="flex justify-between">
                             <span>Readiness:</span>
                             <span className={readinessColor}>
-                              {reportCard.header_meta.readiness_score}/10
+                              {reportCard?.header_meta?.readiness_score || 0}/10
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span>Confidence:</span>
-                            <span>{(reportCard.header_meta.confidence * 100).toFixed(0)}%</span>
+                            <span>{((reportCard?.header_meta?.confidence || 0) * 100).toFixed(0)}%</span>
                           </div>
-                          {reportCard.offline_mode && (
+                          {reportCard?.offline_mode && (
                             <Badge variant="outline">Offline Mode</Badge>
                           )}
                         </div>
                       </div>
                       
-                      {reportCard.header_meta.missing_fields.length > 0 && (
+                      {reportCard?.header_meta?.missing_fields?.length > 0 && (
                         <Alert>
                           <AlertCircle className="h-4 w-4" />
                           <AlertDescription>
-                            <strong>Missing:</strong> {reportCard.header_meta.missing_fields.join(', ')}
+                            <strong>Missing:</strong> {reportCard?.header_meta?.missing_fields?.join(', ') || ''}
                           </AlertDescription>
                         </Alert>
                       )}
@@ -517,17 +593,17 @@ export default function ContextOSPageV2() {
                       <div className="space-y-2">
                         <h3 className="font-semibold">Suggestions</h3>
                         <ul className="list-disc list-inside space-y-1">
-                          {reportCard.suggestions.map((s, i) => (
+                          {(reportCard?.suggestions || []).map((s, i) => (
                             <li key={i} className="text-sm">{s}</li>
                           ))}
                         </ul>
                       </div>
                       
-                      <Alert variant={reportCard.prp_gate.allowed ? "default" : "destructive"}>
+                      <Alert variant={reportCard?.prp_gate?.allowed ? "default" : "destructive"}>
                         <AlertDescription>
-                          <strong>PRP:</strong> {reportCard.prp_gate.reason}
+                          <strong>PRP:</strong> {reportCard?.prp_gate?.reason || 'Not evaluated'}
                           <br />
-                          <strong>Next:</strong> {reportCard.prp_gate.next_best_action}
+                          <strong>Next:</strong> {reportCard?.prp_gate?.next_best_action || 'Run verification'}
                         </AlertDescription>
                       </Alert>
                     </>

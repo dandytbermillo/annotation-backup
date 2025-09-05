@@ -179,7 +179,7 @@ export default function ContextOSPage() {
         body: JSON.stringify({
           slug: featureSlug,
           content,
-          missingFields: validationResult.missingFields
+          missingFields: validationResult?.missingFields || []
         })
       });
       
@@ -259,7 +259,7 @@ export default function ContextOSPage() {
         <div className="flex items-center gap-4">
           {validationResult && (
             <Badge variant={validationResult.valid ? "default" : "destructive"}>
-              {validationResult.valid ? 'Valid' : `${validationResult.missingFields.length} Missing`}
+              {validationResult?.valid ? 'Valid' : `${validationResult?.missingFields?.length || 0} Missing`}
             </Badge>
           )}
           
@@ -365,27 +365,27 @@ export default function ContextOSPage() {
                         <div className="space-y-2">
                           <div className="flex justify-between">
                             <span>Status:</span>
-                            <Badge>{reportCard.header_meta.status}</Badge>
+                            <Badge>{reportCard?.header_meta?.status || 'unknown'}</Badge>
                           </div>
                           <div className="flex justify-between">
                             <span>Readiness:</span>
                             <span className={readinessColor}>
-                              {reportCard.header_meta.readiness_score}/10
+                              {reportCard?.header_meta?.readiness_score || 0}/10
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span>Confidence:</span>
-                            <span>{(reportCard.header_meta.confidence * 100).toFixed(0)}%</span>
+                            <span>{((reportCard?.header_meta?.confidence || 0) * 100).toFixed(0)}%</span>
                           </div>
                         </div>
                       </div>
                       
                       {/* Missing Fields */}
-                      {reportCard.header_meta.missing_fields.length > 0 && (
+                      {reportCard?.header_meta?.missing_fields?.length > 0 && (
                         <Alert>
                           <AlertCircle className="h-4 w-4" />
                           <AlertDescription>
-                            <strong>Missing:</strong> {reportCard.header_meta.missing_fields.join(', ')}
+                            <strong>Missing:</strong> {reportCard?.header_meta?.missing_fields?.join(', ') || ''}
                           </AlertDescription>
                         </Alert>
                       )}
@@ -394,18 +394,18 @@ export default function ContextOSPage() {
                       <div className="space-y-2">
                         <h3 className="font-semibold">Suggestions</h3>
                         <ul className="list-disc list-inside space-y-1">
-                          {reportCard.suggestions.map((suggestion, i) => (
+                          {(reportCard?.suggestions || []).map((suggestion, i) => (
                             <li key={i} className="text-sm">{suggestion}</li>
                           ))}
                         </ul>
                       </div>
                       
                       {/* PRP Gate */}
-                      <Alert variant={reportCard.prp_gate.allowed ? "default" : "destructive"}>
+                      <Alert variant={reportCard?.prp_gate?.allowed ? "default" : "destructive"}>
                         <AlertDescription>
-                          <strong>PRP Status:</strong> {reportCard.prp_gate.reason}
+                          <strong>PRP Status:</strong> {reportCard?.prp_gate?.reason || 'Not evaluated'}
                           <br />
-                          <strong>Next:</strong> {reportCard.prp_gate.next_best_action}
+                          <strong>Next:</strong> {reportCard?.prp_gate?.next_best_action || 'Run verification'}
                         </AlertDescription>
                       </Alert>
                     </>
