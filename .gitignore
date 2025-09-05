@@ -45,4 +45,4 @@ Thumbs.db
 # Package manager lock files (optional - you might want to keep these)
 # pnpm-lock.yaml
 # package-lock.json
-# yarn.lock
+# yarn.lock.context-memory/live/*
