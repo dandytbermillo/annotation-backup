@@ -46,3 +46,7 @@ Thumbs.db
 # pnpm-lock.yaml
 # package-lock.json
 # yarn.lock
+
+# Ignore live context logs and summaries
+.context-memory/live/*
+!.context-memory/live/.keep

@@ -1,0 +1,104 @@
+name: Live Context Summary
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+jobs:
+  summarize:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: live-context-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Snapshot live store mtimes (read-only guard)
+        id: snap
+        run: |
+          SNAP=$(node ./.context-memory/scripts/check-ci-readonly.js || echo "{}")
+          echo "snap=${SNAP}" >> $GITHUB_OUTPUT
+
+      - name: Generate PR summary snippet (read-only)
+        id: gen
+        shell: bash
+        run: |
+          {
+            echo "<!-- live-context-comment -->"
+            echo "### Live Context Summary"
+            echo
+            if [ -f ./.context-memory/live/summary.md ]; then
+              cat ./.context-memory/live/summary.md
+            else
+              echo "(no summary found)"
+            fi
+          } > /tmp/live-context-snippet.md
+          echo "snippet<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/live-context-snippet.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Enforce CI read-only policy
+        env:
+          CI_READONLY_BASE_SNAPSHOT: ${{ steps.snap.outputs.snap }}
+        run: node ./.context-memory/scripts/check-ci-readonly.js
+
+      - name: Comment or update summary on PR
+        if: ${{ github.event.pull_request.number }}
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request?.number
+            if (!pr) {
+              core.info('No PR context; skipping comment')
+              return
+            }
+            const marker = '<!-- live-context-comment -->'
+            const body = `${marker}\n${core.getInput('body')}`
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr,
+                per_page: 100,
+              })
+              const existing = comments.find(c => c.body && c.body.startsWith(marker))
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body,
+                })
+                core.info(`Updated existing live context comment: ${existing.id}`)
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr,
+                  body,
+                })
+                core.info('Created new live context comment')
+              }
+            } catch (e) {
+              core.warning('PR comment permissions unavailable (likely a fork). Falling back to job summary only.')
+            }
+          result-encoding: string
+          body: ${{ steps.gen.outputs.snippet }}
+
+      - name: Add summary to job summary
+        run: |
+          echo "### Live Context Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          printf "%s" "${{ steps.gen.outputs.snippet }}" >> $GITHUB_STEP_SUMMARY
