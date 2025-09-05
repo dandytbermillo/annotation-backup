@@ -46,3 +46,5 @@ Thumbs.db
 # pnpm-lock.yaml
 # package-lock.json
 # yarn.lock.context-memory/live/*
+.logs/
+companion.log
