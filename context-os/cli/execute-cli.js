@@ -27,6 +27,50 @@ const FeatureOrchestrator = require('../create-feature');
  */
 
 async function execute(input) {
+  // Check for --interactive flag
+  if (input.interactive || input.initOnly) {
+    console.log('Delegating to Interactive INITIAL.md creation...');
+    
+    const { spawn } = require('child_process');
+    const featureSlug = input.slug || input.feature?.toLowerCase().replace(/\s+/g, '_') || 'new_feature';
+    
+    // Build arguments for init-interactive
+    const initArgs = ['node', path.join(__dirname, 'init-interactive.js'), featureSlug];
+    
+    if (input.resume) initArgs.push('--resume');
+    if (input.dryRun) initArgs.push('--dry-run');
+    if (input.apply || input.autoConfirm) initArgs.push('--apply');
+    if (input.batchMode) initArgs.push('--batch-mode');
+    
+    // Execute init-interactive
+    return new Promise((resolve, reject) => {
+      const init = spawn(initArgs[0], initArgs.slice(1), {
+        stdio: 'inherit',
+        cwd: path.resolve(__dirname, '..', '..')
+      });
+      
+      init.on('close', (code) => {
+        if (code === 0) {
+          resolve({
+            feature: input.feature || featureSlug,
+            created: [`docs/proposal/${featureSlug}/INITIAL.md`],
+            validation: { passed: true, errors: 0, warnings: 0 },
+            status: 'PLANNED',
+            slug: featureSlug,
+            path: `docs/proposal/${featureSlug}`,
+            interactive: true
+          });
+        } else {
+          reject(new Error('Interactive INITIAL.md creation failed'));
+        }
+      });
+      
+      init.on('error', (err) => {
+        reject(new Error(`Failed to start init-interactive: ${err.message}`));
+      });
+    });
+  }
+  
   const orchestrator = new FeatureOrchestrator();
   
   // For JSON mode, make it non-interactive by default

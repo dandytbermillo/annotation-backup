@@ -79,6 +79,50 @@ These are the only rules to use today. Ignore any conflicting guidance below; it
 
 Note: The sections below are historical/background and may include examples that do not conform to Active Rules.
 
+## Creating Feature Documentation
+
+### Step 1: Create INITIAL.md with Interactive System
+Use the interactive creation system to ensure all required fields are collected:
+
+```bash
+# Direct interactive creation
+/context-init <feature_slug>
+
+# Alternative entry point (delegates to same system)
+/context-execute <feature_slug> --interactive
+```
+
+This interactive system ensures:
+- All required sections are included (title, problem, goals, acceptanceCriteria, stakeholders)
+- Proper schema validation (v1.0.0)
+- Session persistence for resumability
+- Automatic telemetry tracking
+
+### Step 2: Automation for CI/CD
+For batch operations or CI/CD pipelines:
+
+```bash
+# Create without prompts
+/context-init <feature_slug> --batch-mode --apply
+
+# Migrate existing documentation
+/context-init <feature_slug> --migrate --batch-mode
+
+# Dry run to preview changes
+/context-init <feature_slug> --dry-run
+```
+
+### Step 3: Validate Created Documentation
+After creation, validate the INITIAL.md meets standards:
+
+```bash
+# Validate single feature
+node scripts/validate-initial-sections.js --feature <feature_slug> --json
+
+# Validate all features
+node scripts/validate-initial-sections.js --all --json
+```
+
 ## Overview
 
 This guide defines the standard process for documenting feature implementations, bug fixes, and improvements. All implementations MUST follow this structure to maintain consistency and traceability.

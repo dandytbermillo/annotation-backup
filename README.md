@@ -114,6 +114,36 @@ This script will:
 
 ## 🎯 Usage
 
+### Creating INITIAL.md Files
+
+Use either command (they're the same):
+- `/context-init <feature>` - Direct interactive creation
+- `/context-execute <feature> --interactive` - Delegates to init
+
+✨ One mental model, two entry points - both lead to the same interactive flow.
+
+#### Flags Available
+- `--resume` - Continue interrupted session
+- `--dry-run` - Preview without writing
+- `--apply` - Skip confirmation prompts
+- `--migrate` - Upgrade old format
+- `--batch-mode` - CI/automation mode (no prompts)
+
+#### Examples
+```bash
+# Interactive creation
+/context-init dark_mode
+
+# Batch mode for CI
+/context-init auth_system --batch-mode --apply
+
+# Resume interrupted session
+/context-init search_feature --resume
+
+# Preview without writing
+/context-init payment_flow --dry-run
+```
+
 ### Creating Annotations
 1. **Select text** in any editor panel
 2. **Choose annotation type**: Note (blue), Explore (orange), or Promote (green)

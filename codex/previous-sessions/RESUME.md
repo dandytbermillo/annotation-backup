@@ -1,5 +1,13 @@
 # Resume Here
 
+> Open latest session summary: codex/previous-sessions/2025-09-01-session-summary.md
+
+## Quick Status: Context‑OS (2025-09-05)
+- Interactive INITIAL.md (Days 1–3): PASS with minor validator issues.
+- Core components present: init-interactive CLI, Handlebars template + renderer, Claude mock adapter (invokeClaudeInit), session persistence (.tmp/initial), telemetry (logs/init-telemetry.jsonl).
+- Known issues: validator expects Title as a section (template uses metadata); Acceptance Criteria key normalization bug in scripts/validate-initial-sections.js.
+- Next steps: fix validator config/keys; optional aliases (--init-only/--resume-initial); run post-apply doc validator in init flow.
+
 ## Previous Session Summary
 - Guide contradictions resolved: “ACTIVE RULES vs DEPRECATED” banner added to the Documentation Process Guide; verified after initial timing mismatch.
 - Severity definitions: Agreed to adopt objective thresholds (10/25/50%) with environment multipliers; security remains Critical.

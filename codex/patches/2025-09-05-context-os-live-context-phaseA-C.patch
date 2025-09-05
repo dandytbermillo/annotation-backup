@@ -1,0 +1,417 @@
+diff --git a/context-os/.codex/README.md b/context-os/.codex/README.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/.codex/README.md
+@@
++# .codex — Live Context (context-os scope)
+
+This folder enables lightweight, near-real-time context sharing for agents and humans working on `context-os/`.
+
+Lock etiquette:
+- Writers must check for `.codex/lock` before any write.
+- Acquire lock by creating the file atomically; release it after a single atomic write.
+- Use atomic writes: write to a temp file then rename to target.
+
+Files:
+- `state.json` — current focus (feature/branch/status/notes)
+- `journal.ndjson` — append-only event log (one JSON per line)
+- `summary.md` — concise digest derived from recent events + state
+- `lock` — zero-byte file that indicates a write lock is held
+
+Size budgets:
+- `summary.md` ≤ 500 words preferred (max 2,000 words)
+- `journal.ndjson` rotate at ~10,000 lines or 5 MB
+- per-event line ≤ 2 KB; truncate long descriptions safely
+
+Never include secrets, tokens, or PII.
+
+diff --git a/context-os/.codex/state.json b/context-os/.codex/state.json
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/.codex/state.json
+@@
+{
+  "current_feature": "initial_live_context",
+  "current_branch": "",
+  "status": "in_progress",
+  "last_updated": "",
+  "notes": "Bootstrapped .codex live context for context-os scope."
+}
+
+diff --git a/context-os/.codex/journal.ndjson b/context-os/.codex/journal.ndjson
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/.codex/journal.ndjson
+@@
+{"ts":"","type":"note","text":"Initialized .codex live context (phase A)."}
+
+diff --git a/context-os/.codex/summary.md b/context-os/.codex/summary.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/.codex/summary.md
+@@
+# Context-OS — Live Context Summary
+
+Current Work
+- Feature: initial_live_context
+- Branch: (unset)
+- Status: in_progress
+
+Recent Activity
+- Initialized .codex live context (phase A)
+
+Open Questions / Next Steps
+- Hook commit/test events and regenerate this summary.
+
+diff --git a/context-os/scripts/codex-live-context/utils.ts b/context-os/scripts/codex-live-context/utils.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/utils.ts
+@@
+import fs from 'fs-extra'
+import path from 'path'
+
+export const CODEx_DIR = path.join(__dirname, '..', '..', '.codex')
+export const STATE_PATH = path.join(CODEx_DIR, 'state.json')
+export const JOURNAL_PATH = path.join(CODEx_DIR, 'journal.ndjson')
+export const SUMMARY_PATH = path.join(CODEx_DIR, 'summary.md')
+export const LOCK_PATH = path.join(CODEx_DIR, 'lock')
+
+export type Status = 'in_progress' | 'testing' | 'complete' | 'blocked'
+
+export interface StateJson {
+  current_feature: string
+  current_branch: string
+  status: Status
+  last_updated: string
+  notes?: string
+}
+
+export interface BaseEvent {
+  ts: string
+  type: 'commit' | 'test' | 'issue' | 'fix' | 'note' | 'ci' | 'perf' | 'build'
+}
+
+export async function ensureCodexDir() {
+  await fs.ensureDir(CODEx_DIR)
+}
+
+export async function withLock<T>(fn: () => Promise<T>, maxAttempts = 5): Promise<T> {
+  await ensureCodexDir()
+  let attempt = 0
+  while (true) {
+    try {
+      const fd = await fs.open(LOCK_PATH, 'wx')
+      await fs.close(fd)
+      try {
+        const res = await fn()
+        return res
+      } finally {
+        await fs.remove(LOCK_PATH).catch(() => {})
+      }
+    } catch (err: any) {
+      if (err && err.code === 'EEXIST') {
+        attempt++
+        if (attempt >= maxAttempts) throw new Error('Lock busy; give up after retries')
+        const jitter = 50 + Math.floor(Math.random() * 200)
+        await new Promise(r => setTimeout(r, jitter))
+        continue
+      }
+      throw err
+    }
+  }
+}
+
+export function nowIso(): string {
+  return new Date().toISOString()
+}
+
+export function truncate(str: string, max = 2000): string {
+  if (str.length <= max) return str
+  return str.slice(0, max - 1) + '…'
+}
+
+export async function readState(): Promise<StateJson | null> {
+  try {
+    const raw = await fs.readFile(STATE_PATH, 'utf8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+export async function writeState(next: StateJson): Promise<void> {
+  await withLock(async () => {
+    const tmp = STATE_PATH + '.tmp'
+    await fs.writeFile(tmp, JSON.stringify(next, null, 2))
+    await fs.move(tmp, STATE_PATH, { overwrite: true })
+  })
+}
+
+export async function appendEvent(line: object): Promise<void> {
+  const json = JSON.stringify(line)
+  if (json.length > 2048) {
+    throw new Error('Event exceeds 2KB; please shorten fields')
+  }
+  await withLock(async () => {
+    await fs.ensureFile(JOURNAL_PATH)
+    await fs.appendFile(JOURNAL_PATH, json + '\n', 'utf8')
+  })
+}
+
+export async function readLastNLines(n: number): Promise<string[]> {
+  try {
+    const content = await fs.readFile(JOURNAL_PATH, 'utf8')
+    const lines = content.split(/\r?\n/).filter(Boolean)
+    return lines.slice(-n)
+  } catch {
+    return []
+  }
+}
+
+diff --git a/context-os/scripts/codex-live-context/log-event.ts b/context-os/scripts/codex-live-context/log-event.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/log-event.ts
+@@
+import { appendEvent, nowIso, truncate } from './utils'
+
+function parseArgs(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const arg of argv) {
+    const m = arg.match(/^--([^=]+)=(.*)$/)
+    if (m) out[m[1]] = m[2]
+  }
+  return out
+}
+
+async function main() {
+  const [,, type, ...rest] = process.argv
+  if (!type) {
+    console.error('Usage: tsx log-event.ts <type> [--k=v ...]')
+    process.exit(1)
+  }
+  const args = parseArgs(rest)
+  const base = { ts: nowIso(), type }
+  let payload: any = {}
+  switch (type) {
+    case 'commit': {
+      payload = {
+        sha: args.sha || '',
+        files_changed: Number(args.files_changed || '0'),
+        message: truncate(args.message || '')
+      }
+      break
+    }
+    case 'test': {
+      payload = {
+        result: args.result || 'mixed',
+        count: Number(args.count || '0'),
+        focus: args.focus || undefined
+      }
+      break
+    }
+    case 'issue': {
+      payload = {
+        desc: truncate(args.desc || ''),
+        area: args.area || 'general',
+        severity: args.severity || undefined
+      }
+      break
+    }
+    case 'fix': {
+      payload = {
+        desc: truncate(args.desc || ''),
+        area: args.area || 'general'
+      }
+      break
+    }
+    case 'note': {
+      payload = { text: truncate(args.text || '') }
+      break
+    }
+    default:
+      console.error(`Unknown type: ${type}`)
+      process.exit(1)
+  }
+  await appendEvent({ ...base, ...payload })
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
+
+diff --git a/context-os/scripts/codex-live-context/post-commit.ts b/context-os/scripts/codex-live-context/post-commit.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/post-commit.ts
+@@
+import { execSync } from 'child_process'
+import { appendEvent, nowIso, truncate } from './utils'
+
+function sh(cmd: string): string {
+  return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim()
+}
+
+async function main() {
+  const sha = sh('git rev-parse HEAD')
+  const msg = sh('git log -1 --pretty=%B')
+  const files = sh(`git diff-tree --no-commit-id --name-only -r ${sha}`).split('\n').filter(Boolean)
+  await appendEvent({
+    ts: nowIso(),
+    type: 'commit',
+    sha,
+    files_changed: files.length,
+    message: truncate(msg.replace(/\s+/g, ' ').trim()).slice(0, 120)
+  })
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
+
+diff --git a/context-os/scripts/codex-live-context/log-test.ts b/context-os/scripts/codex-live-context/log-test.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/log-test.ts
+@@
+import { appendEvent, nowIso } from './utils'
+
+function parseArgs(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const arg of argv) {
+    const m = arg.match(/^--([^=]+)=(.*)$/)
+    if (m) out[m[1]] = m[2]
+  }
+  return out
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2))
+  const result = (args.result || 'mixed') as 'pass' | 'fail' | 'mixed'
+  const count = Number(args.count || '0')
+  const focus = args.focus
+  await appendEvent({ ts: nowIso(), type: 'test', result, count, focus })
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
+
+diff --git a/context-os/scripts/codex-live-context/summarize.ts b/context-os/scripts/codex-live-context/summarize.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/summarize.ts
+@@
+import fs from 'fs-extra'
+import path from 'path'
+import { readLastNLines, readState, SUMMARY_PATH } from './utils'
+
+interface EventAny { ts: string; type: string; [k: string]: any }
+
+function parseLines(lines: string[]): EventAny[] {
+  const out: EventAny[] = []
+  for (const l of lines) {
+    try { out.push(JSON.parse(l)) } catch {}
+  }
+  return out
+}
+
+function render(state: any, events: EventAny[]): string {
+  const current = state ? {
+    feature: state.current_feature,
+    branch: state.current_branch || '(unset)',
+    status: state.status
+  } : { feature: '(unknown)', branch: '(unset)', status: '(unknown)' }
+
+  const recent = events.slice(-10).reverse()
+  const bullets: string[] = []
+  for (const e of recent) {
+    if (e.type === 'commit') bullets.push(`- commit ${e.sha?.slice(0,7)}: ${e.message || ''}`)
+    else if (e.type === 'issue') bullets.push(`- issue (${e.area||'general'}): ${e.desc||''}`)
+    else if (e.type === 'fix') bullets.push(`- fix (${e.area||'general'}): ${e.desc||''}`)
+    else if (e.type === 'test') bullets.push(`- test: ${e.result} (${e.count||0})`)
+    else if (e.type === 'note') bullets.push(`- note: ${e.text||''}`)
+  }
+
+  const lines = [
+    '# Context-OS — Live Context Summary',
+    '',
+    'Current Work',
+    `- Feature: ${current.feature}`,
+    `- Branch: ${current.branch}`,
+    `- Status: ${current.status}`,
+    '',
+    'Recent Activity',
+    ...(bullets.length ? bullets : ['- (none)']),
+  ]
+  return lines.join('\n') + '\n'
+}
+
+async function main() {
+  const state = await readState()
+  const tail = await readLastNLines(200)
+  const events = parseLines(tail)
+  const md = render(state, events)
+  const tmp = SUMMARY_PATH + '.tmp'
+  await fs.writeFile(tmp, md, 'utf8')
+  await fs.move(tmp, SUMMARY_PATH, { overwrite: true })
+  const size = Buffer.byteLength(md, 'utf8')
+  if (size > 2000 * 5) {
+    console.warn('summary.md exceeds ~10KB; consider tightening events or reducing bullets')
+  }
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
+
+diff --git a/context-os/scripts/codex-live-context/rotate.ts b/context-os/scripts/codex-live-context/rotate.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/context-os/scripts/codex-live-context/rotate.ts
+@@
+import fs from 'fs-extra'
+import path from 'path'
+import { JOURNAL_PATH, CODEx_DIR } from './utils'
+
+async function main() {
+  try {
+    const stat = await fs.stat(JOURNAL_PATH)
+    const archiveDir = path.join(CODEx_DIR, 'archive')
+    await fs.ensureDir(archiveDir)
+    const iso = new Date().toISOString().replace(/[:]/g, '-')
+    if (stat.size > 5 * 1024 * 1024) {
+      const target = path.join(archiveDir, `journal-${iso}.ndjson`)
+      await fs.move(JOURNAL_PATH, target, { overwrite: false })
+      await fs.writeFile(JOURNAL_PATH, '', 'utf8')
+      console.log(`Rotated journal to ${target}`)
+    }
+  } catch {
+    // no journal, ignore
+  }
+}
+
+main().catch(err => { console.error(err); process.exit(1) })
+
+diff --git a/context-os/package.json b/context-os/package.json
+index 3a5e6e1..abcd123 100644
+--- a/context-os/package.json
++++ b/context-os/package.json
+@@
+   "scripts": {
+     "build": "tsc",
+     "dev": "tsx index.ts",
+     "test": "jest",
+     "lint": "eslint . --ext .ts",
+     "type-check": "tsc --noEmit",
+     "clean": "rm -rf dist",
+     "prepare": "npm run build",
+     "codex:record": "tsx scripts/codex-live-context/log-event.ts",
+     "codex:summarize": "tsx scripts/codex-live-context/summarize.ts",
+     "codex:post-commit": "tsx scripts/codex-live-context/post-commit.ts",
+     "codex:log-test": "tsx scripts/codex-live-context/log-test.ts",
+     "codex:rotate": "tsx scripts/codex-live-context/rotate.ts"
+   },

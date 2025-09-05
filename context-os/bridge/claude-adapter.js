@@ -282,6 +282,139 @@ class ClaudeAdapter {
     this.mode = mode;
     console.log(`🔄 Claude adapter switched to ${mode} mode`);
   }
+
+  /**
+   * Invoke Claude for Interactive INITIAL.md collection
+   * Implements the conversational form-filling pattern
+   */
+  async invokeClaudeInit(featureSlug, sessionData = null) {
+    const { v4: uuidv4 } = require('uuid');
+    
+    try {
+      // Load the prompt template
+      const promptPath = path.join(__dirname, '..', 'prompts', 'initial-collector.md');
+      const systemPrompt = fs.readFileSync(promptPath, 'utf8');
+      
+      // Prepare context
+      const context = {
+        featureSlug,
+        sessionId: sessionData?.sessionId || uuidv4(),
+        previousData: sessionData?.spec || {},
+        schemaVersion: '1.0.0'
+      };
+      
+      if (this.mode === 'mock') {
+        // Simulate Claude's response with comprehensive example data
+        await this.simulateDelay(500, 1000);
+        
+        const mockResponse = {
+          status: 'ready',
+          spec: {
+            schemaVersion: '1.0.0',
+            featureSlug,
+            title: `Enhanced ${featureSlug.replace(/_/g, ' ')} Feature`,
+            problem: 'This feature addresses critical user needs in the current system. Users have reported difficulties with the existing workflow. Implementation of this feature will streamline operations and improve user satisfaction.',
+            goals: [
+              'Improve user experience and workflow efficiency',
+              'Ensure backward compatibility with existing features',
+              'Provide comprehensive documentation and examples',
+              'Maintain high performance standards',
+              'Enable extensibility for future enhancements'
+            ],
+            acceptanceCriteria: [
+              'Feature works correctly in all supported browsers',
+              'Unit test coverage exceeds 80%',
+              'Performance metrics remain within acceptable bounds',
+              'Documentation is complete and accurate',
+              'User acceptance testing passes all scenarios'
+            ],
+            stakeholders: [
+              'Product Team',
+              'Engineering Team',
+              'QA Team',
+              'Customer Success',
+              'End Users'
+            ],
+            nonGoals: [
+              'Complex enterprise integration features',
+              'Real-time synchronization capabilities',
+              'Third-party API integrations'
+            ],
+            dependencies: [
+              'Database schema updates',
+              'API endpoint modifications',
+              'Frontend component library'
+            ],
+            severity: 'high',
+            metrics: [
+              'Feature adoption rate > 60% in first month',
+              'Support tickets reduced by 25%',
+              'User satisfaction score improvement'
+            ],
+            sessionId: context.sessionId,
+            createdAt: new Date().toISOString(),
+            createdBy: 'context-os-init'
+          },
+          turns: 5,
+          jsonRetryCount: 0
+        };
+        
+        // Track token usage
+        this.costTracker.totalTokens += 2500;
+        this.costTracker.totalCost = this.costTracker.totalTokens * this.costTracker.costPerToken;
+        
+        console.log(`🤖 [MOCK] Claude Init completed for: ${featureSlug}`);
+        
+        return mockResponse;
+      } else {
+        // Real Claude implementation would use invokeTask with conversational pattern
+        const request = {
+          task: systemPrompt + '\n\nFeature: ' + featureSlug,
+          tools: ['Task'],
+          budget: {
+            maxTokens: 4000,
+            maxTurns: 8
+          },
+          constraints: {
+            outputFormat: 'json',
+            retryOnInvalidJson: true
+          }
+        };
+        
+        return await this.invokeTask(request);
+      }
+      
+    } catch (error) {
+      console.error('❌ Claude init error:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract markers from Claude's conversation for debugging
+   */
+  extractMarkers(conversation) {
+    const markers = [];
+    const regex = /\[([A-Z_]+): ([^\]]+)\]/g;
+    let match;
+    
+    while ((match = regex.exec(conversation)) !== null) {
+      markers.push({
+        type: match[1],
+        value: match[2],
+        timestamp: Date.now()
+      });
+    }
+    
+    return markers;
+  }
 }
 
-module.exports = { ClaudeAdapter };
+// Export both the class and a singleton instance
+const claudeAdapter = new ClaudeAdapter({ mode: 'mock' });
+
+module.exports = { 
+  ClaudeAdapter,
+  claudeAdapter,
+  invokeClaudeInit: claudeAdapter.invokeClaudeInit.bind(claudeAdapter)
+};

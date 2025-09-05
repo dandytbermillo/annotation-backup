@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.0.0",
+  "featureSlug": "test_dryrun_feature",
+  "sessionId": "ae6241dd-5a77-4bb8-a4c9-da197eff1122",
+  "createdAt": "2025-09-05T05:39:48.379Z",
+  "createdBy": "context-os-init",
+  "title": "Feature: test dryrun feature",
+  "problem": "This feature addresses a gap in the current system. Users need this functionality. Implementation will improve the overall experience.",
+  "goals": [
+    "Implement core functionality",
+    "Ensure backward compatibility",
+    "Maintain performance standards"
+  ],
+  "acceptanceCriteria": [
+    "Feature works as specified",
+    "All tests pass",
+    "Documentation is complete"
+  ],
+  "stakeholders": [
+    "Development Team",
+    "Product Team"
+  ],
+  "severity": "medium"
+}

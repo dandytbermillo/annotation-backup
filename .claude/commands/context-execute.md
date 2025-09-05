@@ -24,6 +24,7 @@ Options:
   --plan <path>   - Use existing draft plan file
   --slug <name>   - Pre-select feature slug (default: auto-generated)
   --confirm false - Skip confirmation prompts
+  --interactive   - Create INITIAL.md interactively first
 
 Examples:
   /context-execute "Add Dark Mode"

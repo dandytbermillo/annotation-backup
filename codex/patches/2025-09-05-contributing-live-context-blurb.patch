@@ -1,0 +1,29 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/CONTRIBUTING.md
+@@
+# Contributing
+
+## Live Context in Pull Requests
+
+- CI posts a single, auto-updated PR comment with the marker `<!-- live-context-comment -->` that summarizes the current repository context using `.context-memory/live/summary.md`.
+- On each push to the PR, CI finds the existing comment (by marker) and updates it instead of posting a new one. This avoids comment spam.
+- If PR comment permissions are limited (e.g., forked PRs), CI gracefully falls back to adding the same content to the GitHub Actions job summary only.
+- CI is strictly read-only with respect to `.context-memory/`: it only reads `summary.md` and never writes to the live store. A guard step enforces this policy.
+
+### Local Workflow (optional)
+
+- Generate/refresh the summary locally at any time:
+  - `node .context-memory/scripts/summarize.js`
+  - Preview the PR snippet: `node .context-memory/scripts/generate-pr-summary.js`
+- Auto-log commits and refresh summary locally by installing a post-commit hook:
+  - `bash .context-memory/scripts/install-post-commit-hook.sh`
+
+## Ignoring `.context-memory/live/`
+
+- The files under `.context-memory/live/` (e.g., `journal.ndjson`, `summary.md`, `state.json`) change frequently and are treated like logs/cache during development.
+- To keep diffs and `git status` clean, the repository’s `.gitignore` ignores `*.context-memory/live/*` while keeping the folder tracked via `.context-memory/live/.keep`.
+- If you need to share a snapshot, paste content into the PR or attach the generated `pr-summary.md` artifact rather than committing live files.
+

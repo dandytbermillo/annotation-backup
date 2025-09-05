@@ -1,0 +1,25 @@
+diff --git a/.github/workflows/live-context-summary.yml b/.github/workflows/live-context-summary.yml
+--- a/.github/workflows/live-context-summary.yml
++++ b/.github/workflows/live-context-summary.yml
+@@
+-on:
+-  pull_request:
+-  workflow_dispatch:
++on:
++  pull_request:
++    types: [opened, reopened, synchronize]
++  workflow_dispatch:
+@@
+-jobs:
+-  summarize:
+-    runs-on: ubuntu-latest
++jobs:
++  summarize:
++    permissions:
++      contents: read
++      pull-requests: write
++      issues: write
++    runs-on: ubuntu-latest
++    concurrency:
++      group: live-context-${{ github.ref }}
++      cancel-in-progress: true

@@ -1,0 +1,77 @@
+diff --git a/.github/pull_request_template.md b/.github/pull_request_template.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.github/pull_request_template.md
+@@
++## Live Context Summary
++
++Paste or link to the summary generated from `.context-memory/live/summary.md`.
++A CI job will also attach the latest summary to this PR.
++
++- Snapshot: `.context-memory/live/pr-summary.md`
++
++## Changes
++- [ ] Summary of what changed
++
++## Tests
++- [ ] Unit/Integration notes
++
++## Notes
++- [ ] Risk, rollout, or follow-ups
+
+diff --git a/.github/workflows/live-context-summary.yml b/.github/workflows/live-context-summary.yml
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.github/workflows/live-context-summary.yml
+@@
++name: Live Context Summary
++
++on:
++  pull_request:
++  workflow_dispatch:
++
++jobs:
++  summarize:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - name: Setup Node
++        uses: actions/setup-node@v4
++        with:
++          node-version: '20'
++      - name: Generate summary
++        id: gen
++        run: |
++          node ./.context-memory/scripts/summarize.js || true
++          SNIPPET=$(node ./.context-memory/scripts/generate-pr-summary.js)
++          echo "snippet<<EOF" >> $GITHUB_OUTPUT
++          echo "$SNIPPET" >> $GITHUB_OUTPUT
++          echo "EOF" >> $GITHUB_OUTPUT
++      - name: Post PR comment
++        if: ${{ github.event.pull_request.number }}
++        uses: actions/github-script@v7
++        with:
++          script: |
++            const pr = context.payload.pull_request?.number
++            if (!pr) {
++              core.info('No PR context; skipping comment')
++              return
++            }
++            const body = core.getInput('body')
++            await github.rest.issues.createComment({
++              owner: context.repo.owner,
++              repo: context.repo.repo,
++              issue_number: pr,
++              body,
++            })
++          result-encoding: string
++          github-token: ${{ secrets.GITHUB_TOKEN }}
++          body: ${{ steps.gen.outputs.snippet }}
++      - name: Job summary
++        run: |
++          echo "### Live Context Summary" >> $GITHUB_STEP_SUMMARY
++          echo "" >> $GITHUB_STEP_SUMMARY
++          cat ./.context-memory/live/pr-summary.md >> $GITHUB_STEP_SUMMARY
+
