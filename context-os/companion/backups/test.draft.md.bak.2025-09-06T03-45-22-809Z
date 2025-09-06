@@ -1,0 +1,20 @@
+---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+  **Title**: tiptap text editor using typescript and nextjs
+  **Feature**: editor can accept code
+  - save,save all
+  - can insert pictures
+  - taggging and annotation system
+   
+ 
+
+
+## references
+
+[AI-generated content for references]

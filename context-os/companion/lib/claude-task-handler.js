@@ -3,12 +3,12 @@
  * This module creates a bridge to Claude Code's Task tool for intelligent content generation
  */
 
-const { spawn } = require('child_process');
-const path = require('path');
+const ClaudeAIIntegration = require('./claude-ai-integration');
 
 class ClaudeTaskHandler {
   constructor() {
-    this.scriptPath = path.join(__dirname, '..', 'scripts', 'claude-task-executor.js');
+    // Use real Claude AI integration
+    this.aiIntegration = new ClaudeAIIntegration();
   }
 
   /**
@@ -19,19 +19,24 @@ class ClaudeTaskHandler {
    */
   async generateSuggestion(field, documentContent) {
     try {
-      // Create a detailed prompt for Claude based on the field type
-      const prompt = this.buildPrompt(field, documentContent);
-      
-      // Execute the Claude task script
-      const result = await this.executeClaudeTask(prompt);
-      
-      // Format the result as a suggestion
-      return this.formatSuggestion(field, result);
+      // Use real Claude AI to generate suggestions
+      const suggestion = await this.aiIntegration.generateSuggestion(field, documentContent);
+      return suggestion;
     } catch (error) {
-      console.error(`Error generating suggestion for ${field}:`, error);
-      // Fallback to a generic suggestion if Claude fails
+      console.error(`Error generating AI suggestion for ${field}:`, error);
+      // Fallback to a generic suggestion if AI fails
       return this.getFallbackSuggestion(field);
     }
+  }
+  
+  extractTitle(content) {
+    const match = content.match(/\*\*Title\*\*:\s*(.+)/i);
+    return match ? match[1].trim() : '';
+  }
+  
+  extractFeature(content) {
+    const match = content.match(/\*\*Feature\*\*:\s*(.+)/i);
+    return match ? match[1].trim() : '';
   }
 
   /**
@@ -113,7 +118,7 @@ For title:
   /**
    * Execute Claude task using a separate Node script
    */
-  async executeClaudeTask(prompt) {
+  async executeClaudeTask(prompt, field, documentContent) {
     return new Promise((resolve, reject) => {
       const child = spawn('node', [this.scriptPath], {
         env: { ...process.env }
@@ -122,8 +127,8 @@ For title:
       let output = '';
       let error = '';
 
-      // Send the prompt to the script
-      child.stdin.write(JSON.stringify({ prompt }));
+      // Send the prompt, field, and document content to the script
+      child.stdin.write(JSON.stringify({ prompt, field, documentContent }));
       child.stdin.end();
 
       child.stdout.on('data', (data) => {

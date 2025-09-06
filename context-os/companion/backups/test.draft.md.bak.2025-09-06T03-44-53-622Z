@@ -12,25 +12,13 @@ last_validated_at: 2025-09-05T18:45:11.650Z
   - can insert pictures
   - taggging and annotation system
    
- 
-
-
-## references
-
-[AI-generated content for references]
 
 ## Acceptance Criteria
 
-- [ ] *Title**: tiptap text editor using typescript and nextjs is fully implemented and tested
+- [ ] *Title**: simple python text editor is fully implemented and tested
 - [ ] *Feature**: editor can accept code is fully implemented and tested
 - [ ] save,save all is fully implemented and tested
 - [ ] can insert pictures is fully implemented and tested
-- [ ] taggging and annotation system is fully implemented and tested
 - [ ] Feature works across all supported browsers
 - [ ] Mobile responsive design is implemented
 - [ ] Performance meets acceptable standards
-
-
-## Problem
-
-Users are experiencing challenges with the current implementation. The existing solution does not adequately address user needs, leading to decreased productivity and satisfaction.
