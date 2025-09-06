@@ -7,11 +7,7 @@ missing_fields: []
 last_validated_at: 2025-09-05T18:45:11.650Z
 ---
 
- # INITIAL
-
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
-
+ 
 
 ## Problem
 
@@ -39,9 +35,3 @@ theme option.
 - UX Design Team
 - Product Management
 - End Users
-
-## stakeholders
-
-- Development Team
-- Product Team
-- QA Team

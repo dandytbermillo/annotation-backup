@@ -1,0 +1,24 @@
+diff --git a/AGENTS.md b/AGENTS.md
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@
+-## Operating Policy (Required)
+- See `codex/POLICY.md` for authoritative operating rules:
+-  - Read-only advisory by default; write only with explicit “Approved” and only inside `codex/`.
+-  - Safe reads only; no installs or destructive commands.
+-  - Startup routine: read `codex/previous-sessions/RESUME.md` and recap Next Steps.
+-  - Supported chat commands include “Resume from resume.md”, “Refresh readme.md”, “Refresh resume.md”, and “End session”.
++## Operating Policy (Required)
++- See `codex/POLICY.md` for authoritative operating rules:
++  - Read-only advisory by default; write only with explicit “Approved” and only inside `codex/`.
++  - Safe reads only; no installs or destructive commands.
++  - Startup routine: read `codex/previous-sessions/RESUME.md` and recap Next Steps; then hydrate from `.context-memory/live/` (read-only) for live state.
++  - Supported chat commands include “Resume from resume.md”, “Refresh readme.md”, “Refresh resume.md”, and “End session”.
++
++### Live Context Startup (Read‑Only)
++- Hydrate from `.context-memory/live/` on session start:
++  - Read `state.json` for current feature/branch/status.
++  - Tail last ~100 lines of `journal.ndjson`.
++  - Skim `summary.md` for a quick digest.
++- Ask before running `node .context-memory/scripts/summarize.js`; never write to `.context-memory` without explicit approval.
++- In PRs, also read the “Live Context Summary” PR comment (marker `<!-- live-context-comment -->`) and the job summary.

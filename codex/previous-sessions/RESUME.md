@@ -2,6 +2,14 @@
 
 > Open latest session summary: codex/previous-sessions/2025-09-01-session-summary.md
 
+## Agent Startup (Live Context)
+- On start, hydrate from `.context-memory/live/` (read-only):
+  - Read `state.json` for current feature/branch/status
+  - Tail last ~100 lines of `journal.ndjson`
+  - Skim `summary.md` for a quick digest
+- If the summary looks stale, ask before running `node .context-memory/scripts/summarize.js`.
+- Never write to `.context-memory` without explicit approval.
+
 ## Quick Status: Context‑OS (2025-09-05)
 - Interactive INITIAL.md (Days 1–3): PASS with minor validator issues.
 - Core components present: init-interactive CLI, Handlebars template + renderer, Claude mock adapter (invokeClaudeInit), session persistence (.tmp/initial), telemetry (logs/init-telemetry.jsonl).

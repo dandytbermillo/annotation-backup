@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 
 // Import all modules
 const ETagManager = require('./lib/etag-manager');
@@ -411,6 +412,236 @@ app.post('/api/draft/promote', async (req, res) => {
   } catch (error) {
     console.error('Error promoting draft:', error);
     res.status(500).json({ error: error.message, code: 'PROMOTE_ERROR' });
+  }
+});
+
+// Promote draft to INITIAL.md
+app.post('/api/draft/promote', async (req, res) => {
+  try {
+    const { slug, etag, approveHeader, approveContent } = req.body;
+    
+    if (!slug) {
+      return res.status(400).json({ 
+        error: 'Slug is required',
+        code: 'MISSING_SLUG'
+      });
+    }
+    
+    const normalized = slug.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
+    const finalPath = path.join('context-os', 'docs', 'proposal', normalized, 'INITIAL.md');
+    
+    // Check if draft exists
+    if (!fs.existsSync(draftPath)) {
+      return res.status(404).json({
+        error: 'Draft not found',
+        code: 'DRAFT_NOT_FOUND'
+      });
+    }
+    
+    // Read draft content
+    const draftContent = fs.readFileSync(draftPath, 'utf-8');
+    
+    // Create directory if needed
+    const finalDir = path.dirname(finalPath);
+    if (!fs.existsSync(finalDir)) {
+      fs.mkdirSync(finalDir, { recursive: true });
+    }
+    
+    // Copy draft to final location
+    fs.writeFileSync(finalPath, draftContent, 'utf-8');
+    
+    auditLogger.log('draft_promoted', {
+      slug: normalized,
+      from: draftPath,
+      to: finalPath
+    });
+    
+    res.json({
+      promoted: true,
+      path: finalPath,
+      etag: etag || 'new',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error promoting draft:', error);
+    res.status(500).json({ 
+      error: error.message, 
+      code: 'PROMOTE_ERROR' 
+    });
+  }
+});
+
+// Create PRP endpoint
+app.post('/api/create-prp', async (req, res) => {
+  const { spawn } = require('child_process');
+  
+  try {
+    const { feature } = req.body;
+    
+    if (!feature || typeof feature !== 'string') {
+      return res.status(400).json({ 
+        error: 'Feature slug is required',
+        code: 'MISSING_FEATURE'
+      });
+    }
+    
+    const normalized = feature.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const initialPath = path.join('context-os', 'docs', 'proposal', normalized, 'INITIAL.md');
+    const prpPath = path.join('PRPs', `${normalized}.md`);
+    
+    // Check if INITIAL.md exists
+    if (!fs.existsSync(initialPath)) {
+      return res.status(404).json({
+        error: 'INITIAL.md not found. Please promote your draft first.',
+        code: 'INITIAL_NOT_FOUND'
+      });
+    }
+    
+    // Check if PRP already exists and get version
+    let version = 1;
+    let isUpdate = false;
+    if (fs.existsSync(prpPath)) {
+      isUpdate = true;
+      try {
+        const existingPrp = fs.readFileSync(prpPath, 'utf-8');
+        const versionMatch = existingPrp.match(/\*\*Version\*\*:\s*(\d+)/);
+        if (versionMatch) {
+          version = parseInt(versionMatch[1]) + 1;
+        }
+      } catch (e) {
+        console.log('Could not read existing PRP version, using version 1');
+      }
+    }
+    
+    // Create PRPs directory if needed
+    const prpDir = 'PRPs';
+    if (!fs.existsSync(prpDir)) {
+      fs.mkdirSync(prpDir, { recursive: true });
+    }
+    
+    auditLogger.log(isUpdate ? 'prp_update_started' : 'prp_creation_started', { 
+      feature: normalized,
+      version: version 
+    });
+    
+    // Execute the context-execute command to generate PRP
+    const contextExecutePath = path.join('.claude', 'commands', 'context-execute.sh');
+    
+    // For now, create a simple PRP based on INITIAL.md
+    let initialContent = fs.readFileSync(initialPath, 'utf-8');
+    
+    // Strip YAML frontmatter if present
+    if (initialContent.startsWith('---')) {
+      const endOfYaml = initialContent.indexOf('---', 3);
+      if (endOfYaml !== -1) {
+        initialContent = initialContent.substring(endOfYaml + 3).trim();
+      }
+    }
+    
+    // Parse INITIAL.md to extract key information
+    const titleMatch = initialContent.match(/\*\*Title\*\*:\s*(.+)/);
+    const problemMatch = initialContent.match(/##\s*Problem\s*\n([\s\S]+?)(?=\n\s*##|\n$)/);
+    const goalsMatch = initialContent.match(/##\s*Goals\s*\n([\s\S]+?)(?=\n\s*##|\n$)/);
+    const acceptanceMatch = initialContent.match(/##\s*Acceptance\s+Criteria\s*\n([\s\S]+?)(?=\n\s*##|\n$)/);
+    
+    const title = titleMatch ? titleMatch[1].trim() : normalized;
+    const problem = problemMatch ? problemMatch[1].trim() : 'No problem statement found';
+    const goals = goalsMatch ? goalsMatch[1].trim() : 'No goals found';
+    const acceptance = acceptanceMatch ? acceptanceMatch[1].trim() : 'No acceptance criteria found';
+    
+    // Generate PRP content
+    const prpContent = `# PRP: ${title}
+
+**Feature**: ${normalized}
+**Status**: draft
+**Version**: ${version}
+**${isUpdate ? 'Updated' : 'Created'}**: ${new Date().toISOString()}
+**Source**: ${initialPath}
+
+## Problem Statement
+
+${problem}
+
+## Goals
+
+${goals}
+
+## Acceptance Criteria
+
+${acceptance}
+
+## Implementation Plan
+
+### Phase 1: Foundation
+- [ ] Set up basic infrastructure
+- [ ] Create database schema if needed
+- [ ] Add necessary dependencies
+
+### Phase 2: Core Implementation
+- [ ] Implement main functionality
+- [ ] Add error handling
+- [ ] Create unit tests
+
+### Phase 3: Integration
+- [ ] Integrate with existing systems
+- [ ] Add integration tests
+- [ ] Update documentation
+
+## Files to Modify
+
+- \`app/\` - Add new pages/components as needed
+- \`lib/\` - Add business logic
+- \`components/\` - Add UI components
+
+## Validation Gates
+
+1. \`npm run lint\` - No errors
+2. \`npm run type-check\` - TypeScript passes
+3. \`npm run test\` - All tests pass
+4. Manual testing in browser
+
+## Rollback Plan
+
+1. Revert git commits if issues found
+2. Restore database backup if schema changed
+3. Clear cache and restart services
+
+## Notes
+
+- Generated from INITIAL.md using Context-OS Browser MVP
+- This is a template PRP that should be refined with specific implementation details
+`;
+    
+    // Write PRP file
+    fs.writeFileSync(prpPath, prpContent, 'utf-8');
+    
+    auditLogger.log(isUpdate ? 'prp_updated' : 'prp_created', {
+      feature: normalized,
+      path: prpPath,
+      size: prpContent.length,
+      version: version
+    });
+    
+    res.json({
+      success: true,
+      path: prpPath,
+      feature: normalized,
+      version: version,
+      message: isUpdate ? `PRP updated successfully (v${version})` : 'PRP created successfully',
+      next_steps: [
+        'Review the generated PRP',
+        'Refine implementation details',
+        'Execute with /execute-prp command'
+      ]
+    });
+    
+  } catch (error) {
+    console.error('Error creating PRP:', error);
+    res.status(500).json({ 
+      error: error.message, 
+      code: 'PRP_CREATION_ERROR' 
+    });
   }
 });
 

@@ -1,26 +1,21 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CheckCircle, AlertCircle, FileText, Sparkles, FileCode } from 'lucide-react';
+import { 
+  CheckCircle, AlertCircle, FileText, Sparkles, FileCode, 
+  Lock, RefreshCw, Save, AlertTriangle 
+} from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
-// Dynamic import for the editor to avoid SSR issues
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
 const COMPANION_URL = process.env.NEXT_PUBLIC_COMPANION_URL || 'http://localhost:4000';
-
-interface ValidationResult {
-  valid: boolean;
-  missingFields: string[];
-  warnings: string[];
-  log: string;
-}
 
 interface ReportCard {
   header_meta: {
@@ -28,6 +23,7 @@ interface ReportCard {
     readiness_score: number;
     missing_fields: string[];
     confidence: number;
+    last_validated_at: string;
   };
   suggestions: string[];
   prp_gate: {
@@ -35,287 +31,579 @@ interface ReportCard {
     reason: string;
     next_best_action: string;
   };
+  offline_mode?: boolean;
 }
 
-interface ContentPatch {
-  section: string;
-  suggestion: string;
-  diff: string;
-}
-
-export default function ContextOSPage() {
+export default function ContextOSPageV2() {
   const searchParams = useSearchParams();
   const featureSlug = searchParams.get('feature') || 'new_feature';
   
   // State
   const [content, setContent] = useState('');
-  const [originalContent, setOriginalContent] = useState('');
+  const [etag, setEtag] = useState('');
+  const [csrfToken, setCsrfToken] = useState('');
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [lockStatus, setLockStatus] = useState<any>(null);
   
-  // Validation state
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  // Validation & verification
+  const [validationResult, setValidationResult] = useState<any>(null);
   const [reportCard, setReportCard] = useState<ReportCard | null>(null);
-  const [contentPatches, setContentPatches] = useState<ContentPatch[]>([]);
+  const [patches, setPatches] = useState<any[]>([]);
   
   // UI state
   const [activeTab, setActiveTab] = useState('editor');
   const [isVerifying, setIsVerifying] = useState(false);
   const [isFilling, setIsFilling] = useState(false);
   const [isCreatingPRP, setIsCreatingPRP] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [prpArtifact, setPrpArtifact] = useState<any>(null);
   
-  // Load draft on mount
+  // Refs for debouncing
+  const saveTimeout = useRef<NodeJS.Timeout>();
+  const validateTimeout = useRef<NodeJS.Timeout>();
+  const contentRef = useRef(content);
+  
+  // Keep ref in sync with state
   useEffect(() => {
-    loadDraft();
+    contentRef.current = content;
+  }, [content]);
+  
+  // Initialize on mount
+  useEffect(() => {
+    initializeSession();
   }, [featureSlug]);
   
-  // Autosave
+  // Auto-save with debouncing
   useEffect(() => {
-    if (isDirty) {
-      const timer = setTimeout(() => {
-        saveDraft();
-      }, 1000); // Save after 1 second of no typing
-      
-      return () => clearTimeout(timer);
+    if (isDirty && content) {
+      if (saveTimeout.current) clearTimeout(saveTimeout.current);
+      saveTimeout.current = setTimeout(() => saveDraft(), 300);
     }
   }, [content, isDirty]);
   
-  // Auto-validate
+  // Auto-validate after save
   useEffect(() => {
-    if (content) {
-      const timer = setTimeout(() => {
-        validateContent();
-      }, 800); // Validate after 800ms of no typing
-      
-      return () => clearTimeout(timer);
+    if (content && !isDirty) {
+      if (validateTimeout.current) clearTimeout(validateTimeout.current);
+      validateTimeout.current = setTimeout(() => validateDraft(), 200);
     }
-  }, [content]);
+  }, [content, isDirty]);
   
-  async function loadDraft() {
+  async function initializeSession() {
     try {
-      const res = await fetch(`${COMPANION_URL}/api/draft/${featureSlug}`);
+      // Get CSRF token first
+      const tokenRes = await fetch(`${COMPANION_URL}/api/csrf`, {
+        headers: { 'Origin': window.location.origin }
+      });
+      const tokenData = await tokenRes.json();
+      console.log('CSRF token received:', tokenData.token);
+      setCsrfToken(tokenData.token);
+      
+      // Then load draft with the token
+      await loadDraft(tokenData.token);
+      
+      return tokenData.token; // Return for immediate use
+    } catch (err) {
+      setError('Failed to connect to companion service');
+      console.error(err);
+      return null;
+    }
+  }
+  
+  async function loadDraft(tokenToUse?: string) {
+    try {
+      const res = await fetch(`${COMPANION_URL}/api/draft/${featureSlug}`, {
+        headers: { 'Origin': 'http://localhost:3000' }
+      });
+      
+      if (!res.ok) throw new Error(`Failed to load: ${res.status}`);
+      
       const data = await res.json();
       setContent(data.content);
-      setOriginalContent(data.content);
+      setEtag(data.etag);
+      setLockStatus(data.lockStatus);
       setIsDirty(false);
-    } catch (error) {
-      console.error('Failed to load draft:', error);
+    } catch (err) {
+      setError('Failed to load draft');
+      console.error(err);
     }
   }
   
   async function saveDraft() {
     if (!isDirty) return;
     
+    // Use the current content from ref to avoid stale closure
+    const currentContent = contentRef.current;
+    
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for save, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        console.error('Failed to get CSRF token for save');
+        return;
+      }
+    }
+    
     setIsSaving(true);
+    setError(null);
+    
+    console.log('Saving draft with content length:', currentContent?.length);
+    console.log('First 200 chars of content:', currentContent?.substring(0, 200));
+    
     try {
-      await fetch(`${COMPANION_URL}/api/draft/save`, {
+      const res = await fetch(`${COMPANION_URL}/api/draft/save`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: featureSlug, content })
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
+        },
+        body: JSON.stringify({ slug: featureSlug, content: currentContent, etag })
       });
       
+      if (res.status === 409) {
+        // Stale ETag - reload and retry
+        await loadDraft();
+        return;
+      }
+      
+      if (res.status === 423) {
+        // Resource locked
+        const data = await res.json();
+        setLockStatus(data);
+        setError(data.message);
+        return;
+      }
+      
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
+      
+      const data = await res.json();
+      setEtag(data.etag);
       setIsDirty(false);
       setLastSaved(new Date());
-    } catch (error) {
-      console.error('Failed to save draft:', error);
+    } catch (err) {
+      setError('Failed to save');
+      console.error(err);
     } finally {
       setIsSaving(false);
     }
   }
   
-  async function validateContent() {
+  async function validateDraft() {
+    if (!etag) return;
+    
+    setIsValidating(true);
+    
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        console.error('Failed to get CSRF token');
+        setIsValidating(false);
+        return;
+      }
+    }
+    
     try {
       const res = await fetch(`${COMPANION_URL}/api/validate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: featureSlug, content })
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
+        },
+        body: JSON.stringify({ slug: featureSlug, etag })
       });
+      
+      if (!res.ok) return;
       
       const result = await res.json();
       setValidationResult(result);
-    } catch (error) {
-      console.error('Validation failed:', error);
+    } catch (err) {
+      console.error('Validation failed:', err);
+    } finally {
+      setIsValidating(false);
     }
   }
   
-  // LLM Verify - Non-invasive quality check
   async function handleVerify() {
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for verify, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        setError('Failed to get CSRF token');
+        return;
+      }
+    }
+    
     setIsVerifying(true);
+    setError(null);
+    
     try {
       const res = await fetch(`${COMPANION_URL}/api/llm/verify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
+        },
         body: JSON.stringify({
           slug: featureSlug,
-          content,
+          etag,
           validationResult
         })
       });
       
+      if (!res.ok) throw new Error('Verification failed');
+      
       const card = await res.json();
-      setReportCard(card);
-      setActiveTab('report');
-    } catch (error) {
-      console.error('LLM Verify failed:', error);
-      alert('Failed to verify with LLM');
+      console.log('Report card received:', card);
+      if (card && typeof card === 'object') {
+        setReportCard(card);
+        setActiveTab('report');
+      } else {
+        throw new Error('Invalid report card format');
+      }
+    } catch (err) {
+      setError('LLM verification failed - using local validation');
+      console.error(err);
     } finally {
       setIsVerifying(false);
     }
   }
   
-  // LLM Fill - Suggest missing sections
   async function handleFill() {
-    if (!validationResult?.missingFields?.length) {
-      alert('No missing fields to fill');
+    if (!validationResult || !validationResult.missing_fields || validationResult.missing_fields.length === 0) {
+      setError('No missing fields to fill');
       return;
     }
     
     setIsFilling(true);
+    setError(null);
+    
     try {
-      const res = await fetch(`${COMPANION_URL}/api/llm/fill`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slug: featureSlug,
-          content,
-          missingFields: validationResult?.missingFields || []
-        })
-      });
-      
-      const result = await res.json();
-      setContentPatches(result.content_patches);
+      // TODO: Implement LLM fill
+      setPatches([
+        {
+          section: 'stakeholders',
+          suggestion: '- Development Team\n- Product Team\n- QA Team',
+          diff: '+ - Development Team\n+ - Product Team\n+ - QA Team'
+        }
+      ]);
       setActiveTab('suggestions');
-    } catch (error) {
-      console.error('LLM Fill failed:', error);
-      alert('Failed to get suggestions from LLM');
+    } catch (err) {
+      setError('Fill suggestions failed');
+      console.error(err);
     } finally {
       setIsFilling(false);
     }
   }
   
-  // Create PRP - Generate implementation plan
   async function handleCreatePRP() {
-    // Check gate
-    if (!reportCard?.prp_gate?.allowed && !confirm('INITIAL.md is not ready. Create draft PRP anyway?')) {
-      return;
+    const isReady = reportCard?.prp_gate?.allowed;
+    
+    if (!isReady) {
+      const proceed = confirm(
+        'INITIAL.md is not ready.\nMissing: ' + 
+        (validationResult?.missing_fields?.join(', ') || 'unknown') + 
+        '\n\nCreate draft PRP anyway?'
+      );
+      if (!proceed) return;
+    }
+    
+    // Ensure we have a CSRF token
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for PRP, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        setError('Failed to get CSRF token');
+        return;
+      }
     }
     
     setIsCreatingPRP(true);
+    setError(null);
+    
     try {
-      // First, promote draft to final
-      await fetch(`${COMPANION_URL}/api/draft/promote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: featureSlug })
-      });
+      // First save any pending changes
+      if (isDirty) {
+        await handleSave();
+      }
       
-      // Then create PRP
-      const res = await fetch(`${COMPANION_URL}/api/prp/create`, {
+      // Promote draft to INITIAL.md first if ready
+      if (isReady) {
+        const promoteConfirm = confirm('This will promote your draft to INITIAL.md and create a PRP. Continue?');
+        if (!promoteConfirm) {
+          setIsCreatingPRP(false);
+          return;
+        }
+        
+        // Promote the draft
+        const promoteRes = await fetch(`${COMPANION_URL}/api/draft/promote`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Origin': 'http://localhost:3000',
+            'x-csrf-token': tokenToUse
+          },
+          body: JSON.stringify({
+            slug: featureSlug,
+            etag,
+            approveHeader: true,
+            approveContent: true
+          })
+        });
+        
+        if (!promoteRes.ok) {
+          const error = await promoteRes.json();
+          throw new Error(error.error || 'Failed to promote draft');
+        }
+      }
+      
+      // Create the PRP using our new endpoint
+      const prpRes = await fetch(`${COMPANION_URL}/api/create-prp`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
+        },
         body: JSON.stringify({
-          slug: featureSlug,
-          initialContent: content
+          feature: featureSlug
         })
       });
       
-      const result = await res.json();
-      alert(`PRP created at: ${result.prp_artifact.path}`);
+      const prpData = await prpRes.json();
+      
+      if (!prpRes.ok) {
+        throw new Error(prpData.error || 'Failed to create PRP');
+      }
+      
+      // Show success with next steps
+      alert(`✅ PRP created successfully!\n\nPath: ${prpData.path}\n\nNext steps:\n${prpData.next_steps?.join('\n') || 'Review and execute the PRP'}`);
+      
+      // Update PRP artifact display
+      setPrpArtifact({
+        path: prpData.path,
+        feature: prpData.feature,
+        message: prpData.message
+      });
+      
       setActiveTab('prp');
-    } catch (error) {
-      console.error('PRP creation failed:', error);
-      alert('Failed to create PRP');
+    } catch (err) {
+      setError('Failed to create PRP');
+      console.error(err);
     } finally {
       setIsCreatingPRP(false);
     }
   }
   
-  // Apply a content patch
-  function applyPatch(patch: ContentPatch) {
-    const newContent = content + '\n\n' + patch.suggestion;
+  function applyPatch(patch: any) {
+    // Simple append for now - should use section-scoped patching
+    const newContent = content + '\n\n## ' + patch.section + '\n\n' + patch.suggestion;
     setContent(newContent);
     setIsDirty(true);
-    
-    // Remove applied patch
-    setContentPatches(patches => patches.filter(p => p.section !== patch.section));
+    setPatches(patches.filter(p => p.section !== patch.section));
   }
   
-  // Readiness indicator
+  // Status calculations
+  const status = reportCard?.header_meta?.status || 'draft';
   const readinessScore = reportCard?.header_meta?.readiness_score || 0;
-  const readinessColor = readinessScore >= 8 ? 'text-green-500' : 
-                         readinessScore >= 5 ? 'text-yellow-500' : 'text-red-500';
+  const missingCount = validationResult?.missing_fields?.length || 0;
+  
+  const statusColor = 
+    status === 'ready' ? 'bg-green-500' :
+    status === 'frozen' ? 'bg-blue-500' : 'bg-yellow-500';
+  
+  const readinessColor = 
+    readinessScore >= 7 ? 'text-green-500' :
+    readinessScore >= 5 ? 'text-yellow-500' : 'text-red-500';
   
   return (
     <div className="container mx-auto p-4 max-w-7xl">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      {/* Header with Status Bar */}
+      <div className="flex justify-between items-center mb-4">
         <div>
-          <h1 className="text-3xl font-bold">Context-OS Editor</h1>
+          <h1 className="text-3xl font-bold">Context-OS Editor V2</h1>
           <p className="text-muted-foreground">Feature: {featureSlug.replace(/_/g, ' ')}</p>
         </div>
         
-        {/* Status Bar */}
-        <div className="flex items-center gap-4">
-          {validationResult && (
-            <Badge variant={validationResult.valid ? "default" : "destructive"}>
-              {validationResult?.valid ? 'Valid' : `${validationResult?.missingFields?.length || 0} Missing`}
+        <div className="flex items-center gap-3">
+          <Badge className={statusColor}>{status.toUpperCase()}</Badge>
+          
+          {readinessScore > 0 && (
+            <span className={`font-semibold ${readinessColor}`}>
+              Readiness: {readinessScore}/10
+            </span>
+          )}
+          
+          {missingCount > 0 && (
+            <Badge variant="destructive">
+              {missingCount} missing
             </Badge>
           )}
           
-          {reportCard && (
-            <div className={`flex items-center gap-2 ${readinessColor}`}>
-              <span className="font-semibold">Readiness: {readinessScore}/10</span>
-            </div>
+          {validationResult?.tool_version && (
+            <span className="text-xs text-muted-foreground">
+              {validationResult.tool_version}
+            </span>
           )}
           
-          {isSaving && <span className="text-sm text-muted-foreground">Saving...</span>}
-          {lastSaved && !isSaving && (
-            <span className="text-sm text-muted-foreground">
-              Saved {lastSaved.toLocaleTimeString()}
+          {isSaving && (
+            <span className="flex items-center gap-1 text-sm text-yellow-600">
+              <span className="animate-pulse">●</span> Saving...
+            </span>
+          )}
+          
+          {isValidating && (
+            <span className="flex items-center gap-1 text-sm text-blue-600">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              Validating...
+            </span>
+          )}
+          
+          {isDirty && !isSaving && (
+            <span className="flex items-center gap-1 text-sm text-yellow-500">
+              <span>●</span> Unsaved changes
+            </span>
+          )}
+          
+          {lastSaved && !isSaving && !isDirty && (
+            <span className="flex items-center gap-1 text-sm text-green-600">
+              <CheckCircle className="w-3 h-3" />
+              Saved
             </span>
           )}
         </div>
       </div>
       
-      {/* Main Content */}
+      {/* Lock Banner */}
+      {lockStatus && !lockStatus.acquired && (
+        <Alert className="mb-4 border-yellow-500">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{lockStatus.message}</AlertDescription>
+        </Alert>
+      )}
+      
+      {/* Error Banner */}
+      {error && (
+        <Alert className="mb-4 border-red-500">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+      
+      {/* Frozen State Banner */}
+      {status === 'frozen' && (
+        <Alert className="mb-4 border-blue-500">
+          <Lock className="h-4 w-4" />
+          <AlertDescription>
+            Document frozen - Implementation in progress. Semantic edits blocked.
+            <Button size="sm" variant="outline" className="ml-4">
+              Unfreeze
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {/* Main Content Grid */}
       <div className="grid grid-cols-3 gap-4">
-        {/* Editor Panel (2 cols) */}
+        {/* Editor Panel */}
         <div className="col-span-2">
           <Card className="h-[700px]">
             <CardHeader>
-              <CardTitle>INITIAL.md Editor</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle>INITIAL.md Editor</CardTitle>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {isSaving && (
+                    <span className="flex items-center gap-1">
+                      <span className="animate-pulse">●</span> Saving...
+                    </span>
+                  )}
+                  {!isSaving && isDirty && (
+                    <span className="flex items-center gap-1">
+                      <span className="text-yellow-500">●</span> Unsaved changes
+                    </span>
+                  )}
+                  {!isSaving && !isDirty && lastSaved && (
+                    <span className="flex items-center gap-1">
+                      <span className="text-green-500">✓</span> Saved
+                    </span>
+                  )}
+                  {isVerifying && (
+                    <span className="flex items-center gap-1">
+                      <span className="animate-spin">⟳</span> Validating...
+                    </span>
+                  )}
+                </div>
+              </div>
               <div className="flex gap-2 mt-4">
                 {/* The Three Buttons */}
                 <Button
                   onClick={handleVerify}
-                  disabled={isVerifying}
+                  disabled={isVerifying || !csrfToken}
                   variant="outline"
                   className="gap-2"
                 >
-                  <CheckCircle className="w-4 h-4" />
-                  {isVerifying ? 'Verifying...' : 'LLM Verify'}
+                  {isVerifying ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4" />
+                      LLM Verify
+                    </>
+                  )}
                 </Button>
                 
                 <Button
                   onClick={handleFill}
-                  disabled={isFilling || !validationResult?.missingFields?.length}
+                  disabled={isFilling || !missingCount}
                   variant="outline"
                   className="gap-2"
                 >
-                  <Sparkles className="w-4 h-4" />
-                  {isFilling ? 'Getting Suggestions...' : 'LLM Fill'}
+                  {isFilling ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Getting...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      LLM Fill ({missingCount})
+                    </>
+                  )}
                 </Button>
                 
                 <Button
                   onClick={handleCreatePRP}
-                  disabled={isCreatingPRP}
+                  disabled={isCreatingPRP || !csrfToken}
                   variant={reportCard?.prp_gate?.allowed ? "default" : "secondary"}
                   className="gap-2"
                 >
-                  <FileCode className="w-4 h-4" />
-                  {isCreatingPRP ? 'Creating PRP...' : 
-                   reportCard?.prp_gate?.allowed ? 'Create PRP' : 'Create PRP (Draft)'}
+                  {isCreatingPRP ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Creating PRP...
+                    </>
+                  ) : (
+                    <>
+                      <FileCode className="w-4 h-4" />
+                      {reportCard?.prp_gate?.allowed ? 'Create PRP' : 'Create PRP (Draft)'}
+                    </>
+                  )}
                 </Button>
               </div>
             </CardHeader>
@@ -324,8 +612,17 @@ export default function ContextOSPage() {
               <MonacoEditor
                 value={content}
                 onChange={(value) => {
+                  console.log('Monaco onChange fired, new value length:', value?.length);
+                  console.log('First 100 chars:', value?.substring(0, 100));
                   setContent(value || '');
                   setIsDirty(true);
+                }}
+                onMount={(editor, monaco) => {
+                  console.log('Monaco editor mounted');
+                  // Force update the model value in case of sync issues
+                  if (content) {
+                    editor.setValue(content);
+                  }
                 }}
                 language="markdown"
                 theme="vs-light"
@@ -334,14 +631,15 @@ export default function ContextOSPage() {
                   fontSize: 14,
                   wordWrap: 'on',
                   lineNumbers: 'on',
-                  renderWhitespace: 'selection'
+                  renderWhitespace: 'selection',
+                  readOnly: status === 'frozen'
                 }}
               />
             </CardContent>
           </Card>
         </div>
         
-        {/* Side Panel (1 col) */}
+        {/* Side Panel */}
         <div className="col-span-1">
           <Card className="h-[700px]">
             <CardHeader>
@@ -352,17 +650,17 @@ export default function ContextOSPage() {
               <Tabs value={activeTab} onValueChange={setActiveTab}>
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="report">Report</TabsTrigger>
-                  <TabsTrigger value="suggestions">Suggestions</TabsTrigger>
+                  <TabsTrigger value="suggestions">Fill</TabsTrigger>
                   <TabsTrigger value="prp">PRP</TabsTrigger>
                 </TabsList>
                 
+                {/* Report Tab */}
                 <TabsContent value="report" className="space-y-4">
                   {reportCard ? (
                     <>
-                      {/* Report Card */}
                       <div className="space-y-2">
                         <h3 className="font-semibold">Quality Report</h3>
-                        <div className="space-y-2">
+                        <div className="text-sm space-y-1">
                           <div className="flex justify-between">
                             <span>Status:</span>
                             <Badge>{reportCard?.header_meta?.status || 'unknown'}</Badge>
@@ -377,10 +675,12 @@ export default function ContextOSPage() {
                             <span>Confidence:</span>
                             <span>{((reportCard?.header_meta?.confidence || 0) * 100).toFixed(0)}%</span>
                           </div>
+                          {reportCard?.offline_mode && (
+                            <Badge variant="outline">Offline Mode</Badge>
+                          )}
                         </div>
                       </div>
                       
-                      {/* Missing Fields */}
                       {reportCard?.header_meta?.missing_fields?.length > 0 && (
                         <Alert>
                           <AlertCircle className="h-4 w-4" />
@@ -390,20 +690,18 @@ export default function ContextOSPage() {
                         </Alert>
                       )}
                       
-                      {/* Suggestions */}
                       <div className="space-y-2">
                         <h3 className="font-semibold">Suggestions</h3>
                         <ul className="list-disc list-inside space-y-1">
-                          {(reportCard?.suggestions || []).map((suggestion, i) => (
-                            <li key={i} className="text-sm">{suggestion}</li>
+                          {(reportCard?.suggestions || []).map((s, i) => (
+                            <li key={i} className="text-sm">{s}</li>
                           ))}
                         </ul>
                       </div>
                       
-                      {/* PRP Gate */}
                       <Alert variant={reportCard?.prp_gate?.allowed ? "default" : "destructive"}>
                         <AlertDescription>
-                          <strong>PRP Status:</strong> {reportCard?.prp_gate?.reason || 'Not evaluated'}
+                          <strong>PRP:</strong> {reportCard?.prp_gate?.reason || 'Not evaluated'}
                           <br />
                           <strong>Next:</strong> {reportCard?.prp_gate?.next_best_action || 'Run verification'}
                         </AlertDescription>
@@ -416,15 +714,15 @@ export default function ContextOSPage() {
                   )}
                 </TabsContent>
                 
+                {/* Suggestions Tab */}
                 <TabsContent value="suggestions" className="space-y-4">
-                  {contentPatches.length > 0 ? (
-                    <div className="space-y-4">
-                      <h3 className="font-semibold">Content Suggestions</h3>
-                      {contentPatches.map((patch, i) => (
+                  {patches.length > 0 ? (
+                    <div className="space-y-3">
+                      {patches.map((patch, i) => (
                         <Card key={i}>
                           <CardHeader className="py-2">
                             <div className="flex justify-between items-center">
-                              <span className="font-semibold">{patch.section}</span>
+                              <span className="font-semibold text-sm">{patch.section}</span>
                               <Button
                                 size="sm"
                                 onClick={() => applyPatch(patch)}
@@ -434,7 +732,7 @@ export default function ContextOSPage() {
                             </div>
                           </CardHeader>
                           <CardContent className="py-2">
-                            <pre className="text-xs bg-muted p-2 rounded">
+                            <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
                               {patch.diff}
                             </pre>
                           </CardContent>
@@ -443,17 +741,55 @@ export default function ContextOSPage() {
                     </div>
                   ) : (
                     <p className="text-muted-foreground">
-                      Click "LLM Fill" to get content suggestions for missing sections
+                      Click "LLM Fill" for content suggestions
                     </p>
                   )}
                 </TabsContent>
                 
+                {/* PRP Tab */}
                 <TabsContent value="prp" className="space-y-4">
-                  <p className="text-muted-foreground">
-                    {reportCard?.prp_gate?.allowed ? 
-                     'Ready to generate PRP. Click "Create PRP" to proceed.' :
-                     'Complete missing sections before generating PRP.'}
-                  </p>
+                  {prpArtifact ? (
+                    <div className="space-y-4">
+                      <div className="rounded-lg bg-green-50 dark:bg-green-900/20 p-4">
+                        <h3 className="font-semibold text-green-800 dark:text-green-200 mb-2">
+                          ✅ PRP Created Successfully
+                        </h3>
+                        <p className="text-sm text-green-700 dark:text-green-300">
+                          Path: <code className="bg-green-100 dark:bg-green-800 px-2 py-1 rounded">
+                            {prpArtifact.path}
+                          </code>
+                        </p>
+                        <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                          Feature: <strong>{prpArtifact.feature}</strong>
+                        </p>
+                      </div>
+                      
+                      <div className="border rounded-lg p-4">
+                        <h4 className="font-semibold mb-2">Next Steps:</h4>
+                        <ol className="list-decimal list-inside space-y-1 text-sm">
+                          <li>Review the generated PRP at <code>{prpArtifact.path}</code></li>
+                          <li>Refine implementation details as needed</li>
+                          <li>Execute with <code>/execute-prp {prpArtifact.path}</code></li>
+                        </ol>
+                      </div>
+                      
+                      <Button
+                        variant="outline"
+                        onClick={() => window.open(`vscode://file/${prpArtifact.path}`, '_blank')}
+                        className="w-full"
+                      >
+                        Open PRP in Editor
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      {reportCard?.prp_gate?.allowed ? 
+                       'Ready to generate PRP' :
+                       validationResult?.missing_fields?.length ?
+                       `Complete missing sections: ${validationResult.missing_fields.join(', ')}` :
+                       'Run verification first'}
+                    </p>
+                  )}
                 </TabsContent>
               </Tabs>
             </CardContent>

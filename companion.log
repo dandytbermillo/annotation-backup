@@ -1,7 +1,31 @@
 🚀 Context-OS Companion V2 running on http://127.0.0.1:4000
-   Session: 5fc66d5d-af61-4c42-bf24-13fafbbda9e6
+   Session: a1a7b87f-9bdd-4e97-b899-ee828ecd7993
    User: user_MacAir.local_1757097319839
-Security check for GET /api/draft/test
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'curl/8.7.1',
+  accept: '*/*',
+  'content-type': 'application/json',
+  origin: 'http://localhost:3000',
+  'content-length': '19'
+}
+Origin check: http://localhost:3000
+CSRF token provided: undefined
+WARNING: No CSRF token provided, allowing for development
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'curl/8.7.1',
+  accept: '*/*',
+  'content-type': 'application/json',
+  origin: 'http://localhost:3000',
+  'content-length': '19'
+}
+Origin check: http://localhost:3000
+CSRF token provided: undefined
+WARNING: No CSRF token provided, allowing for development
+Security check for GET /api/csrf
 Headers: {
   host: 'localhost:4000',
   'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
@@ -14,7 +38,7 @@ Headers: {
   'sec-fetch-dest': 'empty',
   'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-site',
-  'if-none-match': 'W/"3ec-aMC1n+ezWcByzdbt8uKoBRbDX8k"',
+  'if-none-match': 'W/"4c-4U9msnMSIhBp24aLk/aMGD3HxDU"',
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
@@ -31,7 +55,7 @@ Headers: {
   'sec-fetch-dest': 'empty',
   'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-site',
-  'if-none-match': 'W/"3ea-e2hQxiYMjXTPRn1/JDPqb0Vkgk0"',
+  'if-none-match': 'W/"3c0-32hnYRLUxwoqkMs3BQ3PIsw3aEU"',
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
@@ -44,7 +68,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '908',
+  'x-csrf-token': '928d1fd3756ae14713a89abf541558cef4dd390321f8ed0c7bffc0d92a808bbe',
+  'content-length': '41',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -53,9 +78,8 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 841
+CSRF token provided: 928d1fd3756ae14713a89abf541558cef4dd390321f8ed0c7bffc0d92a808bbe
+Validating content, length: 799
 First 500 chars of content: ---
 meta_version: 1
 feature_slug: test
@@ -67,19 +91,20 @@ last_validated_at: 2025-09-05T18:45:11.650Z
 
 # INITIAL
 
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
+**Title**: Dark Mode Support
+**Feature**: dark_mode
 
-  ## Problem
+## Problem
 
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
 
-  ## Goals
+## Goals
 
-  - Reduce eye strain for users
-  - Improve access
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
 Normalized content for validation: # INITIAL
 **Title**: Dark Mode Support
 **Feature**: dark_mode
@@ -101,6 +126,23 @@ Validation result: {
   missing: [ 'references' ],
   readiness: 9
 }
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"4c-xIZ9rQkfEytXH63EJC/jUTvWynY"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
 Security check for GET /api/draft/test
 Headers: {
   host: 'localhost:4000',
@@ -114,7 +156,7 @@ Headers: {
   'sec-fetch-dest': 'empty',
   'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-site',
-  'if-none-match': 'W/"3ea-H6E8avWnGAs5pxKkhWwFvcsYjsA"',
+  'if-none-match': 'W/"3c0-NjTkslrYWbHbqfINNC+dbybYWqI"',
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
@@ -127,7 +169,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '908',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -136,9 +179,8 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 841
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 799
 First 500 chars of content: ---
 meta_version: 1
 feature_slug: test
@@ -150,19 +192,20 @@ last_validated_at: 2025-09-05T18:45:11.650Z
 
 # INITIAL
 
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
+**Title**: Dark Mode Support
+**Feature**: dark_mode
 
-  ## Problem
+## Problem
 
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
 
-  ## Goals
+## Goals
 
-  - Reduce eye strain for users
-  - Improve access
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
 Normalized content for validation: # INITIAL
 **Title**: Dark Mode Support
 **Feature**: dark_mode
@@ -184,27 +227,59 @@ Validation result: {
   missing: [ 'references' ],
   readiness: 9
 }
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'sec-fetch-site': 'same-site',
+  accept: '*/*',
+  origin: 'http://localhost:3000',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'sec-fetch-site': 'same-site',
+  accept: '*/*',
+  origin: 'http://localhost:3000',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
 Security check for POST /api/validate
 Headers: {
   host: 'localhost:4000',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
   accept: '*/*',
-  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
-  'accept-encoding': 'gzip, deflate, br, zstd',
-  referer: 'http://localhost:3000/',
+  'x-csrf-token': '2fc6c4c2ac9c55edd882795be3b9e144ecf82d5349ab415c4ca1f1239563f36d',
   'content-type': 'application/json',
-  'content-length': '178',
   origin: 'http://localhost:3000',
-  connection: 'keep-alive',
-  'sec-fetch-dest': 'empty',
-  'sec-fetch-mode': 'cors',
   'sec-fetch-site': 'same-site',
-  priority: 'u=4'
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'content-length': '41',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 841
+CSRF token provided: 2fc6c4c2ac9c55edd882795be3b9e144ecf82d5349ab415c4ca1f1239563f36d
+Validating content, length: 799
 First 500 chars of content: ---
 meta_version: 1
 feature_slug: test
@@ -216,19 +291,20 @@ last_validated_at: 2025-09-05T18:45:11.650Z
 
 # INITIAL
 
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
+**Title**: Dark Mode Support
+**Feature**: dark_mode
 
-  ## Problem
+## Problem
 
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
 
-  ## Goals
+## Goals
 
-  - Reduce eye strain for users
-  - Improve access
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
 Normalized content for validation: # INITIAL
 **Title**: Dark Mode Support
 **Feature**: dark_mode
@@ -250,6 +326,145 @@ Validation result: {
   missing: [ 'references' ],
   readiness: 9
 }
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'sec-fetch-site': 'same-site',
+  accept: '*/*',
+  origin: 'http://localhost:3000',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'sec-fetch-site': 'same-site',
+  accept: '*/*',
+  origin: 'http://localhost:3000',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  accept: '*/*',
+  'x-csrf-token': '495acc29b1e495909baa258cd555ba43a05ca658039dda028681f83da37986cb',
+  'content-type': 'application/json',
+  origin: 'http://localhost:3000',
+  'sec-fetch-site': 'same-site',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'content-length': '41',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 495acc29b1e495909baa258cd555ba43a05ca658039dda028681f83da37986cb
+Validating content, length: 799
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+# INITIAL
+
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  accept: '*/*',
+  'x-csrf-token': '495acc29b1e495909baa258cd555ba43a05ca658039dda028681f83da37986cb',
+  'content-type': 'application/json',
+  origin: 'http://localhost:3000',
+  'sec-fetch-site': 'same-site',
+  'sec-fetch-mode': 'cors',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  referer: 'http://localhost:3000/',
+  'sec-fetch-dest': 'empty',
+  'content-length': '18',
+  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
+  priority: 'u=3, i',
+  'accept-encoding': 'gzip, deflate',
+  connection: 'keep-alive'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 495acc29b1e495909baa258cd555ba43a05ca658039dda028681f83da37986cb
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '18',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
 Security check for POST /api/draft/save
 Headers: {
   host: 'localhost:4000',
@@ -259,7 +474,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '178',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '828',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -268,8 +484,7 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
 Security check for POST /api/validate
 Headers: {
   host: 'localhost:4000',
@@ -279,7 +494,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '909',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -288,9 +504,8 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 141
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 738
 First 500 chars of content: ---
 meta_version: 1
 feature_slug: test
@@ -301,19 +516,315 @@ last_validated_at: 2025-09-05T18:45:11.650Z
 ---
 
  
-Normalized content for validation: 
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
 Validation result: {
-  found: [],
-  missing: [
-    'title',
-    'feature',
-    'problem',
-    'goals',
-    'acceptance_criteria',
-    'stakeholders',
-    'references'
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '505',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
   ],
-  readiness: 0
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120719707-1'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:05:19.708Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 738,
+    list_items: 14
+  }
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '505',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '601',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120725410-2'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:05:25.411Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 738,
+    list_items: 14
+  }
+}
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 517
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ 
+ 
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acceptance Criteria
+
+- Theme toggles between light and dark
+- User preference is saved
+- All UI elements properly themed
+- No contrast issues in dark mode
+
+## Stakeholders
+
+- Development Team
+- UX Design Team
+- Product Manag
+Normalized content for validation: ## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+## Acceptance Criteria
+- Theme toggles between light and dark
+- User preference is saved
+- All UI elements properly themed
+- No contrast issues in dark mode
+## Stakeholders
+
+Validation result: {
+  found: [ 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'problem', 'references' ],
+  readiness: 5
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '592',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120726575-3'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 5,
+    missing_fields: [ 'title', 'feature', 'problem', 'references' ],
+    last_validated_at: '2025-09-06T01:05:26.576Z',
+    confidence: 0.65
+  },
+  suggestions: [
+    'Add a detailed problem statement explaining the issue this feature solves'
+  ],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, problem, references',
+    next_best_action: 'Complete missing sections: title, feature, problem, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 3,
+    content_length: 517,
+    list_items: 14
+  }
 }
 Security check for POST /api/draft/save
 Headers: {
@@ -324,7 +835,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '909',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '828',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -333,8 +845,66 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 738
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ 
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
 Security check for POST /api/llm/verify
 Headers: {
   host: 'localhost:4000',
@@ -344,7 +914,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '1678',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '505',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -353,8 +924,7 @@ Headers: {
   priority: 'u=0'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
 🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
 Claude response: {
   status: 'ok',
@@ -374,290 +944,32 @@ Claude response: {
     toolsInvoked: [ 'Task', 'Grep', 'Read' ],
     duration: 3500
   },
-  requestId: 'mock-1757107677145-1'
+  requestId: 'mock-1757120735433-4'
 }
 Sending report card: {
   header_meta: {
     meta_version: 1,
     feature_slug: 'test',
     status: 'draft',
-    readiness_score: 0,
-    missing_fields: [
-      'title',
-      'feature',
-      'problem',
-      'goals',
-      'acceptance_criteria',
-      'stakeholders',
-      'references'
-    ],
-    last_validated_at: '2025-09-05T21:27:57.145Z',
-    confidence: 0.5
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:05:35.434Z',
+    confidence: 1
   },
-  suggestions: [
-    'Add a detailed problem statement explaining the issue this feature solves',
-    'List at least 3 specific goals this feature aims to achieve',
-    'Define clear acceptance criteria that can be tested',
-    'Identify stakeholders who will be affected by this feature'
-  ],
+  suggestions: [],
   prp_gate: {
     allowed: false,
-    reason: 'Missing: title, feature, problem, goals, acceptance_criteria, stakeholders, references',
-    next_best_action: 'Complete missing sections: title, feature, problem, goals, acceptance_criteria, stakeholders, references'
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
   },
   stats: {
     total_sections: 7,
-    found_sections: 0,
-    content_length: 141,
-    list_items: 2
-  }
-}
-Security check for GET /api/draft/test
-Headers: {
-  host: 'localhost:4000',
-  'sec-fetch-site': 'same-site',
-  accept: '*/*',
-  origin: 'http://localhost:3000',
-  'sec-fetch-mode': 'cors',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
-  referer: 'http://localhost:3000/',
-  'sec-fetch-dest': 'empty',
-  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
-  priority: 'u=3, i',
-  'accept-encoding': 'gzip, deflate',
-  connection: 'keep-alive'
-}
-Origin check: http://localhost:3000
-Security check for POST /api/validate
-Headers: {
-  host: 'localhost:4000',
-  accept: '*/*',
-  'content-type': 'application/json',
-  origin: 'http://localhost:3000',
-  'sec-fetch-site': 'same-site',
-  'sec-fetch-mode': 'cors',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
-  referer: 'http://localhost:3000/',
-  'sec-fetch-dest': 'empty',
-  'content-length': '909',
-  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
-  priority: 'u=3, i',
-  'accept-encoding': 'gzip, deflate',
-  connection: 'keep-alive'
-}
-Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 842
-First 500 chars of content: ---
-meta_version: 1
-feature_slug: test
-status: draft
-readiness_score: 0
-missing_fields: []
-last_validated_at: 2025-09-05T18:45:11.650Z
----
-
- # INITIAL
-
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
-
-  ## Problem
-
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
-
-  ## Goals
-
-  - Reduce eye strain for users
-  - Improve acces
-Normalized content for validation: # INITIAL
-**Title**: Dark Mode Support
-**Feature**: dark_mode
-## Problem
-Users are experiencing eye strain when using the application in low-light conditions. The current 
-bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-theme option.
-## Goals
-- Reduce 
-Validation result: {
-  found: [
-    'title',
-    'feature',
-    'problem',
-    'goals',
-    'acceptance_criteria',
-    'stakeholders'
-  ],
-  missing: [ 'references' ],
-  readiness: 9
-}
-Security check for GET /api/draft/test
-Headers: {
-  host: 'localhost:4000',
-  'sec-fetch-site': 'same-site',
-  accept: '*/*',
-  origin: 'http://localhost:3000',
-  'sec-fetch-mode': 'cors',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
-  referer: 'http://localhost:3000/',
-  'sec-fetch-dest': 'empty',
-  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
-  priority: 'u=3, i',
-  'accept-encoding': 'gzip, deflate',
-  connection: 'keep-alive'
-}
-Origin check: http://localhost:3000
-Security check for POST /api/validate
-Headers: {
-  host: 'localhost:4000',
-  accept: '*/*',
-  'content-type': 'application/json',
-  origin: 'http://localhost:3000',
-  'sec-fetch-site': 'same-site',
-  'sec-fetch-mode': 'cors',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
-  referer: 'http://localhost:3000/',
-  'sec-fetch-dest': 'empty',
-  'content-length': '909',
-  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
-  priority: 'u=3, i',
-  'accept-encoding': 'gzip, deflate',
-  connection: 'keep-alive'
-}
-Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 842
-First 500 chars of content: ---
-meta_version: 1
-feature_slug: test
-status: draft
-readiness_score: 0
-missing_fields: []
-last_validated_at: 2025-09-05T18:45:11.650Z
----
-
- # INITIAL
-
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
-
-  ## Problem
-
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
-
-  ## Goals
-
-  - Reduce eye strain for users
-  - Improve acces
-Normalized content for validation: # INITIAL
-**Title**: Dark Mode Support
-**Feature**: dark_mode
-## Problem
-Users are experiencing eye strain when using the application in low-light conditions. The current 
-bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-theme option.
-## Goals
-- Reduce 
-Validation result: {
-  found: [
-    'title',
-    'feature',
-    'problem',
-    'goals',
-    'acceptance_criteria',
-    'stakeholders'
-  ],
-  missing: [ 'references' ],
-  readiness: 9
-}
-Security check for POST /api/llm/verify
-Headers: {
-  host: 'localhost:4000',
-  accept: '*/*',
-  'content-type': 'application/json',
-  origin: 'http://localhost:3000',
-  'sec-fetch-site': 'same-site',
-  'sec-fetch-mode': 'cors',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
-  referer: 'http://localhost:3000/',
-  'sec-fetch-dest': 'empty',
-  'content-length': '1356',
-  'accept-language': 'en-CA,en-US;q=0.9,en;q=0.8',
-  priority: 'u=3, i',
-  'accept-encoding': 'gzip, deflate',
-  connection: 'keep-alive'
-}
-Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
-Claude response: {
-  status: 'ok',
-  findings: [
-    'Function calculateTotal lacks error handling',
-    "Unused variable 'tempData' in line 42",
-    'Complex nested loops could be simplified'
-  ],
-  recommendations: [
-    'Add try-catch blocks for error handling',
-    'Remove unused variables',
-    'Refactor using array methods'
-  ],
-  confidence: 0.85,
-  metadata: {
-    tokensUsed: 1250,
-    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
-    duration: 3500
-  },
-  requestId: 'mock-1757107711191-2'
-}
-Sending report card: {
-  header_meta: {
-    meta_version: 1,
-    feature_slug: 'test',
-    status: 'draft',
-    readiness_score: 9,
-    missing_fields: [ 'references' ],
-    last_validated_at: '2025-09-05T21:28:31.191Z',
-    confidence: 1
-  },
-  suggestions: [],
-  prp_gate: {
-    allowed: true,
-    reason: 'Missing: references',
-    next_best_action: 'Complete missing sections: references'
-  },
-  stats: {
-    total_sections: 7,
-    found_sections: 6,
-    content_length: 842,
+    found_sections: 4,
+    content_length: 738,
     list_items: 14
   }
 }
-Security check for GET /api/draft/test
-Headers: {
-  host: 'localhost:4000',
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
-  accept: '*/*',
-  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
-  'accept-encoding': 'gzip, deflate, br, zstd',
-  referer: 'http://localhost:3000/',
-  origin: 'http://localhost:3000',
-  connection: 'keep-alive',
-  'sec-fetch-dest': 'empty',
-  'sec-fetch-mode': 'cors',
-  'sec-fetch-site': 'same-site',
-  'if-none-match': 'W/"3ea-PyJO3JncQ+O8HmRhlSU6QKeazg0"',
-  priority: 'u=4'
-}
-Origin check: http://localhost:3000
-Security check for POST /api/validate
+Security check for POST /api/draft/save
 Headers: {
   host: 'localhost:4000',
   'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
@@ -666,7 +978,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '909',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '892',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -675,54 +988,7 @@ Headers: {
   priority: 'u=4'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
-Validating content, length: 842
-First 500 chars of content: ---
-meta_version: 1
-feature_slug: test
-status: draft
-readiness_score: 0
-missing_fields: []
-last_validated_at: 2025-09-05T18:45:11.650Z
----
-
- # INITIAL
-
-  **Title**: Dark Mode Support
-  **Feature**: dark_mode
-
-  ## Problem
-
-  Users are experiencing eye strain when using the application in low-light conditions. The current 
-  bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-  theme option.
-
-  ## Goals
-
-  - Reduce eye strain for users
-  - Improve acces
-Normalized content for validation: # INITIAL
-**Title**: Dark Mode Support
-**Feature**: dark_mode
-## Problem
-Users are experiencing eye strain when using the application in low-light conditions. The current 
-bright theme makes it difficult to work during evening hours. Many users have requested a dark 
-theme option.
-## Goals
-- Reduce 
-Validation result: {
-  found: [
-    'title',
-    'feature',
-    'problem',
-    'goals',
-    'acceptance_criteria',
-    'stakeholders'
-  ],
-  missing: [ 'references' ],
-  readiness: 9
-}
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
 Security check for POST /api/llm/verify
 Headers: {
   host: 'localhost:4000',
@@ -732,7 +998,8 @@ Headers: {
   'accept-encoding': 'gzip, deflate, br, zstd',
   referer: 'http://localhost:3000/',
   'content-type': 'application/json',
-  'content-length': '1356',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '505',
   origin: 'http://localhost:3000',
   connection: 'keep-alive',
   'sec-fetch-dest': 'empty',
@@ -741,8 +1008,74 @@ Headers: {
   priority: 'u=0'
 }
 Origin check: http://localhost:3000
-CSRF token provided: undefined
-WARNING: No CSRF token provided, allowing for development
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 799
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+# INITIAL
+
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
 🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
 Claude response: {
   status: 'ok',
@@ -762,7 +1095,71 @@ Claude response: {
     toolsInvoked: [ 'Task', 'Grep', 'Read' ],
     duration: 3500
   },
-  requestId: 'mock-1757107734024-3'
+  requestId: 'mock-1757120739327-5'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:05:39.328Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 738,
+    list_items: 14
+  }
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '488',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120742884-6'
 }
 Sending report card: {
   header_meta: {
@@ -771,7 +1168,7 @@ Sending report card: {
     status: 'draft',
     readiness_score: 9,
     missing_fields: [ 'references' ],
-    last_validated_at: '2025-09-05T21:28:54.024Z',
+    last_validated_at: '2025-09-06T01:05:42.885Z',
     confidence: 1
   },
   suggestions: [],
@@ -783,7 +1180,1638 @@ Sending report card: {
   stats: {
     total_sections: 7,
     found_sections: 6,
-    content_length: 842,
+    content_length: 799,
     list_items: 14
+  }
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '824',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '41',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 736
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+ 
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Accep
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '505',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120794532-7'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:06:34.533Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 736,
+    list_items: 14
+  }
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '892',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+Validating content, length: 799
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+# INITIAL
+
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f',
+  'content-length': '490',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 50f68628219e066b1acbc9da254d3c723dc84a96284f01ab10aff0fb92b6fb6f
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757120805852-8'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 9,
+    missing_fields: [ 'references' ],
+    last_validated_at: '2025-09-06T01:06:45.853Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: true,
+    reason: 'Missing: references',
+    next_best_action: 'Complete missing sections: references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 6,
+    content_length: 799,
+    list_items: 14
+  }
+}
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"4c-80cMT0IFhhe2X6lqQ7e/uQZoJdQ"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"3c0-dKsnHzB8/XVYm2mElBVIisksoy0"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Validating content, length: 799
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+# INITIAL
+
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match mo
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '490',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121016925-9'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 9,
+    missing_fields: [ 'references' ],
+    last_validated_at: '2025-09-06T01:10:16.925Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: true,
+    reason: 'Missing: references',
+    next_best_action: 'Complete missing sections: references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 6,
+    content_length: 799,
+    list_items: 14
+  }
+}
+Security check for POST /api/draft/promote
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '85',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '18',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '829',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Validating content, length: 738
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ 
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '897',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: cab8c817a7b256b25a49186804eb301a3912768dc4e86665382bfe0bb5b87196
+Validating content, length: 800
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ 
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"4c-pT1k8nePe8qQqQ1wO+L3Ruqz6c8"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"3c1-a5TZR+/o8pA4hecLuVuM7fVa+WI"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Validating content, length: 800
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ 
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '507',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121295341-10'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:14:55.341Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 800,
+    list_items: 17
+  }
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '507',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121296908-11'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:14:56.909Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 800,
+    list_items: 17
+  }
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '968',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Validating content, length: 867
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ # INITIAL
+
+  **Title**: Dark Mode Support
+  **Feature**: dark_mode
+
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Ma
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '490',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121320723-12'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 9,
+    missing_fields: [ 'references' ],
+    last_validated_at: '2025-09-06T01:15:20.724Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: true,
+    reason: 'Missing: references',
+    next_best_action: 'Complete missing sections: references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 6,
+    content_length: 867,
+    list_items: 17
+  }
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '897',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Validating content, length: 800
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+ 
+
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI standards
+- Allow user preference persistence
+
+## Acc
+Normalized content for validation: ## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce eye strain for users
+- Improve accessibility
+- Match modern UI
+Validation result: {
+  found: [ 'problem', 'goals', 'acceptance_criteria', 'stakeholders' ],
+  missing: [ 'title', 'feature', 'references' ],
+  readiness: 7
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '507',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121335587-13'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 7,
+    missing_fields: [ 'title', 'feature', 'references' ],
+    last_validated_at: '2025-09-06T01:15:35.588Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: false,
+    reason: 'Missing: title, feature, references',
+    next_best_action: 'Complete missing sections: title, feature, references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 4,
+    content_length: 800,
+    list_items: 17
+  }
+}
+Security check for POST /api/draft/save
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '968',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Validating content, length: 867
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ # INITIAL
+
+  **Title**: Dark Mode Support
+  **Feature**: dark_mode
+
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Ma
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '490',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121341614-14'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 9,
+    missing_fields: [ 'references' ],
+    last_validated_at: '2025-09-06T01:15:41.614Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: true,
+    reason: 'Missing: references',
+    next_best_action: 'Complete missing sections: references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 6,
+    content_length: 867,
+    list_items: 17
+  }
+}
+Security check for POST /api/draft/promote
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '85',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Security check for POST /api/create-prp
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49',
+  'content-length': '18',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 9de5078b253f21bc4191b497a9e899089f3eac12911fd95a01e8d55adfe6ae49
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"4c-s2lmHZYKpb01h78fWZ/2HF8qsVk"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"3c5-CU0mFnr7mWirZlpwJKlHG1p/x2Y"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': 'bd195ab4631f24c5d195fd3e44628f2c92e07e44c06d4e4fa9dca17dc29a1246',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: bd195ab4631f24c5d195fd3e44628f2c92e07e44c06d4e4fa9dca17dc29a1246
+Validating content, length: 867
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ # INITIAL
+
+  **Title**: Dark Mode Support
+  **Feature**: dark_mode
+
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Ma
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for GET /api/csrf
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"4c-GWh9B6+P3H5KgU0/W9+OejEQscM"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for GET /api/draft/test
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'if-none-match': 'W/"40c-YkYvqXdzXKUDlZ6mjbqDDGYAIYw"',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+Security check for POST /api/validate
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '3bd6dc37b4d9684f4847d5880e4dccb89d0e3deab21bc8d5804391588a25b82b',
+  'content-length': '42',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=4'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 3bd6dc37b4d9684f4847d5880e4dccb89d0e3deab21bc8d5804391588a25b82b
+Validating content, length: 867
+First 500 chars of content: ---
+meta_version: 1
+feature_slug: test
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-05T18:45:11.650Z
+---
+
+ # INITIAL
+
+  **Title**: Dark Mode Support
+  **Feature**: dark_mode
+
+
+## Problem
+
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+
+## Goals
+
+- Reduce eye strain for users
+- Improve accessibility
+- Ma
+Normalized content for validation: # INITIAL
+**Title**: Dark Mode Support
+**Feature**: dark_mode
+## Problem
+Users are experiencing eye strain when using the application in low-light conditions. The current 
+bright theme makes it difficult to work during evening hours. Many users have requested a dark 
+theme option.
+## Goals
+- Reduce 
+Validation result: {
+  found: [
+    'title',
+    'feature',
+    'problem',
+    'goals',
+    'acceptance_criteria',
+    'stakeholders'
+  ],
+  missing: [ 'references' ],
+  readiness: 9
+}
+Security check for POST /api/llm/verify
+Headers: {
+  host: 'localhost:4000',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) Gecko/20100101 Firefox/142.0',
+  accept: '*/*',
+  'accept-language': 'en-CA,en-US;q=0.7,en;q=0.3',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  referer: 'http://localhost:3000/',
+  'content-type': 'application/json',
+  'x-csrf-token': '3bd6dc37b4d9684f4847d5880e4dccb89d0e3deab21bc8d5804391588a25b82b',
+  'content-length': '490',
+  origin: 'http://localhost:3000',
+  connection: 'keep-alive',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  priority: 'u=0'
+}
+Origin check: http://localhost:3000
+CSRF token provided: 3bd6dc37b4d9684f4847d5880e4dccb89d0e3deab21bc8d5804391588a25b82b
+🤖 [MOCK] Claude Task executed: Analyze INITIAL.md and provide quality report...
+Claude response: {
+  status: 'ok',
+  findings: [
+    'Function calculateTotal lacks error handling',
+    "Unused variable 'tempData' in line 42",
+    'Complex nested loops could be simplified'
+  ],
+  recommendations: [
+    'Add try-catch blocks for error handling',
+    'Remove unused variables',
+    'Refactor using array methods'
+  ],
+  confidence: 0.85,
+  metadata: {
+    tokensUsed: 1250,
+    toolsInvoked: [ 'Task', 'Grep', 'Read' ],
+    duration: 3500
+  },
+  requestId: 'mock-1757121362754-15'
+}
+Sending report card: {
+  header_meta: {
+    meta_version: 1,
+    feature_slug: 'test',
+    status: 'draft',
+    readiness_score: 9,
+    missing_fields: [ 'references' ],
+    last_validated_at: '2025-09-06T01:16:02.754Z',
+    confidence: 1
+  },
+  suggestions: [],
+  prp_gate: {
+    allowed: true,
+    reason: 'Missing: references',
+    next_best_action: 'Complete missing sections: references'
+  },
+  stats: {
+    total_sections: 7,
+    found_sections: 6,
+    content_length: 867,
+    list_items: 17
   }
 }

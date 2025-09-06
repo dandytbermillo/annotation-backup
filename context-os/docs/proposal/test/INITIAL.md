@@ -7,7 +7,7 @@ missing_fields: []
 last_validated_at: 2025-09-05T18:45:11.650Z
 ---
 
-# INITIAL
+ # INITIAL
 
   **Title**: Dark Mode Support
   **Feature**: dark_mode
