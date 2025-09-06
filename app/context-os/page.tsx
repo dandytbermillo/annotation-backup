@@ -282,27 +282,72 @@ export default function ContextOSPageV2() {
   }
   
   async function handleFill() {
+    console.log('handleFill called');
+    console.log('validationResult:', validationResult);
+    console.log('missing_fields:', validationResult?.missing_fields);
+    
     if (!validationResult || !validationResult.missing_fields || validationResult.missing_fields.length === 0) {
       setError('No missing fields to fill');
+      alert('No missing fields to fill. validationResult: ' + JSON.stringify(validationResult));
       return;
+    }
+    
+    // Get fresh CSRF token if we don't have one
+    let tokenToUse = csrfToken;
+    if (!tokenToUse) {
+      console.log('No CSRF token for fill, fetching one...');
+      tokenToUse = await initializeSession();
+      if (!tokenToUse) {
+        setError('Failed to get CSRF token');
+        return;
+      }
     }
     
     setIsFilling(true);
     setError(null);
     
     try {
-      // TODO: Implement LLM fill
-      setPatches([
-        {
-          section: 'stakeholders',
-          suggestion: '- Development Team\n- Product Team\n- QA Team',
-          diff: '+ - Development Team\n+ - Product Team\n+ - QA Team'
-        }
-      ]);
+      const res = await fetch(`${COMPANION_URL}/api/llm/fill`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Origin': window.location.origin,
+          'x-csrf-token': tokenToUse
+        },
+        body: JSON.stringify({
+          slug: featureSlug,
+          etag,
+          validationResult
+        })
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Fill generation failed');
+      }
+      
+      const result = await res.json();
+      console.log('Fill suggestions received:', result);
+      console.log('Number of suggestions:', result.suggestions?.length);
+      
+      // Transform suggestions into patches format
+      const patches = result.suggestions.map((suggestion: any) => ({
+        section: suggestion.section,
+        field: suggestion.field,
+        suggestion: suggestion.content,
+        reason: suggestion.reason,
+        diff: `+ ${suggestion.content.split('\n').join('\n+ ')}`
+      }));
+      
+      console.log('Patches created:', patches);
+      setPatches(patches);
+      console.log('Active tab will be set to suggestions');
       setActiveTab('suggestions');
-    } catch (err) {
-      setError('Fill suggestions failed');
-      console.error(err);
+    } catch (err: any) {
+      const errorMsg = `Fill suggestions failed: ${err.message || err}`;
+      setError(errorMsg);
+      console.error('Fill error details:', err);
+      alert(`Error getting suggestions: ${err.message || err}`);
     } finally {
       setIsFilling(false);
     }
@@ -409,17 +454,56 @@ export default function ContextOSPageV2() {
   }
   
   function applyPatch(patch: any) {
-    // Simple append for now - should use section-scoped patching
-    const newContent = content + '\n\n## ' + patch.section + '\n\n' + patch.suggestion;
+    // Apply the suggestion to the content
+    let newContent = content;
+    
+    // Check if section already exists
+    const sectionRegex = new RegExp(`##\\s*${patch.section}`, 'i');
+    if (sectionRegex.test(content)) {
+      // Replace existing section
+      const regex = new RegExp(`##\\s*${patch.section}\\s*\\n[\\s\\S]*?(?=\\n\\s*##|$)`, 'i');
+      newContent = content.replace(regex, patch.suggestion);
+    } else {
+      // Append new section
+      // If it's a field like title or feature (starts with **), add at the beginning
+      if (patch.suggestion.startsWith('**')) {
+        // Find where to insert (after YAML frontmatter if present, otherwise at the beginning)
+        if (content.startsWith('---')) {
+          const endOfYaml = content.indexOf('---', 3);
+          if (endOfYaml !== -1) {
+            const beforeYaml = content.substring(0, endOfYaml + 3);
+            const afterYaml = content.substring(endOfYaml + 3);
+            newContent = beforeYaml + '\n\n' + patch.suggestion + afterYaml;
+          }
+        } else {
+          newContent = patch.suggestion + '\n\n' + content;
+        }
+      } else {
+        // Append section at the end
+        newContent = content + '\n\n' + patch.suggestion;
+      }
+    }
+    
     setContent(newContent);
     setIsDirty(true);
-    setPatches(patches.filter(p => p.section !== patch.section));
+    setPatches(patches.filter(p => p.field !== patch.field));
   }
   
   // Status calculations
   const status = reportCard?.header_meta?.status || 'draft';
   const readinessScore = reportCard?.header_meta?.readiness_score || 0;
   const missingCount = validationResult?.missing_fields?.length || 0;
+  
+  // Debug logging
+  useEffect(() => {
+    console.log('ValidationResult updated:', validationResult);
+    console.log('Missing count:', missingCount);
+  }, [validationResult, missingCount]);
+  
+  useEffect(() => {
+    console.log('Patches state updated:', patches);
+    console.log('Number of patches:', patches.length);
+  }, [patches]);
   
   const statusColor = 
     status === 'ready' ? 'bg-green-500' :
@@ -569,8 +653,14 @@ export default function ContextOSPageV2() {
                 </Button>
                 
                 <Button
-                  onClick={handleFill}
-                  disabled={isFilling || !missingCount}
+                  onClick={() => {
+                    console.log('LLM Fill button clicked!');
+                    console.log('isFilling:', isFilling);
+                    console.log('missingCount:', missingCount);
+                    console.log('validationResult:', validationResult);
+                    handleFill();
+                  }}
+                  disabled={isFilling}
                   variant="outline"
                   className="gap-2"
                 >
@@ -718,6 +808,13 @@ export default function ContextOSPageV2() {
                 <TabsContent value="suggestions" className="space-y-4">
                   {patches.length > 0 ? (
                     <div className="space-y-3">
+                      <Alert className="border-blue-500">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          Found {patches.length} suggestion{patches.length > 1 ? 's' : ''} for missing fields
+                        </AlertDescription>
+                      </Alert>
+                      
                       {patches.map((patch, i) => (
                         <Card key={i}>
                           <CardHeader className="py-2">
@@ -730,10 +827,15 @@ export default function ContextOSPageV2() {
                                 Apply
                               </Button>
                             </div>
+                            {patch.reason && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {patch.reason}
+                              </p>
+                            )}
                           </CardHeader>
                           <CardContent className="py-2">
                             <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
-                              {patch.diff}
+                              {patch.suggestion}
                             </pre>
                           </CardContent>
                         </Card>

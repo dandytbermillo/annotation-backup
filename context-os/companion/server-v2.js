@@ -18,6 +18,7 @@ const LockManager = require('./lib/lock-manager');
 const YAMLValidator = require('./lib/yaml-validator');
 const MarkdownSectionParser = require('./lib/markdown-parser');
 const ContentValidator = require('./lib/content-validator');
+const ClaudeTaskHandler = require('./lib/claude-task-handler');
 const { claudeAdapter } = require('../bridge/claude-adapter');
 const { renderInitial } = require('../templates/render-initial');
 
@@ -272,6 +273,74 @@ app.post('/api/validate', async (req, res) => {
   } catch (error) {
     console.error('Error validating:', error);
     res.status(500).json({ error: error.message, code: 'VALIDATION_ERROR' });
+  }
+});
+
+// LLM Fill - Generate content for missing sections using Claude
+app.post('/api/llm/fill', async (req, res) => {
+  try {
+    const { slug, etag, validationResult } = req.body;
+    
+    if (!validationResult || !validationResult.missing_fields || validationResult.missing_fields.length === 0) {
+      return res.status(400).json({
+        error: 'No missing fields to fill',
+        code: 'NO_MISSING_FIELDS'
+      });
+    }
+    
+    const normalized = slug.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
+    const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
+    
+    // Read current content
+    let content = '';
+    if (fs.existsSync(draftPath)) {
+      content = fs.readFileSync(draftPath, 'utf-8');
+    }
+    
+    // Strip YAML frontmatter for analysis
+    let cleanContent = content;
+    if (content.startsWith('---')) {
+      const endOfYaml = content.indexOf('---', 3);
+      if (endOfYaml !== -1) {
+        cleanContent = content.substring(endOfYaml + 3).trim();
+      }
+    }
+    
+    // Initialize Claude task handler
+    const claudeHandler = new ClaudeTaskHandler();
+    
+    // Generate suggestions for missing fields using Claude
+    const suggestions = [];
+    const missingFields = validationResult.missing_fields;
+    
+    // Use Claude to generate intelligent suggestions for each missing field
+    for (const field of missingFields) {
+      try {
+        console.log(`Generating suggestion for field: ${field}`);
+        const suggestion = await claudeHandler.generateSuggestion(field, cleanContent);
+        if (suggestion) {
+          suggestions.push(suggestion);
+        }
+      } catch (error) {
+        console.error(`Error generating suggestion for ${field}:`, error);
+        // Continue with other fields even if one fails
+      }
+    }
+    
+    // Return suggestions for user to review
+    res.json({
+      suggestions,
+      missing_fields: missingFields,
+      message: `Generated ${suggestions.length} suggestions for missing fields`,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('Error generating fill suggestions:', error);
+    res.status(500).json({ 
+      error: error.message, 
+      code: 'FILL_ERROR' 
+    });
   }
 });
 
