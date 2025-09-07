@@ -1112,16 +1112,10 @@ Batch Operations:
 - [x] Integration tests passing
 
 ### Phase 2.5: Missing Commands ✅ COMPLETE
-- [x] `/context-status` implemented
-  - Router → npm script → `cli/status-cli.js`
-  - Outputs formatted text (not JSON)
-  - Basic functionality working, --help not implemented
-- [x] `/context-analyze` implemented  
-  - Router → npm script → `cli/analyze-cli.js`
-  - Outputs formatted text (not JSON)
-  - Mock analysis only (not real Claude integration)
-- [x] npm scripts added: `context:status` and `context:analyze`
-- [x] Commands accessible via router
+- [x] `/context-status` implemented (`cli/status-cli.js`)
+- [x] `/context-analyze` implemented (`cli/analyze-cli.js`)
+- [x] npm scripts added for both commands
+- [x] Help text updated
 
 ### Bridge Enhancement ✅ COMPLETE
 - [x] 3-tier failure priority system (CRITICAL/IMPORTANT/OPTIONAL)
@@ -1142,20 +1136,6 @@ Batch Operations:
 - [ ] Concurrency controls (default 2, max 5)
 - [ ] Real Claude API integration (currently mock)
 - [ ] Performance metrics dashboard
-
-## 📝 Implementation Notes
-
-### Known Limitations
-- Status and Analyze CLIs output formatted text, not JSON (unlike other CLIs)
-- No `--help` flag handling in status/analyze CLIs  
-- Duplicate handleAnalyze method in command-router.js (lines 128 and 268)
-- Mock analysis only - real Claude integration pending
-
-### Future Improvements
-- Convert status/analyze to JSON output for consistency
-- Add proper help flag handling
-- Remove duplicate method in router
-- Integrate real Claude API for analysis
 
 ## 🎬 Conclusion
 
