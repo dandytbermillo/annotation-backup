@@ -1,0 +1,38 @@
+---
+meta_version: 1
+feature_slug: new_feature
+status: draft
+readiness_score: 0
+missing_fields: []
+last_validated_at: 2025-09-06T22:42:35.656Z
+---
+ 
+
+## Problem
+   ssamples tsxs1est ss d ssdssddd2edd
+   Testing file watcher - this edit should trigger SSE
+[Describe the problem]
+
+## Goals
+
+- [Goal 1]
+- [Goal 2]
+- [Goal 3]
+
+## Acceptance Criteria
+
+- [Criteria 1]
+- [Criteria 2]
+- [Criteria 3]
+
+## Stakeholders
+
+- Development Team
+- Product Team
+Test edit
+Trigger test Sat Sep  6 17:08:50 MDT 2025
+File watcher test 1757200168
+Test change at 17:14:46
+Final test 17:15:59
+Testing fs.watch 17:18:26
+Testing the fix - this should appear in browser without disrupting typing

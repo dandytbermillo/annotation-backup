@@ -28,6 +28,47 @@ class MarkdownSectionParser {
     return sections;
   }
 
+  parseSections(content) {
+    // Parse content into named sections
+    const result = {};
+    const lines = content.split('\n');
+    let currentSection = null;
+    let sectionContent = [];
+    let inCodeBlock = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      if (line.startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+      }
+      
+      if (!inCodeBlock) {
+        const match = line.match(/^##\s+(.+)/);
+        if (match) {
+          // Save previous section
+          if (currentSection) {
+            result[currentSection] = sectionContent.join('\n').trim();
+          }
+          // Start new section
+          currentSection = match[1].trim().toLowerCase().replace(/\s+/g, '_');
+          sectionContent = [];
+        } else if (currentSection) {
+          sectionContent.push(line);
+        }
+      } else if (currentSection) {
+        sectionContent.push(line);
+      }
+    }
+    
+    // Save last section
+    if (currentSection) {
+      result[currentSection] = sectionContent.join('\n').trim();
+    }
+    
+    return result;
+  }
+
   replaceSection(content, sectionName, newContent) {
     const codeBlocks = [];
     const placeholder = '___CODE_BLOCK___';

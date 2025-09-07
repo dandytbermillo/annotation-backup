@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const chokidar = require('chokidar');
 
 // Import all modules
 const ETagManager = require('./lib/etag-manager');
@@ -16,7 +17,8 @@ const AtomicFileOps = require('./lib/atomic-file-ops');
 const LockManager = require('./lib/lock-manager');
 const YAMLValidator = require('./lib/yaml-validator');
 const MarkdownSectionParser = require('./lib/markdown-parser');
-const ContentValidator = require('./lib/content-validator');
+// Use resilient validator (present in repo)
+const ResilientValidator = require('./lib/resilient-validator');
 const { claudeAdapter } = require('../bridge/claude-adapter');
 const { renderInitial } = require('../templates/render-initial');
 
@@ -32,7 +34,7 @@ const fileOps = new AtomicFileOps(auditLogger);
 const lockManager = new LockManager(auditLogger);
 const yamlValidator = new YAMLValidator();
 const markdownParser = new MarkdownSectionParser();
-const validator = new ContentValidator();
+const validator = new ResilientValidator(auditLogger);
 
 // Middleware
 app.use(cors({
@@ -42,6 +44,39 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(security.middleware());
 
+// ===== SSE state =====
+const clientsBySlug = new Map(); // slug -> Set<res>
+let seq = 0;
+
+function sendEvent(res, event, data, id) {
+  const payload = typeof data === 'string' ? data : JSON.stringify(data);
+  if (id) res.write(`id: ${id}\n`);
+  if (event) res.write(`event: ${event}\n`);
+  res.write(`data: ${payload}\n\n`);
+}
+
+app.get('/api/events', (req, res) => {
+  const slug = security.normalizePath(req.query.slug || '');
+  if (!slug) return res.status(400).end();
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  const set = clientsBySlug.get(slug) || new Set();
+  set.add(res);
+  clientsBySlug.set(slug, set);
+
+  // Heartbeat to keep connection alive
+  const hb = setInterval(() => sendEvent(res, 'heartbeat', { ts: Date.now() }), 25000);
+  req.on('close', () => {
+    clearInterval(hb);
+    set.delete(res);
+    if (set.size === 0) clientsBySlug.delete(slug);
+  });
+});
+
 // Only bind to localhost
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`🚀 Context-OS Companion V2 running on http://127.0.0.1:${PORT}`);
@@ -49,6 +84,66 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`   User: ${sessionManager.userId}`);
   auditLogger.log('server_start', { port: PORT });
 });
+
+// ===== File watcher =====
+const fs = require('fs');
+const watchPath = path.resolve(process.cwd(), '.tmp/initial');
+console.log('Watching directory:', watchPath);
+
+function broadcast(slug, event, data) {
+  const id = (++seq).toString();
+  const set = clientsBySlug.get(slug) || new Set();
+  for (const res of set) {
+    try { sendEvent(res, event, { seq, slug, ...data }, id); } catch {}
+  }
+}
+
+// Track files being saved by the server to avoid feedback loops
+const serverSaveInProgress = new Map();
+
+// Simple fs.watch as a fallback since chokidar isn't working
+fs.watch(watchPath, { recursive: false }, async (eventType, filename) => {
+  if (!filename || !filename.endsWith('.draft.md')) return;
+  
+  console.log(`File change detected: ${eventType} on ${filename}`);
+  
+  try {
+    const fullPath = path.join(watchPath, filename);
+    const basename = path.basename(filename);
+    const match = basename.match(/(.+?)\.draft\.md$/);
+    
+    if (match) {
+      const slug = security.normalizePath(match[1]);
+      
+      // Check if this change was triggered by our own save
+      if (serverSaveInProgress.has(slug)) {
+        console.log(`Ignoring self-triggered change for ${slug}`);
+        return;
+      }
+      
+      console.log(`Broadcasting change for slug: ${slug}`);
+      
+      try {
+        const content = await fileOps.read(fullPath);
+        const newEtag = etagManager.increment(slug);
+        const hash = etagManager.hash(content);
+        etagManager.storeHash(slug, newEtag, hash);
+        
+        auditLogger.log('sse_draft_changed', { slug, etag: newEtag });
+        broadcast(slug, 'draft-changed', { etag: newEtag, source: 'file-system', ts: Date.now() });
+        
+        console.log(`Broadcast complete for ${slug} with etag ${newEtag}`);
+      } catch (readErr) {
+        console.error('Error reading file:', readErr);
+      }
+    }
+  } catch (e) {
+    console.error('File watch error:', e);
+    auditLogger.log('sse_watch_error', { error: e.message });
+  }
+});
+
+console.log('File watcher is ready using fs.watch');
 
 // ===== ENDPOINTS =====
 
@@ -89,7 +184,9 @@ app.get('/api/draft/:slug', async (req, res) => {
       const initialPath = path.join('docs/proposal', normalized, 'INITIAL.md');
       try {
         content = await fileOps.read(initialPath);
+        serverSaveInProgress.set(normalized, true);
         await fileOps.write(draftPath, content);
+        setTimeout(() => serverSaveInProgress.delete(normalized), 500);
       } catch {
         // Create new template
         content = `---
@@ -127,7 +224,9 @@ last_validated_at: ${new Date().toISOString()}
 - Development Team
 - Product Team
 `;
+        serverSaveInProgress.set(normalized, true);
         await fileOps.write(draftPath, content);
+        setTimeout(() => serverSaveInProgress.delete(normalized), 500);
       }
     }
     
@@ -157,15 +256,15 @@ app.post('/api/draft/save', async (req, res) => {
     const { slug, content, etag } = req.body;
     const normalized = security.normalizePath(slug);
     
-    // Temporarily skip ETag validation for debugging
-    // if (!etagManager.validate(normalized, etag)) {
-    //   auditLogger.log('etag_conflict', { slug: normalized, provided: etag });
-    //   return res.status(409).json({
-    //     error: 'Stale ETag',
-    //     code: 'STALE_ETAG',
-    //     current: etagManager.getCurrent(normalized)
-    //   });
-    // }
+    // Enforce ETag validation
+    if (!etagManager.validate(normalized, etag)) {
+      auditLogger.log('etag_conflict', { slug: normalized, provided: etag });
+      return res.status(409).json({
+        error: 'Stale ETag',
+        code: 'STALE_ETAG',
+        current: etagManager.getCurrent(normalized)
+      });
+    }
     
     // Acquire lock
     const lockResult = await lockManager.acquireLock(
@@ -192,8 +291,16 @@ app.post('/api/draft/save', async (req, res) => {
       });
     }
     
+    // Mark that we're saving to prevent file watcher feedback loop
+    serverSaveInProgress.set(normalized, true);
+    
     // Save with atomic write
     const { backup } = await fileOps.write(draftPath, content);
+    
+    // Clear the flag after a short delay to ensure file system has registered the change
+    setTimeout(() => {
+      serverSaveInProgress.delete(normalized);
+    }, 500);
     
     // Generate new ETag
     const newEtag = etagManager.increment(normalized);
@@ -235,36 +342,35 @@ app.post('/api/validate', async (req, res) => {
     const { slug, etag } = req.body;
     const normalized = security.normalizePath(slug);
     
-    // Temporarily skip ETag validation for debugging
-    // if (!etagManager.validate(normalized, etag)) {
-    //   return res.status(409).json({
-    //     error: 'Stale ETag',
-    //     code: 'STALE_ETAG'
-    //   });
-    // }
+    if (!etagManager.validate(normalized, etag)) {
+      return res.status(409).json({
+        error: 'Stale ETag',
+        code: 'STALE_ETAG'
+      });
+    }
     
     const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
     const content = await fileOps.read(draftPath);
     
-    // Run validation (no longer async, doesn't need slug)
+    // Run validation
     console.log('Validating content, length:', content.length);
-    console.log('First 500 chars of content:', content.substring(0, 500));
-    const result = validator.validate(content);
+    const result = await validator.validate(normalized, content);
+    const readiness = 10 - (result?.missing_fields?.length || 0);
     console.log('Validation result:', {
-      found: result.found_fields,
       missing: result.missing_fields,
-      readiness: result.readiness_score
+      readiness
     });
     
     auditLogger.log('validation', {
       slug: normalized,
       result: result.ok ? 'pass' : 'fail',
-      readiness: result.readiness_score,
+      readiness,
       missing: result.missing_fields.length
     });
     
     res.json({
       ...result,
+      readiness_score: readiness,
       etag: etagManager.getCurrent(normalized),
       timestamp: new Date().toISOString()
     });
@@ -280,13 +386,12 @@ app.post('/api/llm/verify', async (req, res) => {
     const { slug, etag, validationResult } = req.body;
     const normalized = security.normalizePath(slug);
     
-    // Temporarily skip ETag validation for debugging
-    // if (!etagManager.validate(normalized, etag)) {
-    //   return res.status(409).json({
-    //     error: 'Stale ETag',
-    //     code: 'STALE_ETAG'
-    //   });
-    // }
+    if (!etagManager.validate(normalized, etag)) {
+      return res.status(409).json({
+        error: 'Stale ETag',
+        code: 'STALE_ETAG'
+      });
+    }
     
     const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
     const content = await fileOps.read(draftPath);
@@ -310,7 +415,7 @@ app.post('/api/llm/verify', async (req, res) => {
       const reportCard = {
         header_meta: {
           ...header,
-          readiness_score: validationResult?.readiness_score || 0,
+          readiness_score: validationResult?.readiness_score ?? (10 - ((validationResult?.missing_fields?.length) || 0)),
           missing_fields: validationResult?.missing_fields || [],
           last_validated_at: new Date().toISOString(),
           confidence: validationResult?.confidence || 0
@@ -335,7 +440,7 @@ app.post('/api/llm/verify', async (req, res) => {
       const reportCard = {
         header_meta: {
           ...header,
-          readiness_score: validationResult?.readiness_score || 0,
+          readiness_score: validationResult?.readiness_score ?? (10 - ((validationResult?.missing_fields?.length) || 0)),
           missing_fields: validationResult?.missing_fields || [],
           last_validated_at: new Date().toISOString(),
           confidence: validationResult?.confidence || 0
@@ -366,13 +471,12 @@ app.post('/api/draft/promote', async (req, res) => {
     const { slug, etag, approveHeader, approveContent } = req.body;
     const normalized = security.normalizePath(slug);
     
-    // Temporarily skip ETag validation for debugging
-    // if (!etagManager.validate(normalized, etag)) {
-    //   return res.status(409).json({
-    //     error: 'Stale ETag',
-    //     code: 'STALE_ETAG'
-    //   });
-    // }
+    if (!etagManager.validate(normalized, etag)) {
+      return res.status(409).json({
+        error: 'Stale ETag',
+        code: 'STALE_ETAG'
+      });
+    }
     
     const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
     const finalPath = path.join('docs/proposal', normalized, 'INITIAL.md');
@@ -427,6 +531,91 @@ app.use((error, req, res, next) => {
   });
 });
 
+// Create PRP endpoint
+app.post('/api/prp/create', async (req, res) => {
+  try {
+    const { slug, mode, etag } = req.body;
+    const normalized = security.normalizePath(slug);
+    
+    if (!etagManager.validate(normalized, etag)) {
+      return res.status(409).json({
+        error: 'Stale ETag',
+        code: 'STALE_ETAG'
+      });
+    }
+    
+    const draftPath = path.join('.tmp/initial', `${normalized}.draft.md`);
+    const prpPath = path.join('docs/proposal', normalized, 'PRP.md');
+    
+    // Read draft content
+    const content = await fileOps.read(draftPath);
+    
+    // Parse sections for PRP generation
+    const sections = markdownParser.parseSections(content);
+    
+    // Generate PRP content (simplified version)
+    const prpContent = `# PRP - ${normalized.replace(/_/g, ' ')}
+
+## Overview
+Generated from INITIAL.md on ${new Date().toISOString()}
+Mode: ${mode || 'draft'}
+
+## Problem Statement
+${sections.problem || '[To be extracted from INITIAL.md]'}
+
+## Goals
+${sections.goals || '[To be extracted from INITIAL.md]'}
+
+## Implementation Plan
+1. Review requirements from INITIAL.md
+2. Design solution architecture
+3. Implement core functionality
+4. Add tests and validation
+5. Document changes
+
+## Acceptance Criteria
+${sections.acceptance_criteria || '[To be extracted from INITIAL.md]'}
+
+## Stakeholders
+${sections.stakeholders || '[To be extracted from INITIAL.md]'}
+
+## Status
+- Created: ${new Date().toISOString()}
+- Mode: ${mode === 'strict' ? 'Production Ready' : 'Draft'}
+- Source: ${draftPath}
+
+---
+Generated by Context-OS Companion Service
+`;
+    
+    // Ensure directory exists
+    await fileOps.ensureDir(path.dirname(prpPath));
+    
+    // Write PRP file
+    const { backup } = await fileOps.write(prpPath, prpContent);
+    
+    auditLogger.log('prp_created', {
+      slug: normalized,
+      mode,
+      path: prpPath,
+      backup
+    });
+    
+    res.json({
+      success: true,
+      prp_artifact: {
+        path: prpPath,
+        backup
+      },
+      mode,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error creating PRP:', error);
+    res.status(500).json({ error: error.message, code: 'PRP_CREATE_ERROR' });
+  }
+});
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   auditLogger.log('server_shutdown', {});
@@ -434,3 +623,19 @@ process.on('SIGTERM', () => {
 });
 
 module.exports = { app };
+
+// New: Read patch artifacts
+app.get('/api/draft/:slug/patches', async (req, res) => {
+  try {
+    const slug = security.normalizePath(req.params.slug);
+    const base = path.join('.tmp/initial/patches', slug);
+    const sectionsPath = path.join(base, 'sections.json');
+    const headerPath = path.join(base, 'header.json');
+    const result = { version: 1, slug, sections: [], header: null, etag: etagManager.getCurrent(slug) };
+    try { result.sections = JSON.parse(await fileOps.read(sectionsPath)).patches || []; } catch {}
+    try { result.header = JSON.parse(await fileOps.read(headerPath)).patch || null; } catch {}
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});

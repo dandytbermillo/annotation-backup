@@ -63,22 +63,93 @@ export default function ContextOSPageV2() {
   const saveTimeout = useRef<NodeJS.Timeout>();
   const validateTimeout = useRef<NodeJS.Timeout>();
   const contentRef = useRef(content);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const isDirtyRef = useRef<boolean>(false);
   
   // Keep ref in sync with state
   useEffect(() => {
     contentRef.current = content;
   }, [content]);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
   
   // Initialize on mount
   useEffect(() => {
     initializeSession();
+  }, [featureSlug]);
+
+  // Subscribe to SSE events for this feature
+  useEffect(() => {
+    if (!featureSlug) return;
+    try {
+      const es = new EventSource(`${COMPANION_URL}/api/events?slug=${featureSlug}`);
+      eventSourceRef.current = es;
+
+      es.addEventListener('draft-changed', async (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data || '{}');
+          
+          // Don't reload if user is actively editing (dirty state)
+          if (isDirtyRef.current) {
+            console.log('Ignoring external change - editor has unsaved changes');
+            // Optionally show a subtle notification instead of an error
+            // setError('Draft changed externally. Save/merge or reload.');
+            return;
+          }
+          
+          // Only reload if the change is truly from an external source
+          if (payload.source === 'file-system') {
+            console.log('Reloading draft from external file change');
+            await loadDraft();
+            if (payload?.etag) setEtag(payload.etag);
+          }
+        } catch (err) {
+          console.error('Error handling draft-changed:', err);
+        }
+      });
+
+      es.addEventListener('patches-ready', async () => {
+        try {
+          const res = await fetch(`${COMPANION_URL}/api/draft/${featureSlug}/patches`, {
+            headers: { 'Origin': window.location.origin }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const sectionPatches = (data.sections || []).map((p: any) => ({
+              section: p.section,
+              suggestion: p.suggestion,
+              diff: p.diff
+            }));
+            const headerPatch = data.header
+              ? [{ section: 'header', suggestion: '[meta changes]', diff: data.header.diff || '' }]
+              : [];
+            setPatches([...headerPatch, ...sectionPatches]);
+            setActiveTab('suggestions');
+          }
+        } catch (err) {
+          console.error('Error fetching patches:', err);
+        }
+      });
+
+      es.onerror = () => {
+        // Let browser auto-reconnect; optionally show transient warning
+      };
+
+      return () => {
+        es.close();
+        eventSourceRef.current = null;
+      };
+    } catch (err) {
+      console.error('Failed to open SSE connection:', err);
+    }
   }, [featureSlug]);
   
   // Auto-save with debouncing
   useEffect(() => {
     if (isDirty && content) {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
-      saveTimeout.current = setTimeout(() => saveDraft(), 900);
+      saveTimeout.current = setTimeout(() => saveDraft(), 2000); // Increased delay to prevent rapid saves
     }
   }, [content, isDirty]);
   

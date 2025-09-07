@@ -1,0 +1,305 @@
+diff --git a/context-os/companion/server-v2.js b/context-os/companion/server-v2.js
+index 1111111..2222222 100644
+--- a/context-os/companion/server-v2.js
++++ b/context-os/companion/server-v2.js
+@@
+ const express = require('express');
+ const cors = require('cors');
+ const path = require('path');
++// NOTE: v2 currently imports './lib/content-validator' which is missing in the repo.
++// In implementation, switch to './lib/resilient-validator' (present) and update instantiation accordingly.
++//   - Replace: const ContentValidator = require('./lib/content-validator');
++//   - With:    const ResilientValidator = require('./lib/resilient-validator');
++//   - Replace: const validator = new ContentValidator();
++//   - With:    const validator = new ResilientValidator(auditLogger);
++const chokidar = require('chokidar');
+
+// Import all modules
+// Hunk (import swap):
+// - const ContentValidator = require('./lib/content-validator');
+// + const ResilientValidator = require('./lib/resilient-validator');
+// Hunk (instantiation swap):
+// - const validator = new ContentValidator();
+// + const validator = new ResilientValidator(auditLogger);
+@@
+ app.use(express.json({ limit: '10mb' }));
+ app.use(security.middleware());
+
++// ===== SSE state =====
++const clients = new Map(); // slug -> Set<res>
++let seq = 0;
++
++function sendEvent(res, event, data, id) {
++  const payload = typeof data === 'string' ? data : JSON.stringify(data);
++  if (id) res.write(`id: ${id}\n`);
++  if (event) res.write(`event: ${event}\n`);
++  res.write(`data: ${payload}\n\n`);
++}
++
++app.get('/api/events', (req, res) => {
++  const slug = security.normalizePath(req.query.slug || '');
++  if (!slug) return res.status(400).end();
++
++  res.setHeader('Content-Type', 'text/event-stream');
++  res.setHeader('Cache-Control', 'no-cache');
++  res.setHeader('Connection', 'keep-alive');
++  res.flushHeaders?.();
++
++  const set = clients.get(slug) || new Set();
++  set.add(res);
++  clients.set(slug, set);
++
++  const hb = setInterval(() => sendEvent(res, 'heartbeat', { ts: Date.now() }), 25000);
++  req.on('close', () => {
++    clearInterval(hb);
++    set.delete(res);
++    if (set.size === 0) clients.delete(slug);
++  });
++});
+
+ // Only bind to localhost
+ app.listen(PORT, '127.0.0.1', () => {
+@@
+   auditLogger.log('server_start', { port: PORT });
+ });
+
++// ===== Watcher =====
++const watcher = chokidar.watch('.tmp/initial', {
++  ignoreInitial: true,
++  depth: 3,
++  awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
++  ignored: [/(^|[/\\])\../, '**/*~', '**/*.swp', '**/#*#', '**/.DS_Store', '**/*.tmp.*']
++});
++
++function broadcast(slug, event, data) {
++  const id = (++seq).toString();
++  (clients.get(slug) || new Set()).forEach((res) => {
++    try { sendEvent(res, event, { seq, slug, ...data }, id); } catch {}
++  });
++}
++
++watcher.on('all', async (evt, file) => {
++  try {
++    const draftMatch = file.match(/\.tmp\/initial\/(.+?)\.draft\.md$/);
++    if (draftMatch) {
++      const slug = security.normalizePath(draftMatch[1]);
++      const content = await fileOps.read(file);
++      const newEtag = etagManager.increment(slug);
++      const hash = etagManager.hash(content);
++      etagManager.storeHash(slug, newEtag, hash);
++      auditLogger.log('sse_draft_changed', { slug, etag: newEtag });
++      return broadcast(slug, 'draft-changed', { etag: newEtag, source: 'other', ts: Date.now() });
++    }
++    const patchMatch = file.match(/\.tmp\/initial\/patches\/([^/]+)\/(sections\.json|header\.json)$/);
++    if (patchMatch) {
++      const slug = security.normalizePath(patchMatch[1]);
++      const type = patchMatch[2].startsWith('sections') ? 'sections' : 'header';
++      auditLogger.log('sse_patches_ready', { slug, type });
++      return broadcast(slug, 'patches-ready', { types: [type], ts: Date.now() });
++    }
++  } catch (e) {
++    auditLogger.log('sse_watch_error', { error: e.message });
++  }
++});
+
+ // ===== ENDPOINTS =====
+@@
+ app.post('/api/draft/save', async (req, res) => {
+   try {
+     const { slug, content, etag } = req.body;
+     const normalized = security.normalizePath(slug);
+-    // Temporarily skip ETag validation for debugging
+-    // if (!etagManager.validate(normalized, etag)) {
+-    //   auditLogger.log('etag_conflict', { slug: normalized, provided: etag });
+-    //   return res.status(409).json({
+-    //     error: 'Stale ETag',
+-    //     code: 'STALE_ETAG',
+-    //     current: etagManager.getCurrent(normalized)
+-    //   });
+-    // }
++    // Enforce ETag validation
++    if (!etagManager.validate(normalized, etag)) {
++      auditLogger.log('etag_conflict', { slug: normalized, provided: etag });
++      return res.status(409).json({
++        error: 'Stale ETag',
++        code: 'STALE_ETAG',
++        current: etagManager.getCurrent(normalized)
++      });
++    }
+@@
+ });
+@@
+ app.post('/api/validate', async (req, res) => {
+   try {
+     const { slug, etag } = req.body;
+     const normalized = security.normalizePath(slug);
+-    // Temporarily skip ETag validation for debugging
+-    // if (!etagManager.validate(normalized, etag)) {
+-    //   return res.status(409).json({
+-    //     error: 'Stale ETag',
+-    //     code: 'STALE_ETAG'
+-    //   });
+-    // }
++    if (!etagManager.validate(normalized, etag)) {
++      return res.status(409).json({
++        error: 'Stale ETag',
++        code: 'STALE_ETAG'
++      });
++    }
+@@
+ });
+@@
+ app.post('/api/llm/verify', async (req, res) => {
+   try {
+     const { slug, etag } = req.body;
+     const normalized = security.normalizePath(slug);
+-    // Temporarily skip ETag validation for debugging
+-    // if (!etagManager.validate(normalized, etag)) {
+-    //   return res.status(409).json({
+-    //     error: 'Stale ETag',
+-    //     code: 'STALE_ETAG'
+-    //   });
+-    // }
++    if (!etagManager.validate(normalized, etag)) {
++      return res.status(409).json({
++        error: 'Stale ETag',
++        code: 'STALE_ETAG'
++      });
++    }
+@@
+ });
+@@
+ app.post('/api/draft/promote', async (req, res) => {
+   try {
+     const { slug, etag } = req.body;
+     const normalized = security.normalizePath(slug);
+-    // Temporarily skip ETag validation for debugging
+-    // if (!etagManager.validate(normalized, etag)) {
+-    //   return res.status(409).json({
+-    //     error: 'Stale ETag',
+-    //     code: 'STALE_ETAG'
+-    //   });
+-    // }
++    if (!etagManager.validate(normalized, etag)) {
++      return res.status(409).json({
++        error: 'Stale ETag',
++        code: 'STALE_ETAG'
++      });
++    }
+@@
+});
+
+// New: Read patch artifacts (place this route before `module.exports = { app }`)
+app.get('/api/draft/:slug/patches', async (req, res) => {
+  try {
+    const slug = security.normalizePath(req.params.slug);
+    const base = path.join('.tmp/initial/patches', slug);
+    const sectionsPath = path.join(base, 'sections.json');
+    const headerPath = path.join(base, 'header.json');
+    const result = { version: 1, slug, sections: [], header: null, etag: etagManager.getCurrent(slug) };
+    try { result.sections = JSON.parse(await fileOps.read(sectionsPath)).patches || []; } catch {}
+    try { result.header = JSON.parse(await fileOps.read(headerPath)).patch || null; } catch {}
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+diff --git a/context-os/companion/lib/security.js b/context-os/companion/lib/security.js
+index 3333333..4444444 100644
+--- a/context-os/companion/lib/security.js
++++ b/context-os/companion/lib/security.js
+@@
+   constructor() {
+     this.csrfTokens = new Map();
+     this.rateLimits = new Map();
+     this.idempotencyKeys = new Map();
+-    this.whitelist = ['.tmp/initial/', 'docs/proposal/'];
++    this.whitelist = ['.tmp/initial/', '.tmp/initial/patches/', 'docs/proposal/'];
+   }
+@@
+   middleware() {
+     return (req, res, next) => {
+@@
+-      // Check CSRF for mutations (disabled temporarily for debugging)
+-      if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
+-        const token = req.headers['x-csrf-token'];
+-        console.log('CSRF token provided:', token);
+-        if (token && !this.validateCSRF(token)) {
+-          console.log('CSRF validation failed - invalid token');
+-          // For now, just log but don't block
+-          console.log('WARNING: Invalid CSRF token, but allowing request for development');
+-        } else if (!token) {
+-          console.log('WARNING: No CSRF token provided, allowing for development');
+-        }
+-        // Temporarily allow all requests for debugging
+-        // return res.status(403).json({ error: 'CSRF token required', code: 'CSRF_REQUIRED' });
+-      }
++      // Enforce CSRF for mutations
++      if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
++        const token = req.headers['x-csrf-token'];
++        if (!token || !this.validateCSRF(token)) {
++          return res.status(403).json({ error: 'CSRF token required', code: 'CSRF_REQUIRED' });
++        }
++      }
+@@
+       next();
+     };
+   }
+ }
+
+diff --git a/app/context-os/page-v2.tsx b/app/context-os/page-v2.tsx
+index 5555555..6666666 100644
+--- a/app/context-os/page-v2.tsx
++++ b/app/context-os/page-v2.tsx
+@@
+   const validateTimeout = useRef<NodeJS.Timeout>();
+   const contentRef = useRef(content);
++  const eventSourceRef = useRef<EventSource | null>(null);
++  const isDirtyRef = useRef(isDirty);
++  useEffect(() => { isDirtyRef.current = isDirty }, [isDirty]);
+@@
+   useEffect(() => {
+     initializeSession();
+   }, [featureSlug]);
+
++  // Subscribe to SSE events for this feature
++  useEffect(() => {
++    if (!featureSlug) return;
++    const es = new EventSource(`${COMPANION_URL}/api/events?slug=${featureSlug}`);
++    eventSourceRef.current = es;
++
++    es.addEventListener('draft-changed', async (e: MessageEvent) => {
++      try {
++        const payload = JSON.parse(e.data);
++        if (isDirtyRef.current) {
++          setError('Draft changed externally. Save/merge or reload.');
++          return;
++        }
++        await loadDraft();
++        setEtag(payload?.etag || '');
++      } catch {}
++    });
++
++    es.addEventListener('patches-ready', async () => {
++      try {
++        const res = await fetch(`${COMPANION_URL}/api/draft/${featureSlug}/patches`, { headers: { 'Origin': window.location.origin } });
++        if (res.ok) {
++          const data = await res.json();
++          const sectionPatches = (data.sections || []).map((p: any) => ({ section: p.section, suggestion: p.suggestion, diff: p.diff }));
++          const headerPatch = data.header ? [{ section: 'header', suggestion: '[meta changes]', diff: data.header.diff || '' }] : [];
++          setPatches([...headerPatch, ...sectionPatches]);
++          setActiveTab('suggestions');
++        }
++      } catch {}
++    });
++
++    es.onerror = () => {
++      // Allow browser to auto-reconnect; optionally show transient warning
++    };
++
++    return () => {
++      es.close();
++      eventSourceRef.current = null;
++    };
++  }, [featureSlug]);

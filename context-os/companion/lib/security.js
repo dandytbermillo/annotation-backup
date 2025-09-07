@@ -6,7 +6,7 @@ class SecurityMiddleware {
     this.csrfTokens = new Map();
     this.rateLimits = new Map();
     this.idempotencyKeys = new Map();
-    this.whitelist = ['.tmp/initial/', 'docs/proposal/'];
+    this.whitelist = ['.tmp/initial/', '.tmp/initial/patches/', 'docs/proposal/'];
   }
 
   generateCSRF() {
@@ -81,19 +81,14 @@ class SecurityMiddleware {
         return res.status(403).json({ error: 'Invalid origin', code: 'INVALID_ORIGIN' });
       }
 
-      // Check CSRF for mutations (disabled temporarily for debugging)
+      // Enforce CSRF for mutations
       if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
         const token = req.headers['x-csrf-token'];
         console.log('CSRF token provided:', token);
-        if (token && !this.validateCSRF(token)) {
-          console.log('CSRF validation failed - invalid token');
-          // For now, just log but don't block
-          console.log('WARNING: Invalid CSRF token, but allowing request for development');
-        } else if (!token) {
-          console.log('WARNING: No CSRF token provided, allowing for development');
+        if (!token || !this.validateCSRF(token)) {
+          console.log('CSRF validation failed');
+          return res.status(403).json({ error: 'CSRF token required', code: 'CSRF_REQUIRED' });
         }
-        // Temporarily allow all requests for debugging
-        // return res.status(403).json({ error: 'CSRF token required', code: 'CSRF_REQUIRED' });
       }
 
       // Rate limiting

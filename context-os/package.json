@@ -26,11 +26,16 @@
   "license": "MIT",
   "dependencies": {
     "chalk": "^4.1.2",
+    "chokidar": "^4.0.3",
     "commander": "^11.0.0",
+    "cors": "^2.8.5",
+    "diff": "^8.0.2",
+    "express": "^5.1.0",
     "fs-extra": "^11.1.0",
     "handlebars": "^4.7.8",
     "inquirer": "^9.2.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "zod": "^4.1.5"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.0",

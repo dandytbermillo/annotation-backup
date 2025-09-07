@@ -1,19 +1,19 @@
 "use client"
 
-import dynamic from 'next/dynamic'
-
-const AnnotationApp = dynamic(
-  () => import('@/components/annotation-app').then(mod => ({ default: mod.AnnotationApp })),
-  { 
-    ssr: false,
-    loading: () => (
-      <div className="w-screen h-screen flex items-center justify-center bg-gray-950">
-        <div className="text-white text-2xl font-semibold animate-pulse">Loading application...</div>
-      </div>
-    )
-  }
-)
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 export default function Page() {
-  return <AnnotationApp />
+  const router = useRouter()
+  
+  useEffect(() => {
+    // Redirect to Context-OS with a default feature
+    router.push('/context-os?feature=new_feature')
+  }, [router])
+  
+  return (
+    <div className="w-screen h-screen flex items-center justify-center bg-gray-950">
+      <div className="text-white text-2xl font-semibold animate-pulse">Redirecting to Context-OS...</div>
+    </div>
+  )
 }
