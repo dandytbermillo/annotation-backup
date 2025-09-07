@@ -1,0 +1,18 @@
+{"ts":"","type":"note","text":"Initialized .context-memory live context (phase A)."}
+{"ts":"2025-09-05T04:00:13.262Z","type":"note","text":"Live context check-in"}
+{"ts":"2025-09-05T04:00:13.287Z","type":"test","result":"pass","count":5}
+{"ts":"2025-09-05T04:42:26.904Z","type":"note","text":"bg-parallel-5"}
+{"ts":"2025-09-05T04:42:26.903Z","type":"note","text":"bg-parallel-4"}
+{"ts":"2025-09-05T04:42:26.904Z","type":"note","text":"bg-parallel-2"}
+{"ts":"2025-09-05T04:42:26.903Z","type":"note","text":"bg-parallel-1"}
+{"ts":"2025-09-05T04:42:26.904Z","type":"note","text":"bg-parallel-3"}
+{"ts":"2025-09-05T04:45:39.787Z","type":"note","text":"Follow-up check"}
+{"ts":"2025-09-05T04:45:39.807Z","type":"test","result":"pass","count":7}
+{"ts":"2025-09-05T05:08:44.500Z","type":"commit","sha":"a64f7006231aa4808ba9d31fb04b32ed0f0de040","files_changed":4,"message":"ci: live context find-or-update PR comment, read-only guard, ignore live artifacts"}
+{"ts":"2025-09-05T05:22:04.294Z","type":"commit","sha":"fdc709c4986acfe87dedfb7729885b25af94ec03","files_changed":609,"message":"interactive initial.md implementation and context-memory implementation"}
+{"ts":"2025-09-06T05:22:49Z","type":"note","text":"Policy update: assistant may write within .context-memory (user-approved)."}
+{"ts":"2025-09-06T05:25:55Z","type":"note","text":"User prefs: codex approval-required; logging enabled; refresh enabled."}
+{"ts":"2025-09-06T05:26:45Z","type":"note","text":"Added writer-policy.md to document write/log/refresh rules."}
+{"ts":"2025-09-06T05:29:56Z","type":"note","text":"Updated AGENTS.md to document .context-memory write policy and logging/refresh behavior."}
+{"ts":"2025-09-06T05:31:05.950Z","type":"note","text":"Updated codex/POLICY.md to add .context-memory write carve-out and clarify read/write scopes."}
+{"ts":"2025-09-06T05:37:22Z","type":"note","text":"Enabled timestamps in summary bullets via summarize.js."}

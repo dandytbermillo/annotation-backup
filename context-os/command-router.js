@@ -47,7 +47,20 @@ class CommandRouter {
     }
     
     // First arg should be the command (without slash)
-    const command = args[0].replace(/^\//, '').toLowerCase();
+    const rawCommand = args[0].replace(/^\//, '').toLowerCase();
+    
+    // Map context-* aliases to their base commands
+    const aliases = {
+      'context-execute': 'execute',
+      'context-fix': 'fix',
+      'context-validate': 'validate',
+      'context-status': 'status',
+      'context-analyze': 'analyze',
+      'context-help': 'help'
+    };
+    
+    // Use alias if it exists, otherwise use the raw command
+    const command = aliases[rawCommand] || rawCommand;
     
     const options = {};
     let currentKey = null;
@@ -278,20 +291,24 @@ class CommandRouter {
    */
   handleHelp() {
     console.log(`
-╔═══════════════════════════════════════════════════════════════╗
-║                    Context-OS Commands                        ║
-╚═══════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════╗
+║                    Context-OS Commands                            ║
+╚═══════════════════════════════════════════════════════════════════╝
 
-📝 /execute - Create and scaffold a new feature
-   Usage: /execute "Feature name" [options]
+📝 /context-execute (or /execute) - Create and scaffold a new feature
+   Usage: /context-execute --feature "Feature name" [options]
+   Short: /execute "Feature name" [options]
    Options:
-     --plan <path>    Path to draft plan
+     --from <path>    Path to draft plan (replaces --plan)
+     --plan <path>    Legacy: Path to draft plan  
      --slug <slug>    Pre-select feature slug
    
-   Example: /execute "Add dark mode" --plan context-os/drafts/dark-mode.md
+   Example: /context-execute --feature "Add dark mode" --from drafts/dark-mode.md
+   Example: /execute "Add dark mode" --plan drafts/dark-mode.md
 
-🔧 /fix - Create a post-implementation fix
-   Usage: /fix --feature <slug> --issue "Description" [options]
+🔧 /context-fix (or /fix) - Create a post-implementation fix
+   Usage: /context-fix --feature <slug> --issue "Description" [options]
+   Short: /fix --feature <slug> --issue "Description" [options]
    Options:
      --severity CRITICAL|HIGH|MEDIUM|LOW
      --perf <0-100>   Performance degradation %
@@ -299,20 +316,31 @@ class CommandRouter {
      --env <env>      Environment (prod/staging/dev)
      --dry-run        Preview without creating
    
+   Example: /context-fix --feature dark_mode --issue "Toggle not saving"
    Example: /fix --feature dark_mode --issue "Toggle not saving" --severity HIGH
 
-✅ /validate - Check documentation compliance
-   Usage: /validate [feature] [options]
+✅ /context-validate (or /validate) - Check documentation compliance
+   Usage: /context-validate --feature <slug> [options]
+   Short: /validate [feature] [options]
    Options:
      --strict         Treat warnings as errors
      --all            Validate all features
    
    Example: /validate dark_mode --strict
 
-📊 /status - Check feature status
-   Usage: /status [feature]
+📊 /context-status (or /status) - Check feature status
+   Usage: /context-status --feature <slug>
+   Short: /status [feature]
    
+   Example: /context-status --feature dark_mode
    Example: /status dark_mode
+
+🔍 /context-analyze (or /analyze) - Analyze feature with Claude
+   Usage: /context-analyze --feature <slug>
+   Short: /analyze <feature>
+   
+   Example: /context-analyze --feature dark_mode
+   Example: /analyze dark_mode
 
 ═══════════════════════════════════════════════════════════════
 Pro tips:

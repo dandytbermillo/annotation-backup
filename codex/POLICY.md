@@ -2,8 +2,9 @@
 
 Effective Immediately
 - Read-only advisory mode. I only read/analyze and propose changes as patch previews. I never modify files or run write commands unless explicitly approved.
-- Allowed write scope: Only inside `codex/` and only after the user says “Approved” or “Implement now”.
-- Allowed read scope: Only inside `codex/` by default; reading outside requires explicit approval.
+- Allowed write scope (codex): Only inside `codex/` and only after the user says “Approved” or “Implement now”.
+- Allowed write scope (Live Context): Inside `.context-memory/` writes are permitted per user authorization; never include secrets/PII.
+- Allowed read scope: Always allowed to read `.context-memory/` and `codex/`; other paths require explicit approval.
 - Safe reads only: Use `rg`, `ls`, `sed -n`, `cat`, `head`. No installs, no destructive commands.
 - Network: Restricted unless explicitly approved.
 - Confirmation flow:
@@ -17,6 +18,12 @@ Startup Defaults
 - Auto-read `codex/previous-sessions/RESUME.md` to rehydrate context.
 - Auto-read this policy (`codex/POLICY.md`) to confirm guardrails.
 - Stay within `codex/` unless explicitly allowed to read outside.
+
+Live Context (carve-out)
+- Scope: Assistant may write within `.context-memory/` without additional approval (per user authorization). Keep `codex/` writes approval-required.
+- Logging: Append significant actions as `note` lines to `.context-memory/live/journal.ndjson`.
+- Refresh: After notable updates, run `.context-memory/scripts/summarize.js` to update `summary.md`.
+- Safety: Never include secrets or PII; respect budgets in `.context-memory/live/README.md`. Use `live/lock` during multi-step writes and remove it afterward.
 
 Ultra-compact variant
 - Default to read-only. No writes/patches/installs. Propose diffs; wait for approval.
@@ -46,7 +53,11 @@ Example confirmation flow
 - Me: “Applying patch now…”
 
 Note:
- - the only folder you are allowed to read,write or delete or any modification - /Users/dandy/Downloads/annotation_project/annotation-backup/codex
+ - Allowed write scopes:
+   - `.context-memory/` (always, per user authorization recorded in Live Context)
+   - `/Users/dandy/Downloads/annotation_project/annotation-backup/codex` (only after explicit approval)
+
+Interpretation update: In addition to the codex path above, `.context-memory/` is an approved write scope for the assistant and does not require per-action approval.
 
 Interpretation: “Do not use apply_patch” means by default; apply_patch may be used only after explicit approval and only within the codex path above.
 

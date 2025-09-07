@@ -4,6 +4,51 @@ Creates a new feature with compliant documentation structure using Context-OS.
 
 ## Feature Description: $ARGUMENTS
 
+## Architecture Note: Claude as Orchestrator
+
+**Important**: Claude (the main agent) acts as the orchestrator. When this command is invoked, Claude orchestrates the entire workflow by:
+1. Reading these instructions
+2. Deciding whether to spawn a subagent via Task tool
+3. Choosing which Context-OS tools to call
+4. Coordinating the overall execution
+
+## Subagent Role When Task Tool is Used
+
+When complex implementation is needed, use the Task tool with subagent_type: 'general-purpose'. The subagent should follow these guidelines:
+
+### Decision-Making Framework
+
+For each implementation task, the subagent must decide:
+
+**Use Context-OS .js/.ts tools (via Bash) when:**
+- Creating deterministic directory structures → `node context-os/agents/orchestrator.ts`
+- Calculating precise severity → `node context-os/agents/classifier-agent.js`
+- Validating against fixed rules → `node context-os/validate-cli.js`
+- Managing state transitions → `node context-os/status-enforcer.js`
+
+**Use Claude's built-in tools when:**
+- Understanding requirements (Read tool)
+- Generating new code (MultiEdit tool)
+- Creating documentation (Write tool)
+- Searching patterns (Grep tool)
+
+### Tool Reference
+
+#### Context-OS Tools (call via Bash)
+- `context-os/agents/orchestrator.ts` - Feature structure creation, validation
+- `context-os/agents/classifier-agent.js` - Issue classification, severity calculation
+- `context-os/agents/verifier.ts` - Test execution, artifact collection
+- `context-os/create-feature.js` - Initial feature scaffolding
+- `context-os/status-enforcer.js` - Status management (PLANNED → IN PROGRESS → COMPLETE)
+
+#### Claude Built-in Tools (use directly)
+- Read - Parse INITIAL.md and existing code
+- MultiEdit - Generate implementation code
+- Write - Create new files
+- Bash - Execute commands and tools
+- Grep - Search codebase
+- Task - Spawn specialized subagents when needed
+
 ## Check for Help Flag
 
 ```bash

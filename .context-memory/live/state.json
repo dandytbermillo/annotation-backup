@@ -2,6 +2,8 @@
   "current_feature": "initial_live_context",
   "current_branch": "",
   "status": "in_progress",
-  "last_updated": "",
-  "notes": "Bootstrapped live context inside .context-memory."
+  "last_updated": "2025-09-06T05:48:36.220Z",
+  "notes": "Assistant may write within .context-memory; codex remains approval-required; logging enabled; refresh after changes.",
+  "auto_chat_logging": true,
+  "auto_refresh_summary": true
 }

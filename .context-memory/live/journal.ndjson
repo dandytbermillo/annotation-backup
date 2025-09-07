@@ -1,4 +1,4 @@
-{"ts":"","type":"note","text":"Initialized .context-memory live context (phase A)."}
+{"ts":"2025-09-05T04:00:12.262Z","type":"note","text":"Initialized .context-memory live context (phase A)."}
 {"ts":"2025-09-05T04:00:13.262Z","type":"note","text":"Live context check-in"}
 {"ts":"2025-09-05T04:00:13.287Z","type":"test","result":"pass","count":5}
 {"ts":"2025-09-05T04:42:26.904Z","type":"note","text":"bg-parallel-5"}
@@ -10,3 +10,23 @@
 {"ts":"2025-09-05T04:45:39.807Z","type":"test","result":"pass","count":7}
 {"ts":"2025-09-05T05:08:44.500Z","type":"commit","sha":"a64f7006231aa4808ba9d31fb04b32ed0f0de040","files_changed":4,"message":"ci: live context find-or-update PR comment, read-only guard, ignore live artifacts"}
 {"ts":"2025-09-05T05:22:04.294Z","type":"commit","sha":"fdc709c4986acfe87dedfb7729885b25af94ec03","files_changed":609,"message":"interactive initial.md implementation and context-memory implementation"}
+{"ts":"2025-09-06T05:22:49Z","type":"note","text":"Policy update: assistant may write within .context-memory (user-approved)."}
+{"ts":"2025-09-06T05:25:55Z","type":"note","text":"User prefs: codex approval-required; logging enabled; refresh enabled."}
+{"ts":"2025-09-06T05:26:45Z","type":"note","text":"Added writer-policy.md to document write/log/refresh rules."}
+{"ts":"2025-09-06T05:29:56Z","type":"note","text":"Updated AGENTS.md to document .context-memory write policy and logging/refresh behavior."}
+{"ts":"2025-09-06T05:31:05.950Z","type":"note","text":"Updated codex/POLICY.md to add .context-memory write carve-out and clarify read/write scopes."}
+{"ts":"2025-09-06T05:37:22Z","type":"note","text":"Enabled timestamps in summary bullets via summarize.js."}
+{"ts":"2025-09-06T05:39:58Z","type":"note","text":"Backfilled missing timestamps in journal.ndjson; created backup journal.ndjson.bak-20250906053958."}
+{"ts":"2025-09-06T05:46:14.816Z","type":"note","text":"Enabled chat logging and Recent Chat section in summary."}
+{"ts":"2025-09-06T05:46:14.835Z","type":"chat","role":"user","text":"is it possible to include the chat conversation in the context-memory?"}
+{"ts":"2025-09-06T05:47:05.522Z","type":"chat","role":"assistant","text":"Yes — chat logging is enabled and integrated into the summary. I updated scripts, recorded your question, and I’m now logging this reply so the pair appears together."}
+{"ts":"2025-09-06T05:48:36.175Z","type":"chat","role":"user","text":"can this be automatic so that you dont need to ask me again about saving thing like this in context-memory?"}
+{"ts":"2025-09-06T05:48:36.201Z","type":"note","text":"Policy: enable auto chat logging and auto summary refresh for future messages."}
+{"ts":"2025-09-06T05:48:36.260Z","type":"chat","role":"assistant","text":"Confirmed: auto chat logging and auto summary refresh enabled; I will persist future messages and updates without asking."}
+{"ts":"2025-09-06T05:50:41.448Z","type":"chat","role":"user","text":"is the ff complete text are also stored right now?:What I changed\n\n- Preferences: Set auto_chat_logging=true and auto_refresh_summary=true in .context-memory/live/state.json.\n- Policy doc: Updated .context-memory/live/writer-policy.md with an Automation section.\n- Journal: Logged your request and the policy change.\n- Summary: Refreshed; Recent Chat now shows your message and this confirmation.\n\nResult\n\n- Future user/assistant messages are logged automatically to .context-memory/live/journal.ndjson.\n- summary.md updates after notable events without asking.\n\nIf you later want to disable this, say “disable auto chat logging” or “disable auto refresh,” and I’ll flip the\nflags and log it.\n"}
+{"ts":"2025-09-06T13:37:51.277Z","type":"note","text":"Backfilled 'how context-memory remembers' explainer into live/guides/how-context-memory-works.md."}
+{"ts":"2025-09-06T14:00:54.400Z","type":"note","text":"Added comprehensive Context Memory guide at live/guides/context-memory-overview.md and linked from READMEs."}
+{"ts":"2025-09-06T14:05:33.875Z","type":"note","text":"Copied referenced docs/scripts to live/guides/linkfiles (excluded live log/state files)."}
+{"ts":"2025-09-06T14:06:41.118Z","type":"note","text":"Added linkfiles/INDEX.md with descriptions and authoritative source paths."}
+{"ts":"2025-09-06T22:49:54.536Z","type":"note","text":"Reviewed RESUME.md and CLAUDE_NATIVE_AGENT_PROPOSAL.md reference; preparing recap + adoption plan proposal."}
+{"ts":"2025-09-06T22:58:56.464Z","type":"note","text":"Audited context-os/CLAUDE_NATIVE_AGENT_RESEARCH.md for readiness: command naming mismatches (/context-execute vs /execute), safety tiers (3-tier vs 4-tier), logging levels (5 vs 4), concurrency cap (5 vs 2), cache TTL not implemented, resource limits not enforced. Preparing correction list + patch preview on approval."}

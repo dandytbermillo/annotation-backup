@@ -49,3 +49,7 @@
   - Safe reads only; no installs or destructive commands.
   - Startup routine: read `codex/previous-sessions/RESUME.md` and recap Next Steps.
   - Supported chat commands include “Resume from resume.md”, “Refresh readme.md”, “Refresh resume.md”, and “End session”.
+ - Live Context (`.context-memory/`):
+   - Assistant may write within `.context-memory/` without additional approval (user-authorized).
+   - Log significant actions as `note` lines in `.context-memory/live/journal.ndjson` and refresh `summary.md` via `.context-memory/scripts/summarize.js`.
+   - Keep `codex/` writes approval‑required; never include secrets or PII in Live Context.

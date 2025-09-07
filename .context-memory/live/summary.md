@@ -6,16 +6,34 @@ Current Work
 - Status: in_progress
 
 Recent Activity
-- commit fdc709c: interactive initial.md implementation and context-memory implementation
-- commit a64f700: ci: live context find-or-update PR comment, read-only guard, ignore live artifacts
-- test: pass (7)
-- note: Follow-up check
-- note: bg-parallel-3
-- note: bg-parallel-1
-- note: bg-parallel-2
-- note: bg-parallel-4
-- note: bg-parallel-5
-- test: pass (5)
+- note [2025-09-06 22:58Z]: Audited context-os/CLAUDE_NATIVE_AGENT_RESEARCH.md for readiness: command naming mismatches (/context-execute vs /execute), safety tiers (3-tier vs 4-tier), logging levels (5 vs 4), concurrency cap (5 vs 2), cache TTL not implemented, resource limits not enforced. Preparing correction list + patch preview on approval.
+- note [2025-09-06 22:49Z]: Reviewed RESUME.md and CLAUDE_NATIVE_AGENT_PROPOSAL.md reference; preparing recap + adoption plan proposal.
+- note [2025-09-06 14:06Z]: Added linkfiles/INDEX.md with descriptions and authoritative source paths.
+- note [2025-09-06 14:05Z]: Copied referenced docs/scripts to live/guides/linkfiles (excluded live log/state files).
+- note [2025-09-06 14:00Z]: Added comprehensive Context Memory guide at live/guides/context-memory-overview.md and linked from READMEs.
+- note [2025-09-06 13:37Z]: Backfilled 'how context-memory remembers' explainer into live/guides/how-context-memory-works.md.
+- note [2025-09-06 05:48Z]: Policy: enable auto chat logging and auto summary refresh for future messages.
+
+Recent Chat
+- chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
+
+- Preferences: Set auto_chat_logging=true and auto_refresh_summary=true in .context-memory/live/state.json.
+- Policy doc: Updated .context-memory/live/writer-policy.md with an Automation section.
+- Journal: Logged your request and the policy change.
+- Summary: Refreshed; Recent Chat now shows your message and this confirmation.
+
+Result
+
+- Future user/assistant messages are logged automatically to .context-memory/live/journal.ndjson.
+- summary.md updates after notable events without asking.
+
+If you later want to disable this, say “disable auto chat logging” or “disable auto refresh,” and I’ll flip the
+flags and log it.
+
+- chat [2025-09-06 05:48Z] assistant: Confirmed: auto chat logging and auto summary refresh enabled; I will persist future messages and updates without asking.
+- chat [2025-09-06 05:48Z] user: can this be automatic so that you dont need to ask me again about saving thing like this in context-memory?
+- chat [2025-09-06 05:47Z] assistant: Yes — chat logging is enabled and integrated into the summary. I updated scripts, recorded your question, and I’m now logging this reply so the pair appears together.
+- chat [2025-09-06 05:46Z] user: is it possible to include the chat conversation in the context-memory?
 
 Health Snapshot
 - Tests: pass (7)

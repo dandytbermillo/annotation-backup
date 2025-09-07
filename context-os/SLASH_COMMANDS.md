@@ -1,36 +1,47 @@
 # Context-OS Slash Commands Integration
 
-**Version**: 1.0.0  
+**Version**: 2.0.0  
 **Status**: ✅ IMPLEMENTED  
 **Purpose**: Enable Claude Code's built-in agent to orchestrate Context-OS via slash commands
 
 ## 🎯 Overview
 
-Context-OS now supports slash commands that can be used directly in Claude Code. When you type `/execute` or `/fix`, Claude's built-in agent routes the command to our custom JavaScript/TypeScript agents, providing a seamless workflow for documentation-compliant feature development.
+Context-OS supports both long-form (`/context-*`) and short-form (`/execute`, `/fix`) slash commands. The long-form commands are preferred for clarity and to avoid conflicts with other tools. When you type `/context-execute` or `/execute`, Claude's built-in agent routes the command to our custom JavaScript/TypeScript agents, providing a seamless workflow for documentation-compliant feature development.
 
 ## 🚀 Quick Start
 
 ```bash
-# Create a new feature
+# Create a new feature (preferred long-form)
+/context-execute --feature "Add user authentication" --from drafts/auth.md
+
+# Or use short-form
 /execute "Add user authentication" --plan drafts/auth.md
 
-# Fix a validation issue
+# Fix a validation issue (preferred long-form)
+/context-fix --feature user_auth --issue "Missing phase boundary" 
+
+# Or use short-form
 /fix --feature user_auth --issue "Missing phase boundary" 
 
 # Validate structure
-/validate user_auth --strict
+/context-validate --feature user_auth --strict
 
 # Check feature status
-/status user_auth
+/context-status --feature user_auth
 ```
 
 ## 📝 Available Commands
 
-### `/execute` - Create and Scaffold Features
+### `/context-execute` (or `/execute`) - Create and Scaffold Features
 
 Creates a new feature with compliant documentation structure.
 
-**Syntax:**
+**Preferred Syntax:**
+```
+/context-execute --feature "Feature name" [options]
+```
+
+**Short Form:**
 ```
 /execute "Feature name" [options]
 ```
