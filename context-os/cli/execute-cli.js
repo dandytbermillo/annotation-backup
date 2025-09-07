@@ -27,6 +27,64 @@ const FeatureOrchestrator = require('../create-feature');
  */
 
 async function execute(input) {
+  // SINGLE COMMAND PHILOSOPHY: Auto-detect and initialize if needed
+  // This is the core innovation from the proposal
+  
+  // Generate slug from feature name
+  const featureSlug = input.slug || 
+    (input.feature ? input.feature.toLowerCase().replace(/[^a-z0-9]+/g, '_') : null);
+  
+  if (featureSlug) {
+    // Check if feature already exists
+    const featurePath = path.join(__dirname, '../../docs/proposal', featureSlug);
+    const exists = fs.existsSync(featurePath);
+    
+    if (!exists && !input.interactive && !input.initOnly) {
+      // Feature doesn't exist - auto-initialize first
+      if (process.env.DEBUG) {
+        console.error(`[AUTO-INIT] Feature ${featureSlug} doesn't exist, initializing...`);
+      }
+      
+      // If we have a plan, copy it to the feature location
+      if (input.plan) {
+        // Create the feature structure first
+        const orchestrator = new FeatureOrchestrator();
+        
+        // Set up for non-interactive mode
+        if (input.autoConfirm !== false) {
+          if (orchestrator.rl) {
+            orchestrator.rl.close();
+          }
+          
+          // Mock readline for auto-confirm
+          orchestrator.rl = {
+            question: (question, callback) => {
+              if (question.includes('Your choice')) {
+                callback('4'); // Custom slug
+              } else if (question.includes('Enter custom slug')) {
+                callback(featureSlug);
+              } else if (question.includes('Proceed with scaffolding')) {
+                callback('yes');
+              } else {
+                callback('no');
+              }
+            },
+            close: () => {}
+          };
+        }
+        
+        // Create the structure
+        await orchestrator.createFeature(input.feature, input.plan);
+        
+        if (process.env.DEBUG) {
+          console.error(`[AUTO-INIT] Feature structure created for ${featureSlug}`);
+        }
+      }
+    } else if (exists && process.env.DEBUG) {
+      console.error(`[AUTO-INIT] Feature ${featureSlug} already exists, skipping initialization`);
+    }
+  }
+  
   // Check for --interactive flag
   if (input.interactive || input.initOnly) {
     console.log('Delegating to Interactive INITIAL.md creation...');

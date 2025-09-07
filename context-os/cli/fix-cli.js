@@ -78,7 +78,7 @@ async function fix(input) {
   
   try {
     // Check if feature exists
-    const featurePath = path.join('../docs/proposal', input.feature);
+    const featurePath = path.join('docs/proposal', input.feature);
     if (!fs.existsSync(featurePath)) {
       throw new Error(`Feature not found: ${input.feature}`);
     }
@@ -93,6 +93,14 @@ async function fix(input) {
     
     // Classify the issue
     const classification = manager.classifier.classify(issue);
+    
+    // Check if severity override was provided but not used
+    if (input.severity && input.severity !== classification.severity) {
+      console.error(`[NOTICE] Severity override '${input.severity}' provided but not applied.`);
+      console.error(`[NOTICE] Auto-classified as '${classification.severity}' based on metrics.`);
+      console.error(`[NOTICE] Manual severity override is PLANNED for future release.`);
+    }
+    
     result.classification = {
       severity: classification.severity,
       type: classification.type,

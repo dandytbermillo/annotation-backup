@@ -28,7 +28,8 @@
     "context:fix": "node context-os/cli/fix-cli.js",
     "context:validate": "node context-os/cli/validate-cli.js",
     "context:classify": "node context-os/agents/classifier-agent.js",
-    "context:status": "node context-os/status-enforcer.js",
+    "context:status": "node context-os/cli/status-cli.js",
+    "context:analyze": "node context-os/cli/analyze-cli.js",
     "context:help": "node scripts/context-help.js",
     "doc:validate": "bash scripts/validate-doc-structure.sh",
     "doc:validate:strict": "bash scripts/validate-doc-structure.sh --strict"

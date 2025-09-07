@@ -3,10 +3,15 @@
  * Maps slash commands to appropriate agents and workflows
  */
 
+// Normalize command by removing optional 'context-' prefix
+function normalizeCommand(command) {
+  return command.replace(/^\/context-/, '/');
+}
+
 const commandRoutes = [
   {
     command: '/execute',
-    pattern: /^\/execute\s+"([^"]+)"(.*)$/,
+    pattern: /^\/(context-)?execute\s+"([^"]+)"(.*)$/,
     claudeAgent: null,  // Pure Context-OS operation
     contextAgent: ['orchestrator.ts', 'scaffolder.ts'],
     hybrid: false,
@@ -16,7 +21,7 @@ const commandRoutes = [
   
   {
     command: '/fix',
-    pattern: /^\/fix\s+(.*)$/,  // More flexible pattern, parse args later
+    pattern: /^\/(context-)?fix\s+(.*)$/,  // More flexible pattern, parse args later
     claudeAgent: ['Task'],  // For root cause analysis
     contextAgent: ['classifier-agent.js', 'docfix.ts'],
     hybrid: true,
@@ -26,7 +31,7 @@ const commandRoutes = [
   
   {
     command: '/validate',
-    pattern: /^\/validate\s+(\S+)?(\s+--strict)?$/,
+    pattern: /^\/(context-)?validate\s+(\S+)?(\s+--strict)?$/,
     claudeAgent: null,  // Pure validation
     contextAgent: ['validate-doc-structure.sh'],
     hybrid: false,
@@ -162,6 +167,9 @@ class CommandRouter {
    * Route a command to appropriate agents
    */
   route(command) {
+    // Normalize command to handle both /context-* and /* forms
+    const normalizedCmd = normalizeCommand(command);
+    
     for (const route of this.routes) {
       const match = command.match(route.pattern);
       if (match) {

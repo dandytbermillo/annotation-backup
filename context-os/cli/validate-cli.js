@@ -19,7 +19,7 @@ const path = require('path');
  */
 
 function validate(input) {
-  const scriptPath = '../scripts/validate-doc-structure.sh';
+  const scriptPath = path.join(__dirname, '../../scripts/validate-doc-structure.sh');
   
   if (!fs.existsSync(scriptPath)) {
     throw new Error('Validation script not found');
@@ -41,7 +41,7 @@ function validate(input) {
     if (input.feature) {
       const featurePath = input.feature.startsWith('/')
         ? input.feature
-        : `../docs/proposal/${input.feature}`;
+        : path.join(__dirname, '../..', 'docs/proposal', input.feature);
       command += ` ${featurePath}`;
     }
     

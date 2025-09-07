@@ -8,6 +8,13 @@
 
 Context-OS supports both long-form (`/context-*`) and short-form (`/execute`, `/fix`) slash commands. The long-form commands are preferred for clarity and to avoid conflicts with other tools. When you type `/context-execute` or `/execute`, Claude's built-in agent routes the command to our custom JavaScript/TypeScript agents, providing a seamless workflow for documentation-compliant feature development.
 
+### Agent Guidance Files
+Commands are processed using Task tool guidance in `.claude/agents/`:
+- [context-executor.md](../.claude/agents/context-executor.md) - Feature creation and scaffolding
+- [context-fixer.md](../.claude/agents/context-fixer.md) - Issue classification and fix routing  
+- [context-validator.md](../.claude/agents/context-validator.md) - Compliance validation rules
+- [task-hierarchy.md](../.claude/agents/task-hierarchy.md) - Complete Task tool hierarchy
+
 ## 🚀 Quick Start
 
 ```bash
@@ -47,17 +54,21 @@ Creates a new feature with compliant documentation structure.
 ```
 
 **Options:**
-- `--plan <path>` - Path to draft plan (in context-os/drafts/)
-- `--slug <slug>` - Pre-select a specific slug
-- `--confirm false` - Skip confirmation (for automation)
+- `--from <path>` or `--plan <path>` - **Optional**: Path to draft plan (recommended)
+  - If omitted: Creates minimal plan and enters interactive mode
+  - If provided: Preserves original filename when moving to feature directory
+- `--slug <slug>` - **Optional**: Pre-select a specific slug
+- `--confirm false` - **Optional**: Skip confirmation (for automation)
 
 **Example:**
 ```bash
-# Basic usage
+# Interactive mode (no draft plan)
 /execute "Add dark mode toggle"
+# → Will prompt for missing fields interactively
 
-# With existing draft
-/execute "Add dark mode" --plan context-os/drafts/dark-mode.md
+# With existing draft (recommended)
+/execute "Add dark mode" --from context-os/drafts/dark-mode.md
+# → Moves to docs/proposal/add_dark_mode/dark-mode.md (preserves filename)
 
 # With specific slug
 /execute "Dark Mode" --slug dark_mode_v2

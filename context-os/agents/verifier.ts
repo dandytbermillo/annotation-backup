@@ -12,6 +12,8 @@ import chalk from 'chalk';
 const execAsync = promisify(exec);
 
 export class VerifierAgent extends Agent {
+  private jsonOutput: boolean = false;
+  
   private readonly allowedCommands = [
     'npm test',
     'npm run test',
@@ -27,9 +29,12 @@ export class VerifierAgent extends Agent {
   /**
    * Executes verification tests
    */
-  async execute(command?: string): Promise<AgentResult> {
+  async execute(command?: string, options?: { json?: boolean }): Promise<AgentResult> {
+    this.jsonOutput = options?.json || false;
     try {
-      console.log(chalk.bold('🧪 Verification Agent\n'));
+      if (!this.jsonOutput) {
+        console.log(chalk.bold('🧪 Verification Agent\n'));
+      }
       
       // Validate command if provided
       if (command && !this.isCommandSafe(command)) {
@@ -51,7 +56,9 @@ export class VerifierAgent extends Agent {
         };
       }
       
-      console.log(chalk.blue(`Running: ${testCommand}`));
+      if (!this.jsonOutput) {
+        console.log(chalk.blue(`Running: ${testCommand}`));
+      }
       
       // Execute command
       const result = await this.runCommand(testCommand);
@@ -60,27 +67,31 @@ export class VerifierAgent extends Agent {
       const artifactPath = await this.saveArtifacts(result);
       
       // Update status based on result
-      if (result.exitCode === 0) {
-        console.log(chalk.green('✓ Tests passed'));
-        return {
-          success: true,
-          message: 'Verification successful',
-          data: {
-            result,
-            artifactPath
-          }
-        };
+      const success = result.exitCode === 0;
+      const response = {
+        success,
+        message: success ? 'Verification successful' : 'Verification failed',
+        data: {
+          result,
+          artifactPath
+        }
+      };
+      
+      if (this.jsonOutput) {
+        console.log(JSON.stringify({
+          ok: success,
+          command: 'verify',
+          result: response
+        }));
       } else {
-        console.log(chalk.red('✗ Tests failed'));
-        return {
-          success: false,
-          message: 'Verification failed',
-          data: {
-            result,
-            artifactPath
-          }
-        };
+        if (success) {
+          console.log(chalk.green('✓ Tests passed'));
+        } else {
+          console.log(chalk.red('✗ Tests failed'));
+        }
       }
+      
+      return response;
       
     } catch (error) {
       return {
@@ -318,19 +329,25 @@ export class VerifierAgent extends Agent {
     const results: any[] = [];
     
     for (const check of checks) {
-      console.log(chalk.blue(`Running ${check.name}...`));
+      if (!this.jsonOutput) {
+        console.log(chalk.blue(`Running ${check.name}...`));
+      }
       
       try {
         const result = await check.fn();
         results.push({ name: check.name, ...result });
         
-        if (result.success) {
-          console.log(chalk.green(`  ✓ ${check.name} passed`));
-        } else {
-          console.log(chalk.red(`  ✗ ${check.name} failed`));
+        if (!this.jsonOutput) {
+          if (result.success) {
+            console.log(chalk.green(`  ✓ ${check.name} passed`));
+          } else {
+            console.log(chalk.red(`  ✗ ${check.name} failed`));
+          }
         }
       } catch (error) {
-        console.log(chalk.red(`  ✗ ${check.name} error`));
+        if (!this.jsonOutput) {
+          console.log(chalk.red(`  ✗ ${check.name} error`));
+        }
         results.push({ 
           name: check.name, 
           success: false, 
@@ -341,11 +358,21 @@ export class VerifierAgent extends Agent {
     
     const allPassed = results.every(r => r.success);
     
-    return {
+    const response = {
       success: allPassed,
       message: allPassed ? 'All checks passed' : 'Some checks failed',
       data: results
     };
+    
+    if (this.jsonOutput) {
+      console.log(JSON.stringify({
+        ok: allPassed,
+        command: 'checks',
+        result: response
+      }));
+    }
+    
+    return response;
   }
   
   private async checkStructure(): Promise<any> {

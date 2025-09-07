@@ -10,3 +10,14 @@ This policy records the user-approved change allowing assistant writes within `.
 Automation
 - Auto Chat Logging: Enabled. User and assistant messages are recorded as `chat` events in `journal.ndjson` with timestamps.
 - Auto Refresh: Enabled. `summary.md` is refreshed after notable updates and chat events.
+
+Output Styling Preferences (User-Requested)
+- Emphasis: Use underlined text for important notices in CLI/terminal outputs (ANSI underline `\x1b[4m...\x1b[0m`). Avoid background colors.
+- Docs/Markdown: Prefer clear headings and bold. Underline using `<u>...</u>` only when necessary and readable in the target renderer.
+- Consistency: Do not introduce background color blocks in examples or logs. Preserve emojis/icons for quick scanning.
+
+Clarification & Approval Protocol (User-Requested)
+- Always Ask: If a user request is ambiguous or scope is unclear, ask for clarification before making changes.
+- Restricted Areas: Never modify `context-os/` (or other protected folders) without explicit user approval. Default write area is `.context-memory/` only.
+- Scope Confirmation: Confirm target files, commands, and expected outputs prior to edits outside `.context-memory/`.
+- Change Log: Log significant intent (what/where/why) in `journal.ndjson` before and after approved changes.

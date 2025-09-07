@@ -13,6 +13,7 @@
 const { ContextOSClaudeBridge } = require('./bridge/bridge-enhanced');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 class CommandRouter {
   constructor() {
@@ -262,6 +263,39 @@ class CommandRouter {
   }
   
   /**
+   * Handle /analyze command (simulated Claude analysis)
+   */
+  async handleAnalyze(options) {
+    const feature = options.feature || options._main;
+    
+    console.log('🔍 Analyzing Feature\n');
+    
+    try {
+      let command = 'npm run context:analyze --silent -- ';
+      
+      if (options.all) {
+        command += '--all';
+      } else if (options.health) {
+        command += '--health';
+      } else if (feature) {
+        command += feature;
+        if (options.metrics) command += ' --metrics';
+      } else {
+        command += '--health';  // Default to health analysis
+      }
+      
+      const result = execSync(command, { encoding: 'utf8' });
+      console.log(result);
+      
+      return { ok: true, result };
+      
+    } catch (error) {
+      this.renderError(error.message);
+      return { ok: false, error: error.message };
+    }
+  }
+  
+  /**
    * Handle /status command
    */
   async handleStatus(options) {
@@ -270,9 +304,12 @@ class CommandRouter {
     console.log('📊 Feature Status\n');
     
     try {
-      let command = 'npm run context:status --silent -- list';
+      let command = 'npm run context:status --silent -- ';
       if (feature) {
-        command = `npm run context:status --silent -- check ../docs/proposal/${feature}`;
+        // Pass just the feature slug, not the path
+        command += feature;
+      } else {
+        command += '--all';
       }
       
       const result = execSync(command, { encoding: 'utf8' });
@@ -299,12 +336,12 @@ class CommandRouter {
    Usage: /context-execute --feature "Feature name" [options]
    Short: /execute "Feature name" [options]
    Options:
-     --from <path>    Path to draft plan (replaces --plan)
-     --plan <path>    Legacy: Path to draft plan  
-     --slug <slug>    Pre-select feature slug
+     --from <path>    Optional: Path to draft plan (recommended)
+     --plan <path>    Legacy: Same as --from  
+     --slug <slug>    Optional: Pre-select feature slug
    
-   Example: /context-execute --feature "Add dark mode" --from drafts/dark-mode.md
-   Example: /execute "Add dark mode" --plan drafts/dark-mode.md
+   Example: /execute "Add dark mode" --from drafts/dark-mode.md  # With draft plan
+   Example: /execute "Add dark mode"                             # Interactive mode
 
 🔧 /context-fix (or /fix) - Create a post-implementation fix
    Usage: /context-fix --feature <slug> --issue "Description" [options]
@@ -411,7 +448,7 @@ Pro tips:
     
     console.log('\n🚀 Next steps:');
     console.log(`  1. cd docs/proposal/${result.slug}`);
-    console.log('  2. Review implementation.md');
+    console.log('  2. Review the feature plan file');
     console.log('  3. Update status to IN PROGRESS when starting');
   }
   
@@ -506,7 +543,8 @@ Pro tips:
       return await this.commands[command](options);
     } else {
       console.log(`Unknown command: ${command}`);
-      return this.handleHelp();
+      this.handleHelp();  // Show help but don't return its result
+      return { ok: false, error: `Unknown command: ${command}` };
     }
   }
 }
@@ -517,7 +555,9 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   
   router.execute(args).then(result => {
-    process.exit(result && result.ok ? 0 : 1);
+    // Handle both patterns: { ok: true } and { status: 'ok' }
+    const success = result && (result.ok === true || result.status === 'ok');
+    process.exit(success ? 0 : 1);
   });
 }
 

@@ -14,6 +14,7 @@ import chalk from 'chalk';
 export class Orchestrator extends Agent {
   private rl: readline.Interface;
   private scaffolder: Scaffolder;
+  private jsonOutput: boolean = false;
   
   constructor(context: AgentContext) {
     super(context);
@@ -27,9 +28,12 @@ export class Orchestrator extends Agent {
   /**
    * Main execution flow
    */
-  async execute(): Promise<AgentResult> {
+  async execute(options?: { json?: boolean }): Promise<AgentResult> {
+    this.jsonOutput = options?.json || false;
     try {
-      console.log(chalk.bold('\n🤖 Context-OS Orchestrator\n'));
+      if (!this.jsonOutput) {
+        console.log(chalk.bold('\n🤖 Context-OS Orchestrator\n'));
+      }
       
       // Step A: Parse & Propose
       const slug = this.proposeSlug();
@@ -60,7 +64,7 @@ export class Orchestrator extends Agent {
       }
       
       // Step E: Success
-      return {
+      const result = {
         success: true,
         message: 'Feature workspace created successfully',
         data: {
@@ -68,6 +72,16 @@ export class Orchestrator extends Agent {
           filesCreated: scaffoldResult.data.filesCreated
         }
       };
+      
+      if (this.jsonOutput) {
+        console.log(JSON.stringify({
+          ok: true,
+          command: 'orchestrate',
+          result
+        }));
+      }
+      
+      return result;
       
     } catch (error) {
       return {
@@ -116,10 +130,12 @@ export class Orchestrator extends Agent {
    * Handles validation failures
    */
   private async handleValidationFailure(validation: ValidationResult): Promise<AgentResult> {
-    this.log('error', 'Plan validation failed:');
-    validation.errors.forEach(error => {
-      console.log(chalk.red(`  ✗ ${error.field}: ${error.message}`));
-    });
+    if (!this.jsonOutput) {
+      this.log('error', 'Plan validation failed:');
+      validation.errors.forEach(error => {
+        console.log(chalk.red(`  ✗ ${error.field}: ${error.message}`));
+      });
+    }
     
     if (validation.missingFields.length > 0) {
       const fix = await this.askUser('Would you like to fix these issues interactively? (yes/no): ');
@@ -154,15 +170,17 @@ export class Orchestrator extends Agent {
   private async getConfirmation(): Promise<boolean> {
     const targetDir = path.join('docs/proposal', this.context.plan.slug!);
     
-    console.log(chalk.bold('\n📋 Action Summary:'));
-    console.log(`  • Feature: ${this.context.plan.title}`);
-    console.log(`  • Location: ${targetDir}/`);
-    console.log(`  • Status: ${this.context.plan.status}`);
-    console.log('\nThis will create:');
-    console.log('  • Complete directory structure');
-    console.log('  • Implementation plan');
-    console.log('  • Report templates');
-    console.log('  • Fix documentation structure');
+    if (!this.jsonOutput) {
+      console.log(chalk.bold('\n📋 Action Summary:'));
+      console.log(`  • Feature: ${this.context.plan.title}`);
+      console.log(`  • Location: ${targetDir}/`);
+      console.log(`  • Status: ${this.context.plan.status}`);
+      console.log('\nThis will create:');
+      console.log('  • Complete directory structure');
+      console.log('  • Implementation plan');
+      console.log('  • Report templates');
+      console.log('  • Fix documentation structure');
+    }
     
     const answer = await this.askUser('\nProceed with creation? (yes/no): ');
     return answer.toLowerCase() === 'yes';
@@ -228,6 +246,7 @@ export class Orchestrator extends Agent {
    */
   private log(level: 'info' | 'warn' | 'error' | 'success', message: string): void {
     if (!this.context.verbose && level === 'info') return;
+    if (this.jsonOutput) return; // Skip all logs in JSON mode
     
     const prefix = {
       info: chalk.blue('→'),

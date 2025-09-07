@@ -125,8 +125,8 @@ docs/proposal/user_authentication/post-implementation-fixes/README.md
 # Full interactive mode
 node context-os/create-feature.js "Fix batch save issues"
 
-# With draft plan
-node context-os/create-feature.js "Fix batch save" drafts/implementation.md
+# With draft plan (use descriptive filename)  
+node context-os/create-feature.js "Fix batch save" drafts/batch-save-fix.md
 ```
 
 ### Validate Structure

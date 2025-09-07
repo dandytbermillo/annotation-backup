@@ -61,14 +61,14 @@ Create `context-os/config.json`:
 
 ## 📊 Commands Reference
 
-| Command | Type | Claude | Context-OS | Description |
-|---------|------|--------|------------|-------------|
-| `/execute` | Context-only | ❌ | ✅ | Create feature structure |
-| `/analyze` | Claude-only | ✅ | ❌ | Semantic analysis |
-| `/fix` | Hybrid | ✅ | ✅ | Analyze + create fix |
-| `/validate` | Context-only | ❌ | ✅ | Check compliance |
-| `/review` | Hybrid (parallel) | ✅ | ✅ | Quality + compliance |
-| `/status` | Context-only | ❌ | ✅ | Check feature status |
+| Command | Type | Claude | Context-OS | Description | Agent Guidance |
+|---------|------|--------|------------|-------------|----------------|
+| `/execute` | Context-only | ❌ | ✅ | Create feature structure | [context-executor.md](../.claude/agents/context-executor.md) |
+| `/analyze` | Claude-only | ✅ | ❌ | Semantic analysis | Task tool with analysis prompt |
+| `/fix` | Hybrid | ✅ | ✅ | Analyze + create fix | [context-fixer.md](../.claude/agents/context-fixer.md) |
+| `/validate` | Context-only | ❌ | ✅ | Check compliance | [context-validator.md](../.claude/agents/context-validator.md) |
+| `/review` | Hybrid (parallel) | ✅ | ✅ | Quality + compliance | Task tool with review prompt |
+| `/status` | Context-only | ❌ | ✅ | Check feature status | Direct CLI tool |
 
 ### Command Flags
 
@@ -80,6 +80,17 @@ Create `context-os/config.json`:
 - `--severity`: CRITICAL|HIGH|MEDIUM|LOW
 - `--perf <0-100>`: Performance degradation %
 - `--users <0-100>`: Users affected %
+
+## 🤖 Agent Guidance Files
+
+Commands are orchestrated by Claude using Task tool guidance located in `.claude/agents/`:
+
+- **[context-executor.md](../.claude/agents/context-executor.md)** - Feature creation and scaffolding logic
+- **[context-fixer.md](../.claude/agents/context-fixer.md)** - Issue classification and fix routing
+- **[context-validator.md](../.claude/agents/context-validator.md)** - Compliance validation rules  
+- **[task-hierarchy.md](../.claude/agents/task-hierarchy.md)** - Complete Task tool hierarchy
+
+These files define how Claude should use Context-OS tools to accomplish tasks. Claude remains the orchestrator while Context-OS provides deterministic execution.
 
 ## 📈 Telemetry
 
@@ -115,6 +126,69 @@ Telemetry logs are written to `context-os/telemetry/<session-id>.jsonl`
 - `ok`: Command succeeded completely
 - `degraded`: Partial success (e.g., Claude failed but Context-OS worked)
 - `error`: Command failed
+- `skipped`: Optional operation was skipped after failure
+
+### Failure Priority Tiers
+
+The bridge implements a 3-tier failure handling system with different strategies:
+
+#### Tier Action Matrix
+
+| Tier | Max Retries | Backoff (ms) | Fallback Strategy | Action |
+|------|-------------|--------------|-------------------|--------|
+| **CRITICAL** | 3 | [1000, 2000, 4000] | Immediate after retries | Retry aggressively with exponential backoff, then degrade to Context-OS |
+| **IMPORTANT** | 2 | [500, 1500] | After first retry | Retry once with backoff, then fallback to Context-OS |
+| **OPTIONAL** | 1 | [500] | Skip on failure | Try once, skip if failed |
+
+#### Priority Assignment
+
+**CRITICAL** - Must succeed or degrade gracefully:
+- Security operations
+- Data integrity checks
+- Production fixes
+- Compliance validation
+
+**IMPORTANT** (default) - Should succeed but can fallback:
+- Feature creation
+- Standard bug fixes
+- Documentation updates
+- Analysis operations
+
+**OPTIONAL** - Nice to have, skip if problematic:
+- Telemetry logging
+- Optional enhancements
+- Cosmetic updates
+- Performance metrics
+
+#### Backoff Policy
+
+Exponential backoff with jitter is applied based on tier:
+
+```javascript
+// CRITICAL: Aggressive retry
+Retry 1: Wait 1000ms
+Retry 2: Wait 2000ms  
+Retry 3: Wait 4000ms
+Then: Degrade to Context-OS only
+
+// IMPORTANT: Balanced approach
+Retry 1: Wait 500ms
+Retry 2: Wait 1500ms
+Then: Fallback to Context-OS
+
+// OPTIONAL: Minimal retry
+Retry 1: Wait 500ms
+Then: Skip operation
+```
+
+#### Usage Examples
+
+```javascript
+// Specify priority when calling bridge
+bridge.execute('/fix --feature auth --issue "Security bug"', 'CRITICAL');
+bridge.execute('/execute "New feature"', 'IMPORTANT');  // default
+bridge.execute('/analyze --metrics', 'OPTIONAL');
+```
 
 ### Common Failures
 
@@ -138,6 +212,15 @@ Telemetry logs are written to `context-os/telemetry/<session-id>.jsonl`
 
 ## 🔒 Safety Rails
 
+### Failure Recovery
+
+The bridge implements multiple recovery strategies:
+
+1. **Retry with Backoff**: Automatic retries based on tier
+2. **Graceful Degradation**: Fall back to Context-OS when Claude unavailable
+3. **Skip Non-Critical**: Optional operations can be skipped
+4. **Circuit Breaker**: Prevents cascade failures (future)
+
 ### Dry-Run by Default
 ```bash
 /fix --feature x --issue "Bug"        # DRY RUN (preview only)
@@ -154,6 +237,24 @@ patches/
 ```
 
 ### Budget Protection
+
+The bridge enforces multiple budget constraints:
+
+#### Token Budgets
+```
+Per Call:    4,000 tokens max
+Per Session: 100,000 tokens max
+Parallel:    2 concurrent calls max
+```
+
+#### Resource Budgets
+```
+Timeout:     30 seconds per call
+Retries:     Based on failure tier
+Backoff:     Exponential with tier-specific delays
+```
+
+#### Budget Exceeded Behavior
 ```
 Session: abc123
 Tokens used: 45,000 / 100,000

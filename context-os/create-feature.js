@@ -47,9 +47,10 @@ class FeatureOrchestrator {
     const slug = await this.selectSlug(slugSuggestions);
     log.step(`Selected feature slug: ${slug}`);
     
-    // Step B: Locate Draft Plan
-    const planPath = draftPath || 'drafts/implementation.md';
-    const plan = await this.loadOrCreatePlan(planPath, slug, description);
+    // Step B: Load Draft Plan or Create Minimal
+    const plan = draftPath 
+      ? await this.loadDraftPlan(draftPath)
+      : await this.createMinimalPlan(slug, description);
     
     // Step C: Validate Plan
     const validation = this.validatePlan(plan);
@@ -79,9 +80,11 @@ class FeatureOrchestrator {
     }
     
     // Step D: Confirmation Gate
+    const path = require('path');
+    const originalFilename = draftPath ? path.basename(draftPath) : 'plan.md';
     console.log('\n📋 Action Summary:');
     console.log(`  • Create feature at: ${targetDir}/`);
-    console.log(`  • Move plan to: ${targetDir}/implementation.md`);
+    console.log(`  • Move plan to: ${targetDir}/${originalFilename}`);
     console.log(`  • Create standard directories and stubs`);
     
     const confirm = await this.askUser('\nProceed with scaffolding? (yes/no): ');
@@ -92,12 +95,15 @@ class FeatureOrchestrator {
     }
     
     // Step E: Scaffold & Move
-    await this.scaffoldFeature(slug, plan);
+    await this.scaffoldFeature(slug, plan, originalFilename);
     
     // Step F: Validate Structure
     log.step('Validating structure compliance...');
     const validationResult = this.validateStructure(targetDir);
-    if (validationResult.errors > 0) {
+    
+    if (validationResult.scriptError) {
+      log.error('Validation script failed to run - please check manually');
+    } else if (validationResult.errors > 0) {
       log.warn(`Structure has ${validationResult.errors} errors - review and fix`);
     } else {
       log.info('Structure validation passed!');
@@ -107,7 +113,7 @@ class FeatureOrchestrator {
     log.info(`Feature workspace created successfully!`);
     console.log(`\n📂 Next steps:`);
     console.log(`  1. cd ${targetDir}`);
-    console.log(`  2. Review implementation.md`);
+    console.log(`  2. Review the feature plan file`);
     console.log(`  3. Update status to IN PROGRESS when starting`);
     console.log(`  4. Use validate-doc-structure.sh to verify compliance`);
     
@@ -181,15 +187,22 @@ class FeatureOrchestrator {
   }
 
   /**
-   * Load existing plan or create minimal one
+   * Load existing draft plan
    */
-  async loadOrCreatePlan(planPath, slug, description) {
-    if (fs.existsSync(planPath)) {
-      log.info(`Found draft plan at: ${planPath}`);
-      return fs.readFileSync(planPath, 'utf8');
+  async loadDraftPlan(planPath) {
+    if (!fs.existsSync(planPath)) {
+      log.error(`Draft plan not found at: ${planPath}`);
+      throw new Error(`Draft plan not found: ${planPath}`);
     }
-    
-    log.warn(`No draft found at ${planPath}, creating minimal plan...`);
+    log.info(`Found draft plan at: ${planPath}`);
+    return fs.readFileSync(planPath, 'utf8');
+  }
+
+  /**
+   * Create minimal plan when no draft provided
+   */
+  async createMinimalPlan(slug, description) {
+    log.info('No draft plan provided, creating minimal plan...');
     
     const date = new Date().toISOString().split('T')[0];
     return `# ${description}
@@ -290,7 +303,7 @@ class FeatureOrchestrator {
   /**
    * Scaffold the feature structure
    */
-  async scaffoldFeature(slug, plan) {
+  async scaffoldFeature(slug, plan, originalFilename = 'plan.md') {
     const baseDir = `../docs/proposal/${slug}`;
     
     log.step('Creating directory structure...');
@@ -316,12 +329,12 @@ class FeatureOrchestrator {
       }
     }
     
-    // Write implementation.md
-    fs.writeFileSync(`${baseDir}/implementation.md`, plan);
-    log.info(`Created: ${baseDir}/implementation.md`);
+    // Write the plan with original filename
+    fs.writeFileSync(`${baseDir}/${originalFilename}`, plan);
+    log.info(`Created: ${baseDir}/${originalFilename}`);
     
     // Create main report stub
-    const reportStub = this.generateReportStub(slug);
+    const reportStub = this.generateReportStub(slug, originalFilename);
     const reportPath = `${baseDir}/reports/${slug}-Implementation-Report.md`;
     fs.writeFileSync(reportPath, reportStub);
     log.info(`Created: ${reportPath}`);
@@ -345,13 +358,13 @@ class FeatureOrchestrator {
   /**
    * Generate report template
    */
-  generateReportStub(slug) {
+  generateReportStub(slug, planFilename = 'plan.md') {
     const title = slug.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     const date = new Date().toISOString().split('T')[0];
     
     return `# ${title} Implementation Report
 
-**Implementation Plan**: [implementation.md](../implementation.md)
+**Implementation Plan**: [${planFilename}](../${planFilename})
 **Date Started**: ${date}
 **Date Completed**: TBD
 **Status**: 🚧 IN PROGRESS
@@ -360,7 +373,7 @@ class FeatureOrchestrator {
 [2-3 sentences maximum once complete]
 
 ## Scope of Implementation
-- What Was Planned: See implementation.md
+- What Was Planned: See ${planFilename}
 - What Was Delivered: TBD
 
 ## Quick Status
@@ -383,7 +396,7 @@ class FeatureOrchestrator {
 - Files modified will be listed here
 
 ## Acceptance Criteria ✓
-See implementation.md for criteria
+See ${planFilename} for criteria
 
 ---
 <!-- Phase boundary: Everything above = implementation, below = post-implementation -->
@@ -564,7 +577,7 @@ To be calculated once fixes are recorded.
   validateStructure(featurePath) {
     try {
       // Try to run the validation script
-      const scriptPath = '../scripts/validate-doc-structure.sh';
+      const scriptPath = path.join(__dirname, '../scripts/validate-doc-structure.sh');
       if (!fs.existsSync(scriptPath)) {
         log.warn('Validation script not found - skipping validation');
         return { errors: 0, warnings: 0 };
@@ -592,9 +605,10 @@ To be calculated once fixes are recorded.
         warnings: parseInt(warnings) || 0 
       };
     } catch (error) {
-      // If validation fails, don't block the process
-      log.warn('Could not run validation: ' + error.message);
-      return { errors: 0, warnings: 0 };
+      // If validation script errors, treat as validation failure
+      log.warn('Validation script error: ' + error.message);
+      // Return -1 to indicate script failure (different from validation errors)
+      return { errors: -1, warnings: 0, scriptError: true };
     }
   }
   

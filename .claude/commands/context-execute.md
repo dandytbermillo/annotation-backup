@@ -14,7 +14,9 @@ Creates a new feature with compliant documentation structure using Context-OS.
 
 ## Subagent Role When Task Tool is Used
 
-When complex implementation is needed, use the Task tool with subagent_type: 'general-purpose'. The subagent should follow these guidelines:
+When complex implementation is needed, use the Task tool with subagent_type: 'general-purpose'. 
+
+The subagent should load and follow the guidelines from `.claude/agents/feature-implementer.md`.
 
 ### Decision-Making Framework
 
@@ -23,7 +25,7 @@ For each implementation task, the subagent must decide:
 **Use Context-OS .js/.ts tools (via Bash) when:**
 - Creating deterministic directory structures → `node context-os/agents/orchestrator.ts`
 - Calculating precise severity → `node context-os/agents/classifier-agent.js`
-- Validating against fixed rules → `node context-os/validate-cli.js`
+- Validating against fixed rules → `node context-os/cli/validate-cli.js`
 - Managing state transitions → `node context-os/status-enforcer.js`
 
 **Use Claude's built-in tools when:**

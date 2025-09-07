@@ -53,3 +53,12 @@
    - Assistant may write within `.context-memory/` without additional approval (user-authorized).
    - Log significant actions as `note` lines in `.context-memory/live/journal.ndjson` and refresh `summary.md` via `.context-memory/scripts/summarize.js`.
    - Keep `codex/` writes approval‑required; never include secrets or PII in Live Context.
+
+## Protected Areas & Approval (Assistant Policy)
+
+- Default write area: `.context-memory/` only. Use it for notes, preferences, and session records (auto‑logged; never include secrets/PII).
+- Protected directories (require explicit user approval before edits): `context-os/` and application code (`app/`, `components/`, `lib/`, `docs/`). Treat these as read‑only unless the user explicitly approves scope and files.
+- Always ask when ambiguous: If a request’s scope/intent is unclear, ask for clarification before acting.
+- Confirm scope before changes outside `.context-memory/`: list target files, commands to run, and expected outputs; proceed only after user approval.
+- Log intent and results for approved changes in `.context-memory/live/journal.ndjson` and refresh `.context-memory/live/summary.md` using `.context-memory/scripts/summarize.js`.
+- Output styling preference: for CLI messages, prefer underlined emphasis (no background colors). In docs, prefer headings/bold; use `<u>` sparingly where it renders clearly.

@@ -23,6 +23,28 @@ class ContextOSClaudeBridge {
       ...options.budget
     };
     
+    // Failure Priority Tiers
+    this.failureTiers = {
+      CRITICAL: {
+        maxRetries: 3,
+        backoffMs: [1000, 2000, 4000],
+        fallbackStrategy: 'immediate',
+        action: 'retry-with-backoff-then-degrade'
+      },
+      IMPORTANT: {
+        maxRetries: 2,
+        backoffMs: [500, 1500],
+        fallbackStrategy: 'after-retry',
+        action: 'retry-once-then-fallback'
+      },
+      OPTIONAL: {
+        maxRetries: 1,
+        backoffMs: [500],
+        fallbackStrategy: 'skip',
+        action: 'try-once-then-skip'
+      }
+    };
+    
     // Safety: track usage for this session
     this.usage = {
       tokensUsed: 0,
@@ -40,9 +62,13 @@ class ContextOSClaudeBridge {
     this.sessionId = Date.now().toString(36);
   }
   
-  async execute(rawCommand) {
+  async execute(rawCommand, priority = 'IMPORTANT') {
     const startTime = Date.now();
     const route = this.commandRouter.route(rawCommand);
+    
+    // Set failure handling tier
+    route.priority = priority;
+    route.tier = this.failureTiers[priority] || this.failureTiers.IMPORTANT;
     
     // Parse arguments from matches
     route.args = route.matches || [];
@@ -88,42 +114,129 @@ class ContextOSClaudeBridge {
         contextOSExecuted: !!route.contextAgent,
         tokenEstimate: this.usage.tokensUsed,
         duration: Date.now() - startTime,
-        exitStatus: result.status === 'ok' ? 'success' : 'failure',
+        exitStatus: result.status === 'ok' ? 'success' : (result.status === 'degraded' ? 'degraded' : 'failure'),
         artifacts: result.artifacts
       });
       
       return result;
       
     } catch (error) {
-      // SAFETY: Graceful degradation
-      console.error('⚠️  Bridge error, attempting fallback...');
-      
-      if (route.contextAgent && !parts.contextResults) {
-        // Try Context-OS only as fallback
-        try {
-          parts.contextResults = await this.executeContextOSWithSafety(route);
-          return {
-            status: 'degraded',
-            summary: 'Executed with Context-OS only (Claude unavailable)',
-            ...parts.contextResults
-          };
-        } catch (fallbackError) {
-          // Complete failure
-          return {
-            status: 'error',
-            summary: `Bridge failed: ${error.message}`,
-            fallback: `Fallback also failed: ${fallbackError.message}`,
-            logs: [String(error), String(fallbackError)]
-          };
-        }
-      }
-      
-      return {
-        status: 'error',
-        summary: `Bridge failed: ${error.message}`,
-        logs: [String(error)]
-      };
+      // Apply failure tier handling
+      return await this.handleFailureWithTier(error, route, parts);
     }
+  }
+  
+  /**
+   * Handle failures based on priority tier
+   */
+  async handleFailureWithTier(error, route, parts) {
+    const tier = route.tier;
+    console.error(`⚠️  ${route.priority} failure: ${error.message}`);
+    
+    // Apply tier-specific strategy
+    switch (tier.action) {
+      case 'retry-with-backoff-then-degrade':
+        // CRITICAL: Aggressive retry with exponential backoff
+        for (let i = 0; i < tier.maxRetries; i++) {
+          console.log(`🔄 Retry ${i + 1}/${tier.maxRetries} after ${tier.backoffMs[i]}ms...`);
+          await this.sleep(tier.backoffMs[i]);
+          
+          try {
+            // Retry the entire operation
+            if (route.claudeAgent && !parts.claudeResults) {
+              parts.claudeResults = await this.executeClaudeWithBudget(route);
+            }
+            if (route.contextAgent && !parts.contextResults) {
+              parts.contextResults = await this.executeContextOSWithSafety(route);
+            }
+            
+            // Success after retry
+            return route.hybrid 
+              ? this.combineResults(parts)
+              : (parts.claudeResults || parts.contextResults);
+          } catch (retryError) {
+            console.error(`  Retry ${i + 1} failed: ${retryError.message}`);
+          }
+        }
+        
+        // All retries failed, try degraded mode
+        if (route.contextAgent) {
+          try {
+            parts.contextResults = await this.executeContextOSWithSafety(route);
+            return {
+              status: 'degraded',
+              summary: 'CRITICAL operation degraded to Context-OS only',
+              tier: 'CRITICAL',
+              retriesExhausted: true,
+              ...parts.contextResults
+            };
+          } catch (degradeError) {
+            // Complete failure for CRITICAL
+            return {
+              status: 'error',
+              tier: 'CRITICAL',
+              summary: `CRITICAL failure after ${tier.maxRetries} retries`,
+              error: error.message,
+              degradeError: degradeError.message
+            };
+          }
+        }
+        break;
+        
+      case 'retry-once-then-fallback':
+        // IMPORTANT: Single retry then fallback
+        for (let i = 0; i < tier.maxRetries; i++) {
+          await this.sleep(tier.backoffMs[i]);
+          
+          try {
+            if (route.claudeAgent && !parts.claudeResults) {
+              parts.claudeResults = await this.executeClaudeWithBudget(route);
+              return parts.claudeResults;
+            }
+          } catch (retryError) {
+            // Try fallback
+            if (route.contextAgent) {
+              try {
+                parts.contextResults = await this.executeContextOSWithSafety(route);
+                return {
+                  status: 'degraded',
+                  summary: 'IMPORTANT operation fell back to Context-OS',
+                  tier: 'IMPORTANT',
+                  ...parts.contextResults
+                };
+              } catch (fallbackError) {
+                // Fallback failed
+              }
+            }
+          }
+        }
+        break;
+        
+      case 'try-once-then-skip':
+        // OPTIONAL: Single attempt, skip on failure
+        console.log('🛡 OPTIONAL operation skipped after failure');
+        return {
+          status: 'skipped',
+          tier: 'OPTIONAL',
+          summary: 'Optional operation skipped',
+          reason: error.message
+        };
+    }
+    
+    // Default error response
+    return {
+      status: 'error',
+      tier: route.priority,
+      summary: `Operation failed: ${error.message}`,
+      logs: [String(error)]
+    };
+  }
+  
+  /**
+   * Sleep helper for backoff
+   */
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
   
   /**

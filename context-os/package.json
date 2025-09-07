@@ -13,7 +13,9 @@
     "lint": "eslint . --ext .ts",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "context:status": "node cli/status-cli.js",
+    "context:analyze": "node cli/analyze-cli.js"
   },
   "keywords": [
     "documentation",

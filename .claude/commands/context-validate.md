@@ -4,6 +4,16 @@ Validates a feature's documentation structure against the Documentation Process 
 
 ## Feature: $ARGUMENTS
 
+## Architecture Note: Claude as Orchestrator
+
+When this command is invoked, Claude may choose to:
+1. Run validation directly using Context-OS tools
+2. Spawn a Validator Subagent via Task tool for comprehensive checks
+
+## Subagent Role When Task Tool is Used
+
+When spawning a subagent for validation, the subagent should load and follow the guidelines from `.claude/agents/validator.md`.
+
 ## Check for Help Flag
 
 ```bash

@@ -354,6 +354,13 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const command = args[0];
   
+  // Check for JSON output flag
+  const jsonIndex = args.indexOf('--json');
+  const jsonOutput = jsonIndex > -1;
+  if (jsonOutput) {
+    args.splice(jsonIndex, 1); // Remove --json from args
+  }
+  
   switch (command) {
     case 'classify':
       // Example: classifier-agent classify "Memory leak in editor" --perf 30 --users 15
@@ -371,14 +378,23 @@ if (require.main === module) {
       };
       
       const classification = classifier.classify(issue);
-      console.log('\n📊 Issue Classification:');
-      console.log(`  Severity: ${classification.icon} ${classification.severity}`);
-      console.log(`  Type: ${classification.type}`);
-      console.log(`  Priority: ${classification.priority}`);
-      console.log(`  SLA: ${classification.sla}`);
-      console.log(`  Workflow: ${classification.workflow}`);
-      console.log('\n📝 Recommendations:');
-      classification.recommendations.forEach(r => console.log(`  ${r}`));
+      
+      if (jsonOutput) {
+        console.log(JSON.stringify({
+          ok: true,
+          command: 'classify',
+          result: classification
+        }));
+      } else {
+        console.log('\n📊 Issue Classification:');
+        console.log(`  Severity: ${classification.icon} ${classification.severity}`);
+        console.log(`  Type: ${classification.type}`);
+        console.log(`  Priority: ${classification.priority}`);
+        console.log(`  SLA: ${classification.sla}`);
+        console.log(`  Workflow: ${classification.workflow}`);
+        console.log('\n📝 Recommendations:');
+        classification.recommendations.forEach(r => console.log(`  ${r}`));
+      }
       break;
       
     case 'route':
@@ -392,10 +408,19 @@ if (require.main === module) {
       };
       
       const result = classifier.routeIssue(routeIssue, featurePath);
-      console.log('\n✅ Issue routed successfully:');
-      console.log(`  Path: ${result.path}`);
-      console.log(`  Severity: ${result.classification.icon} ${result.classification.severity}`);
-      console.log(`  Type: ${result.classification.type}`);
+      
+      if (jsonOutput) {
+        console.log(JSON.stringify({
+          ok: true,
+          command: 'route',
+          result: result
+        }));
+      } else {
+        console.log('\n✅ Issue routed successfully:');
+        console.log(`  Path: ${result.path}`);
+        console.log(`  Severity: ${result.classification.icon} ${result.classification.severity}`);
+        console.log(`  Type: ${result.classification.type}`);
+      }
       break;
       
     case 'analyze':
@@ -403,30 +428,47 @@ if (require.main === module) {
       const analyzePath = args[1] || '.';
       const stats = classifier.analyzeFeature(analyzePath);
       
-      console.log('\n📈 Feature Fix Statistics:');
-      console.log(`  Total Issues: ${stats.total}`);
-      console.log(`  Open: ${stats.byStatus.open} | Closed: ${stats.byStatus.closed}`);
-      console.log('\n  By Severity:');
-      for (const [severity, count] of Object.entries(stats.bySeverity)) {
-        if (count > 0) {
-          const config = classifier.severityLevels[severity];
-          console.log(`    ${config.icon} ${severity}: ${count}`);
+      if (jsonOutput) {
+        console.log(JSON.stringify({
+          ok: true,
+          command: 'analyze',
+          result: stats
+        }));
+      } else {
+        console.log('\n📈 Feature Fix Statistics:');
+        console.log(`  Total Issues: ${stats.total}`);
+        console.log(`  Open: ${stats.byStatus.open} | Closed: ${stats.byStatus.closed}`);
+        console.log('\n  By Severity:');
+        for (const [severity, count] of Object.entries(stats.bySeverity)) {
+          if (count > 0) {
+            const config = classifier.severityLevels[severity];
+            console.log(`    ${config.icon} ${severity}: ${count}`);
+          }
         }
-      }
-      console.log('\n  By Type:');
-      for (const [type, count] of Object.entries(stats.byType)) {
-        if (count > 0) {
-          console.log(`    ${type}: ${count}`);
+        console.log('\n  By Type:');
+        for (const [type, count] of Object.entries(stats.byType)) {
+          if (count > 0) {
+            console.log(`    ${type}: ${count}`);
+          }
         }
       }
       break;
       
     default:
-      console.log('Usage: classifier-agent <command> [options]');
-      console.log('Commands:');
-      console.log('  classify "description" [--perf N] [--users N]');
-      console.log('  route "issue" [feature-path]');
-      console.log('  analyze [feature-path]');
+      if (jsonOutput) {
+        console.log(JSON.stringify({
+          ok: false,
+          error: 'Invalid command. Use: classify, route, or analyze'
+        }));
+      } else {
+        console.log('Usage: classifier-agent <command> [options]');
+        console.log('Commands:');
+        console.log('  classify "description" [--perf N] [--users N] [--json]');
+        console.log('  route "issue" [feature-path] [--json]');
+        console.log('  analyze [feature-path] [--json]');
+        console.log('\nOptions:');
+        console.log('  --json    Output results in JSON format');
+      }
   }
 }
 

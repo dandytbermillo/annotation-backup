@@ -6,14 +6,16 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-07 01:48Z] 990e729: delete branches except the main
 - commit [2025-09-07 01:38Z] c82e5fe: adding context-os proposal doc
 - note [2025-09-06 22:58Z]: Audited context-os/CLAUDE_NATIVE_AGENT_RESEARCH.md for readiness: command naming mismatches (/context-execute vs /execute), safety tiers (3-tier vs 4-tier), logging levels (5 vs 4), concurrency cap (5 vs 2), cache TTL not implemented, resource limits not enforced. Preparing correction list + patch preview on approval.
 - note [2025-09-06 22:49Z]: Reviewed RESUME.md and CLAUDE_NATIVE_AGENT_PROPOSAL.md reference; preparing recap + adoption plan proposal.
+- note [2025-09-07 13:45Z]: Policy update: Added Clarification & Approval Protocol — always ask on ambiguity, no edits to context-os/ without explicit approval, confirm scope, and log intent/results in journal.
+- note [2025-09-07 13:40Z]: Output styling policy: Use underlined text for emphasis in CLI outputs; avoid background colors. Docs may use <u> tags sparingly. Preference recorded per user request.
 - note [2025-09-06 14:06Z]: Added linkfiles/INDEX.md with descriptions and authoritative source paths.
 - note [2025-09-06 14:05Z]: Copied referenced docs/scripts to live/guides/linkfiles (excluded live log/state files).
 - note [2025-09-06 14:00Z]: Added comprehensive Context Memory guide at live/guides/context-memory-overview.md and linked from READMEs.
 - note [2025-09-06 13:37Z]: Backfilled 'how context-memory remembers' explainer into live/guides/how-context-memory-works.md.
-- note [2025-09-06 05:48Z]: Policy: enable auto chat logging and auto summary refresh for future messages.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
