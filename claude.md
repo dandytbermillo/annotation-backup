@@ -2,9 +2,54 @@
 # Project Conventions – Dual-Mode Annotation System (Authoritative CLAUDE.md)
 
 > Purpose: definitive rules and guardrails for AI agents (Claude / Agent-OS) and human contributors.  
-> Agents MUST load this file as top-priority context before generating PRPs or applying changes.
+> Agents MUST load this file as top-priority context before proposing or applying changes.
 >
 > Modes: The project supports two modes. Current focus is Option A (offline, single-user, no Yjs). Option B (multi-user/live collaboration with Yjs) is a future phase. Keep schemas/adapters compatible with Yjs, but do not implement live CRDT in Option A.
+
+---
+
+## MANDATORY HONESTY AND ACCURACY REQUIREMENTS
+
+**CRITICAL: Agents (Claude) MUST maintain absolute honesty and accuracy at all times.**
+
+### Truth Requirements:
+- **NEVER claim something works without actually testing it** - Show real command output or state "not tested"
+- **NEVER mark features as complete without verification** - Run actual tests and show results
+- **NEVER fabricate test results or success claims** - If something fails, report the failure honestly
+- **ALWAYS distinguish between**:
+  - What is implemented vs what is planned
+  - What actually works vs what theoretically should work
+  - What was tested vs what was assumed
+  - What can be done vs what cannot be done
+
+### When Testing:
+- **ALWAYS show actual command output** - Don't summarize or claim success without evidence
+- **ALWAYS run the actual commands** - Don't simulate or pretend to run them
+- **ALWAYS report errors and failures** - Don't hide or gloss over problems
+- **ALWAYS verify claims before making them** - Test first, report second
+
+### When Implementing:
+- **State "I will create"** not "this exists" when building new features
+- **State "I'm attempting"** not "this works" before verification
+- **State "This should"** not "this does" for untested functionality
+- **State limitations clearly** - If something cannot be done, say so immediately
+
+### No Assumptions Policy:
+- **NEVER assume you understand anything without reading the required sources**
+- **ALWAYS read referenced files completely before acting** - If any instruction references a file, read it first
+- **ALWAYS verify your understanding against authoritative sources** - Don't assume based on patterns, experience, or partial information
+- **ALWAYS read command specifications, documentation, and requirements fully** - No shortcuts or assumptions
+- **ALWAYS start with the source of truth** - Don't rely on summaries, inline snippets, or your assumptions
+
+### Accountability:
+- If caught in an error or false claim, immediately:
+  1. Acknowledge the mistake
+  2. Correct the false information
+  3. Show what actually happens
+  4. Explain why the error occurred
+  5. Prevent similar errors going forward
+
+**Violation of these honesty requirements is the most serious breach of project conventions.**
 
 ---
 
@@ -36,7 +81,7 @@ Agents must run and pass these gates before claiming "done".
 Dev flow: Iterate in Web dev mode with npm run dev for fast feedback; once working,
 validate and wire into Electron via npm run electron:dev.
 
-**Local validation sequence (must be included in PRPs and CI):**
+**Local validation sequence (must be included in PRs/Implementation Reports and CI):**
 1. `npm run lint` (or `pnpm lint`) — no new lint errors
 2. `npm run type-check` (or `npx tsc --noEmit`)
 3. `npm run test` — unit tests
@@ -49,11 +94,11 @@ Migration hygiene:
 - Ensure every DB migration has reversible scripts: `.up.sql` and `.down.sql`.
 - Validate forward/backward application in CI (apply latest up → verify → apply down → re-apply up).
 
-> PRPs must include exact commands required to reproduce these gates in CI and local dev.
+> PRs and Implementation Reports must include exact commands required to reproduce these gates in CI and local dev.
 
 ---
 
-## DATA MODEL (Postgres) — authoritative examples (but PRPs may propose refinements)
+## DATA MODEL (Postgres) — authoritative examples (but proposals may propose refinements)
 - `notes`: id, title, content, metadata, created_at, updated_at
 - `annotations`: id, note_id, type, anchors (jsonb/plain for Option A), anchors_fallback (jsonb), metadata, order, version
 - `panels`: id, note_id, position (jsonb), dimensions (jsonb), state, last_accessed
@@ -143,38 +188,21 @@ Future phase (Option B — Yjs collaboration):
 - `docs/yjs-annotation-architecture.md` — Future collaboration reference only (Option B). For Option A, do not implement Yjs runtime or CRDT storage; maintain schema compatibility so Option B can be added later.
 - `docs/enhanced-architecture-migration-guide.md` — migration patterns & provider design
 
-Common:
-- PRP template: `PRPs/templates/prp_base.md`
-- Generate/execute command prompts: `.claude/commands/generate-prp.md`, `.claude/commands/execute-prp.md`
-
 Agents must cite relevant files for the active phase and reference exact paths/line ranges when making code changes.
 
 ---
 
-## PRP PROCESS (How agents must operate)
-1. **Read `INITIAL.md`** (the feature request) fully; for Option A, treat `INITIAL.md` as the PRP (do not create a separate PRP file). If information is missing, append clarification directly to `INITIAL.md`.
-2. If and only if a team explicitly opts into the PRP workflow, **run `/generate-prp <INITIAL.md>`** to output `PRPs/{feature}.md` using `PRPs/templates/prp_base.md`. Otherwise, skip this step and continue with `INITIAL.md` as the single source.
-   - **IMPORTANT**: If a PRP already exists for this feature (check PRPs/ directory), UPDATE the existing file instead of creating a new one
-   - Use consistent naming: for `initial.md` about postgres, use `PRPs/postgres-persistence.md`
-   - Add version tracking: increment `version: N` at the top of the PRP when updating
-   - If working on collaboration features (Option B), read `initial_with_yjs.md` and ensure the PRP clearly states Option B scope.
-3. **PRP content must include**:
-   - Clear goal, acceptance criteria, data models, exact files to modify (with paths), ordered tasks, validation gates, and rollback steps.
-   - External references and any required dev setup commands.
-4. **Run `/execute-prp PRPs/{feature}.md`** to implement. The executor must:
-   - Create a feature branch `feat/{short-name}`
-   - Make small commits per task
-   - Run validation gates after each major task and fix failing tests
-   - Update `INITIAL.md` with concise error entries if failures occur
-5. **If `/execute-prp` fails**:
-   - Append concise error summary to `INITIAL.md` `ERRORS` section (root cause + suggested fix + reproduction command).
-   - Increment `iteration_count` in `INITIAL.md`.
-   - Re-run generate → execute cycles, or escalate if iteration threshold reached (see Escalation Policy).
+## IMPLEMENTATION PLAN PROCESS (How agents must operate)
+1. Read `INITIAL.md` (feature request) fully. Treat `INITIAL.md` as the living plan; append clarifications directly if information is missing. Optionally add `Implementation-Plan.md` in the same feature folder if you want a separate plan file.
+2. Create the feature workspace under `docs/proposal/<FEATURE_SLUG>/` and keep all feature artifacts there (`reports/`, `implementation-details/`, `post-implementation-fixes/`, `test_pages/`, `test_scripts/`, `supporting_files/`).
+3. Implement on a feature branch `feat/{short-name}` with small, focused commits. Run the validation gates after each major task and fix failures promptly.
+4. Record issues in `INITIAL.md` under an `ERRORS` section (root cause + reproduction + fix) and maintain an `ATTEMPT HISTORY` as you iterate.
+5. Produce a main Implementation Report under `docs/proposal/<FEATURE_SLUG>/reports/` summarizing scope, changes, validation results, and acceptance criteria status. Link it from PR descriptions.
 
 ---
 
 ## IMPLEMENTATION REPORTS (MANDATORY)
-- After each task or meaningful milestone, write a concise implementation report and save it to `fixes_doc/option_A/YYYY-MM-DD-<short-title>.md`.
+- After each task or meaningful milestone, write a concise implementation report and save it under `docs/proposal/<FEATURE_SLUG>/reports/` (e.g., `YYYY-MM-DD-implementation-report.md`).
 - Each report must include:
   - Summary: what was implemented/fixed and why
   - Changes: files/paths modified and key diffs
@@ -224,7 +252,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 ## ROADMAP NOTES (Authoritative for planners)
 - Minimap: **DO NOT** reintroduce here. Handled by Infinite Canvas OS later.
 - Next planned feature after Postgres migration: **Tagging system** (tags attachable to notes/annotations/panels; persisted in Postgres).
-- PRPs should anticipate tagging schema additions (nullable fields, tags table, m2m relations) where appropriate.
+- Implementation plans/reports should anticipate tagging schema additions (nullable fields, tags table, m2m relations) where appropriate.
 
 ---
 
@@ -233,7 +261,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 - `dev` = integration
 - `feat/{name}` = feature branches
 - PR titles: `feat(postgres): add postgres persistence adapter` (scope + short description)
-- PR description must include: `INITIAL.md` link, PRP file link, test run status, and a short changelog.
+- PR description must include: `INITIAL.md` link, Implementation Report link, test run status, and a short changelog.
 
 ---
 
@@ -244,14 +272,13 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ---
 
-## OPERATIONAL CHECKS FOR PRPs (Quick list agents must confirm)
-- [ ] PRP references `PRPs/templates/prp_base.md`.
+## OPERATIONAL CHECKS FOR IMPLEMENTATIONS (Quick list agents must confirm)
 - [ ] All file paths exist or are explicitly marked as `NOT FOUND` with proposed stubs.
 - [ ] Validation gates are runnable locally and in CI.
 - [ ] DB migrations are present in `migrations/` and idempotent.
 - [ ] Reversible migrations: each change includes both `.up.sql` and `.down.sql`, tested forward/backward.
 - [ ] `INITIAL.md` is updated with attempt history and any error summaries.
-- [ ] Implementation report saved under `fixes_doc/option_A/YYYY-MM-DD-<short-title>.md`.
+- [ ] Implementation report saved under `docs/proposal/<FEATURE_SLUG>/reports/`.
 
 ---
 
@@ -263,7 +290,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 ---
 
 ## NOTES
-- Keep `CLAUDE.md` short and prescriptive. This file is the single-source policy the agent must obey — if a PR or change diverges from it, it must be documented and justified in the PR description and PRP.
+- Keep `CLAUDE.md` short and prescriptive. This file is the single-source policy the agent must obey — if a PR or change diverges from it, it must be documented and justified in the PR description and associated reports.
 
 ## References / Knowledge Sources
  When fixing or extending the codebase, always consult the following sources for context:

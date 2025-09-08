@@ -257,6 +257,7 @@ export function NotesExplorer({
 
   const handleNoteSelect = (noteId: string) => {
     setSelectedNoteId(noteId)
+    // Always call onNoteSelect to trigger centering, even for already selected notes
     onNoteSelect(noteId)
   }
 

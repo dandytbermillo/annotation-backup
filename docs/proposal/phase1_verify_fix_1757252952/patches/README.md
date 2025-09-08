@@ -1,3 +1,0 @@
-# Patches
-
-No patches yet.

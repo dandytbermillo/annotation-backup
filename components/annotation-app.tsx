@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import dynamic from 'next/dynamic'
 import { NotesExplorer } from "./notes-explorer"
 import { Menu } from "lucide-react"
@@ -25,12 +25,43 @@ export function AnnotationApp() {
     showConnections: true
   })
   
+  // Force re-center trigger - increment to force effect to run
+  const [centerTrigger, setCenterTrigger] = useState(0)
+  
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
+  
+  // Ref to track last centered note to avoid repeated centering during normal flow
+  const lastCenteredRef = useRef<string | null>(null)
   
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
+  
+  // Handle note selection with force re-center support
+  const handleNoteSelect = (noteId: string) => {
+    if (noteId === selectedNoteId) {
+      // Same note clicked - force re-center by incrementing trigger
+      setCenterTrigger(prev => prev + 1)
+    } else {
+      // Different note - normal selection
+      setSelectedNoteId(noteId)
+    }
+  }
+  
+  // Center panel when note selection changes or when forced
+  useEffect(() => {
+    if (!selectedNoteId) return
+    
+    // Always center when this effect runs (triggered by selectedNoteId change or centerTrigger change)
+    lastCenteredRef.current = selectedNoteId
+    
+    // Use a slight delay to ensure panel has time to mount
+    const timeoutId = setTimeout(() => {
+      canvasRef.current?.centerOnPanel?.('main')
+    }, 50) // Small delay to allow React to render the panel
+    return () => clearTimeout(timeoutId)
+  }, [selectedNoteId, centerTrigger]) // Also watch centerTrigger
 
   const openNotesExplorer = () => {
     setIsNotesExplorerOpen(true)
@@ -89,7 +120,7 @@ export function AnnotationApp() {
       
       {/* Notes Explorer - Sliding Panel */}
       <NotesExplorer 
-        onNoteSelect={setSelectedNoteId} 
+        onNoteSelect={handleNoteSelect} 
         isOpen={isNotesExplorerOpen}
         onClose={closeNotesExplorer}
         zoom={canvasState.zoom * 100}

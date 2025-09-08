@@ -508,6 +508,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       ref={panelRef}
       className={`panel ${currentBranch.type}`}
       id={`panel-${panelId}`}
+      data-panel-id={panelId}
       style={{
         position: 'absolute',
         left: position.x + 'px',

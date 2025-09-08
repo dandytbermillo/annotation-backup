@@ -21,6 +21,7 @@ interface CanvasImperativeHandle {
   zoomOut: () => void
   resetView: () => void
   toggleConnections: () => void
+  centerOnPanel: (panelId: string) => void
 }
 
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
@@ -259,8 +260,93 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         onCanvasStateChange?.({ zoom: prev.zoom, showConnections: newShowConnections })
         return newState
       })
+    },
+    centerOnPanel: (panelId: string) => {
+      const getPanelPosition = (id: string): { x: number; y: number } | null => {
+        // 1) Try collaboration map if not in plain mode
+        const provider = UnifiedProvider.getInstance()
+        if (getPlainProvider() == null) {
+          const branchesMap = provider.getBranchesMap()
+          const branch = branchesMap?.get(id)
+          if (branch?.position) return branch.position
+        }
+        
+        // 2) DOM lookup (plain mode)
+        const el = document.querySelector(`[data-panel-id="${id}"]`) as HTMLElement | null
+        if (el) {
+          const rect = el.getBoundingClientRect()
+          const container = document.getElementById('canvas-container')
+          const containerRect = container?.getBoundingClientRect()
+          
+          // Get the center of the panel relative to the container
+          const screenX = (rect.left + rect.width / 2) - (containerRect?.left ?? 0)
+          const screenY = (rect.top + rect.height / 2) - (containerRect?.top ?? 0)
+          
+          // Convert screen coordinates to world coordinates
+          // The panel's world position when canvas has translate(tx, ty) scale(zoom):
+          // screenPos = (worldPos + translate) * zoom
+          // Therefore: worldPos = screenPos / zoom - translate
+          const worldX = (screenX / canvasState.zoom) - canvasState.translateX
+          const worldY = (screenY / canvasState.zoom) - canvasState.translateY
+          
+          return { x: worldX, y: worldY }
+        }
+        
+        // 3) Don't use fallback immediately - return null to trigger retry
+        return null
+      }
+
+      console.log(`[Canvas] Attempting to center on panel '${panelId}'`)
+      
+      // Retry mechanism: wait for panel to be in DOM
+      let retryCount = 0
+      const maxRetries = 10
+      const retryDelay = 100 // ms
+      
+      const attemptCenter = () => {
+        const position = getPanelPosition(panelId)
+        
+        if (position) {
+          console.log(`[Canvas] Panel '${panelId}' found, centering...`)
+          panToPanel(
+            panelId,
+            () => position, // Direct position since we already have it
+            { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom },
+            (viewportState) => setCanvasState(prev => ({
+              ...prev,
+              translateX: viewportState.x ?? prev.translateX,
+              translateY: viewportState.y ?? prev.translateY,
+              zoom: viewportState.zoom ?? prev.zoom,
+            })),
+            { duration: 400 }
+          )
+        } else if (retryCount < maxRetries) {
+          retryCount++
+          console.log(`[Canvas] Panel '${panelId}' not found, retry ${retryCount}/${maxRetries}`)
+          setTimeout(attemptCenter, retryDelay)
+        } else {
+          // Final fallback: calculate viewport-centered position
+          console.warn(`[Canvas] Panel '${panelId}' not found after ${maxRetries} retries, using viewport center`)
+          
+          // Calculate position to place panel at viewport center
+          const viewportWidth = window.innerWidth
+          const viewportHeight = window.innerHeight
+          const panelWidth = 800
+          const panelHeight = 600
+          
+          // Calculate world position that would appear centered
+          const centerWorldX = (viewportWidth / 2 - panelWidth / 2) / canvasState.zoom - canvasState.translateX
+          const centerWorldY = (viewportHeight / 2 - panelHeight / 2) / canvasState.zoom - canvasState.translateY
+          
+          // For new panels, we actually want them to appear centered
+          // So we don't pan, we just note where they should be created
+          console.log(`[Canvas] Panel should be created at world position (${centerWorldX}, ${centerWorldY}) to appear centered`)
+        }
+      }
+      
+      attemptCenter()
     }
-  }), [onCanvasStateChange])
+  }), [onCanvasStateChange, canvasState])
 
   return (
     <CanvasProvider noteId={noteId}>

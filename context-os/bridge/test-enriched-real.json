@@ -1,0 +1,11 @@
+{
+  "feature": "phase1_verify_fix_1757252952",
+  "issue": "Critical UI regression - Button component broken on mobile. [Visual Analysis Detected] - Button extends 25px beyond container boundary at 375px viewport width - Text color #999999 on #FFFFFF background fails WCAG AA (contrast ratio 2.84:1, requires 4.5:1) - Z-index conflict causes button to appear behind modal overlay - Touch target size 38x38px below recommended 44x44px minimum - Missing focus indicator for keyboard navigation [Attached Images] - Image 1: ./context-os/test-screenshots/button-mobile.png - Image 2: ./context-os/test-screenshots/contrast-issue.png",
+  "environment": "production",
+  "metrics": {
+    "performanceDegradation": 45,
+    "usersAffected": 30
+  },
+  "autoConfirm": true,
+  "dryRun": false
+}

@@ -49,7 +49,6 @@ Examples:
 
 Visual Issue Support:
   - Attach screenshots before sending (the UI binds them automatically), or provide resolvable paths/URLs via JSON/`--files`.
-  - Removing images before sending means they won’t be processed (images are captured at submission time).
   - If tokens like `@1 @2` are present but no images are attached, the call is blocked with guidance to attach or use `--files`/JSON.
 
 Severity Levels (4-tier):

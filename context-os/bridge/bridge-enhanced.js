@@ -5,6 +5,7 @@
 const { CommandRouter } = require('./command-routing');
 const { ClaudeAdapter } = require('./claude-adapter');
 const { execContextOS } = require('./contextos-adapter');
+const ImageHandler = require('./image-handler');
 const fs = require('fs');
 const path = require('path');
 
@@ -13,6 +14,7 @@ class ContextOSClaudeBridge {
     // Initialize adapters
     this.claudeAdapter = options.claude || new ClaudeAdapter();
     this.commandRouter = new CommandRouter();
+    this.imageHandler = new ImageHandler();
     
     this.budget = {
       maxTokensPerCall: 4000,
@@ -62,7 +64,7 @@ class ContextOSClaudeBridge {
     this.sessionId = Date.now().toString(36);
   }
   
-  async execute(rawCommand, priority = 'IMPORTANT') {
+  async execute(rawCommand, priority = 'IMPORTANT', attachments = []) {
     const startTime = Date.now();
     const route = this.commandRouter.route(rawCommand);
     
@@ -84,10 +86,41 @@ class ContextOSClaudeBridge {
       claudeResults: null,
       contextResults: null,
       logs: [],
-      artifacts: []
+      artifacts: [],
+      imageProcessing: null
     };
     
     try {
+      // Process images for /fix command if attachments present
+      if (route.command === '/fix' && attachments.length > 0) {
+        console.log(`📸 Processing ${attachments.length} image(s) for fix command...`);
+        
+        // Parse fix command parameters
+        const featureMatch = route.args[0]?.match(/--feature\s+(\S+)/);
+        const issueMatch = route.args[0]?.match(/--issue\s+"([^"]+)"/);
+        
+        const params = {
+          feature: featureMatch?.[1] || route.args[0],
+          issue: issueMatch?.[1] || route.args[1] || route.args[0],
+          // Visual findings would come from Claude's analysis
+          visualFindings: attachments.map((att, i) => 
+            `Visual finding ${i+1} from ${att.name || 'image'}`
+          )
+        };
+        
+        // Process images through handler
+        const imageResult = await this.imageHandler.processCommand('fix', params, attachments);
+        parts.imageProcessing = imageResult;
+        
+        if (imageResult.success && imageResult.enrichedParams) {
+          // Update route args with enriched issue text
+          route.enrichedIssue = imageResult.enrichedParams.issue;
+          // Store telemetry
+          this.telemetry.imagesCaptured = imageResult.telemetry.imagesCaptured;
+          this.telemetry.imagesBound = imageResult.telemetry.imagesBound;
+        }
+      }
+      
       // Execute Claude agent if needed
       if (route.claudeAgent) {
         parts.claudeResults = await this.executeClaudeWithBudget(route);
@@ -95,6 +128,10 @@ class ContextOSClaudeBridge {
       
       // Execute Context-OS agent if needed
       if (route.contextAgent) {
+        // If we have enriched issue text, update the route
+        if (route.enrichedIssue) {
+          route.args[1] = route.enrichedIssue;
+        }
         parts.contextResults = await this.executeContextOSWithSafety(route);
       }
       
@@ -115,7 +152,9 @@ class ContextOSClaudeBridge {
         tokenEstimate: this.usage.tokensUsed,
         duration: Date.now() - startTime,
         exitStatus: result.status === 'ok' ? 'success' : (result.status === 'degraded' ? 'degraded' : 'failure'),
-        artifacts: result.artifacts
+        artifacts: result.artifacts,
+        imagesCaptured: this.telemetry.imagesCaptured || 0,
+        imagesBound: this.telemetry.imagesBound || 0
       });
       
       return result;
@@ -457,6 +496,8 @@ class ContextOSClaudeBridge {
       tokenEstimate: event.tokenEstimate || 0,
       duration: event.duration,
       exitStatus: event.exitStatus,
+      imagesCaptured: event.imagesCaptured || 0,
+      imagesBound: event.imagesBound || 0,
       artifacts: event.artifacts || []
     };
     

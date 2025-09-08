@@ -70,6 +70,17 @@ Create `context-os/config.json`:
 | `/review` | Hybrid (parallel) | ✅ | ✅ | Quality + compliance | Task tool with review prompt |
 | `/status` | Context-only | ❌ | ✅ | Check feature status | Direct CLI tool |
 
+### 📷 Visual Evidence (Attachments)
+- Attach screenshots in the chat composer before sending a command (UI binds them automatically), or provide resolvable paths/URLs via JSON/`--files`.
+- When attachments are present, the Router/Bridge includes an `images[]` array in the JSON envelope and lists any persisted files under `artifacts`.
+- If tokens like `@1 @2` appear but no attachments are captured, the call is blocked with guidance (attach images or use `--files`/JSON).
+- Privacy: telemetry logs counts (`imagesCaptured`, `imagesBound`) by default — not URLs — unless explicitly allowed by policy.
+ - If tokens are missing/edited but attachments exist, attachments are authoritative (order of appearance). We deduplicate by content hash and warn once ("Duplicate image ignored").
+
+#### Attachment Limits (Harness-Enforced)
+- Max images per call (default 5), max size 5MB each; allowed types: png/jpg/jpeg/webp/gif.
+- Accept `https` URLs or repo-relative paths; require signed URLs (≥1h TTL) when using URLs.
+
 ### Command Flags
 
 **Safety Flags:**
