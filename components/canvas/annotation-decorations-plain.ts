@@ -207,15 +207,8 @@ export const AnnotationDecorations = () => new Plugin({
         `
       }
 
-      if (titleText || previewText) renderPreview(previewText)
-      else tooltipElement!.innerHTML = `
-        <div class="tooltip-header">
-          <span class="tooltip-icon">${getTypeIcon(type)}</span>
-          <span class="tooltip-title">${capitalize(type)} annotation</span>
-        </div>
-        <div class="tooltip-content">Loading notes...</div>
-        <div class="tooltip-footer">Click to open panel</div>
-      `
+      // Always render via renderPreview so empty state reads "No notes added yet"
+      renderPreview(previewText)
 
       const rect = el.getBoundingClientRect()
       const trect = tooltipElement!.getBoundingClientRect()

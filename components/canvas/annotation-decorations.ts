@@ -226,13 +226,13 @@ export const AnnotationDecorations = () => {
                                    document.querySelector(`[data-branch="${dbId}"]`)
           const selectedText = annotatedElement?.textContent || ''
           
-          // Show a loading state tooltip
+          // Show immediate empty state (no loading copy)
           tooltipElement.innerHTML = `
             <div class="tooltip-header">
               <span class="tooltip-icon">${getTypeIcon(type)}</span>
               <span class="tooltip-title">${type.charAt(0).toUpperCase() + type.slice(1)} annotation</span>
             </div>
-            <div class="tooltip-content">Loading notes...</div>
+            <div class="tooltip-content">No notes added yet</div>
             <div class="tooltip-footer">Click to open panel</div>
           `
           
@@ -286,13 +286,13 @@ export const AnnotationDecorations = () => {
               <div class="tooltip-footer">Click to open panel</div>
             `
           } else {
-            // No branch preview; fallback to provider/doc content
+            // No branch preview; show placeholder immediately and then try provider/doc
             tooltipElement.innerHTML = `
               <div class="tooltip-header">
                 <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
                 <span class="tooltip-title">${title}</span>
               </div>
-              <div class="tooltip-content">Loading notes...</div>
+              <div class="tooltip-content">No notes added yet</div>
               <div class="tooltip-footer">Click to open panel</div>
             `
             
