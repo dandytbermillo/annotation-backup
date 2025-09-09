@@ -3,7 +3,7 @@
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import { BranchItem } from "./branch-item"
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { useEffect, useState } from "react"
 
@@ -61,8 +61,8 @@ Features:
       currentBranch = dataStore.get(panelId) || branch
       branchesMap = dataStore
     } else {
-      // Yjs mode: Get branch data from CollaborationProvider
-      const provider = CollaborationProvider.getInstance()
+      // Yjs mode: Get branch data from UnifiedProvider
+      const provider = UnifiedProvider.getInstance()
       branchesMap = provider.getBranchesMap()
       currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
     }

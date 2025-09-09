@@ -1,7 +1,7 @@
 "use client"
 
 import { useCanvas } from "./canvas-context"
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 
 interface BranchItemProps {
@@ -25,8 +25,8 @@ export function BranchItem({ branchId, parentId }: BranchItemProps) {
     branch = dataStore.get(branchId)
     branchesMap = dataStore
   } else {
-    // Yjs mode: Get from CollaborationProvider
-    const provider = CollaborationProvider.getInstance()
+    // Yjs mode: Get from UnifiedProvider
+    const provider = UnifiedProvider.getInstance()
     branchesMap = provider.getBranchesMap()
     branch = branchesMap.get(branchId) || dataStore.get(branchId)
   }
@@ -72,8 +72,8 @@ export function BranchItem({ branchId, parentId }: BranchItemProps) {
       const siblings = parent?.branches || []
       siblingCount = siblings.length
     } else {
-      // Use YJS native types to get the accurate sibling count
-      const provider = CollaborationProvider.getInstance()
+      // Use provider API to get the accurate sibling count
+      const provider = UnifiedProvider.getInstance()
       const allSiblings = provider.getBranches(parentId)
       siblingCount = allSiblings.length
     }

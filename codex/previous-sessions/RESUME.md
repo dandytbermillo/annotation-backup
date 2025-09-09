@@ -2,6 +2,45 @@
 
 > Open latest session summary: codex/previous-sessions/2025-09-01-session-summary.md
 
+## Quick Status: Tooltips (2025-09-09)
+- Mode: Option A (plain, no Yjs). Hover tooltips now read branch-first and never display raw JSON.
+- Empty-state: Brand‑new annotations with no panel content show “No notes added yet” (no “Loading notes…” text).
+- Consistency: Same title behavior across cases; original annotated text may appear in the title but not in the body.
+
+## Changes Applied This Session
+- Plain tooltip (`components/canvas/annotation-decorations-plain.ts`)
+  - Preview precedence standardized to: stripHTML(branch.content) → provider/doc text (JSON-aware) → placeholder.
+  - Removed originalText from preview body; kept in title context only.
+  - Initial hover always renders via `renderPreview(...)` so empty shows “No notes added yet”.
+  - Added delayed re-check of `canvasDataStore` and guarded API/doc fallbacks; kept async guards via `dataset.branchId`.
+- Yjs tooltip (`components/canvas/annotation-decorations.ts`)
+  - Aligned behavior for parity: show “No notes added yet” when brand‑new and empty; never use originalText in body.
+  - Note: Option A path does not import/use Yjs; this parity is defensive for non‑plain runs.
+
+## Proposal Patches (codex/proposal)
+- `tooltip-unified-branch-first.patch`: unify preview precedence in both paths (branch-first with safe fallbacks).
+- `option-a-tooltip-branch-first.patch`: plain‑mode branch‑first preview (earlier draft).
+- Optional hardening (not applied): enforce plain as fail‑closed default and warn if any Yjs import occurs in plain.
+
+## Verification Notes
+- Ensure `NEXT_PUBLIC_COLLAB_MODE=plain` (or `localStorage.collab-mode="plain"`) during dev.
+- Console should show: “📝 Using Plain Mode (no collaboration)” and `[getPlainProvider] Called. COLLAB_MODE: plain`.
+- Manual checks:
+  - Hover old and new annotations: body shows branch snippet or “No notes added yet”; never raw JSON.
+  - After adding panel content, hover updates to the stripped snippet.
+
+## Recent Messages (summary)
+- User: Hover shows raw text/JSON for new vs existing annotations after applying guardrails patch.
+- Assistant: Cause was provider‑doc‑first preview; proposed branch‑first + JSON parsing.
+- User: Provide a patch; save to `codex/proposal`.
+- Assistant: Added unified proposal; later applied targeted changes to plain path; removed originalText from body; fixed initial empty state.
+- User: Works, but wants “No notes added yet” instead of “Loading notes…” for brand‑new annotations; apply also for Yjs parity.
+- Assistant: Updated both paths; confirmed no “Loading notes…” and no originalText in body.
+
+## Next Steps
+- Optional: add a small guard to default to plain if env flag is missing, and log a visible warning if any Yjs import occurs in plain mode. Keep as proposal unless approved.
+- Consider adding a lightweight unit test around preview selection to prevent regressions (branch content vs provider doc vs placeholder).
+
 ## Quick Status: Context‑OS (2025-09-05)
 - Interactive INITIAL.md (Days 1–3): PASS with minor validator issues.
 - Core components present: init-interactive CLI, Handlebars template + renderer, Claude mock adapter (invokeClaudeInit), session persistence (.tmp/initial), telemetry (logs/init-telemetry.jsonl).

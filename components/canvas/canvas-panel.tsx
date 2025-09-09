@@ -1,13 +1,17 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer, useMemo } from "react"
+import { useRef, useState, useEffect, useReducer } from "react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
-import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
+import dynamic from 'next/dynamic'
 import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
+import type { TiptapEditorHandle } from './tiptap-editor-collab'
+import type * as Y from 'yjs'
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
+
+const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
 interface CanvasPanelProps {
   panelId: string
@@ -19,7 +23,8 @@ interface CanvasPanelProps {
 
 export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId } = useCanvas()
-  const editorRef = useRef<TiptapEditorHandle | TiptapEditorPlainHandle>(null)
+  type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
+  const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const [isEditing, setIsEditing] = useState(branch.isEditable ?? true)
   const [zIndex, setZIndex] = useState(1)
@@ -46,7 +51,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   })
 
   // Get appropriate provider based on mode
-  let ydoc = null
+  const [ydocState, setYdocState] = useState<{ loading: boolean; doc: Y.Doc | null; error: Error | null }>(
+    { loading: false, doc: null, error: null }
+  )
   const provider = UnifiedProvider.getInstance()
   
   // Load plain provider when in plain mode
@@ -68,15 +75,31 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [isPlainMode])
   
-  if (!isPlainMode) {
-    // Yjs mode: Use enhanced provider to get subdoc with PostgreSQL persistence
-    // IMPORTANT: Only import and use Yjs components when NOT in plain mode
-    ydoc = useMemo(() => {
-      // Dynamic import to avoid loading Yjs in plain mode
-      const { getEditorYDoc } = require('@/lib/yjs-provider')
-      return getEditorYDoc(panelId, currentNoteId)
-    }, [panelId, currentNoteId])
-  }
+  // Lazy-load Y.Doc only in Yjs mode
+  useEffect(() => {
+    let cancelled = false
+    if (!isPlainMode) {
+      setYdocState(s => ({ ...s, loading: true, error: null }))
+      import('@/lib/lazy-yjs')
+        .then(({ loadYjsProvider }) => loadYjsProvider())
+        .then((yjsProvider) => {
+          if (cancelled) return
+          if (yjsProvider?.getEditorYDoc) {
+            const doc = yjsProvider.getEditorYDoc(panelId, currentNoteId)
+            setYdocState({ loading: false, doc, error: null })
+          } else {
+            setYdocState({ loading: false, doc: null, error: new Error('getEditorYDoc unavailable') })
+          }
+        })
+        .catch((e: any) => {
+          if (cancelled) return
+          setYdocState({ loading: false, doc: null, error: e instanceof Error ? e : new Error('Failed to load Yjs') })
+        })
+    } else {
+      setYdocState({ loading: false, doc: null, error: null })
+    }
+    return () => { cancelled = true }
+  }, [isPlainMode, panelId, currentNoteId])
   
   // Set the current note context if provided
   useEffect(() => {
@@ -698,17 +721,28 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   </div>
                 )
               ) : (
-                <TiptapEditor
-                  ref={editorRef as any}
-                  content={ydoc ? '' : currentBranch.content}
-                  isEditable={isEditing}
-                  panelId={panelId}
-                  onUpdate={handleUpdate}
-                  onSelectionChange={handleSelectionChange}
-                  placeholder={isEditing ? "Start typing..." : ""}
-                  ydoc={ydoc}
-                  provider={provider.getProvider()}
-                />
+                ydocState.loading && !ydocState.doc ? (
+                  <div style={{
+                    padding: '40px',
+                    textAlign: 'center',
+                    color: '#666',
+                    fontSize: '14px'
+                  }}>
+                    Loading collaborative editor...
+                  </div>
+                ) : (
+                  <TiptapEditorCollab
+                    ref={editorRef}
+                    content={''}
+                    isEditable={isEditing}
+                    panelId={panelId}
+                    onUpdate={handleUpdate}
+                    onSelectionChange={handleSelectionChange}
+                    placeholder={isEditing ? "Start typing..." : ""}
+                    ydoc={ydocState.doc as Y.Doc}
+                    provider={provider.getProvider() as any}
+                  />
+                )
               )}
             </div>
           </div>

@@ -1,0 +1,151 @@
+diff --git a/components/canvas/canvas-panel.tsx b/components/canvas/canvas-panel.tsx
+index 1111111..2222222 100644
+--- a/components/canvas/canvas-panel.tsx
++++ b/components/canvas/canvas-panel.tsx
+@@ -1,17 +1,76 @@
+ "use client"
+-import React from 'react'
++import React from 'react'
+ import dynamic from 'next/dynamic'
+-import type { TiptapEditorPlainHandle } from './tiptap-editor-plain'
++import type { TiptapEditorPlainHandle } from './tiptap-editor-plain'
+ import { TiptapEditorPlain } from './tiptap-editor-plain'
++import type * as Y from 'yjs'
++
++// IMPORTANT: these helpers must be implemented to return a shared Y.Doc instance
++// and (optionally) a provider if collaboration is enabled.
++import { loadYjs, getEditorYDoc } from '@/lib/lazy-yjs'
+ 
+ const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
+ type TiptapEditorHandle = TiptapEditorPlainHandle
+ 
+-export function CanvasPanel({ panelId, noteId, isPlainMode }: { panelId: string; noteId: string; isPlainMode: boolean }) {
+-  const editorRef = React.useRef<TiptapEditorHandle | null>(null)
+-  // ... existing logic
+-  return isPlainMode
+-    ? <TiptapEditorPlain ref={editorRef} />
+-    : <TiptapEditorCollab ref={editorRef} />
++type YState = {
++  loading: boolean
++  doc: Y.Doc | null
++  error: Error | null
++}
++
++export function CanvasPanel({
++  panelId,
++  noteId,
++  isPlainMode,
++}: {
++  panelId: string
++  noteId: string
++  isPlainMode: boolean
++}) {
++  const editorRef = React.useRef<TiptapEditorHandle | null>(null)
++  const [y, setY] = React.useState<YState>({ loading: false, doc: null, error: null })
++
++  React.useEffect(() => {
++    if (isPlainMode) return
++    let cancelled = False as unknown as boolean  # placeholder for TS; remove if TS environment
++    cancelled = false
++    setY({ loading: True, doc: None, error: None })  # placeholders to emphasize states in diff
++    ;(async () => {
++      try {
++        await loadYjs()
++        const doc = await getEditorYDoc(panelId, noteId)
++        if (!cancelled) setY({ loading: False, doc: doc ?? None, error: None })
++      } catch (e: any) {
++        if (!cancelled) setY({ loading: False, doc: None, error: e })
++      }
++    })()
++    return () => { cancelled = true }
++  }, [isPlainMode, panelId, noteId])
++
++  if (isPlainMode) {
++    return <TiptapEditorPlain ref={editorRef} />
++  }
++  if (y.loading && !y.doc) {
++    return <div>Loading collaborative editor…</div>
++  }
++  if (y.error) {
++    return <div role="alert">Failed to start collaboration. Falling back to plain mode.</div>
++  }
++  // y.doc is guaranteed here
++  return <TiptapEditorCollab ref={editorRef} ydoc={y.doc!} />
+ }
+ 
+diff --git a/components/canvas/tiptap-editor-collab.tsx b/components/canvas/tiptap-editor-collab.tsx
+index 3333333..4444444 100644
+--- a/components/canvas/tiptap-editor-collab.tsx
++++ b/components/canvas/tiptap-editor-collab.tsx
+@@ -1,30 +1,38 @@
+ "use client"
+-import { useEditor, EditorContent } from '@tiptap/react'
++import { useEditor, EditorContent } from '@tiptap/react'
+ import StarterKit from '@tiptap/starter-kit'
+ import Highlight from '@tiptap/extension-highlight'
+ import Underline from '@tiptap/extension-underline'
+ import Placeholder from '@tiptap/extension-placeholder'
+ import Collaboration from '@tiptap/extension-collaboration'
+ import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
+ import { useImperativeHandle, forwardRef } from 'react'
+-import * as Y from 'yjs'
++import type * as Y from 'yjs'
+ import { Mark, mergeAttributes } from '@tiptap/core'
+-import { IndexeddbPersistence } from 'y-indexeddb'
+-import { WebsocketProvider } from 'y-websocket'
++// Providers should be created outside and bound to the SAME Y.Doc passed via props.
++// If you need offline-only mode, set that up in the caller and still pass the doc here.
+ 
+-export interface TiptapEditorProps {
+-  content: string
+-  isEditable: boolean
+-  panelId: string
+-  placeholder?: string
+-  ydoc?: Y.Doc
+-  provider?: WebsocketProvider | null
+-}
++type TiptapEditorProps = {
++  content: string
++  isEditable: boolean
++  panelId: string
++  placeholder?: string
++  ydoc: Y.Doc            // <-- now REQUIRED to prevent identity mismatch
++}
+ 
+ export interface TiptapEditorHandle {
+   getHTML: () => string
+   focus: () => void
+   setEditable: (editable: boolean) => void
+ }
+ 
+ export const TiptapEditorCollab = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
+   function TiptapEditorCollab({ content, isEditable, panelId, placeholder, ydoc }, ref) {
+-    const doc = ydoc || new Y.Doc()
++    // IMPORTANT: never create a new doc here; the editor must bind to the shared instance
++    const doc = ydoc
++    // Create your awareness/provider outside and bind via the same doc if needed
+ 
+     const editor = useEditor({
+       extensions: [
+         StarterKit.configure({ history: false }),
+         Highlight,
+         Underline,
+         Placeholder.configure({ placeholder: placeholder ?? 'Start typing…' }),
+-        Collaboration.configure({ document: doc }),
++        Collaboration.configure({ document: doc }),
+         CollaborationCursor.configure({ provider: undefined, user: { name: 'You', color: '#8b5cf6' } }),
+       ],
+       content,
+       editable: isEditable,
+     })
+ 
+     useImperativeHandle(ref, () => ({
+       getHTML: () => editor?.getHTML() ?? '',
+       focus: () => editor?.commands.focus(),
+       setEditable: (editable: boolean) => editor?.setEditable(editable),
+     }))
+ 
+     return <EditorContent editor={editor} />
+   }
+ )
+ export default TiptapEditorCollab

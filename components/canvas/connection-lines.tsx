@@ -1,6 +1,6 @@
 "use client"
 
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getAnnotationColor } from "@/lib/models/annotation"
 import { useCanvas } from "./canvas-context"
@@ -17,7 +17,7 @@ export function ConnectionLines({ panels }: ConnectionLinesProps) {
   // Get branches based on mode
   const branches = isPlainMode 
     ? dataStore 
-    : CollaborationProvider.getInstance().getBranchesMap()
+    : UnifiedProvider.getInstance().getBranchesMap()
   
   const connections: Array<{ 
     from: { x: number; y: number }; 

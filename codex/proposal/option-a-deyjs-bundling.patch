@@ -1,0 +1,154 @@
+Subject: Option A — De‑Yjs Bundling (import-only swaps + lazy helper)
+
+Context
+- Goal: Ensure Yjs is not included in plain‑mode bundles while preserving behavior.
+- Rationale: Static imports of `@/lib/yjs-provider` in client components bring Yjs into client chunks, even if runtime guards block initialization. Swapping to `UnifiedProvider` (which is mode‑aware) and removing unused imports reduces bundle inclusion in plain mode.
+
+Scope (proposal; no app edits applied)
+- Add `lib/lazy-yjs.ts` helper for guarded dynamic imports (available for future use).
+- Replace static `@/lib/yjs-provider` imports in select components with `UnifiedProvider` and update usage sites.
+- Remove unused `yjs-provider` import from `components/canvas/tiptap-editor.tsx`.
+- Keep method surfaces intact to avoid behavior changes.
+
+Files changed
+1) lib/lazy-yjs.ts (new)
+2) components/debug-branches.tsx (import + usage swap)
+3) components/canvas/annotation-decorations.ts (import + usage swap)
+4) components/canvas/tiptap-editor.tsx (remove unused yjs-provider import)
+5) components/canvas/branch-item.tsx (import + usage swap)
+6) components/canvas/branches-section.tsx (import + usage swap)
+7) components/canvas/minimap.tsx (import + usage swap)
+8) components/canvas/connection-lines.tsx (import + usage swap)
+
+--- /dev/null
++++ b/lib/lazy-yjs.ts
+@@
++// Guarded Yjs dynamic loaders to avoid bundling in plain mode
++import { getCollabMode } from './collab-mode'
++
++export async function loadYjsProvider() {
++  if (getCollabMode() === 'plain') {
++    console.warn('[lazy-yjs] Refusing to load yjs-provider in plain mode')
++    return null
++  }
++  return await import('./yjs-provider')
++}
++
++export async function loadEnhancedProvider() {
++  if (getCollabMode() === 'plain') {
++    console.warn('[lazy-yjs] Refusing to load enhanced-yjs-provider in plain mode')
++    return null
++  }
++  return await import('./enhanced-yjs-provider')
++}
+
+--- a/components/debug-branches.tsx
++++ b/components/debug-branches.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+   useEffect(() => {
+     const updateBranches = () => {
+-      const provider = CollaborationProvider.getInstance()
++      const provider = UnifiedProvider.getInstance()
+       const branchesMap = provider.getBranchesMap()
+       const branchArray = Array.from(branchesMap.entries())
+       setBranches(branchArray)
+     }
+
+--- a/components/canvas/annotation-decorations.ts
++++ b/components/canvas/annotation-decorations.ts
+@@
+-import { CollaborationProvider } from '@/lib/yjs-provider'
++import { UnifiedProvider } from '@/lib/provider-switcher'
+@@
+        // Try collaboration provider first (has getBranchesMap)
+        // Yjs uses the UI format (branch-<uuid>)
+        try {
+-          const provider = CollaborationProvider.getInstance()
++          const provider = UnifiedProvider.getInstance()
+          if (provider && provider.getBranchesMap) {
+            const branchesMap = provider.getBranchesMap()
+            branchData = branchesMap.get(uiId) // Use UI format for Yjs
+          }
+        } catch (e) {
+
+--- a/components/canvas/tiptap-editor.tsx
++++ b/components/canvas/tiptap-editor.tsx
+@@
+-import { CollaborationProvider } from '@/lib/yjs-provider'
++// (removed unused yjs-provider import to avoid bundling Yjs in plain mode)
+
+--- a/components/canvas/branch-item.tsx
++++ b/components/canvas/branch-item.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+  } else {
+    // Yjs mode: Get from CollaborationProvider
+-    const provider = CollaborationProvider.getInstance()
++    const provider = UnifiedProvider.getInstance()
+    branchesMap = provider.getBranchesMap()
+    branch = branchesMap.get(branchId) || dataStore.get(branchId)
+  }
+@@
+    } else {
+      // Use YJS native types to get the accurate sibling count
+-      const provider = CollaborationProvider.getInstance()
++      const provider = UnifiedProvider.getInstance()
+      const allSiblings = provider.getBranches(parentId)
+      siblingCount = allSiblings.length
+    }
+
+--- a/components/canvas/branches-section.tsx
++++ b/components/canvas/branches-section.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+    } else {
+      // Yjs mode: Get branch data from CollaborationProvider
+-      const provider = CollaborationProvider.getInstance()
++      const provider = UnifiedProvider.getInstance()
+      branchesMap = provider.getBranchesMap()
+      currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
+    }
+
+--- a/components/canvas/minimap.tsx
++++ b/components/canvas/minimap.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+          {panels.map(panelId => {
+-            const provider = CollaborationProvider.getInstance()
++            const provider = UnifiedProvider.getInstance()
+             const branch = provider.getBranchesMap().get(panelId)
+
+--- a/components/canvas/connection-lines.tsx
++++ b/components/canvas/connection-lines.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+-  const branches = isPlainMode 
+-    ? dataStore 
+-    : CollaborationProvider.getInstance().getBranchesMap()
++  const branches = isPlainMode 
++    ? dataStore 
++    : UnifiedProvider.getInstance().getBranchesMap()
+
+Bundle/Behavior Expectations
+- Plain mode: No static `@/lib/yjs-provider` imports remain in these components, reducing the chance of Yjs being included in plain-mode client chunks. UnifiedProvider returns minimal stubs and refuses initialization.
+- Yjs mode: UnifiedProvider allows normal Yjs usage; functionality unchanged.
+
+Testing Plan
+- Verify both modes: create/edit annotation, hover tooltip, open panel, switch notes, reload.
+- Build check: confirm no `yjs` chunk in plain. If using an analyzer, verify absence in initial page load for plain mode flows.
+
+Notes
+- For complete elimination of Yjs from plain bundles, consider:
+  - Split a dedicated `TiptapEditorCollab` that statically imports Yjs/TipTap collab and load it via `next/dynamic` only in Yjs mode.
+  - Move provider module loads behind dynamic `import()` calls in helper functions invoked only in Yjs paths. Keep constructor code paths synchronous; delegate module loading to async helpers.

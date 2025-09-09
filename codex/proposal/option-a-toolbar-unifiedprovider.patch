@@ -1,0 +1,39 @@
+Subject: Option A — Migrate annotation-toolbar.tsx to UnifiedProvider (advisory)
+
+Context
+- Goal: Remove the last direct `@/lib/yjs-provider` import in components to avoid pulling Yjs into plain-mode bundles.
+- Scope: Import-only swap in `components/canvas/annotation-toolbar.tsx`, preserving behavior in both modes.
+
+Changes (preview)
+--- a/components/canvas/annotation-toolbar.tsx
++++ b/components/canvas/annotation-toolbar.tsx
+@@
+-import { CollaborationProvider } from "@/lib/yjs-provider"
++import { UnifiedProvider } from "@/lib/provider-switcher"
+@@
+-    } else {
+-      // Yjs mode: Use collaboration provider
+-      const provider = CollaborationProvider.getInstance()
++    } else {
++      // Yjs mode: Use UnifiedProvider (collab)
++      const provider = UnifiedProvider.getInstance()
+       if (noteId) {
+         provider.setCurrentNote(noteId)
+       }
+@@
+-    const branchesMap = isPlainMode ? new Map() : CollaborationProvider.getInstance().getBranchesMap()
++    const branchesMap = isPlainMode ? new Map() : UnifiedProvider.getInstance().getBranchesMap()
+@@
+-      const currentBranches = isPlainMode 
+-        ? (dataStore.get(panel)?.branches || [])
+-        : CollaborationProvider.getInstance().getBranches(panel)
++      const currentBranches = isPlainMode 
++        ? (dataStore.get(panel)?.branches || [])
++        : UnifiedProvider.getInstance().getBranches(panel)
+
+Notes
+- This is an advisory patch; no source changes applied.
+- Behavior remains the same in both modes; only the provider abstraction changes.
+- After applying, verify:
+  - Plain: Create annotation; panel opens; no Yjs init in console.
+  - Yjs: Create annotation; branches update in collab mode; no errors in console.

@@ -2,6 +2,7 @@
 // This fixes the awareness.getStates error while enabling enhanced features
 
 import { PlainOfflineProvider } from './providers/plain-offline-provider'
+import { getCollabMode, ensureFailClosed, warnIfYjsLoadAttempted } from './collab-mode'
 
 // Lazy loading of Yjs providers to avoid loading them in plain mode
 let CollaborationProvider: any = null
@@ -11,10 +12,6 @@ let patchApplied = false
 // Feature flags for provider selection
 const USE_ENHANCED_PROVIDER = process.env.NEXT_PUBLIC_USE_ENHANCED_PROVIDER === 'true' || 
                               typeof window !== 'undefined' && window.localStorage?.getItem('use-enhanced-provider') === 'true'
-
-const COLLAB_MODE = process.env.NEXT_PUBLIC_COLLAB_MODE || 
-                    (typeof window !== 'undefined' && window.localStorage?.getItem('collab-mode')) || 
-                    'yjs' // default to yjs mode
 
 // Singleton instance for plain provider
 let plainProviderInstance: PlainOfflineProvider | null = null
@@ -44,12 +41,22 @@ export class UnifiedProvider {
   private provider: any = null
   
   private constructor() {
-    // Check if we're in plain mode
-    if (COLLAB_MODE === 'plain') {
-      console.log('📝 Using Plain Mode (no collaboration)')
-      // Don't initialize Yjs providers in plain mode
+    // Establish fail-closed plain behavior and set lock as needed
+    ensureFailClosed()
+    const mode = getCollabMode()
+
+    // Check if we're in plain mode (fail-closed path)
+    if (mode === 'plain') {
+      console.log('📝 Using Plain Mode (no collaboration) — Yjs disabled')
+      // Never initialize Yjs providers in plain mode
       this.provider = null
     } else if (USE_ENHANCED_PROVIDER) {
+      // Defensive: if somehow reached while plain, warn and refuse
+      if (getCollabMode() === 'plain') {
+        warnIfYjsLoadAttempted('UnifiedProvider → enhanced yjs-provider')
+        this.provider = null
+        return
+      }
       console.log('🚀 Using Enhanced YJS Provider with all advanced features')
       // Dynamically import and initialize enhanced provider
       const { EnhancedCollaborationProvider: EnhancedProvider } = require('./enhanced-yjs-provider')
@@ -66,6 +73,12 @@ export class UnifiedProvider {
     } else {
       console.log('Using standard YJS Provider (with getStates fix)')
       // Dynamically import and initialize standard provider
+      // Defensive: if somehow reached while plain, warn and refuse
+      if (getCollabMode() === 'plain') {
+        warnIfYjsLoadAttempted('UnifiedProvider → standard yjs-provider')
+        this.provider = null
+        return
+      }
       const { CollaborationProvider: StandardProvider } = require('./yjs-provider')
       CollaborationProvider = StandardProvider
       
@@ -182,9 +195,9 @@ export function toggleProvider() {
 
 // Get plain provider instance (for Option A mode)
 export function getPlainProvider(): PlainOfflineProvider | null {
-  console.log('[getPlainProvider] Called. COLLAB_MODE:', COLLAB_MODE, 'Instance:', plainProviderInstance)
-  
-  if (COLLAB_MODE !== 'plain') {
+  const mode = getCollabMode()
+  console.log('[getPlainProvider] Called. mode:', mode, 'Instance:', plainProviderInstance)
+  if (mode !== 'plain') {
     console.log('[getPlainProvider] Not in plain mode, returning null')
     return null
   }
@@ -202,8 +215,8 @@ export function getPlainProvider(): PlainOfflineProvider | null {
 
 // Initialize plain provider with adapter
 export function initializePlainProvider(adapter: any): void {
-  if (COLLAB_MODE === 'plain' && !plainProviderInstance) {
+  if (getCollabMode() === 'plain' && !plainProviderInstance) {
     plainProviderInstance = new PlainOfflineProvider(adapter)
     console.log('[initializePlainProvider] Plain provider initialized')
   }
-} 
+}

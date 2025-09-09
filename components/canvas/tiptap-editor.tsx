@@ -14,7 +14,7 @@ import { WebsocketProvider } from 'y-websocket'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
-import { CollaborationProvider } from '@/lib/yjs-provider'
+// (removed unused yjs-provider import to avoid bundling Yjs in plain mode)
 
 // Custom annotation mark extension based on the source implementation
 const Annotation = Mark.create({

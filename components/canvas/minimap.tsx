@@ -1,6 +1,6 @@
 "use client"
 
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 import { useState, useEffect } from "react"
 
 interface MinimapProps {
@@ -56,7 +56,7 @@ export function Minimap({ panels, canvasState, onNavigate }: MinimapProps) {
       >
           {/* Render miniaturized panels */}
           {panels.map(panelId => {
-            const provider = CollaborationProvider.getInstance()
+            const provider = UnifiedProvider.getInstance()
             const branch = provider.getBranchesMap().get(panelId)
             
           if (!branch) return null

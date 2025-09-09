@@ -1,6 +1,6 @@
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { CollaborationProvider } from '@/lib/yjs-provider'
+import { UnifiedProvider } from '@/lib/provider-switcher'
 import { trackTooltipShown } from './performance-decorations'
 import { getPlainProvider } from '@/lib/provider-switcher'
 
@@ -81,7 +81,7 @@ export const AnnotationDecorations = () => {
         // Try collaboration provider first (has getBranchesMap)
         // Yjs uses the UI format (branch-<uuid>)
         try {
-          const provider = CollaborationProvider.getInstance()
+          const provider = UnifiedProvider.getInstance()
           if (provider && provider.getBranchesMap) {
             const branchesMap = provider.getBranchesMap()
             branchData = branchesMap.get(uiId) // Use UI format for Yjs

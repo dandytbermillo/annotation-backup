@@ -1,14 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 
 export function DebugBranches() {
   const [branches, setBranches] = useState<any[]>([])
 
   useEffect(() => {
     const updateBranches = () => {
-      const provider = CollaborationProvider.getInstance()
+      const provider = UnifiedProvider.getInstance()
       const branchesMap = provider.getBranchesMap()
       const branchArray = Array.from(branchesMap.entries())
       setBranches(branchArray)

@@ -3,17 +3,20 @@
 import { useEffect } from 'react'
 import { initializePlainProvider } from '@/lib/provider-switcher'
 import { WebPostgresOfflineAdapter } from '@/lib/adapters/web-postgres-offline-adapter'
+import { ensureFailClosed, getCollabMode, lockPlainMode } from '@/lib/collab-mode'
 
 export function PlainModeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Check if we're in browser environment
     if (typeof window === 'undefined') return
     
-    const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 
-                       localStorage.getItem('collab-mode') || 
-                       'yjs'
+    // Establish fail-closed plain behavior and set lock (query/env/default)
+    ensureFailClosed()
+    const collabMode = getCollabMode()
     
     if (collabMode === 'plain') {
+      // If we reached plain due to transient state, ensure lock persists
+      lockPlainMode('runtime')
       console.log('[PlainModeProvider] Detected plain mode, initializing...')
       // Check if we're in Electron
       if (window.electronAPI) {

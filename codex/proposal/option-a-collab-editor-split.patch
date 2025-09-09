@@ -1,0 +1,228 @@
+Subject: Option A — Split Collab Editor + Lazy Y.Doc (proposal; no provider code-split yet)
+
+Overview
+- Goal: Keep Yjs out of plain-mode bundles, preserve behavior in both modes, and avoid timing races.
+- Strategy (Phase 1):
+  1) Split a collab-only TipTap editor that contains all Yjs/TipTap-collab imports and load it with `next/dynamic` only in Yjs mode.
+  2) Lazy-load Y.Doc via `lib/lazy-yjs.ts` in the canvas panel, so no static reference pulls Yjs into plain bundles.
+  3) Keep `lib/provider-switcher.ts` synchronous for now (no `ready()` gate needed). We can code-split providers in a separate, gated Phase 2.
+
+Files changed (preview)
+1) components/canvas/tiptap-editor-collab.tsx (new)
+2) components/canvas/canvas-panel.tsx (wire dynamic editor + typed async ydoc load + guards)
+
+Notes
+- Phase 2 (optional): Code-split Yjs providers in `provider-switcher.ts` with a `UnifiedProvider.ready()` gate to avoid races.
+- CSP: If you run a collab WebSocket on a separate origin, ensure CSP `connect-src` includes that `wss://...` endpoint.
+
+--- a/components/canvas/tiptap-editor-collab.tsx (new)
++++ b/components/canvas/tiptap-editor-collab.tsx
+"use client"
+
+import { useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Highlight from '@tiptap/extension-highlight'
+import Underline from '@tiptap/extension-underline'
+import Placeholder from '@tiptap/extension-placeholder'
+import Collaboration from '@tiptap/extension-collaboration'
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor'
+import { useEffect, useImperativeHandle, forwardRef } from 'react'
+import * as Y from 'yjs'
+import { IndexeddbPersistence } from 'y-indexeddb'
+import { WebsocketProvider } from 'y-websocket'
+import { Mark, mergeAttributes } from '@tiptap/core'
+import { AnnotationDecorations } from './annotation-decorations'
+import { PerformanceMonitor } from './performance-decorations'
+
+// Mirror the existing handle/type used by the current editor
+export interface TiptapEditorHandle {
+  getHTML: () => string
+  focus: () => void
+  setEditable: (editable: boolean) => void
+  executeCommand: (command: string, value?: any) => void
+  insertAnnotation: (type: string, annotationId: string, branchId: string) => void
+}
+
+interface TiptapEditorProps {
+  content: string
+  isEditable: boolean
+  panelId: string
+  onUpdate?: (html: string) => void
+  onSelectionChange?: (text: string, range: Range | null) => void
+  placeholder?: string
+  ydoc?: Y.Doc
+  provider?: WebsocketProvider | null
+  onCreateAnnotation?: (type: string, selectedText: string) => { id: string; branchId: string } | null
+}
+
+// Inline Annotation mark (or import your centralized extension if you have one)
+const Annotation = Mark.create({
+  name: 'annotation',
+  addOptions() { return { HTMLAttributes: {} } },
+  addAttributes() {
+    return {
+      id: { default: null, parseHTML: el => el.getAttribute('data-annotation-id'), renderHTML: a => a.id ? { 'data-annotation-id': a.id } : {} },
+      type: { default: null, parseHTML: el => el.getAttribute('data-type'), renderHTML: a => a.type ? { 'data-type': a.type } : {} },
+      branchId: { default: null, parseHTML: el => el.getAttribute('data-branch'), renderHTML: a => a.branchId ? { 'data-branch': a.branchId } : {} },
+      'data-branch': { default: null, parseHTML: el => el.getAttribute('data-branch'), renderHTML: a => a['data-branch'] ? { 'data-branch': a['data-branch'] } : {} },
+    }
+  },
+  parseHTML() { return [{ tag: 'span[data-annotation-id]' }] },
+  renderHTML({ HTMLAttributes, mark }) {
+    const type = mark.attrs.type || 'note'
+    const className = `annotation annotation-${type}`
+    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { class: className, style: 'cursor: pointer;' }), 0]
+  },
+})
+
+const TiptapEditorCollab = forwardRef<TiptapEditorHandle, TiptapEditorProps>(({
+  content, isEditable, panelId, onUpdate, onSelectionChange, placeholder, ydoc, provider, onCreateAnnotation
+}, ref) => {
+  const doc = ydoc || new Y.Doc()
+
+  useEffect(() => {
+    if (ydoc) {
+      console.log(`[TiptapEditorCollab] Using Y.Doc for panelId: ${panelId}`)
+    }
+  }, [ydoc, panelId])
+
+  const fragmentField = doc.getMap('_meta').get('fragmentField') || 'prosemirror'
+
+  // Local IndexedDB fallback when no external provider is present
+  useEffect(() => {
+    if (!provider && !ydoc && typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
+      const persistence = new IndexeddbPersistence(`annotation-${panelId}`, doc)
+      return () => { persistence.destroy() }
+    }
+  }, [doc, panelId, provider, ydoc])
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ history: false }),
+      Highlight,
+      Underline,
+      Annotation,
+      Placeholder.configure({ placeholder: placeholder || 'Start typing...' }),
+      Collaboration.configure({ document: doc, field: fragmentField }),
+      ...(provider ? [ CollaborationCursor.configure({ provider, user: { name: 'User', color: '#667eea' } }) ] : []),
+    ],
+    content: undefined, // content comes from the Y.Doc in collab mode
+    editable: isEditable,
+    onCreate: ({ editor }) => {
+      editor.registerPlugin(AnnotationDecorations())
+      editor.registerPlugin(PerformanceMonitor())
+    },
+    onUpdate: ({ editor }) => { onUpdate?.(editor.getHTML()) },
+    onSelectionUpdate: ({ editor }) => {
+      const { from, to } = editor.state.selection
+      const text = editor.state.doc.textBetween(from, to, ' ')
+      if (text.trim().length > 0 && onSelectionChange) {
+        const view = editor.view
+        const domRange = document.createRange()
+        try {
+          const start = view.domAtPos(from)
+          const end = view.domAtPos(to)
+          domRange.setStart(start.node, start.offset)
+          domRange.setEnd(end.node, end.offset)
+          onSelectionChange(text, domRange)
+        } catch { onSelectionChange(text, null) }
+      } else { onSelectionChange?.('', null) }
+    },
+  })
+
+  useImperativeHandle(ref, () => ({
+    getHTML: () => editor?.getHTML() || '',
+    focus: () => editor?.commands.focus(),
+    setEditable: (editable: boolean) => editor?.setEditable(editable),
+    executeCommand: (command: string, value?: any) => { /* keep parity with plain editor */ },
+    insertAnnotation: (type: string, annotationId: string, branchId: string) => {
+      editor?.chain().focus().setMark('annotation', { id: annotationId, type, branchId }).run()
+    },
+  }))
+
+  return <EditorContent editor={editor} />
+})
+
+export default TiptapEditorCollab
+export type { TiptapEditorHandle }
+
+--- a/components/canvas/canvas-panel.tsx (preview)
++++ b/components/canvas/canvas-panel.tsx
+@@ imports
+  import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
+  import dynamic from 'next/dynamic'
+  import type { TiptapEditorHandle } from './tiptap-editor-collab'
+  import type * as Y from 'yjs' // type-only import: does not bundle Yjs
+  const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
+
+  // Optional: unify editor handle surface used by refs
+  type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
+
+@@ setup
+  const provider = UnifiedProvider.getInstance()
+  const [ydocState, setYdocState] = useState<{
+    loading: boolean
+    doc: Y.Doc | null
+    error: Error | null
+  }>({ loading: false, doc: null, error: null })
+  const editorRef = useRef<UnifiedEditorHandle | null>(null)
+
+@@ load-ydoc (replace the old require('@/lib/yjs-provider') block)
+  useEffect(() => {
+    if (!isPlainMode) {
+      setYdocState(s => ({ ...s, loading: true, error: null }))
+      import('@/lib/lazy-yjs')
+        .then(({ loadYjsProvider }) => loadYjsProvider())
+        .then(mod => {
+          if (mod?.getEditorYDoc) {
+            const doc = mod.getEditorYDoc(panelId, currentNoteId)
+            setYdocState({ loading: false, doc, error: null })
+          } else {
+            setYdocState({ loading: false, doc: null, error: new Error('getEditorYDoc unavailable') })
+          }
+        })
+        .catch((e: any) => setYdocState({ loading: false, doc: null, error: e instanceof Error ? e : new Error('load failed') }))
+    } else {
+      setYdocState({ loading: false, doc: null, error: null })
+    }
+  }, [isPlainMode, panelId, currentNoteId])
+
+@@ render (collab path)
+  {!isPlainMode && ydocState.loading ? (
+    <div style={{ padding: '40px', textAlign: 'center', color: '#666', fontSize: '14px' }}>
+      Loading collaborative editor...
+    </div>
+  ) : !isPlainMode && ydocState.doc ? (
+    <TiptapEditorCollab
+      ref={editorRef}
+      content={''}
+      isEditable={isEditing}
+      panelId={panelId}
+      onUpdate={handleUpdate}
+      onSelectionChange={handleSelectionChange}
+      placeholder={isEditing ? "Start typing..." : ""}
+      ydoc={ydocState.doc}
+      provider={provider.getProvider() as any}
+    />
+  ) : (
+    <TiptapEditorPlain
+      ref={editorRef}
+      content={currentBranch.content}
+      isEditable={isEditing}
+      noteId={currentNoteId || ''}
+      panelId={panelId}
+      onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
+      onSelectionChange={handleSelectionChange}
+      placeholder={isEditing ? "Start typing..." : ""}
+      provider={plainProvider}
+    />
+  )}
+
+// Optional migration fallback:
+// If you want a belt-and-suspenders approach during rollout, render the legacy
+// TiptapEditor temporarily when not plain and ydocState.doc is null, instead of the loader.
+// Otherwise, the loader shown above is sufficient.
+
+Phase 2 (optional, separate proposal)
+- Code-split Yjs providers in `lib/provider-switcher.ts` with dynamic `import()` and add `UnifiedProvider.ready(): Promise<void>`.
+- At collab call sites, wait for readiness (or render a spinner until `provider !== null`).
