@@ -1,0 +1,124 @@
+Subject: Unify tooltip preview precedence (Yjs + Plain) to branch-first with safe fallbacks
+
+Summary
+- Fix tooltip preview inconsistency by standardizing precedence across both implementations.
+- Preview order: stripHTML(branch.content) → extractText(provider/doc) → branch.originalText → "No notes added yet".
+- Keep async/visibility guards and ID normalization; never render selected DOM text.
+
+Scope
+- components/canvas/annotation-decorations-plain.ts
+- components/canvas/annotation-decorations.ts
+
+Instructions
+
+1) components/canvas/annotation-decorations-plain.ts
+   Change preview precedence to branch-first and keep provider/API as fallbacks only.
+
+   Find:
+     const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on "${truncate(dsBranch.originalText, 30)}"` : ''}`
+     const previewText = extractPreviewFromDoc(docContent) || (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '') || (dsBranch?.originalText || '')
+
+   Replace with:
+     // Unified precedence: branch.content → provider doc → originalText
+     const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on "${truncate(dsBranch.originalText, 30)}"` : ''}`
+     const previewText = (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '')
+       || extractPreviewFromDoc(docContent)
+       || (dsBranch?.originalText || '')
+
+   And ensure API/provider fetches only run when !previewText (already guarded in file).
+
+2) components/canvas/annotation-decorations.ts (Yjs path)
+   Prefer branch data immediately; only fetch provider/doc if branch has no preview.
+
+   Inside showAnnotationTooltip(), after resolving uiId/dbId and branchData:
+
+   Add/ensure this guard early:
+     if (!tooltipElement) {
+       tooltipElement = document.createElement('div')
+       tooltipElement.className = 'annotation-tooltip'
+       document.body.appendChild(tooltipElement)
+       tooltipElement.addEventListener('mouseenter', () => { isOverTooltip = true })
+       tooltipElement.addEventListener('mouseleave', () => { isOverTooltip = false; hideAnnotationTooltipSoon() })
+     }
+     tooltipElement.dataset.branchId = uiId
+
+   Replace the existing branchData block with branch-first rendering:
+
+     if (branchData) {
+       const branch = typeof branchData.toJSON === 'function' ? branchData.toJSON() : JSON.parse(JSON.stringify(branchData))
+       const title = branch.title || `${(branch.type || type).charAt(0).toUpperCase() + (branch.type || type).slice(1)} annotation`
+       const branchPreview = branch.content ? String(branch.content).replace(/<[^>]*>/g, '').trim() : ''
+
+       if (branchPreview) {
+         const preview = branchPreview.substring(0, 150) + (branchPreview.length > 150 ? '...' : '')
+         tooltipElement.innerHTML = `
+           <div class="tooltip-header">
+             <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
+             <span class="tooltip-title">${title}</span>
+           </div>
+           <div class="tooltip-content">${preview}</div>
+           <div class="tooltip-footer">Click to open panel</div>
+         `
+       } else {
+         // No branch preview; fallback to provider/doc content first, then originalText
+         tooltipElement.innerHTML = `
+           <div class="tooltip-header">
+             <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
+             <span class="tooltip-title">${title}</span>
+           </div>
+           <div class="tooltip-content">Loading notes...</div>
+           <div class="tooltip-footer">Click to open panel</div>
+         `
+
+         const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+         const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') || document.querySelector('[data-note]')?.getAttribute('data-note')
+         const noteId = noteIdFromPath || noteIdFromAttr
+
+         if (noteId && branch.id) {
+           const panelId = branch.id.startsWith('branch-') ? branch.id : `branch-${branch.id}`
+           const currentKey = uiId
+           fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`)
+             .then(res => res.ok ? res.json() : null)
+             .then(doc => {
+               if (!doc || !tooltipElement || tooltipElement.dataset.branchId !== currentKey || !tooltipElement.classList.contains('visible')) return
+               let txt = ''
+               if (typeof doc.content === 'string') {
+                 const s = doc.content.trim()
+                 if (s.startsWith('{') || s.startsWith('[')) {
+                   try { const parsed = JSON.parse(s); txt = extractTextFromPM(parsed) } catch { txt = s.replace(/<[^>]*>/g, '') }
+                 } else { txt = s.replace(/<[^>]*>/g, '') }
+               } else if (doc.content && typeof doc.content === 'object') {
+                 txt = extractTextFromPM(doc.content)
+               }
+               let base = txt || (branch.original_text || branch.originalText || '') || 'No notes added yet'
+               const preview = base.substring(0, 150) + ((base && base.length > 150) ? '...' : '')
+               tooltipElement.innerHTML = `
+                 <div class="tooltip-header">
+                   <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
+                   <span class="tooltip-title">${title}</span>
+                 </div>
+                 <div class="tooltip-content">${preview}</div>
+                 <div class="tooltip-footer">Click to open panel</div>
+               `
+             })
+             .catch(() => {})
+         }
+       }
+     }
+
+   Include the helper near existing helpers:
+
+     function extractTextFromPM(node: any): string {
+       let text = ''
+       if (node && Array.isArray(node.content)) {
+         node.content.forEach((n: any) => {
+           if (n.type === 'text') text += n.text || ''
+           else if (n.content) text += extractTextFromPM(n)
+         })
+       }
+       return text.trim()
+     }
+
+Notes
+- This is an advisory patch preview. Apply the replacements above to the indicated files.
+- After applying, both modes render branch-first and only consult provider/API when needed, eliminating raw JSON in tooltips while keeping performance O(1) for the common case.

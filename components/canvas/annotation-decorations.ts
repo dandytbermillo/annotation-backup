@@ -72,6 +72,9 @@ export const AnnotationDecorations = () => {
           })
         }
         
+        // Add branch ID for async guard
+        tooltipElement.dataset.branchId = uiId
+        
         // Get branch data - try both providers
         let branchData = null
         
@@ -196,6 +199,18 @@ export const AnnotationDecorations = () => {
           return text.trim()
         }
         
+        // Compact helper for ProseMirror text extraction (used in branch-first rendering)
+        function extractTextFromPM(node: any): string {
+          let text = ''
+          if (node && Array.isArray(node.content)) {
+            node.content.forEach((n: any) => {
+              if (n.type === 'text') text += n.text || ''
+              else if (n.content) text += extractTextFromPM(n)
+            })
+          }
+          return text.trim()
+        }
+        
         // If still no data, it might be a temporary/unsaved branch
         if (!branchData && dbId.startsWith('temp-')) {
           console.log('[showAnnotationTooltip] Temporary branch, no data available yet')
@@ -251,48 +266,66 @@ export const AnnotationDecorations = () => {
             ? branchData.toJSON() 
             : JSON.parse(JSON.stringify(branchData))
           
-          // Branch data exists but we need to fetch the actual document content
-          // The branch object typically only has metadata, not the full content
           const title = branch.title || 
                        `${(branch.type || type).charAt(0).toUpperCase() + (branch.type || type).slice(1)} annotation`
           
-          // Show a placeholder while fetching actual content
-          tooltipElement.innerHTML = `
-            <div class="tooltip-header">
-              <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
-              <span class="tooltip-title">${title}</span>
-            </div>
-            <div class="tooltip-content">Loading notes...</div>
-            <div class="tooltip-footer">Click to open panel</div>
-          `
+          // Branch-first rendering: use branch content directly
+          const branchPreview = branch.content 
+            ? String(branch.content).replace(/<[^>]*>/g, '').trim() 
+            : ''
           
-          // Now fetch the actual document content
-          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
-          const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
-                                document.querySelector('[data-note]')?.getAttribute('data-note')
-          const noteId = noteIdFromPath || noteIdFromAttr
-          
-          if (noteId && branch.id) {
-            // Don't double-prefix - if branch.id already has 'branch-', use it as is
-            // Otherwise add the prefix
-            const panelId = branch.id.startsWith('branch-') ? branch.id : `branch-${branch.id}`
-            fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`)
-              .then(res => res.json())
-              .then(doc => {
-                if (tooltipElement && tooltipElement.classList.contains('visible')) {
-                  // Extract text content from the document
-                  let content = ''
-                  if (doc && doc.content) {
-                    if (typeof doc.content === 'string') {
-                      content = doc.content.replace(/<[^>]*>/g, '').trim()
-                    } else if (doc.content.content) {
-                      content = extractTextFromProseMirrorJSON(doc.content)
+          if (branchPreview) {
+            // We have branch content - show it immediately
+            const preview = branchPreview.substring(0, 150) + (branchPreview.length > 150 ? '...' : '')
+            tooltipElement.innerHTML = `
+              <div class="tooltip-header">
+                <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
+                <span class="tooltip-title">${title}</span>
+              </div>
+              <div class="tooltip-content">${preview}</div>
+              <div class="tooltip-footer">Click to open panel</div>
+            `
+          } else {
+            // No branch preview; fallback to provider/doc content
+            tooltipElement.innerHTML = `
+              <div class="tooltip-header">
+                <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
+                <span class="tooltip-title">${title}</span>
+              </div>
+              <div class="tooltip-content">Loading notes...</div>
+              <div class="tooltip-footer">Click to open panel</div>
+            `
+            
+            const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+            const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
+                                  document.querySelector('[data-note]')?.getAttribute('data-note')
+            const noteId = noteIdFromPath || noteIdFromAttr
+            
+            if (noteId && branch.id) {
+              const panelId = branch.id.startsWith('branch-') ? branch.id : `branch-${branch.id}`
+              const currentKey = uiId
+              fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`)
+                .then(res => res.ok ? res.json() : null)
+                .then(doc => {
+                  if (!doc || !tooltipElement || tooltipElement.dataset.branchId !== currentKey || !tooltipElement.classList.contains('visible')) return
+                  let txt = ''
+                  if (typeof doc.content === 'string') {
+                    const s = doc.content.trim()
+                    if (s.startsWith('{') || s.startsWith('[')) {
+                      try { 
+                        const parsed = JSON.parse(s)
+                        txt = extractTextFromPM(parsed)
+                      } catch { 
+                        txt = s.replace(/<[^>]*>/g, '') 
+                      }
+                    } else { 
+                      txt = s.replace(/<[^>]*>/g, '') 
                     }
+                  } else if (doc.content && typeof doc.content === 'object') {
+                    txt = extractTextFromPM(doc.content)
                   }
-                  
-                  const displayText = content || 'No notes added yet'
-                  const preview = displayText.substring(0, 150) + (displayText.length > 150 ? '...' : '')
-                  
+                  let base = txt || (branch.original_text || branch.originalText || '') || 'No notes added yet'
+                  const preview = base.substring(0, 150) + ((base && base.length > 150) ? '...' : '')
                   tooltipElement.innerHTML = `
                     <div class="tooltip-header">
                       <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
@@ -301,21 +334,9 @@ export const AnnotationDecorations = () => {
                     <div class="tooltip-content">${preview}</div>
                     <div class="tooltip-footer">Click to open panel</div>
                   `
-                }
-              })
-              .catch(() => {
-                // If fetch fails, show that no content is available
-                if (tooltipElement && tooltipElement.classList.contains('visible')) {
-                  tooltipElement.innerHTML = `
-                    <div class="tooltip-header">
-                      <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
-                      <span class="tooltip-title">${title}</span>
-                    </div>
-                    <div class="tooltip-content">No notes added yet</div>
-                    <div class="tooltip-footer">Click to open panel</div>
-                  `
-                }
-              })
+                })
+                .catch(() => {})
+            }
           }
           
           // Position tooltip

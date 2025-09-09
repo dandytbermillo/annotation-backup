@@ -1,0 +1,21 @@
+Subject: Tooltip preview: prefer branch fields over provider doc (plain mode)
+
+Context
+- In plain mode, the hover tooltip currently reads the provider document cache first, then falls back to branch.content/originalText.
+- This leads to newly created annotations showing JSON-derived text instead of the branch’s label/content the user expects.
+- This patch reorders the preview precedence to branch-first to keep behavior consistent and predictable.
+
+Files changed
+1) components/canvas/annotation-decorations-plain.ts
+   - Flip `previewText` selection to: `branch.content` -> `branch.originalText` -> provider `docContent`.
+
+--- a/components/canvas/annotation-decorations-plain.ts
++++ b/components/canvas/annotation-decorations-plain.ts
+@@
+-      const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on \"${truncate(dsBranch.originalText, 30)}\"` : ''}`
+-      const previewText = extractPreviewFromDoc(docContent) || (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '') || (dsBranch?.originalText || '')
++      const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on \"${truncate(dsBranch.originalText, 30)}\"` : ''}`
++      const previewText = (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '') || (dsBranch?.originalText || '') || extractPreviewFromDoc(docContent)
+
+Notes
+ - To apply, update the referenced lines in components/canvas/annotation-decorations-plain.ts accordingly.
