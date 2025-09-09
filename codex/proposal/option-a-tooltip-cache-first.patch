@@ -1,0 +1,182 @@
+Subject: Option A tooltip: cache-first branch preview fix (no Yjs)
+
+Problem
+- Popup shows annotated text or "Loading notes..." instead of actual branch notes in Option A (offline).
+- Causes: ID mismatches (UI id `branch-<uuid>` vs DB `<uuid>`), fragile noteId detection, API-first fetch while content exists in local caches, and duplicate/conflicting tooltip CSS.
+
+High-level approach (cache-first, ID-normalized)
+- Normalize IDs once: `uiId = branchId`, `dbId = branchId.replace(/^branch-/, '')`.
+- Get noteId from editor DOM (`role="textbox"[data-note]`).
+- Prefer local sources: `window.canvasDataStore.get(uiId)` and `plainProvider.getDocument(noteId, uiId)`.
+- Use `/api/postgres-offline/documents/<noteId>/<uiId>` only as late fallback.
+- Ensure tooltip CSS toggles visibility via the `.visible` class.
+
+---
+diff --git a/components/canvas/annotation-decorations.ts b/components/canvas/annotation-decorations.ts
+index 0000000..1111111 100644
+--- a/components/canvas/annotation-decorations.ts
++++ b/components/canvas/annotation-decorations.ts
+@@
+-      // Tooltip functions (moved inside view scope)
+--      function showAnnotationTooltip(element: HTMLElement, branchId: string, type: string) {
+ +      // Tooltip (Option A: cache-first; no Yjs dependency)
+ +      function showAnnotationTooltip(element: HTMLElement, branchId: string, type: string) {
+ +        // Normalize IDs
+ +        const uiId = branchId
+ +        const dbId = uiId.replace(/^branch-/, '')
+ +
+ +        // Note context (Option A stores this on the editor element)
+ +        const root = element.closest('.tiptap-editor-wrapper') || document.body
+ +        const textbox = root.querySelector('[role="textbox"]') as HTMLElement | null
+ +        const noteId = textbox?.getAttribute('data-note') || ''
+ +
+ +        // Local sources
+ +        const ds = (window as any).canvasDataStore
+ +        const plainProvider = getPlainProvider()
+ +        const dsBranch = ds?.get?.(uiId) || null
+ +
+ +        // Try provider document cache first
+ +        let docContent: any = null
+ +        if (plainProvider && noteId) {
+ +          try { docContent = plainProvider.getDocument(noteId, uiId) || null } catch {}
+ +        }
+ +
+ +        // Build immediate preview (no spinners if possible)
+ +        const titleText = dsBranch?.title
+ +          || `${capitalize(type)}${dsBranch?.originalText ? ` on "${truncate(dsBranch.originalText, 30)}"` : ''}`
+ +        const previewText =
+ +          extractPreviewFromDoc(docContent)
+ +          || (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '')
+ +          || (dsBranch?.originalText || '')
+ +
+ +        if (titleText || previewText) {
+ +          const headerType = dsBranch?.type || type
+ +          const safe = (previewText || 'No notes added yet').substring(0, 150)
+ +          tooltipElement!.innerHTML = `
+ +            <div class="tooltip-header">
+ +              <span class="tooltip-icon">${getTypeIcon(headerType)}</span>
+ +              <span class="tooltip-title">${titleText || `${capitalize(type)} annotation`}</span>
+ +            </div>
+ +            <div class="tooltip-content">${safe}${(previewText && previewText.length > 150) ? '...' : ''}</div>
+ +            <div class="tooltip-footer">Click to open panel</div>
+ +          `
+ +        } else {
+ +          tooltipElement!.innerHTML = `
+ +            <div class="tooltip-header">
+ +              <span class="tooltip-icon">${getTypeIcon(type)}</span>
+ +              <span class="tooltip-title">${capitalize(type)} annotation</span>
+ +            </div>
+ +            <div class="tooltip-content">Loading notes...</div>
+ +            <div class="tooltip-footer">Click to open panel</div>
+ +          `
+ +        }
+ +
+ +        // Late fallback to API (after caches)
+ +        if (noteId && !previewText) {
+ +          fetch(`/api/postgres-offline/documents/${noteId}/${uiId}`)
+ +            .then(res => res.ok ? res.json() : null)
+ +            .then(doc => {
+ +              if (!doc || !tooltipElement || !tooltipElement.classList.contains('visible')) return
+ +              const contentText = extractPreviewFromDoc(doc.content) || ''
+ +              const headerType = dsBranch?.type || type
+ +              const safe = (contentText || 'No notes added yet').substring(0, 150)
+ +              tooltipElement.innerHTML = `
+ +                <div class="tooltip-header">
+ +                  <span class="tooltip-icon">${getTypeIcon(headerType)}</span>
+ +                  <span class="tooltip-title">${titleText || `${capitalize(type)} annotation`}</span>
+ +                </div>
+ +                <div class="tooltip-content">${safe}${(contentText && contentText.length > 150) ? '...' : ''}</div>
+ +                <div class="tooltip-footer">Click to open panel</div>
+ +              `
+ +            })
+ +            .catch(() => {})
+ +        }
+ +      }
+@@
+ +      // Helpers
+ +      function stripHtml(html: string): string {
+ +        try { return html.replace(/<[^>]*>/g, '') } catch { return html || '' }
+ +      }
+ +      function extractPreviewFromDoc(content: any): string | null {
+ +        if (!content) return null
+ +        if (typeof content === 'string') return stripHtml(content)
+ +        if (content && typeof content === 'object') {
+ +          try { return extractTextFromProseMirrorJSON(content) } catch { return null }
+ +        }
+ +        return null
+ +      }
+ +      function truncate(s: string, n: number): string {
+ +        if (!s) return ''
+ +        return s.length > n ? s.slice(0, n) + '...' : s
+ +      }
+ +      function capitalize(s: string): string {
+ +        if (!s) return ''
+ +        return s.charAt(0).toUpperCase() + s.slice(1)
+ +      }
+
+---
+diff --git a/components/canvas/tiptap-editor-plain.tsx b/components/canvas/tiptap-editor-plain.tsx
+index 2222222..3333333 100644
+--- a/components/canvas/tiptap-editor-plain.tsx
++++ b/components/canvas/tiptap-editor-plain.tsx
+@@
+-        /* Tooltip styles */
+-        .annotation-tooltip {
+-          position: absolute;
+-          background: rgba(0, 0, 0, 0.95);
+-          color: white;
+-          padding: 12px 16px;
+-          border-radius: 8px;
+-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+-          z-index: 10000;
+-          max-width: 300px;
+-          opacity: 0;
+-          pointer-events: none;
+-          transition: opacity 0.2s ease, transform 0.2s ease;
+-          transform: translateY(5px);
+-        }
+-        .annotation-tooltip.visible {
+-          opacity: 1;
+-          transform: translateY(0);
+-          pointer-events: auto;
+-        }
++        /* Tooltip styles (canonical; ensure .visible shows) */
++        .annotation-tooltip {
++          position: fixed;
++          background: rgba(0, 0, 0, 0.95);
++          color: white;
++          padding: 12px 16px;
++          border-radius: 8px;
++          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
++          z-index: 10000;
++          max-width: 300px;
++          opacity: 0;
++          transform: translateY(5px);
++          pointer-events: none;
++          visibility: hidden;
++          transition: opacity 0.2s ease, transform 0.2s ease;
++        }
++        .annotation-tooltip.visible {
++          opacity: 1;
++          transform: translateY(0);
++          pointer-events: auto;
++          visibility: visible;
++        }
+@@
+-        /* Tooltip styles */
+-        .annotation-tooltip {
+-          position: fixed;
+-          background: white;
+-          border: 1px solid #e1e8ed;
+-          border-radius: 8px;
+-          padding: 12px;
+-          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+-          z-index: 10001;
+-          max-width: 300px;
+-          opacity: 0;
+-          visibility: hidden;
+-          transition: opacity 0.2s, visibility 0.2s;
+-          pointer-events: auto;
+-        }
++        /* (remove duplicate tooltip block to avoid conflicts) */
+

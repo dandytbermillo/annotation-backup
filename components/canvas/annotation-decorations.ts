@@ -39,6 +39,17 @@ export const AnnotationDecorations = () => {
           return
         }
         
+        // Normalize IDs: UI uses 'branch-<uuid>', DB uses raw '<uuid>'
+        const uiId = branchId // This is what comes from the UI (e.g., 'branch-04742759...')
+        const dbId = branchId.replace(/^branch-/, '') // Strip prefix for DB lookups
+        
+        console.log('[showAnnotationTooltip] ID normalization:', { 
+          original: branchId, 
+          uiId, 
+          dbId,
+          hasPrefix: branchId.startsWith('branch-')
+        })
+        
         // Clear any existing timeout
         if (tooltipTimeout) {
           clearTimeout(tooltipTimeout)
@@ -65,21 +76,23 @@ export const AnnotationDecorations = () => {
         let branchData = null
         
         // Try collaboration provider first (has getBranchesMap)
+        // Yjs uses the UI format (branch-<uuid>)
         try {
           const provider = CollaborationProvider.getInstance()
           if (provider && provider.getBranchesMap) {
             const branchesMap = provider.getBranchesMap()
-            branchData = branchesMap.get(branchId)
+            branchData = branchesMap.get(uiId) // Use UI format for Yjs
           }
         } catch (e) {
           // CollaborationProvider not available
         }
         
         // Fall back to plain provider (has getBranch)
+        // Plain provider uses raw UUID format
         if (!branchData) {
           const plainProvider = getPlainProvider()
           if (plainProvider && plainProvider.getBranch) {
-            branchData = plainProvider.getBranch(branchId)
+            branchData = plainProvider.getBranch(dbId) // Use DB format for plain provider
           }
         }
         
@@ -87,25 +100,34 @@ export const AnnotationDecorations = () => {
         // Branch content is what the user writes IN the annotation panel, not the selected text
         
         // If still no data, fetch from API and also fetch the document content
-        if (!branchData && branchId && !branchId.startsWith('temp-')) {
+        if (!branchData && dbId && !dbId.startsWith('temp-')) {
           
           // Extract noteId from the current page/context
-          const noteIdMatch = window.location.pathname.match(/note\/([^/]+)/) || 
-                             document.querySelector('[data-note-id]')?.getAttribute('data-note-id')
-          const noteId = noteIdMatch?.[1] || noteIdMatch
+          // Try multiple sources for better reliability
+          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+          const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
+                                 document.querySelector('[data-note]')?.getAttribute('data-note')
+          const noteId = noteIdFromPath || noteIdFromAttr
           
           if (noteId) {
-            // First fetch branch metadata
+            console.log('[showAnnotationTooltip] Fetching branches for noteId:', noteId)
+            // First fetch branch metadata (API uses raw UUID)
             fetch(`/api/postgres-offline/branches?noteId=${noteId}`)
               .then(res => res.json())
               .then(branches => {
-                const branch = branches.find((b: any) => b.id === branchId)
+                console.log('[showAnnotationTooltip] Branches from API:', branches)
+                console.log('[showAnnotationTooltip] Looking for branch with id:', dbId)
+                const branch = branches.find((b: any) => b.id === dbId) // Compare with DB format
                 if (branch) {
+                  console.log('[showAnnotationTooltip] Found branch:', branch)
                   // Now fetch the actual document content for this branch
-                  const panelId = `branch-${branchId}`
-                  fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`)
+                  // Use UI format for panel ID (already has branch- prefix)
+                  const docUrl = `/api/postgres-offline/documents/${noteId}/${uiId}`
+                  console.log('[showAnnotationTooltip] Fetching document from:', docUrl)
+                  fetch(docUrl)
                     .then(res => res.json())
                     .then(doc => {
+                      console.log('[showAnnotationTooltip] Document fetched:', doc)
                       if (tooltipElement && tooltipElement.classList.contains('visible')) {
                         // Extract text content from HTML
                         let content = ''
@@ -118,6 +140,7 @@ export const AnnotationDecorations = () => {
                             content = extractTextFromProseMirrorJSON(doc.content)
                           }
                         }
+                        console.log('[showAnnotationTooltip] Extracted content:', content)
                         
                         // Use branch content if available, otherwise show the original annotated text
                         const preview = content || branch.original_text || branch.originalText || 'No notes added yet'
@@ -147,6 +170,9 @@ export const AnnotationDecorations = () => {
                         `
                       }
                     })
+                } else {
+                  console.log('[showAnnotationTooltip] Branch not found in API response')
+                  console.log('[showAnnotationTooltip] Available branch IDs:', branches.map((b: any) => b.id))
                 }
               })
               .catch(err => {
@@ -171,15 +197,18 @@ export const AnnotationDecorations = () => {
         }
         
         // If still no data, it might be a temporary/unsaved branch
-        if (!branchData && branchId.startsWith('temp-')) {
+        if (!branchData && dbId.startsWith('temp-')) {
           console.log('[showAnnotationTooltip] Temporary branch, no data available yet')
           return
         }
         
         if (!branchData) {
           // Show that we're loading the actual branch content
-          const annotatedElement = document.querySelector(`[data-branch-id="${branchId}"]`) ||
-                                   document.querySelector(`[data-branch="${branchId}"]`)
+          // Use the UI format for DOM queries
+          const annotatedElement = document.querySelector(`[data-branch-id="${uiId}"]`) ||
+                                   document.querySelector(`[data-branch="${uiId}"]`) ||
+                                   document.querySelector(`[data-branch-id="${dbId}"]`) ||
+                                   document.querySelector(`[data-branch="${dbId}"]`)
           const selectedText = annotatedElement?.textContent || ''
           
           // Show a loading state tooltip
@@ -238,12 +267,15 @@ export const AnnotationDecorations = () => {
           `
           
           // Now fetch the actual document content
-          const noteIdMatch = window.location.pathname.match(/note\/([^/]+)/) || 
-                             document.querySelector('[data-note-id]')?.getAttribute('data-note-id')
-          const noteId = noteIdMatch?.[1] || noteIdMatch
+          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+          const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
+                                document.querySelector('[data-note]')?.getAttribute('data-note')
+          const noteId = noteIdFromPath || noteIdFromAttr
           
           if (noteId && branch.id) {
-            const panelId = `branch-${branch.id}`
+            // Don't double-prefix - if branch.id already has 'branch-', use it as is
+            // Otherwise add the prefix
+            const panelId = branch.id.startsWith('branch-') ? branch.id : `branch-${branch.id}`
             fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`)
               .then(res => res.json())
               .then(doc => {

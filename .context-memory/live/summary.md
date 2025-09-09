@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-09 02:13Z] 9c2ce45: popup toltip appear
 - commit [2025-09-07 21:32Z] 6bb99df: before codex start coding
 - commit [2025-09-07 19:54Z] 82272ee: phase 2 (context-os) is done with testing(success)
 - commit [2025-09-07 01:48Z] 990e729: delete branches except the main
@@ -15,7 +16,6 @@ Recent Activity
 - note [2025-09-07 13:45Z]: Policy update: Added Clarification & Approval Protocol — always ask on ambiguity, no edits to context-os/ without explicit approval, confirm scope, and log intent/results in journal.
 - note [2025-09-07 13:40Z]: Output styling policy: Use underlined text for emphasis in CLI outputs; avoid background colors. Docs may use <u> tags sparingly. Preference recorded per user request.
 - note [2025-09-06 14:06Z]: Added linkfiles/INDEX.md with descriptions and authoritative source paths.
-- note [2025-09-06 14:05Z]: Copied referenced docs/scripts to live/guides/linkfiles (excluded live log/state files).
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
