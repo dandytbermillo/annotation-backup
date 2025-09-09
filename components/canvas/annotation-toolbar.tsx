@@ -2,7 +2,7 @@
 
 import { useCanvas } from "./canvas-context"
 import { v4 as uuidv4 } from "uuid"
-import { CollaborationProvider } from "@/lib/yjs-provider"
+import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { createAnnotationBranch } from "@/lib/models/annotation"
 
@@ -67,8 +67,8 @@ export function AnnotationToolbar() {
         dataStore.update(panel, { branches: [...branches, branchId] })
       }
     } else {
-      // Yjs mode: Use collaboration provider
-      const provider = CollaborationProvider.getInstance()
+      // Yjs mode: Use UnifiedProvider (collab)
+      const provider = UnifiedProvider.getInstance()
       if (noteId) {
         provider.setCurrentNote(noteId)
       }
@@ -92,7 +92,7 @@ export function AnnotationToolbar() {
     }
 
     // Calculate position for new panel
-    const branchesMap = isPlainMode ? new Map() : CollaborationProvider.getInstance().getBranchesMap()
+    const branchesMap = isPlainMode ? new Map() : UnifiedProvider.getInstance().getBranchesMap()
     const parentBranch = branchesMap.get(panel) || dataStore.get(panel)
     
     if (!parentBranch || !parentBranch.position) {
@@ -108,7 +108,7 @@ export function AnnotationToolbar() {
       // Count siblings
       const currentBranches = isPlainMode 
         ? (dataStore.get(panel)?.branches || [])
-        : CollaborationProvider.getInstance().getBranches(panel)
+        : UnifiedProvider.getInstance().getBranches(panel)
       const siblingCount = currentBranches.length - 1 // Subtract 1 because we just added this branch
 
       const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
