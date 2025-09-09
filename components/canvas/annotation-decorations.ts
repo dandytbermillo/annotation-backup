@@ -145,8 +145,8 @@ export const AnnotationDecorations = () => {
                         }
                         console.log('[showAnnotationTooltip] Extracted content:', content)
                         
-                        // Use branch content if available, otherwise show the original annotated text
-                        const preview = content || branch.original_text || branch.originalText || 'No notes added yet'
+                        // Use doc content if available; do NOT fall back to original annotated text
+                        const preview = content || 'No notes added yet'
                         const displayText = preview.substring(0, 150) + (preview.length > 150 ? '...' : '')
                         
                         tooltipElement.innerHTML = `
@@ -160,15 +160,15 @@ export const AnnotationDecorations = () => {
                       }
                     })
                     .catch(() => {
-                      // If document fetch fails, show just the branch metadata
+                      // If document fetch fails, show placeholder
                       if (tooltipElement && tooltipElement.classList.contains('visible')) {
-                        const preview = branch.original_text || branch.originalText || 'No notes added yet'
+                        const preview = 'No notes added yet'
                         tooltipElement.innerHTML = `
                           <div class="tooltip-header">
                             <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
                             <span class="tooltip-title">${branch.title || `${(branch.type || type).charAt(0).toUpperCase() + (branch.type || type).slice(1)} annotation`}</span>
                           </div>
-                          <div class="tooltip-content">Selected text: "${preview}"</div>
+                          <div class="tooltip-content">${preview}</div>
                           <div class="tooltip-footer">Click to open panel</div>
                         `
                       }
@@ -324,7 +324,7 @@ export const AnnotationDecorations = () => {
                   } else if (doc.content && typeof doc.content === 'object') {
                     txt = extractTextFromPM(doc.content)
                   }
-                  let base = txt || (branch.original_text || branch.originalText || '') || 'No notes added yet'
+                  let base = txt || 'No notes added yet'
                   const preview = base.substring(0, 150) + ((base && base.length > 150) ? '...' : '')
                   tooltipElement.innerHTML = `
                     <div class="tooltip-header">

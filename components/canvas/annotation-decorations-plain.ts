@@ -187,11 +187,12 @@ export const AnnotationDecorations = () => new Plugin({
         try { docContent = plainProvider.getDocument(noteId, uiId) || null } catch {}
       }
 
-      // Unified precedence: branch.content → provider doc → originalText
+      // Unified precedence: branch.content → provider doc → placeholder
+      // Keep originalText ONLY for the title, not the preview body
       const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on "${truncate(dsBranch.originalText, 30)}"` : ''}`
       const previewText = (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '')
         || extractPreviewFromDoc(docContent)
-        || (dsBranch?.originalText || '')
+        || ''
 
       function renderPreview(text: string) {
         const headerType = dsBranch?.type || type
@@ -241,17 +242,13 @@ export const AnnotationDecorations = () => new Plugin({
             
             const branch = branches.find((b: any) => b.id === dbId)
             if (branch) {
-              // Simple: just strip HTML from branch content
+              // Use only branch.content for preview; no originalText
               let txt = ''
               if (branch.content) {
                 txt = stripHtml(String(branch.content))
-              } else if (branch.original_text || branch.originalText) {
-                txt = branch.original_text || branch.originalText
               }
-              
-              if (txt) {
-                renderPreview(txt)
-              }
+              // Always render; empty txt shows “No notes added yet”
+              renderPreview(txt)
             }
           })
           .catch(() => {})
@@ -267,17 +264,12 @@ export const AnnotationDecorations = () => new Plugin({
             const ds = (window as any).canvasDataStore
             const retryBranch = ds?.get?.(uiId)
             if (retryBranch) {
-              // Simple: just strip HTML from branch content
+              // Simple: just strip HTML from branch content; do not use originalText
               let txt = ''
               if (retryBranch.content) {
                 txt = stripHtml(String(retryBranch.content))
-              } else if (retryBranch.originalText) {
-                txt = retryBranch.originalText
               }
-              
-              if (txt) {
-                renderPreview(txt)
-              }
+              renderPreview(txt)
             }
           } catch {}
         }, 900)
