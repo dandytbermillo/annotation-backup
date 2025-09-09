@@ -159,14 +159,20 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
           }),
         ] : []),
       ],
-      plugins: [
-        AnnotationDecorations(),
-        PerformanceMonitor(),
-      ],
       // Only set initial content if NOT using Y.js collaboration
       // When using Y.js, content comes from the Y.Doc
       content: ydoc ? undefined : content,
       editable: isEditable,
+      onCreate: ({ editor }) => {
+        console.log('[TipTapEditor] onCreate callback called')
+        // Register ProseMirror plugins (hover icon + perf monitor)
+        const annotationPlugin = AnnotationDecorations()
+        const perfPlugin = PerformanceMonitor()
+        console.log('[TipTapEditor] Registering annotation plugin:', annotationPlugin)
+        editor.registerPlugin(annotationPlugin)
+        editor.registerPlugin(perfPlugin)
+        console.log('[TipTapEditor] Plugins registered successfully')
+      },
       onUpdate: ({ editor }) => {
         const html = editor.getHTML()
         console.log(`[TiptapEditor] onUpdate fired for panelId: ${panelId}, html length: ${html.length}`)
@@ -268,19 +274,19 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
           box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
         
-        .tiptap-editor .annotation.note {
+        .tiptap-editor .annotation.annotation-note {
           background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
           border-bottom-color: #2196f3;
           color: #1565c0;
         }
         
-        .tiptap-editor .annotation.explore {
+        .tiptap-editor .annotation.annotation-explore {
           background: linear-gradient(135deg, #fff3e0 0%, #ffcc80 100%);
           border-bottom-color: #ff9800;
           color: #ef6c00;
         }
         
-        .tiptap-editor .annotation.promote {
+        .tiptap-editor .annotation.annotation-promote {
           background: linear-gradient(135deg, #e8f5e8 0%, #c8e6c9 100%);
           border-bottom-color: #4caf50;
           color: #2e7d32;
@@ -308,25 +314,50 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
           100% { transform: scale(1); }
         }
         
+        /* Hover icon styles */
+        .annotation-hover-icon {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          background: rgba(0, 0, 0, 0.85);
+          color: #fff;
+          font-size: 12px;
+          line-height: 22px;
+          text-align: center;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          cursor: pointer;
+          user-select: none;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .annotation-hover-icon:hover {
+          transform: scale(1.1);
+          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        
         /* Tooltip styles */
         .annotation-tooltip {
-          position: absolute;
-          background: rgba(0, 0, 0, 0.95);
-          color: white;
-          padding: 12px 16px;
+          position: fixed;
+          background: white;
+          border: 1px solid #e1e8ed;
           border-radius: 8px;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-          z-index: 10000;
+          padding: 12px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10001;
           max-width: 300px;
           opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.2s ease, transform 0.2s ease;
+          visibility: hidden;
+          transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
           transform: translateY(5px);
+          pointer-events: none;
         }
         
         .annotation-tooltip.visible {
           opacity: 1;
+          visibility: visible;
           transform: translateY(0);
+          pointer-events: auto;
         }
         
         .annotation-tooltip .tooltip-header {
@@ -335,7 +366,21 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
           gap: 8px;
           margin-bottom: 8px;
           font-weight: 600;
+        }
+        
+        .annotation-tooltip .tooltip-content {
+          color: #666;
           font-size: 14px;
+          line-height: 1.4;
+        }
+        
+        .annotation-tooltip .tooltip-footer {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid #e1e8ed;
+          font-size: 12px;
+          color: #999;
+        }
         }
         
         .annotation-tooltip .tooltip-icon {

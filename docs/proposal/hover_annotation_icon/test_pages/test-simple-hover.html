@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Hover Icon Test</title>
+    <style>
+        body {
+            font-family: Georgia, serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.8;
+        }
+        
+        /* Annotation styles - matching TipTap output */
+        .annotation {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            display: inline-block;
+        }
+        
+        .annotation.annotation-note {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-bottom-color: #2196f3;
+            color: #1565c0;
+        }
+        
+        .annotation-hovered {
+            transform: translateY(-2px) scale(1.02);
+            filter: brightness(1.1);
+            z-index: 10;
+        }
+        
+        /* Status display */
+        #status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #333;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Simple Hover Icon Test</h1>
+    
+    <p>
+        This is a test paragraph with an 
+        <span class="annotation annotation-note" data-branch="branch-123" data-type="note">
+            annotated text span
+        </span> 
+        that should trigger the hover icon.
+    </p>
+    
+    <div id="status">Waiting for hover...</div>
+    
+    <script>
+        // Simple test to verify mouseover works
+        const annotation = document.querySelector('.annotation');
+        const status = document.getElementById('status');
+        
+        let hoverCount = 0;
+        
+        annotation.addEventListener('mouseover', (e) => {
+            hoverCount++;
+            console.log('MOUSEOVER DETECTED!', e);
+            status.innerHTML = `Mouseover #${hoverCount}<br>Target: ${e.target.className}<br>Time: ${new Date().toLocaleTimeString()}`;
+            annotation.classList.add('annotation-hovered');
+            
+            // Test creating and showing an icon
+            let icon = document.getElementById('test-hover-icon');
+            if (!icon) {
+                icon = document.createElement('div');
+                icon.id = 'test-hover-icon';
+                icon.innerHTML = '🔎';
+                icon.style.cssText = `
+                    position: fixed;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 50%;
+                    background: rgba(0, 0, 0, 0.85);
+                    color: #fff;
+                    font-size: 12px;
+                    line-height: 22px;
+                    text-align: center;
+                    border: 1px solid rgba(255, 255, 255, 0.15);
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    cursor: pointer;
+                    z-index: 10000;
+                `;
+                document.body.appendChild(icon);
+            }
+            
+            // Position near cursor
+            icon.style.left = (e.clientX + 10) + 'px';
+            icon.style.top = (e.clientY - 20) + 'px';
+            icon.style.display = 'block';
+        });
+        
+        annotation.addEventListener('mouseout', (e) => {
+            console.log('MOUSEOUT DETECTED!', e);
+            status.innerHTML += '<br>Mouseout detected';
+            annotation.classList.remove('annotation-hovered');
+            
+            // Hide icon
+            const icon = document.getElementById('test-hover-icon');
+            if (icon) {
+                setTimeout(() => {
+                    icon.style.display = 'none';
+                }, 200);
+            }
+        });
+        
+        // Test that the element exists
+        console.log('Annotation element found:', annotation);
+        console.log('Classes:', annotation.className);
+        console.log('Data attributes:', {
+            branch: annotation.getAttribute('data-branch'),
+            type: annotation.getAttribute('data-type')
+        });
+    </script>
+</body>
+</html>

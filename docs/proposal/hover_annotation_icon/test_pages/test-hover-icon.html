@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hover Icon Test</title>
+    <style>
+        body {
+            font-family: Georgia, serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.8;
+        }
+        
+        /* Annotation styles */
+        .annotation {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+        }
+        
+        .annotation-hover-target {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .annotation-hover-target.annotation-hovered {
+            transform: translateY(-2px) scale(1.02);
+            filter: brightness(1.1);
+            z-index: 10;
+        }
+        
+        /* Hover icon */
+        .annotation-hover-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            font-size: 12px;
+            line-height: 22px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            user-select: none;
+            position: fixed;
+            display: none;
+            z-index: 10000;
+            pointer-events: auto;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .annotation-hover-icon:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* Tooltip */
+        .annotation-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.95);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            z-index: 10000;
+            max-width: 300px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            transform: translateY(5px);
+        }
+        
+        .annotation-tooltip.visible {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        
+        .tooltip-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .tooltip-content {
+            font-size: 12px;
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 8px;
+        }
+        
+        .tooltip-footer {
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.7);
+            font-style: italic;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            padding-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Hover Icon Test Page</h1>
+    
+    <p>
+        This is a test paragraph with an 
+        <span class="annotation annotation-hover-target" data-branch-id="branch-123" data-annotation-type="note">
+            annotated text span
+        </span> 
+        that should show a hover icon when you move your mouse over it.
+    </p>
+    
+    <p>
+        Here's another paragraph with a different 
+        <span class="annotation annotation-hover-target" data-branch-id="branch-456" data-annotation-type="explore">
+            exploration annotation
+        </span> 
+        and also a 
+        <span class="annotation annotation-hover-target" data-branch-id="branch-789" data-annotation-type="promote">
+            promoted annotation
+        </span> 
+        to test multiple annotations.
+    </p>
+    
+    <div class="annotation-hover-icon">🔎</div>
+    <div class="annotation-tooltip">
+        <div class="tooltip-header">
+            <span class="tooltip-icon">📝</span>
+            <span class="tooltip-title">Test Annotation</span>
+        </div>
+        <div class="tooltip-content">This is a preview of the annotation content...</div>
+        <div class="tooltip-footer">Click to open panel</div>
+    </div>
+    
+    <script>
+        // Test implementation
+        let hoverIcon = document.querySelector('.annotation-hover-icon');
+        let tooltip = document.querySelector('.annotation-tooltip');
+        let isOverIcon = false;
+        let isOverTarget = false;
+        let isOverTooltip = false;
+        let hoverIconHideTimeout = null;
+        let tooltipHideTimeout = null;
+        
+        // Position hover icon
+        function positionHoverIcon(x, y) {
+            const OFFSET = 8;
+            hoverIcon.style.left = `${x + OFFSET}px`;
+            hoverIcon.style.top = `${y - OFFSET - 11}px`;
+        }
+        
+        // Show hover icon
+        function showHoverIcon(target, evt) {
+            const branchId = target.getAttribute('data-branch-id');
+            const type = target.getAttribute('data-annotation-type');
+            
+            hoverIcon.setAttribute('data-branch-id', branchId);
+            hoverIcon.setAttribute('data-annotation-type', type);
+            positionHoverIcon(evt.clientX, evt.clientY);
+            hoverIcon.style.display = 'block';
+            
+            if (hoverIconHideTimeout) {
+                clearTimeout(hoverIconHideTimeout);
+                hoverIconHideTimeout = null;
+            }
+        }
+        
+        // Hide hover icon with delay
+        function hideHoverIconSoon() {
+            if (hoverIconHideTimeout) clearTimeout(hoverIconHideTimeout);
+            
+            hoverIconHideTimeout = setTimeout(() => {
+                if (!isOverIcon && !isOverTarget) {
+                    hoverIcon.style.display = 'none';
+                }
+            }, 180);
+        }
+        
+        // Show tooltip
+        function showTooltip() {
+            const branchId = hoverIcon.getAttribute('data-branch-id');
+            const type = hoverIcon.getAttribute('data-annotation-type');
+            
+            // Update tooltip content
+            const typeIcons = { note: '📝', explore: '🔍', promote: '⭐' };
+            tooltip.querySelector('.tooltip-icon').textContent = typeIcons[type] || '📝';
+            tooltip.querySelector('.tooltip-title').textContent = `${type.charAt(0).toUpperCase() + type.slice(1)} Annotation`;
+            tooltip.querySelector('.tooltip-content').textContent = `This is content for branch ${branchId}...`;
+            
+            // Position tooltip near icon
+            const iconRect = hoverIcon.getBoundingClientRect();
+            tooltip.style.left = `${iconRect.left - 100}px`;
+            tooltip.style.top = `${iconRect.bottom + 10}px`;
+            tooltip.classList.add('visible');
+            
+            if (tooltipHideTimeout) {
+                clearTimeout(tooltipHideTimeout);
+                tooltipHideTimeout = null;
+            }
+        }
+        
+        // Hide tooltip with delay
+        function hideTooltipSoon() {
+            if (tooltipHideTimeout) clearTimeout(tooltipHideTimeout);
+            
+            tooltipHideTimeout = setTimeout(() => {
+                if (!isOverTooltip && !isOverIcon) {
+                    tooltip.classList.remove('visible');
+                }
+            }, 200);
+        }
+        
+        // Add event listeners to annotations
+        document.querySelectorAll('.annotation-hover-target').forEach(ann => {
+            ann.addEventListener('mouseenter', (evt) => {
+                isOverTarget = true;
+                ann.classList.add('annotation-hovered');
+                showHoverIcon(ann, evt);
+            });
+            
+            ann.addEventListener('mouseleave', () => {
+                isOverTarget = false;
+                ann.classList.remove('annotation-hovered');
+                hideHoverIconSoon();
+                hideTooltipSoon();
+            });
+        });
+        
+        // Add event listeners to hover icon
+        hoverIcon.addEventListener('mouseenter', () => {
+            isOverIcon = true;
+            showTooltip();
+        });
+        
+        hoverIcon.addEventListener('mouseleave', () => {
+            isOverIcon = false;
+            hideHoverIconSoon();
+            hideTooltipSoon();
+        });
+        
+        // Add event listeners to tooltip
+        tooltip.addEventListener('mouseenter', () => {
+            isOverTooltip = true;
+        });
+        
+        tooltip.addEventListener('mouseleave', () => {
+            isOverTooltip = false;
+            hideTooltipSoon();
+            hideHoverIconSoon();
+        });
+    </script>
+</body>
+</html>

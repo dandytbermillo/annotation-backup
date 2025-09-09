@@ -69,10 +69,11 @@ const Annotation = Mark.create({
   },
 
   parseHTML() {
+    // Recognize both explicit annotation-id spans and seeded annotation spans
     return [
-      {
-        tag: 'span[data-annotation-id]',
-      },
+      { tag: 'span[data-annotation-id]' },
+      { tag: 'span.annotation[data-branch]' },
+      { tag: 'span[data-branch]' },
     ]
   },
 
@@ -158,13 +159,13 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           placeholder: placeholder || 'Start typing...',
         }),
       ],
-      plugins: [
-        AnnotationDecorations(),
-        PerformanceMonitor(),
-      ],
       content: initialContent,
       editable: isEditable,
       onCreate: ({ editor }) => {
+        // Register ProseMirror plugins (hover icon + perf monitor)
+        editor.registerPlugin(AnnotationDecorations())
+        editor.registerPlugin(PerformanceMonitor())
+        
         // Don't clear content or set loading false here if we're still loading
         if (!isContentLoading) {
           // Fix #1: Prevent duplicate "Start writing..."
@@ -357,25 +358,72 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           100% { transform: scale(1); }
         }
         
+        /* Hover icon styles */
+        .annotation-hover-icon {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          background: rgba(0, 0, 0, 0.85);
+          color: #fff;
+          font-size: 12px;
+          line-height: 22px;
+          text-align: center;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+          cursor: pointer;
+          user-select: none;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .annotation-hover-icon:hover {
+          transform: scale(1.1);
+          box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        
         /* Tooltip styles */
         .annotation-tooltip {
-          position: absolute;
-          background: rgba(0, 0, 0, 0.95);
-          color: white;
-          padding: 12px 16px;
+          position: fixed;
+          background: white;
+          border: 1px solid #e1e8ed;
           border-radius: 8px;
-          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-          z-index: 10000;
+          padding: 12px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10001;
           max-width: 300px;
           opacity: 0;
-          pointer-events: none;
-          transition: opacity 0.2s ease, transform 0.2s ease;
+          visibility: hidden;
+          transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
           transform: translateY(5px);
+          pointer-events: none;
         }
         
         .annotation-tooltip.visible {
           opacity: 1;
+          visibility: visible;
           transform: translateY(0);
+          pointer-events: auto;
+        }
+        
+        .annotation-tooltip .tooltip-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+          font-weight: 600;
+        }
+        
+        .annotation-tooltip .tooltip-content {
+          color: #666;
+          font-size: 14px;
+          line-height: 1.4;
+        }
+        
+        .annotation-tooltip .tooltip-footer {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid #e1e8ed;
+          font-size: 12px;
+          color: #999;
         }
         
         /* Additional plain mode specific styles */

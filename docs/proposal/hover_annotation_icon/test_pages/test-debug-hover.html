@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Hover Icon</title>
+    <style>
+        body {
+            font-family: Georgia, serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            line-height: 1.8;
+        }
+        
+        /* Annotation styles */
+        .annotation {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            display: inline-block;
+        }
+        
+        .annotation.annotation-note {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border-bottom-color: #2196f3;
+            color: #1565c0;
+        }
+        
+        .annotation-hover-target {
+            background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.3s ease;
+            font-weight: 600;
+            border-bottom: 2px solid #ff6b6b;
+        }
+        
+        .annotation-hovered {
+            transform: translateY(-2px) scale(1.02);
+            filter: brightness(1.1);
+            z-index: 10;
+        }
+        
+        /* Hover icon styles */
+        .annotation-hover-icon {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            font-size: 12px;
+            line-height: 22px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .annotation-hover-icon:hover {
+            background: rgba(0, 0, 0, 0.95);
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* Console output */
+        #console {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            background: #000;
+            color: #0f0;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 11px;
+            max-width: 400px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .console-log {
+            margin: 2px 0;
+            padding: 2px;
+            border-left: 2px solid #0f0;
+            padding-left: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Debug Hover Icon Test</h1>
+    
+    <p>Test 1: Standard annotation span:
+        <span class="annotation annotation-note" data-branch-id="branch-123" data-annotation-type="note">
+            annotated text (class="annotation annotation-note")
+        </span>
+    </p>
+    
+    <p>Test 2: Hover target class:
+        <span class="annotation-hover-target" data-branch-id="branch-456" data-annotation-type="explore">
+            hover target text (class="annotation-hover-target")
+        </span>
+    </p>
+    
+    <p>Test 3: Both classes:
+        <span class="annotation annotation-note annotation-hover-target" data-branch-id="branch-789" data-annotation-type="promote">
+            both classes text
+        </span>
+    </p>
+    
+    <div id="console">
+        <div style="color: #ff0; font-weight: bold;">Console Output:</div>
+    </div>
+    
+    <script>
+        const consoleDiv = document.getElementById('console');
+        
+        function log(msg) {
+            const entry = document.createElement('div');
+            entry.className = 'console-log';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            consoleDiv.appendChild(entry);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            console.log(msg);
+        }
+        
+        // Global hover state
+        let hoverIcon = null;
+        let isOverIcon = false;
+        let isOverTarget = false;
+        let hoverIconHideTimeout = null;
+        
+        function ensureHoverIcon() {
+            if (hoverIcon) return;
+            
+            log('Creating hover icon');
+            hoverIcon = document.createElement('div');
+            hoverIcon.className = 'annotation-hover-icon';
+            hoverIcon.innerHTML = '🔎';
+            hoverIcon.style.cssText = 'position:fixed;display:none;z-index:10000;pointer-events:auto;';
+            document.body.appendChild(hoverIcon);
+            
+            hoverIcon.addEventListener('mouseenter', () => {
+                isOverIcon = true;
+                log('Mouse entered icon');
+            });
+            
+            hoverIcon.addEventListener('mouseleave', () => {
+                isOverIcon = false;
+                log('Mouse left icon');
+                hideHoverIconSoon();
+            });
+        }
+        
+        function positionHoverIcon(x, y) {
+            const OFFSET = 8;
+            const iconWidth = 22;
+            const iconHeight = 22;
+            
+            let left = Math.min(x + OFFSET, window.innerWidth - iconWidth - 10);
+            let top = Math.max(y - OFFSET - iconHeight/2, 10);
+            
+            if (hoverIcon) {
+                hoverIcon.style.left = `${left}px`;
+                hoverIcon.style.top = `${top}px`;
+            }
+        }
+        
+        function showHoverIcon(targetEl, branchId, type, evt) {
+            log(`showHoverIcon called: branchId=${branchId}, type=${type}`);
+            ensureHoverIcon();
+            
+            if (hoverIcon) {
+                hoverIcon.setAttribute('data-branch-id', branchId);
+                hoverIcon.setAttribute('data-annotation-type', type);
+                positionHoverIcon(evt.clientX, evt.clientY);
+                hoverIcon.style.display = 'block';
+                log('Hover icon displayed');
+            }
+            
+            if (hoverIconHideTimeout) {
+                clearTimeout(hoverIconHideTimeout);
+                hoverIconHideTimeout = null;
+            }
+        }
+        
+        function hideHoverIconSoon() {
+            if (hoverIconHideTimeout) clearTimeout(hoverIconHideTimeout);
+            
+            hoverIconHideTimeout = setTimeout(() => {
+                if (!isOverIcon && !isOverTarget && hoverIcon) {
+                    hoverIcon.style.display = 'none';
+                    log('Hover icon hidden');
+                }
+            }, 180);
+        }
+        
+        // Simulate the plugin's event handling
+        document.addEventListener('mouseover', (event) => {
+            const target = event.target;
+            
+            // Check for both annotation spans AND decoration-added hover targets
+            let annotationEl = target.closest('.annotation-hover-target');
+            if (!annotationEl) {
+                annotationEl = target.closest('.annotation');
+            }
+            
+            if (annotationEl && !annotationEl.hasAttribute('data-hover-processed')) {
+                annotationEl.setAttribute('data-hover-processed', 'true');
+                
+                log(`Mouseover detected on: ${annotationEl.className}`);
+                
+                const branchId = annotationEl.getAttribute('data-branch-id') ||
+                               annotationEl.getAttribute('data-branch') ||
+                               'temp-' + Date.now();
+                const type = annotationEl.getAttribute('data-annotation-type') ||
+                            annotationEl.getAttribute('data-type') ||
+                            'note';
+                
+                isOverTarget = true;
+                showHoverIcon(annotationEl, branchId, type, event);
+                annotationEl.classList.add('annotation-hovered');
+            }
+        });
+        
+        document.addEventListener('mouseout', (event) => {
+            const target = event.target;
+            
+            let annotationEl = target.closest('.annotation-hover-target');
+            if (!annotationEl) {
+                annotationEl = target.closest('.annotation');
+            }
+            
+            if (annotationEl && annotationEl.hasAttribute('data-hover-processed')) {
+                annotationEl.removeAttribute('data-hover-processed');
+                isOverTarget = false;
+                annotationEl.classList.remove('annotation-hovered');
+                log(`Mouseout detected on: ${annotationEl.className}`);
+                hideHoverIconSoon();
+            }
+        });
+        
+        log('Page loaded - hover over annotations to test');
+    </script>
+</body>
+</html>
