@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-10 13:15Z] c438c31: experiment for testing the cursor issue when edit mode make it annotated text editable
 - commit [2025-09-10 05:28Z] 0c76a90: first electron app (working)
 - commit [2025-09-10 04:49Z] 594f744: added scrollable tooltip for branch data (working)
 - commit [2025-09-10 04:26Z] 86ded30: remove click event in the annotated text (success change),transfered to hover icon
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-09 21:22Z] 5ce57fa: codex/proposal/option-a-collab-editor-split.patch is success
 - note [2025-09-09 18:17Z]: 
 - commit [2025-09-09 10:16Z] 2ba9772: tooltip can show no data added yet tested
-- commit [2025-09-09 09:58Z] 8e8ae9d: tooltip can show no data added yet
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

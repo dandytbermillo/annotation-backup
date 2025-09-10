@@ -48,3 +48,4 @@
 {"ts":"2025-09-10T04:26:15.585Z","type":"commit","sha":"86ded306614fc4d4fd8d6d7dc017b77c0bd1b9e6","files_changed":11,"message":"remove click event in the annotated text (success change),transfered to hover icon"}
 {"ts":"2025-09-10T04:49:26.953Z","type":"commit","sha":"594f7440086ab4bc2ba2c73127b3f69d6e377249","files_changed":7,"message":"added scrollable tooltip for branch data (working)"}
 {"ts":"2025-09-10T05:28:30.765Z","type":"commit","sha":"0c76a901d475b133f26f6f5f28e9368bc837388c","files_changed":16,"message":"first electron app (working)"}
+{"ts":"2025-09-10T13:15:49.638Z","type":"commit","sha":"c438c314a1a986d17172d8b5d2c62fdfa953e524","files_changed":22,"message":"experiment for testing the cursor issue when edit mode make it annotated text editable"}

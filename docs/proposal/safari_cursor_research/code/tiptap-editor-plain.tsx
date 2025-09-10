@@ -18,11 +18,9 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
-// import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
-import { WebKitAnnotationCursorFix } from './webkit-annotation-cursor-fix'
 // import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
 // import { WebKitAnnotationClickFix } from './webkit-annotation-click-fix'
 // import { SafariInlineBlockFix } from './safari-inline-block-fix'
@@ -182,21 +180,15 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
         // Register ProseMirror plugins
-        
-        // WebKit-specific fix for cursor placement on annotations - MUST BE REGISTERED FIRST
-        editor.registerPlugin(WebKitAnnotationCursorFix()) // Only active in Safari/Chrome
-        
-        // Full annotation decorations with hover icons and tooltips
-        editor.registerPlugin(AnnotationDecorations()) // Now works with cursor fix
-        
-        // KEEP DISABLED: Old Safari-specific plugins that interfere
-        // - SafariProvenFix: deprecated webkitUserModify property causes issues  
-        // - SafariManualCursorFix: interferes with natural clicks
-        // editor.registerPlugin(SafariProvenFix())
-        // editor.registerPlugin(SafariManualCursorFix(isEditableRef))
-        
+        editor.registerPlugin(AnnotationDecorations())
         editor.registerPlugin(PerformanceMonitor())
+        // Fix for annotation start boundary
         editor.registerPlugin(AnnotationStartBoundaryFix())
+        // Research-proven Safari fix: inline-block + margin + webkit-user-modify
+        editor.registerPlugin(SafariProvenFix())
+        // Manual cursor placement for Safari clicks (only in read-only mode)
+        editor.registerPlugin(SafariManualCursorFix(isEditableRef))
+        // Read-only guard - allows cursor but blocks edits when not in edit mode
         editor.registerPlugin(ReadOnlyGuard(isEditableRef))
         // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         
@@ -341,25 +333,26 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           padding: 1px 2px; /* Minimal padding to avoid issues */
           border-radius: 2px;
           cursor: text !important;
-          /* position: relative; REMOVED - causes Safari cursor bug */
+          position: relative;
           transition: background 0.2s ease;
           font-weight: 600;
           border-bottom: 1px solid transparent;
           
-          /* Keep inline-block for proper rendering */
+          /* PROVEN FIXES from research document */
           display: inline-block !important;
-          vertical-align: baseline;
-          line-height: inherit;
+          margin-right: 1px; /* Helps with adjacent spans */
+          vertical-align: middle; /* Prevents tall cursor */
+          line-height: 1; /* Normalizes cursor height */
           
           /* Safari-specific fixes */
-          /* -webkit-user-modify: read-write-plaintext-only; REMOVED - deprecated and can interfere */
+          -webkit-user-modify: read-write-plaintext-only;
           -webkit-user-select: text;
           user-select: text;
           caret-color: auto;
         }
         
         .tiptap-editor .annotation:hover {
-          /* transform: translateY(-1px); REMOVED - causes Safari cursor bug */
+          transform: translateY(-1px);
           box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         }
         
@@ -383,53 +376,25 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         
         /* Enhanced hover effects for decorations */
         .tiptap-editor .annotation-hover-target {
-          /* position: relative; REMOVED - causes Safari cursor bug */
+          position: relative;
           display: inline-block;
         }
         
         .tiptap-editor .annotation-hover-target.annotation-hovered {
-          /* transform: translateY(-2px) scale(1.02); REMOVED - causes Safari cursor bug */
+          transform: translateY(-2px) scale(1.02);
           filter: brightness(1.1);
-          /* z-index: 10; REMOVED - creates stacking context */
+          z-index: 10;
         }
         
         .tiptap-editor .annotation-hover-target.annotation-clicked {
-          /* animation: annotationClick 0.3s ease-out; REMOVED - uses transform */
+          animation: annotationClick 0.3s ease-out;
         }
         
-        /* Simple decoration for annotations without interference */
-        .tiptap-editor .annotation-decorated {
-          /* Visual indication without affecting cursor placement */
-          border-bottom: 2px dotted rgba(255, 165, 0, 0.3);
-        }
-        
-        /* Clean hover effect without icons or layout changes */
-        .tiptap-editor .annotation:hover {
-          /* Safe hover effects that don't break Safari or text layout */
-          filter: brightness(1.15);
-          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        }
-        
-        /* Different hover effects for different types */
-        .tiptap-editor .annotation.annotation-note:hover {
-          box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
-        }
-        
-        .tiptap-editor .annotation.annotation-explore:hover {
-          box-shadow: 0 2px 8px rgba(255, 152, 0, 0.3);
-        }
-        
-        .tiptap-editor .annotation.annotation-promote:hover {
-          box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
-        }
-        
-        /* Animation removed - uses transform which causes Safari cursor bug
         @keyframes annotationClick {
           0% { transform: scale(1); }
           50% { transform: scale(0.95); }
           100% { transform: scale(1); }
         }
-        */
         
         /* Hover icon styles */
         .annotation-hover-icon {

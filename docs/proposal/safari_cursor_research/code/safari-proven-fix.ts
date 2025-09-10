@@ -20,12 +20,14 @@ export const SafariProvenFix = () => {
         annotations.forEach((el) => {
           const span = el as HTMLElement
           
-          // Keep inline-block for structure
+          // Apply ALL the proven fixes from the research
           span.style.display = 'inline-block'
-          span.style.verticalAlign = 'baseline'
+          span.style.verticalAlign = 'middle' // Prevents tall cursor
+          span.style.lineHeight = '1' // Normalizes cursor height
+          span.style.marginRight = '1px' // Helps with adjacent spans
           
-          // Safari-specific fix for text selection
-          // Removed webkitUserModify - deprecated and can interfere
+          // Safari-specific fix for plain text editing
+          span.style.webkitUserModify = 'read-write-plaintext-only'
           span.style.caretColor = 'auto'
           span.style.userSelect = 'text'
         })
