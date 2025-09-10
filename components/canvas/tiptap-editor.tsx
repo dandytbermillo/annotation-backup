@@ -14,11 +14,17 @@ import { WebsocketProvider } from 'y-websocket'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
+import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 // (removed unused yjs-provider import to avoid bundling Yjs in plain mode)
 
 // Custom annotation mark extension based on the source implementation
 const Annotation = Mark.create({
   name: 'annotation',
+  
+  // Prevent mark from extending when typing at boundaries
+  inclusive: false,
+  // Prevent mark from carrying over when pressing Enter
+  keepOnSplit: false,
   
   addOptions() {
     return {
@@ -168,9 +174,12 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         // Register ProseMirror plugins (hover icon + perf monitor)
         const annotationPlugin = AnnotationDecorations()
         const perfPlugin = PerformanceMonitor()
+        const clearMarksPlugin = ClearStoredMarksAtBoundary()
         console.log('[TipTapEditor] Registering annotation plugin:', annotationPlugin)
         editor.registerPlugin(annotationPlugin)
         editor.registerPlugin(perfPlugin)
+        // Prevent annotation marks from leaking at boundaries (IME-safe)
+        editor.registerPlugin(clearMarksPlugin)
         console.log('[TipTapEditor] Plugins registered successfully')
       },
       onUpdate: ({ editor }) => {

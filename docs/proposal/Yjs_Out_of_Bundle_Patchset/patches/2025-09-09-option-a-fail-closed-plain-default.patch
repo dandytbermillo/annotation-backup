@@ -1,0 +1,254 @@
+Subject: Option A (Fail‑Closed Plain Default) — Runtime lock + Yjs guardrails
+
+Context
+- Goal: Make plain the fail‑closed path so tooltips/editors never accidentally use Yjs when the env flag is missing, typo’d, or a teammate runs without .env.local.
+- This patch proposal defaults to plain when NEXT_PUBLIC_COLLAB_MODE is absent/invalid, locks plain at runtime (also honors ?mode=plain), and adds guardrails so no Yjs provider loads when plain is active. It also emits a visible console warning if anything tries to load Yjs in plain mode. Yjs builds remain unchanged when env is yjs.
+
+Files changed
+1) lib/collab-mode.ts (new)
+   - Provides getCollabMode(), ensureFailClosed(), lockPlainMode(), warnIfYjsLoadAttempted().
+   - Precedence for mode: ?mode=plain → env → localStorage → default(plain).
+
+2) lib/provider-switcher.ts
+   - Use collab-mode helpers; refuse Yjs initialization in plain mode and warn on attempted loads.
+   - Remove hardwired default to yjs; instead fail‑closed to plain.
+
+3) app/providers/plain-mode-provider.tsx
+   - Call ensureFailClosed() at startup, then initialize plain adapter only when mode is plain.
+   - Lock plain mode persistently when active.
+
+--- a/lib/provider-switcher.ts
++++ b/lib/provider-switcher.ts
+@@
+-import { PlainOfflineProvider } from './providers/plain-offline-provider'
++import { PlainOfflineProvider } from './providers/plain-offline-provider'
++import { getCollabMode, ensureFailClosed, warnIfYjsLoadAttempted } from './collab-mode'
+@@
+-// Feature flags for provider selection
+-const USE_ENHANCED_PROVIDER = process.env.NEXT_PUBLIC_USE_ENHANCED_PROVIDER === 'true' || 
+-                              typeof window !== 'undefined' && window.localStorage?.getItem('use-enhanced-provider') === 'true'
+-
+-const COLLAB_MODE = process.env.NEXT_PUBLIC_COLLAB_MODE || 
+-                    (typeof window !== 'undefined' && window.localStorage?.getItem('collab-mode')) || 
+-                    'yjs' // default to yjs mode
++// Feature flags for provider selection
++const USE_ENHANCED_PROVIDER =
++  process.env.NEXT_PUBLIC_USE_ENHANCED_PROVIDER === 'true' ||
++  (typeof window !== 'undefined' && window.localStorage?.getItem('use-enhanced-provider') === 'true')
+@@
+-  private constructor() {
+-    // Check if we're in plain mode
+-    if (COLLAB_MODE === 'plain') {
+-      console.log('📝 Using Plain Mode (no collaboration)')
+-      // Don't initialize Yjs providers in plain mode
+-      this.provider = null
+-    } else if (USE_ENHANCED_PROVIDER) {
++  private constructor() {
++    // Establish fail-closed plain behavior and set lock as needed
++    ensureFailClosed()
++    const mode = getCollabMode()
++
++    // Check if we're in plain mode (fail-closed path)
++    if (mode === 'plain') {
++      console.log('📝 Using Plain Mode (no collaboration) — Yjs disabled')
++      // Never initialize Yjs providers in plain mode
++      this.provider = null
++    } else if (USE_ENHANCED_PROVIDER) {
+       console.log('🚀 Using Enhanced YJS Provider with all advanced features')
+       // Dynamically import and initialize enhanced provider
+       const { EnhancedCollaborationProvider: EnhancedProvider } = require('./enhanced-yjs-provider')
+       const { applyEnhancedProviderPatch } = require('./enhanced-yjs-provider-patch')
+@@
+     } else {
+       console.log('Using standard YJS Provider (with getStates fix)')
+       // Dynamically import and initialize standard provider
+-      const { CollaborationProvider: StandardProvider } = require('./yjs-provider')
++      // Defensive: if somehow reached while plain, warn and refuse
++      if (getCollabMode() === 'plain') {
++        warnIfYjsLoadAttempted('UnifiedProvider → standard yjs-provider')
++        this.provider = null
++        return
++      }
++      const { CollaborationProvider: StandardProvider } = require('./yjs-provider')
+       CollaborationProvider = StandardProvider
+@@
+   // Delegate all methods to the underlying provider
+   public getProvider() {
+     if (!this.provider) {
+       // Return a minimal object for plain mode
+       return {
+@@
+ export function getPlainProvider(): PlainOfflineProvider | null {
+-  console.log('[getPlainProvider] Called. COLLAB_MODE:', COLLAB_MODE, 'Instance:', plainProviderInstance)
+-  
+-  if (COLLAB_MODE !== 'plain') {
++  const mode = getCollabMode()
++  console.log('[getPlainProvider] Called. mode:', mode, 'Instance:', plainProviderInstance)
++  if (mode !== 'plain') {
+     console.log('[getPlainProvider] Not in plain mode, returning null')
+     return null
+   }
+@@
+ export function initializePlainProvider(adapter: any): void {
+-  if (COLLAB_MODE === 'plain' && !plainProviderInstance) {
++  if (getCollabMode() === 'plain' && !plainProviderInstance) {
+     plainProviderInstance = new PlainOfflineProvider(adapter)
+     console.log('[initializePlainProvider] Plain provider initialized')
+   }
+ }
+ 
+--- /dev/null
++++ b/lib/collab-mode.ts
+/* Collab mode helpers — fail-closed to plain, with runtime lock + warnings */
+export type CollabMode = 'plain' | 'yjs'
+
+function isBrowser(): boolean {
+  return typeof window !== 'undefined'
+}
+
+function parseMode(value?: string | null): CollabMode | null {
+  return value === 'plain' || value === 'yjs' ? value : null
+}
+
+function readEnvMode(): CollabMode | null {
+  return parseMode(process.env.NEXT_PUBLIC_COLLAB_MODE)
+}
+
+function readQueryMode(): CollabMode | null {
+  if (!isBrowser()) return null
+  try {
+    const q = new URLSearchParams(window.location.search).get('mode')
+    return parseMode(q)
+  } catch {
+    return null
+  }
+}
+
+function readStoredMode(): CollabMode | null {
+  if (!isBrowser()) return null
+  try {
+    return parseMode(window.localStorage?.getItem('collab-mode'))
+  } catch {
+    return null
+  }
+}
+
+export function getCollabMode(): CollabMode {
+  // Precedence: ?mode=plain → env → stored → default(plain)
+  const q = readQueryMode()
+  if (q === 'plain') return 'plain'
+
+  const env = readEnvMode()
+  if (env) return env
+
+  const stored = readStoredMode()
+  if (stored) return stored
+
+  // Fail-closed default
+  return 'plain'
+}
+
+export function lockPlainMode(reason: 'query' | 'env' | 'default' | 'runtime' = 'runtime'): void {
+  if (!isBrowser()) return
+  try {
+    window.localStorage?.setItem('collab-mode', 'plain')
+    ;(window as any).__COLLAB_MODE_LOCK__ = { mode: 'plain', reason, ts: Date.now() }
+    console.info(`[collab-mode] Locked to plain (${reason}). Yjs disabled.`)
+  } catch {
+    /* no-op */
+  }
+}
+
+export function ensureFailClosed(): void {
+  // Lock plain when explicitly selected or when env missing/invalid
+  const q = readQueryMode()
+  const env = readEnvMode()
+  const stored = readStoredMode()
+
+  if (q === 'plain') {
+    lockPlainMode('query')
+    return
+  }
+  if (env === 'plain') {
+    lockPlainMode('env')
+    return
+  }
+  if (!stored && env === null) {
+    // Absent/invalid env — fail-closed to plain
+    lockPlainMode('default')
+  }
+}
+
+export function isPlainModeActive(): boolean {
+  return getCollabMode() === 'plain'
+}
+
+export function warnIfYjsLoadAttempted(what: string): boolean {
+  if (!isPlainModeActive()) return false
+  try {
+    const key = `__YJS_WARNED__:${what}`
+    if (isBrowser() && !(window as any)[key]) {
+      console.warn(`[collab-mode] Yjs load blocked in plain mode: ${what}`)
+      ;(window as any)[key] = true
+    } else {
+      console.warn(`[collab-mode] Yjs load blocked in plain mode: ${what}`)
+    }
+  } catch {
+    /* noop */
+  }
+  return true
+}
+
+--- a/app/providers/plain-mode-provider.tsx
++++ b/app/providers/plain-mode-provider.tsx
+@@
+ 'use client'
+ 
+ import { useEffect } from 'react'
+ import { initializePlainProvider } from '@/lib/provider-switcher'
+ import { WebPostgresOfflineAdapter } from '@/lib/adapters/web-postgres-offline-adapter'
+import { ensureFailClosed, getCollabMode, lockPlainMode } from '@/lib/collab-mode'
+ 
+ export function PlainModeProvider({ children }: { children: React.ReactNode }) {
+   useEffect(() => {
+     // Check if we're in browser environment
+     if (typeof window === 'undefined') return
+ 
+     // Establish fail-closed plain behavior and set lock (query/env/default)
+     ensureFailClosed()
+     const collabMode = getCollabMode()
+ 
+     if (collabMode === 'plain') {
+       // If we reached plain due to transient state, ensure lock persists
+       lockPlainMode('runtime')
+       console.log('[PlainModeProvider] Detected plain mode, initializing...')
+       // Check if we're in Electron
+       if (window.electronAPI) {
+         // Dynamic import for Electron adapter
+         import('@/lib/adapters/electron-postgres-offline-adapter').then(({ ElectronPostgresOfflineAdapter }) => {
+           const adapter = new ElectronPostgresOfflineAdapter()
+           initializePlainProvider(adapter)
+           console.log('[PlainModeProvider] ✅ Initialized plain mode with Electron adapter]')
+         })
+       } else {
+         // Use web adapter
+         const adapter = new WebPostgresOfflineAdapter()
+         initializePlainProvider(adapter)
+         console.log('[PlainModeProvider] ✅ Initialized plain mode with Web adapter')
+       }
+     } else {
+       console.log('[PlainModeProvider] Not in plain mode, skipping initialization. Mode:', collabMode)
+     }
+   }, [])
+   
+   return <>{children}</>
+ }
+
+Verification
+- No env set: Start dev without NEXT_PUBLIC_COLLAB_MODE. App locks plain mode and shows console info about the lock; Yjs provider does not initialize.
+- Env set to plain: App locks plain mode via env; no Yjs provider loads.
+- Query param: Visit any route with ?mode=plain. App locks plain and warns if any Yjs import is attempted.
+- Switch to Yjs: Set NEXT_PUBLIC_COLLAB_MODE=yjs and remove localStorage.collab-mode. Reload; Yjs providers initialize as before.
+
+Notes
+- Several components statically import '@/lib/yjs-provider'. While this patch fail‑closes at runtime and blocks provider init, those static imports may still pull Yjs into the bundle. Follow-up (separate patch) should refactor those call sites to use '@/lib/provider-switcher' with dynamic requires to fully avoid Yjs in plain builds.

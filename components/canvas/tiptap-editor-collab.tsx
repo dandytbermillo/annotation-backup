@@ -12,6 +12,7 @@ import type * as Y from 'yjs'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
+import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 
 export interface TiptapEditorHandle {
   getHTML: () => string
@@ -36,6 +37,12 @@ interface TiptapEditorProps {
 
 const Annotation = Mark.create({
   name: 'annotation',
+  
+  // Prevent mark from extending when typing at boundaries
+  inclusive: false,
+  // Prevent mark from carrying over when pressing Enter
+  keepOnSplit: false,
+  
   addOptions() { return { HTMLAttributes: {} } },
   addAttributes() {
     return {
@@ -82,6 +89,8 @@ const TiptapEditorCollab = forwardRef<TiptapEditorHandle, TiptapEditorProps>(({
     onCreate: ({ editor }) => {
       editor.registerPlugin(AnnotationDecorations())
       editor.registerPlugin(PerformanceMonitor())
+      // Prevent annotation marks from leaking at boundaries (IME-safe)
+      editor.registerPlugin(ClearStoredMarksAtBoundary())
     },
     onUpdate: ({ editor }) => { onUpdate?.(editor.getHTML()) },
     onSelectionUpdate: ({ editor }) => {
