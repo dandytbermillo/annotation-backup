@@ -1,0 +1,318 @@
+/**
+ * Overlay-based hover icon for annotations
+ * Lives outside editor DOM to prevent cursor interference
+ * Handles multi-line annotations with exact line detection
+ */
+
+import type { EditorView } from '@tiptap/pm/view'
+
+type HoverIconOpts = {
+  view: EditorView
+  iconEl?: HTMLElement          // if omitted, we'll create one
+  offset?: number               // px above the line
+  editingOffset?: number        // px above the line while editing
+  hideWhileTyping?: boolean
+  annotationSelector?: string   // default: '.annotation'
+}
+
+export function attachHoverIcon(opts: HoverIconOpts) {
+  const {
+    view,
+    offset = 24,
+    editingOffset = 36,
+    hideWhileTyping = true,
+    annotationSelector = '.annotation',
+  } = opts
+  
+  console.log('[HoverIcon] Initializing with selector:', annotationSelector)
+  console.log('[HoverIcon] Editor view:', view)
+
+  // Overlay root appended to <body>, not inside the editor
+  const overlay = document.createElement('div')
+  overlay.className = 'annotation-hover-overlay'
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9999;
+    pointer-events: none;
+    overflow: visible;
+  `
+  document.body.appendChild(overlay)
+  console.log('[HoverIcon] Overlay appended to body:', overlay)
+
+  // Create or use provided icon element
+  const icon = opts.iconEl ?? document.createElement('button')
+  if (!opts.iconEl) {
+    icon.className = 'annotation-hover-icon-overlay'
+    icon.setAttribute('aria-label', 'Annotation actions')
+    
+    // Square icon SVG
+    icon.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+      </svg>
+    `
+    
+    icon.style.cssText = `
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      padding: 3px;
+      border-radius: 4px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.12);
+      background: white;
+      border: 1px solid rgba(0,0,0,.08);
+      display: none;
+      opacity: 0;
+      transition: opacity .12s, transform .12s;
+      transform: translateY(4px) scale(.98);
+      pointer-events: auto; /* the only interactive thing in the overlay */
+      cursor: pointer;
+    `
+    overlay.appendChild(icon)
+    console.log('[HoverIcon] Icon element created and added to overlay:', icon)
+  } else {
+    console.log('[HoverIcon] Using provided icon element:', icon)
+  }
+
+  let raf = 0
+  let lastAnno: HTMLElement | null = null
+  let typingFadeTO: number | null = null
+  let isOverIcon = false
+  let hideTimeout: NodeJS.Timeout | null = null
+
+  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v))
+
+  const getAnnotationEl = (t: EventTarget | null): HTMLElement | null => {
+    if (!(t instanceof Element)) return null
+    return t.closest(annotationSelector) as HTMLElement | null
+  }
+
+  // Pick the client-rect (line box) under the mouse for multi-line spans
+  const getLineRectAtY = (el: HTMLElement, clientY: number): DOMRect => {
+    const rects = Array.from(el.getClientRects())
+    if (!rects.length) return el.getBoundingClientRect()
+    
+    // Find the rect that contains the Y coordinate
+    const hit = rects.find(r => clientY >= r.top && clientY <= r.bottom)
+    if (hit) return hit
+    
+    // If between lines, find nearest
+    return rects.reduce((best, r) => {
+      const d = Math.abs(clientY - (r.top + r.bottom) / 2)
+      const bd = Math.abs(clientY - (best.top + best.bottom) / 2)
+      return d < bd ? r : best
+    }, rects[0])
+  }
+
+  const isEditing = () =>
+    view.hasFocus() && view.state.selection.from === view.state.selection.to
+
+  const show = (left: number, top: number) => {
+    console.log('[HoverIcon] Showing icon at:', left, top)
+    console.log('[HoverIcon] Current icon state:', {
+      display: icon.style.display,
+      opacity: icon.style.opacity,
+      transform: icon.style.transform
+    })
+    
+    if (hideTimeout) {
+      clearTimeout(hideTimeout)
+      hideTimeout = null
+    }
+    
+    icon.style.left = `${left}px`
+    icon.style.top = `${top}px`
+    
+    // Always ensure the icon is visible
+    icon.style.display = 'block'
+    
+    // Force a reflow to ensure the display change is applied
+    void icon.offsetHeight
+    
+    // Then apply the fade-in animation
+    requestAnimationFrame(() => {
+      icon.style.opacity = '1'
+      icon.style.transform = 'translateY(0) scale(1)'
+      console.log('[HoverIcon] Icon animation applied')
+    })
+  }
+
+  const hide = () => {
+    if (isOverIcon) return // Don't hide if mouse is over icon
+    
+    hideTimeout = setTimeout(() => {
+      icon.style.opacity = '0'
+      icon.style.transform = 'translateY(4px) scale(.98)'
+      setTimeout(() => {
+        icon.style.display = 'none'
+        console.log('[HoverIcon] Icon hidden')
+      }, 120)
+      lastAnno = null
+    }, 200) // Small delay to prevent flicker
+  }
+
+  const onMove = (e: MouseEvent) => {
+    cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(() => {
+      const anno = getAnnotationEl(e.target)
+      
+      // Debug logging
+      if (e.target instanceof Element && (e.target as Element).classList.contains('annotation')) {
+        console.log('[HoverIcon] Mouse over annotation element:', e.target, anno)
+      }
+      
+      if (!anno) {
+        hide()
+        return
+      }
+      
+      console.log('[HoverIcon] Annotation detected:', anno)
+
+      lastAnno = anno
+
+      // Get the exact line rect under the mouse
+      const lineRect = getLineRectAtY(anno, e.clientY)
+      const iconW = icon.offsetWidth || 24
+      const currentOffset = isEditing() ? editingOffset : offset
+
+      // Calculate position in viewport coordinates (since overlay is position: fixed)
+      const viewportLeft = e.clientX - iconW / 2
+      let viewportTop = lineRect.top - currentOffset
+
+      // Clamp to viewport boundaries
+      const minLeft = 4
+      const maxLeft = document.documentElement.clientWidth - iconW - 4
+      const clampedLeft = clamp(viewportLeft, minLeft, maxLeft)
+      
+      // If too close to top, show below instead
+      if (lineRect.top < currentOffset + 6) {
+        viewportTop = lineRect.bottom + 8
+      }
+      
+      console.log('[HoverIcon] Position calculation:', {
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        lineRect: { top: lineRect.top, bottom: lineRect.bottom, left: lineRect.left, right: lineRect.right },
+        calculatedLeft: clampedLeft,
+        calculatedTop: viewportTop,
+        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
+      })
+
+      show(clampedLeft, viewportTop)
+
+      // Store annotation data for tooltip
+      const branchId = anno.getAttribute('data-branch') || 
+                      anno.getAttribute('data-branch-id') || ''
+      const annotationType = anno.getAttribute('data-type') || 'note'
+      
+      icon.setAttribute('data-branch-id', branchId)
+      icon.setAttribute('data-annotation-type', annotationType)
+    })
+  }
+
+  const onLeave = (e: MouseEvent) => {
+    // If leaving the editor entirely, hide
+    if (!(e.relatedTarget instanceof Node) || !view.dom.contains(e.relatedTarget)) {
+      hide()
+    }
+  }
+
+  const onScroll = () => {
+    // Reposition against last known annotation if icon is visible
+    if (!lastAnno || icon.style.display !== 'block') return
+    
+    // Recalculate position based on new scroll position
+    const rect = lastAnno.getBoundingClientRect()
+    const iconW = icon.offsetWidth || 24
+    const currentOffset = isEditing() ? editingOffset : offset
+    
+    const viewportLeft = rect.left + rect.width / 2 - iconW / 2
+    let viewportTop = rect.top - currentOffset
+    
+    // If too close to top, show below instead
+    if (rect.top < currentOffset + 6) {
+      viewportTop = rect.bottom + 8
+    }
+    
+    show(viewportLeft, viewportTop)
+  }
+
+  const onInput = () => {
+    if (!hideWhileTyping) return
+    
+    // Fade icon during typing
+    if (icon.style.display === 'block') {
+      icon.style.opacity = '0.35'
+    }
+    
+    if (typingFadeTO) clearTimeout(typingFadeTO)
+    typingFadeTO = window.setTimeout(() => {
+      if (icon.style.display === 'block') {
+        icon.style.opacity = '1'
+      }
+    }, 250)
+  }
+
+  // Icon hover handlers
+  icon.addEventListener('mouseenter', () => {
+    isOverIcon = true
+    if (hideTimeout) {
+      clearTimeout(hideTimeout)
+      hideTimeout = null
+    }
+    // Visual feedback
+    icon.style.background = '#f7fafc'
+    icon.style.borderColor = '#cbd5e0'
+    icon.style.transform = 'translateY(0) scale(1.05)'
+  })
+
+  icon.addEventListener('mouseleave', () => {
+    isOverIcon = false
+    // Reset visual state
+    icon.style.background = 'white'
+    icon.style.borderColor = 'rgba(0,0,0,.08)'
+    icon.style.transform = 'translateY(0) scale(1)'
+    hide()
+  })
+
+  // Attach event listeners
+  console.log('[HoverIcon] Attaching listeners to:', view.dom)
+  view.dom.addEventListener('mousemove', onMove, { passive: true })
+  view.dom.addEventListener('mouseleave', onLeave, { passive: true })
+  window.addEventListener('scroll', onScroll, { passive: true })
+  view.dom.addEventListener('input', onInput)
+  
+  // Test: Check if there are any annotations already in the DOM
+  setTimeout(() => {
+    const annotations = view.dom.querySelectorAll(annotationSelector)
+    console.log('[HoverIcon] Found annotations in DOM:', annotations.length, annotations)
+  }, 1000)
+
+  // Accessibility: respect reduced motion preference
+  const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  if (mediaQuery.matches) {
+    icon.style.transition = 'none'
+  }
+
+  // Public API
+  return {
+    destroy() {
+      cancelAnimationFrame(raf)
+      if (hideTimeout) clearTimeout(hideTimeout)
+      if (typingFadeTO) clearTimeout(typingFadeTO)
+      
+      view.dom.removeEventListener('mousemove', onMove)
+      view.dom.removeEventListener('mouseleave', onLeave)
+      window.removeEventListener('scroll', onScroll)
+      view.dom.removeEventListener('input', onInput)
+      
+      overlay.remove()
+    },
+    element: icon,
+    overlay: overlay,
+  }
+}

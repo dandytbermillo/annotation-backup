@@ -38,6 +38,8 @@ Content source:
 - Collaboration (Yjs) mode: the in-file tooltip logic inside `components/canvas/annotation-decorations.ts` loads branch content and applies the scrollbar when content is long.
 - Plain mode: the shared tooltip in `components/canvas/annotation-tooltip.ts` fetches branch metadata and document content, sanitizes to text, and auto-enables the scrollbar.
 
+See also: `TOOLTIP_REFERENCE.md` for a deep dive into data flow, auto-scroll, positioning, and safety notes.
+
 ---
 
 ## Changes by File (current state)

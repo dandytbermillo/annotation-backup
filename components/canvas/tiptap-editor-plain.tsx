@@ -18,8 +18,10 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
 // import { AnnotationDecorations } from './annotation-decorations'
-import { AnnotationDecorationsHoverOnly } from './annotation-decorations-hover-only'
+// import { AnnotationDecorationsHoverOnly } from './annotation-decorations-hover-only' // Replaced with hover-icon.ts
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
+import { attachHoverIcon } from './hover-icon'
+import { showAnnotationTooltip, hideAnnotationTooltipSoon, initializeTooltip } from './annotation-tooltip'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
@@ -98,9 +100,19 @@ const Annotation = Mark.create({
     const type = mark.attrs.type || 'note'
     const className = `annotation annotation-${type}`
     
-    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { 
-      class: className
-    }), 0]
+    // Include all the attributes needed for hover icon
+    const attrs: any = { 
+      class: className,
+      'data-type': type
+    }
+    
+    // Add branch-related attributes
+    if (mark.attrs.branchId) {
+      attrs['data-branch'] = mark.attrs.branchId
+      attrs['data-branch-id'] = mark.attrs.branchId
+    }
+    
+    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, attrs), 0]
   },
 })
 
@@ -201,9 +213,54 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           console.error('[TiptapEditorPlain] Failed to register WebKitAnnotationCursorFix:', error)
         }
         
-        // Register AnnotationDecorationsHoverOnly with square icon for hover UI
-        console.log('[TiptapEditorPlain] Registering AnnotationDecorationsHoverOnly...')
-        editor.registerPlugin(AnnotationDecorationsHoverOnly())
+        // Initialize the overlay-based hover icon (replaces AnnotationDecorationsHoverOnly)
+        console.log('[TiptapEditorPlain] Attaching overlay hover icon...')
+        
+        // Initialize tooltip first
+        initializeTooltip()
+        
+        // Attach the hover icon that lives outside the editor DOM
+        const hoverIcon = attachHoverIcon({
+          view: editor.view,
+          annotationSelector: '.annotation',
+          offset: 24,           // Normal distance above text
+          editingOffset: 36,    // Extra distance when editing
+          hideWhileTyping: true // Fade during typing
+        })
+        
+        // Connect hover icon to tooltip
+        hoverIcon.element.addEventListener('mouseenter', () => {
+          const branchId = hoverIcon.element.getAttribute('data-branch-id')
+          const type = hoverIcon.element.getAttribute('data-annotation-type') || 'note'
+          
+          if (branchId) {
+            console.log('[TiptapEditorPlain] Showing tooltip for branch:', branchId)
+            showAnnotationTooltip(branchId, type, hoverIcon.element)
+          }
+        })
+        
+        hoverIcon.element.addEventListener('mouseleave', () => {
+          console.log('[TiptapEditorPlain] Hiding tooltip')
+          hideAnnotationTooltipSoon()
+        })
+        
+        // Click handler to open panel
+        hoverIcon.element.addEventListener('click', (e) => {
+          e.stopPropagation()
+          const branchId = hoverIcon.element.getAttribute('data-branch-id')
+          if (branchId) {
+            console.log('[TiptapEditorPlain] Opening panel for branch:', branchId)
+            window.dispatchEvent(new CustomEvent('create-panel', { 
+              detail: { panelId: branchId } 
+            }))
+          }
+        })
+        
+        // Store cleanup function
+        editor.on('destroy', () => {
+          console.log('[TiptapEditorPlain] Cleaning up hover icon')
+          hoverIcon.destroy()
+        })
         
         // KEEP DISABLED: Old Safari-specific plugins that interfere
         // - SafariProvenFix: deprecated webkitUserModify property causes issues  
@@ -526,7 +583,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           margin-bottom: 4px;
         }
         
-        /* Hover icon styles */
+        /* Old hover icon styles - kept for compatibility */
         .annotation-hover-icon {
           width: 22px;
           height: 22px;
@@ -546,6 +603,28 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         .annotation-hover-icon:hover {
           transform: scale(1.1);
           box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* New overlay-based hover icon styles */
+        .annotation-hover-icon-overlay {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .annotation-hover-icon-overlay:hover {
+          background: #f7fafc !important;
+          border-color: #cbd5e0 !important;
+        }
+        
+        .annotation-hover-icon-overlay svg {
+          width: 18px;
+          height: 18px;
+          stroke: #4a5568;
+        }
+        
+        .annotation-hover-icon-overlay:hover svg {
+          stroke: #2d3748;
         }
         
         /* Tooltip styles */

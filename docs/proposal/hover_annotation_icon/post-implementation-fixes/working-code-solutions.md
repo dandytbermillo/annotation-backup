@@ -1,5 +1,8 @@
 # Working Code Solutions - Complete Implementation
 
+Note: For canonical, exact code mirrors synced with the codebase, see:
+- post-implementation-fixes/exact-code-mirrors.md
+
 ## 1. Square Hover Icon (annotation-decorations-hover-only.ts)
 
 This plugin shows the square icon without interfering with cursor placement:
