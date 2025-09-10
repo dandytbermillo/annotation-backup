@@ -17,7 +17,8 @@ import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
-import { AnnotationDecorations } from './annotation-decorations'
+// import { AnnotationDecorations } from './annotation-decorations'
+import { AnnotationDecorationsFixed } from './annotation-decorations-fixed'
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
@@ -182,12 +183,27 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
         // Register ProseMirror plugins
+        console.log('[TiptapEditorPlain] Editor created, registering plugins...')
+        console.log('[TiptapEditorPlain] Browser info:', {
+          userAgent: navigator.userAgent,
+          isChrome: /chrome/i.test(navigator.userAgent),
+          isSafari: /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent),
+          isFirefox: /firefox/i.test(navigator.userAgent)
+        })
         
-        // WebKit-specific fix for cursor placement on annotations - MUST BE REGISTERED FIRST
-        editor.registerPlugin(WebKitAnnotationCursorFix()) // Only active in Safari/Chrome
+        // WebKit-specific fix FIRST to handle clicks before other plugins
+        console.log('[TiptapEditorPlain] Registering WebKitAnnotationCursorFix...')
+        try {
+          const plugin = WebKitAnnotationCursorFix()
+          editor.registerPlugin(plugin)
+          console.log('[TiptapEditorPlain] WebKitAnnotationCursorFix registered successfully')
+        } catch (error) {
+          console.error('[TiptapEditorPlain] Failed to register WebKitAnnotationCursorFix:', error)
+        }
         
-        // Full annotation decorations with hover icons and tooltips
-        editor.registerPlugin(AnnotationDecorations()) // Now works with cursor fix
+        // Then register AnnotationDecorationsFixed with square icon for hover UI
+        console.log('[TiptapEditorPlain] Registering AnnotationDecorationsFixed...')
+        editor.registerPlugin(AnnotationDecorationsFixed())
         
         // KEEP DISABLED: Old Safari-specific plugins that interfere
         // - SafariProvenFix: deprecated webkitUserModify property causes issues  
