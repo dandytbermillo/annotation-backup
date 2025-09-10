@@ -30,6 +30,35 @@ export const AnnotationDecorations = () => {
       let tooltipElement: HTMLDivElement | null = null
       let tooltipTimeout: NodeJS.Timeout | null = null
       
+      // Helper function to check and set scrollable state
+      function checkTooltipScrollable() {
+        if (!tooltipElement) return
+        
+        // Small delay to ensure DOM is updated
+        setTimeout(() => {
+          // Check if content is scrollable
+          const contentEl = tooltipElement.querySelector('.tooltip-content') as HTMLElement
+          if (contentEl) {
+            // Log for debugging
+            console.log('[Tooltip Scroll Check]', {
+              scrollHeight: contentEl.scrollHeight,
+              clientHeight: contentEl.clientHeight,
+              isScrollable: contentEl.scrollHeight > contentEl.clientHeight
+            })
+            
+            // If scrollHeight is greater than clientHeight, content is scrollable
+            if (contentEl.scrollHeight > contentEl.clientHeight) {
+              tooltipElement.classList.add('has-scroll')
+              // Ensure content area can be scrolled
+              contentEl.style.overflowY = 'auto'
+            } else {
+              tooltipElement.classList.remove('has-scroll')
+              contentEl.style.overflowY = 'hidden'
+            }
+          }
+        }, 10)
+      }
+      
       // Tooltip functions (moved inside view scope)
       function showAnnotationTooltip(element: HTMLElement, branchId: string, type: string) {
         
@@ -147,16 +176,17 @@ export const AnnotationDecorations = () => {
                         
                         // Use doc content if available; do NOT fall back to original annotated text
                         const preview = content || 'No notes added yet'
-                        const displayText = preview.substring(0, 150) + (preview.length > 150 ? '...' : '')
+                        // Don't truncate - let scrolling handle long content
                         
                         tooltipElement.innerHTML = `
                           <div class="tooltip-header">
                             <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
                             <span class="tooltip-title">${branch.title || `${(branch.type || type).charAt(0).toUpperCase() + (branch.type || type).slice(1)} annotation`}</span>
                           </div>
-                          <div class="tooltip-content">${displayText}</div>
+                          <div class="tooltip-content">${preview}</div>
                           <div class="tooltip-footer">Click to open panel</div>
                         `
+                        checkTooltipScrollable()
                       }
                     })
                     .catch(() => {
@@ -171,6 +201,7 @@ export const AnnotationDecorations = () => {
                           <div class="tooltip-content">${preview}</div>
                           <div class="tooltip-footer">Click to open panel</div>
                         `
+                        checkTooltipScrollable()
                       }
                     })
                 } else {
@@ -235,6 +266,7 @@ export const AnnotationDecorations = () => {
             <div class="tooltip-content">No notes added yet</div>
             <div class="tooltip-footer">Click to open panel</div>
           `
+          checkTooltipScrollable()
           
           // Position and show the fallback tooltip
           const rect = element.getBoundingClientRect()
@@ -276,15 +308,16 @@ export const AnnotationDecorations = () => {
           
           if (branchPreview) {
             // We have branch content - show it immediately
-            const preview = branchPreview.substring(0, 150) + (branchPreview.length > 150 ? '...' : '')
+            // Don't truncate - let scrolling handle long content
             tooltipElement.innerHTML = `
               <div class="tooltip-header">
                 <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
                 <span class="tooltip-title">${title}</span>
               </div>
-              <div class="tooltip-content">${preview}</div>
+              <div class="tooltip-content">${branchPreview}</div>
               <div class="tooltip-footer">Click to open panel</div>
             `
+            checkTooltipScrollable()
           } else {
             // No branch preview; show placeholder immediately and then try provider/doc
             tooltipElement.innerHTML = `
@@ -295,6 +328,7 @@ export const AnnotationDecorations = () => {
               <div class="tooltip-content">No notes added yet</div>
               <div class="tooltip-footer">Click to open panel</div>
             `
+            checkTooltipScrollable()
             
             const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
             const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
@@ -325,15 +359,16 @@ export const AnnotationDecorations = () => {
                     txt = extractTextFromPM(doc.content)
                   }
                   let base = txt || 'No notes added yet'
-                  const preview = base.substring(0, 150) + ((base && base.length > 150) ? '...' : '')
+                  // Don't truncate - let scrolling handle long content
                   tooltipElement.innerHTML = `
                     <div class="tooltip-header">
                       <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>
                       <span class="tooltip-title">${title}</span>
                     </div>
-                    <div class="tooltip-content">${preview}</div>
+                    <div class="tooltip-content">${base}</div>
                     <div class="tooltip-footer">Click to open panel</div>
                   `
+                  checkTooltipScrollable()
                 })
                 .catch(() => {})
             }

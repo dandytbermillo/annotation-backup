@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Tooltip Scrolling</title>
+    <style>
+        body {
+            padding: 50px;
+            font-family: Arial, sans-serif;
+        }
+        
+        .test-annotation {
+            background-color: rgba(52, 152, 219, 0.2);
+            border: 1px solid rgba(52, 152, 219, 0.4);
+            padding: 2px 4px;
+            border-radius: 3px;
+            cursor: pointer;
+            display: inline-block;
+            margin: 20px;
+        }
+        
+        .annotation-tooltip {
+            position: fixed;
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 10001;
+            max-width: 300px;
+            max-height: 400px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            display: none;
+        }
+        
+        .annotation-tooltip.visible {
+            display: block;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        
+        .tooltip-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .tooltip-content {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.4;
+            max-height: 250px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            word-wrap: break-word;
+            padding-right: 8px;
+        }
+        
+        .tooltip-content::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .tooltip-content::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        .tooltip-content::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 2px;
+        }
+        
+        .tooltip-content::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+        
+        .tooltip-footer {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #e1e8ed;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .has-scroll::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 20px;
+            background: linear-gradient(to bottom, transparent, white);
+            pointer-events: none;
+            border-radius: 0 0 8px 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Tooltip Scroll Test</h1>
+    
+    <div class="test-annotation" id="short">
+        Short content annotation
+    </div>
+    
+    <div class="test-annotation" id="long">
+        Long content annotation
+    </div>
+    
+    <div class="annotation-tooltip" id="tooltip">
+        <div class="tooltip-header">
+            <span>📝</span>
+            <span>Test Annotation</span>
+        </div>
+        <div class="tooltip-content" id="tooltip-content">
+            Content will be inserted here
+        </div>
+        <div class="tooltip-footer">
+            Click to open panel
+        </div>
+    </div>
+    
+    <script>
+        const shortContent = "This is a short piece of content that doesn't need scrolling.";
+        
+        const longContent = `
+            # DOCUMENTATION & REFERENCES
+            
+            ### Authoritative Documents
+            
+            Documents that MUST be followed - mark with ⚠️:
+            
+            - Architecture Guide: docs/architecture-doc...
+            - API Standards: docs/api-standards.md
+            - Security Protocols: docs/security-guide.md
+            - Database Schema: docs/database-schema.sql
+            - Testing Requirements: docs/testing-requirements.md
+            
+            ### Implementation Details
+            
+            This is a comprehensive documentation about the AI in Healthcare Research project. 
+            The project aims to leverage artificial intelligence and machine learning technologies 
+            to improve healthcare outcomes and accelerate medical research.
+            
+            Key objectives include:
+            1. Automated diagnosis assistance
+            2. Drug discovery optimization
+            3. Patient data analysis
+            4. Treatment recommendation systems
+            5. Clinical trial matching
+            6. Medical imaging analysis
+            7. Natural language processing for medical records
+            8. Predictive analytics for patient outcomes
+            9. Real-time monitoring and alerts
+            10. Research paper analysis and summarization
+            
+            ### Technical Stack
+            
+            - Frontend: React, TypeScript, TailwindCSS
+            - Backend: Node.js, Express, PostgreSQL
+            - AI/ML: TensorFlow, PyTorch, scikit-learn
+            - Infrastructure: Docker, Kubernetes, AWS
+            - Monitoring: Prometheus, Grafana
+            - CI/CD: GitHub Actions, Jenkins
+            
+            ### Current Status
+            
+            The project is currently in Phase 2 of development, focusing on:
+            - Integration with hospital systems
+            - HIPAA compliance implementation
+            - Model training on larger datasets
+            - User interface improvements
+            - Performance optimization
+            - Security hardening
+            
+            ### Next Steps
+            
+            1. Complete integration testing
+            2. Deploy to staging environment
+            3. Conduct user acceptance testing
+            4. Security audit
+            5. Production deployment
+            6. Post-launch monitoring
+            
+            This content should definitely trigger scrolling in the tooltip!
+        `.trim();
+        
+        const tooltip = document.getElementById('tooltip');
+        const tooltipContent = document.getElementById('tooltip-content');
+        
+        function showTooltip(element, content) {
+            tooltipContent.textContent = content;
+            
+            const rect = element.getBoundingClientRect();
+            tooltip.style.top = (rect.bottom + 10) + 'px';
+            tooltip.style.left = rect.left + 'px';
+            tooltip.classList.add('visible');
+            
+            // Check if scrollable
+            setTimeout(() => {
+                if (tooltipContent.scrollHeight > tooltipContent.clientHeight) {
+                    tooltip.classList.add('has-scroll');
+                    console.log('Tooltip is scrollable!', {
+                        scrollHeight: tooltipContent.scrollHeight,
+                        clientHeight: tooltipContent.clientHeight
+                    });
+                } else {
+                    tooltip.classList.remove('has-scroll');
+                    console.log('Tooltip is not scrollable', {
+                        scrollHeight: tooltipContent.scrollHeight,
+                        clientHeight: tooltipContent.clientHeight
+                    });
+                }
+            }, 10);
+        }
+        
+        function hideTooltip() {
+            tooltip.classList.remove('visible');
+        }
+        
+        document.getElementById('short').addEventListener('mouseenter', (e) => {
+            showTooltip(e.target, shortContent);
+        });
+        
+        document.getElementById('short').addEventListener('mouseleave', hideTooltip);
+        
+        document.getElementById('long').addEventListener('mouseenter', (e) => {
+            showTooltip(e.target, longContent);
+        });
+        
+        document.getElementById('long').addEventListener('mouseleave', hideTooltip);
+        
+        // Keep tooltip visible when hovering over it
+        tooltip.addEventListener('mouseenter', () => {
+            tooltip.classList.add('visible');
+        });
+        
+        tooltip.addEventListener('mouseleave', hideTooltip);
+    </script>
+</body>
+</html>

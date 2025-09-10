@@ -398,6 +398,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           box-shadow: 0 4px 12px rgba(0,0,0,0.15);
           z-index: 10001;
           max-width: 300px;
+          max-height: 400px; /* Set maximum height */
+          overflow-y: auto; /* Enable vertical scrolling */
+          overflow-x: hidden; /* Hide horizontal scroll */
           opacity: 0;
           visibility: hidden;
           transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
@@ -405,11 +408,30 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           pointer-events: none;
         }
         
+        /* Custom scrollbar styles for tooltip */
+        .annotation-tooltip::-webkit-scrollbar {
+          width: 6px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb {
+          background: #888;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb:hover {
+          background: #555;
+        }
+        
         .annotation-tooltip.visible {
           opacity: 1;
           visibility: visible;
           transform: translateY(0);
-          pointer-events: auto;
+          pointer-events: auto; /* Important for scrolling */
         }
         
         .annotation-tooltip .tooltip-header {
@@ -424,6 +446,42 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           color: #666;
           font-size: 14px;
           line-height: 1.4;
+          max-height: 250px; /* Ensure content area has height limit */
+          overflow-y: auto; /* Allow content scrolling */
+          overflow-x: hidden; /* Hide horizontal scroll */
+          word-wrap: break-word; /* Break long words */
+          padding-right: 8px; /* Add space for scrollbar */
+        }
+        
+        /* Custom scrollbar for content area */
+        .annotation-tooltip .tooltip-content::-webkit-scrollbar {
+          width: 4px;
+        }
+        
+        .annotation-tooltip .tooltip-content::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        
+        .annotation-tooltip .tooltip-content::-webkit-scrollbar-thumb {
+          background: #ccc;
+          border-radius: 2px;
+        }
+        
+        .annotation-tooltip .tooltip-content::-webkit-scrollbar-thumb:hover {
+          background: #999;
+        }
+        
+        /* Add fade indicator at bottom when scrollable */
+        .annotation-tooltip.has-scroll::after {
+          content: '';
+          position: absolute;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          height: 20px;
+          background: linear-gradient(to bottom, transparent, white);
+          pointer-events: none;
+          border-radius: 0 0 8px 8px;
         }
         
         .annotation-tooltip .tooltip-footer {

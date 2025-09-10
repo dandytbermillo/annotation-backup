@@ -355,11 +355,33 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
           box-shadow: 0 4px 12px rgba(0,0,0,0.15);
           z-index: 10001;
           max-width: 300px;
+          max-height: 400px; /* Set maximum height */
+          overflow-y: auto; /* Enable vertical scrolling */
+          overflow-x: hidden; /* Hide horizontal scroll */
           opacity: 0;
           visibility: hidden;
           transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
           transform: translateY(5px);
           pointer-events: none;
+        }
+        
+        /* Custom scrollbar styles for tooltip */
+        .annotation-tooltip::-webkit-scrollbar {
+          width: 6px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb {
+          background: #888;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb:hover {
+          background: #555;
         }
         
         .annotation-tooltip.visible {

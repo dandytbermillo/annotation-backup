@@ -4,7 +4,7 @@
 **Feature Slug**: [auto-generated-from-title]  
 **Author**: [Your name]  
 **Created Date**: YYYY-MM-DD  
-**Status**: 📝 PLANNED  
+**Status**: 🚧 IN PROGRESS  
 **Priority**: [critical | high | medium | low]  
 **Severity (Process Guide)**: [Critical | High | Medium | Low]  
 **Estimated Risk**: [high | medium | low]  
@@ -16,7 +16,7 @@
 ## SUMMARY
 [One paragraph executive summary. What is being built and why? Maximum 3-4 sentences.]
 
-Note: This template seeds `initial.md`, `implementation.md`, or a PRP. When used as `implementation.md`, maintain ATTEMPT HISTORY and ERRORS as living logs.
+Note: This template seeds `initial.md` or `implementation.md`. PRP workflow is disabled in this repository; do not create PRPs. When used as `implementation.md`, maintain ATTEMPT HISTORY and ERRORS as living logs.
 
 ---
 
@@ -81,7 +81,7 @@ All paths below are relative to the repository root.
   - Create subfolders:
     - `docs/proposal/<feature-slug>/reports/` (main Implementation Report)
     - `docs/proposal/<feature-slug>/implementation-details/`
-    - `docs/proposal/<feature-slug>/post-implementation-fixes/` (with `README.md` index)
+    - `docs/proposal/<feature-slug>/post-implementation-fixes/` (with `README.md` index and severity subfolders: `critical/`, `high/`, `medium/`, `low/`)
 - **Migration Note** (add to `initial.md`): “Migrated from `<previous-path>` on YYYY-MM-DD.”
 - If migration is blocked, proceed in current location and record the deviation (see Deviation Logging); complete migration when unblocked.
 
@@ -161,8 +161,8 @@ npm test -- path/to/test.spec.ts
 
 ### Integration Tests
 ```bash
-# Environment setup
-docker compose up -d [services]
+# Environment setup (match repo scripts)
+docker-compose up -d [services]
 
 # Run integration tests
 npm run test:integration
@@ -170,6 +170,7 @@ npm run test:integration
 
 ### E2E Tests
 ```bash
+# If configured; otherwise set up Playwright or Cypress
 npm run test:e2e
 ```
 
@@ -210,7 +211,7 @@ cp .env.example .env.local
 # - API_KEY=
 
 # Start services
-docker compose up -d
+docker-compose up -d
 
 # Run migrations
 npm run db:migrate
@@ -319,12 +320,12 @@ npm run db:migrate
 ## POST-IMPLEMENTATION FIXES (Mandatory)
 - **Classify Severity** per Documentation Process Guide: [Critical | High | Medium | Low]
 - **Create Fix Report** at:
-  - `docs/proposal/<feature-slug>/post-implementation-fixes/YYYY-MM-DD-<feature-slug>.md`
+  - `docs/proposal/<feature-slug>/post-implementation-fixes/<severity>/YYYY-MM-DD-<short-title>.md`
 - **Artifacts**:
   - Place long logs/screenshots under:
-    - `docs/proposal/<feature-slug>/post-implementation-fixes/artifacts/`
+    - `docs/proposal/<feature-slug>/post-implementation-fixes/<severity>/artifacts/`
 - **Update Index**:
-  - Edit `docs/proposal/<feature-slug>/post-implementation-fixes/README.md` to add the fix to the table/counters.
+  - Edit `docs/proposal/<feature-slug>/post-implementation-fixes/README.md` and add an entry under the corresponding severity section; update counters.
 - **Fix Report Must Include**:
   - Summary: 1–3 sentences
   - Files Modified: paths + brief rationale
@@ -370,8 +371,8 @@ Quick skeleton for a fix report:
 
 Index update reminder for `post-implementation-fixes/README.md`:
 - Increment total fix counter(s)
-- Add a table row:
-  - Date | Severity | Title | Link | Status
+- Add a table row under the correct severity section:
+  - Date | Title | Link | Status | Time to Fix
 
 ---
 
@@ -398,11 +399,11 @@ Index update reminder for `post-implementation-fixes/README.md`:
 ---
 
 ## AGENT INSTRUCTIONS
-**For Claude Code Agent Implementation:**
+**For Agent Implementation:**
 
 1. **MUST READ FIRST**: 
    - All documents marked with ⚠️ in Documentation section
-   - This INITIAL.md completely before starting
+   - Read this INITIAL.md completely before starting
 
 2. **MUST VALIDATE**: 
    - All acceptance criteria are specific and testable
@@ -410,7 +411,7 @@ Index update reminder for `post-implementation-fixes/README.md`:
    - Environment setup is complete
 
 3. **MUST FOLLOW**:
-   - Process Guide v1.4.5 for documentation
+   - Documentation Process Guide (see link above)
    - Architecture patterns from authoritative docs
    - Scope boundaries (do not implement out-of-scope items)
 
