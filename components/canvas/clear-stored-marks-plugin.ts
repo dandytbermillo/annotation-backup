@@ -18,25 +18,26 @@ export const ClearStoredMarksAtBoundary = () =>
     props: {
       handleTextInput(view) {
         const { state } = view
-        const { empty, from } = state.selection
-        
-        // Only handle when cursor is at a single position (not a selection)
+        const { empty, $from } = state.selection
         if (!empty) return false
-        
-        // Check if annotation mark exists in the schema
-        const annotationMark = state.schema.marks.annotation
-        if (!annotationMark) return false
-        
-        // If cursor is NOT inside an annotation mark, clear stored marks
-        // This prevents the annotation from extending when typing at boundaries
-        if (!state.doc.rangeHasMark(from, from, annotationMark)) {
-          // Clear any stored marks to prevent them from applying to new text
-          const tr = state.tr.setStoredMarks(null)
-          view.dispatch(tr)
+
+        const annType = state.schema.marks.annotation
+        if (!annType) return false
+
+        // Treat caret as "inside" if any of these are true:
+        // This is the key fix - we check BOTH before AND after
+        const inStored = !!state.storedMarks?.some(m => m.type === annType)
+        const inHere = $from.marks().some(m => m.type === annType)
+        const beforeHas = !!$from.nodeBefore?.marks?.some(m => m.type === annType)
+        const afterHas = !!$from.nodeAfter?.marks?.some(m => m.type === annType)
+
+        if (inStored || inHere || beforeHas || afterHas) {
+          // Inside or at a boundary: do not clear; let typing continue annotation
+          return false
         }
-        
-        // Return false to allow normal text input to continue
-        // This is important for accessibility and IME compatibility
+
+        // Caret truly outside: ensure further typing is plain text
+        view.dispatch(state.tr.setStoredMarks(null))
         return false
       },
     },
@@ -50,27 +51,34 @@ export const ClearStoredMarksAtBoundaryDebug = () =>
     props: {
       handleTextInput(view) {
         const { state } = view
-        const { empty, from } = state.selection
+        const { empty, $from } = state.selection
         
         if (!empty) return false
         
-        const annotationMark = state.schema.marks.annotation
-        if (!annotationMark) {
+        const annType = state.schema.marks.annotation
+        if (!annType) {
           console.warn('[ClearStoredMarks] No annotation mark in schema')
           return false
         }
         
-        const hasAnnotation = state.doc.rangeHasMark(from, from, annotationMark)
+        // Improved boundary detection with three checks
+        const inStored = !!state.storedMarks?.some(m => m.type === annType)
+        const inHere = $from.marks().some(m => m.type === annType)
+        const beforeHas = !!$from.nodeBefore?.marks?.some(m => m.type === annType)
         const storedMarks = state.storedMarks
         
         console.log('[ClearStoredMarks]', {
-          position: from,
-          hasAnnotation,
+          position: $from.pos,
+          inStored,
+          inHere,
+          beforeHas,
+          isInsideAnnotation: inStored || inHere || beforeHas,
           storedMarks: storedMarks?.map(m => m.type.name),
-          willClear: !hasAnnotation && storedMarks?.some(m => m.type.name === 'annotation')
+          willClear: !(inStored || inHere || beforeHas) && storedMarks?.some(m => m.type.name === 'annotation')
         })
         
-        if (!hasAnnotation) {
+        // Only clear if we're truly outside the annotation
+        if (!(inStored || inHere || beforeHas)) {
           const tr = state.tr.setStoredMarks(null)
           view.dispatch(tr)
         }

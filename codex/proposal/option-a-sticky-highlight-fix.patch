@@ -1,0 +1,117 @@
+Subject: Option A — Sticky Highlight Boundary Fix (Plain Editor only)
+
+Context
+- Issue: When the caret is at the end of an annotated span, the next typed character sometimes “detaches” and is inserted outside the highlight. This is caused by ProseMirror storedMarks clearing at the wrong time and mark inclusivity behavior.
+- Scope: Option A (plain editor) only. No changes to the collab editor are required for Option A.
+
+Fixes
+1) Make the Annotation mark explicitly non‑inclusive and non‑splitting:
+   - `inclusive: false` prevents sticky growth.
+   - `keepOnSplit: false` prevents Enter from carrying the mark over to a new line.
+2) Add an IME‑safe guard plugin that clears stored marks only when the caret is actually outside the annotation.
+3) Ensure keyboard shortcuts return `true` only when they actually handle the key to avoid interfering with IMEs/assistive tech.
+
+--- a/components/canvas/tiptap-editor-plain.tsx
++++ b/components/canvas/tiptap-editor-plain.tsx
+@@
+ import { AnnotationDecorations } from './annotation-decorations'
+ import { PerformanceMonitor } from './performance-decorations'
++import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
+@@
+ const Annotation = Mark.create({
+   name: 'annotation',
+   
+   // Primary fix: prevent mark extension
+-  inclusive: false,
++  inclusive: false,
++  // Prevent carry-over on Enter splits
++  keepOnSplit: false,
+@@
+   addKeyboardShortcuts() {
+     return {
+       // Exit annotation on right arrow at boundary
+       'ArrowRight': ({ editor }) => {
+         if (!this.options.exitOnArrowRight) return false
+         
+         const { $from, $to } = editor.state.selection
+         if ($from.pos === $to.pos) {
+           const marks = $from.marks()
+           const hasAnnotation = marks.some(mark => mark.type.name === 'annotation')
+           
+           if (hasAnnotation) {
+             // Check if at annotation boundary
+             const after = $from.nodeAfter
+             if (!after || !after.marks.some(m => m.type.name === 'annotation')) {
+               editor.commands.unsetMark('annotation')
+-              return true
++              return true // handled
+             }
+           }
+         }
+         return false
+       },
+       
+       // Exit annotation on space
+       'Space': ({ editor }) => {
+         if (!this.options.exitOnSpace) return false
+         
+         const { $from } = editor.state.selection
+         const marks = $from.marks()
+         if (marks.some(mark => mark.type.name === 'annotation')) {
+           // Insert space without annotation mark
+           editor.chain()
+             .insertContent(' ')
+             .unsetMark('annotation')
+             .run()
+-          return true
++          return true // handled
+         }
+         return false
+       }
+     }
+   },
+@@
+   onCreate: ({ editor }) => {
+     console.log('[TipTapEditor] onCreate callback called')
+     // Register ProseMirror plugins (hover icon + perf monitor)
+     const annotationPlugin = AnnotationDecorations()
+     const perfPlugin = PerformanceMonitor()
+     console.log('[TipTapEditor] Registering annotation plugin:', annotationPlugin)
+     editor.registerPlugin(annotationPlugin)
+     editor.registerPlugin(perfPlugin)
++    // IME‑safe boundary guard: clear stored marks only when caret is outside annotation
++    editor.registerPlugin(ClearStoredMarksAtBoundary())
+     console.log('[TipTapEditor] Plugins registered successfully')
+   },
+
+--- /dev/null
++++ b/components/canvas/clear-stored-marks-plugin.ts
+@@
+import { Plugin } from '@tiptap/pm/state'
+
+// IME‑safe guard: only clear stored marks when caret is outside annotation
+export const ClearStoredMarksAtBoundary = () =>
+  new Plugin({
+    props: {
+      handleTextInput(view) {
+        const { state } = view
+        const { empty, $from } = state.selection
+        if (!empty) return false
+
+        const annType = state.schema.marks.annotation
+        if (!annType) return false
+
+        // Check whether caret is effectively inside annotation
+        const inStored = !!state.storedMarks?.some(m => m.type === annType)
+        const inHere = $from.marks().some(m => m.type === annType)
+        const beforeHas = !!$from.nodeBefore?.marks?.some(m => m.type === annType)
+
+        if (inStored || inHere || beforeHas) return false
+
+        // Caret outside: ensure further typing is plain text
+        view.dispatch(state.tr.setStoredMarks(null))
+        return false
+      },
+    },
+  })
+

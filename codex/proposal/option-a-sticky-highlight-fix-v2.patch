@@ -1,0 +1,57 @@
+Subject: Option A — Sticky Highlight Fix v2 (IME-safe + start/end boundaries)
+
+Context
+- Symptom: Characters typed at the very start or end of an annotation sometimes "detach" (inserted outside the highlight). At boundaries, ArrowLeft/ArrowRight can appear to jump or leave a gap.
+- Root causes:
+  1) Boundary detection in the stored-marks guard didn’t consider the "start" side (nodeAfter) and only partially covered the "end" side (nodeBefore).
+  2) (If implemented) visible boundary widgets/pseudo-elements can create a visual gap that looks like a space. Avoid widgets; prefer non-intrusive CSS.
+
+Fixes
+1) Update the IME‑safe stored marks guard to treat three "inside or boundary" cases as inside:
+   - storedMarks already include annotation
+   - marks at `$from` include annotation
+   - `$from.nodeBefore` OR `$from.nodeAfter` have the annotation mark
+   Only clear stored marks when ALL checks fail (caret truly outside).
+
+2) Recommendation (docs): Do not use inline widget decorations for boundary markers. If you need a visual hint, use an inset box‑shadow on `.annotation` instead of `::after`/widgets.
+
+--- a/components/canvas/clear-stored-marks-plugin.ts
++++ b/components/canvas/clear-stored-marks-plugin.ts
+@@
+ import { Plugin } from '@tiptap/pm/state'
+ 
+ // IME‑safe guard: only clear stored marks when caret is outside annotation
+ export const ClearStoredMarksAtBoundary = () =>
+   new Plugin({
+     props: {
+       handleTextInput(view) {
+         const { state } = view
+         const { empty, $from } = state.selection
+         if (!empty) return false
+ 
+         const annType = state.schema.marks.annotation
+         if (!annType) return false
+ 
+         // Treat caret as "inside" if any of these are true:
+         const inStored = !!state.storedMarks?.some(m => m.type === annType)
+         const inHere = $from.marks().some(m => m.type === annType)
+         const beforeHas = !!$from.nodeBefore?.marks?.some(m => m.type === annType)
+         const afterHas = !!$from.nodeAfter?.marks?.some(m => m.type === annType)
+ 
+         if (inStored || inHere || beforeHas || afterHas) {
+           // Inside or at a boundary: do not clear; let typing continue annotation
+           return false
+         }
+ 
+         // Caret outside: ensure further typing is plain text
+         view.dispatch(state.tr.setStoredMarks(null))
+         return false
+       },
+     },
+   })
+ 
+Notes
+- If you added any boundary widgets (Decoration.widget), remove them to avoid caret jumps — widgets are real DOM nodes the caret must navigate around.
+- If you need a boundary hint, prefer a non-intrusive style like:
+  .annotation { box-shadow: inset -1px 0 0 rgba(0,0,0,.2); }
+

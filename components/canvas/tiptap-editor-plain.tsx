@@ -20,16 +20,16 @@ import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
+import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
   name: 'annotation',
   
-  // Prevent mark from extending when typing at boundaries
-  inclusive: false,
-  // Prevent mark from carrying over when pressing Enter
-  keepOnSplit: false,
+  // Configuration for proper boundary behavior
+  // inclusive: true (default) - allows typing at end to extend
+  keepOnSplit: false, // Prevent Enter from carrying annotation to new line
   
   addOptions() {
     return {
@@ -168,11 +168,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       content: initialContent,
       editable: isEditable,
       onCreate: ({ editor }) => {
-        // Register ProseMirror plugins (hover icon + perf monitor)
+        // Register ProseMirror plugins
         editor.registerPlugin(AnnotationDecorations())
         editor.registerPlugin(PerformanceMonitor())
-        // Prevent annotation marks from leaking at boundaries (IME-safe)
-        editor.registerPlugin(ClearStoredMarksAtBoundary())
+        // Fix for annotation start boundary
+        editor.registerPlugin(AnnotationStartBoundaryFix())
+        // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         
         // Don't clear content or set loading false here if we're still loading
         if (!isContentLoading) {

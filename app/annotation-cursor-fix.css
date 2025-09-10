@@ -1,0 +1,45 @@
+/* Fix for cursor appearing on the edge of annotation boundaries */
+
+/* Option 1: Reduce left padding to bring cursor visually inside */
+.annotation {
+  padding-left: 1px !important; /* Reduced from 4px */
+  padding-right: 4px !important; /* Keep right padding */
+}
+
+/* Option 2: Alternative - use only vertical padding and rely on border for visual separation
+.annotation {
+  padding: 2px 0 !important;
+  margin: 0 2px;
+}
+*/
+
+/* Option 3: Alternative - use underline style instead of box
+.annotation {
+  padding: 0 !important;
+  border: none !important;
+  border-bottom: 2px solid !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+}
+*/
+
+/* Ensure cursor is visible when at annotation boundary */
+.ProseMirror .annotation:first-child {
+  margin-left: 1px;
+}
+
+/* Adjust cursor positioning for better visual alignment */
+.ProseMirror-focused .annotation {
+  position: relative;
+}
+
+/* Optional: Add a subtle indicator when cursor is at annotation start */
+.ProseMirror-focused .annotation::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  pointer-events: none;
+}
