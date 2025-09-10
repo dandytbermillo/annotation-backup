@@ -8,7 +8,7 @@ Owner: Claude
 Created: 2025-09-09
 
 ## Summary
-Show a small "hover icon" when the cursor enters an annotated text span. Only when hovering the icon do we display the full annotation popup (title/preview). This reduces accidental popups while preserving discoverability. Works in both collaboration (Yjs) and plain modes.
+Show a small hover icon when the cursor enters an annotated text span. Only when hovering the icon do we display the full annotation popup (title/preview). This reduces accidental popups while preserving discoverability. Works in both collaboration (Yjs) and plain modes.
 
 ## Goals
 - Hovering annotated text reveals a small, non-intrusive icon near the cursor/text.
@@ -29,47 +29,42 @@ Migrated from `context-os/docs/proposal/annotation_system/` on 2025-09-09.
 ---
 
 ## Approach
-Add a floating icon controlled by the existing TipTap hover plugin (AnnotationDecorations). On mouseover of an annotated decoration:
+Add a floating icon controlled by a TipTap hover plugin. On mouseover of an annotated decoration:
 - Render a floating icon near the cursor or at the annotated span edge.
 - When the user moves onto the icon, show the existing annotation tooltip at the icon.
 - Hide icon/tooltip when the cursor is no longer over the annotated text, icon, or tooltip (with short delay).
 
 Content source:
-- Collaboration mode: use CollaborationProvider.getBranchesMap() to obtain preview (existing logic).
-- Plain mode: fall back to the plain provider via getPlainProvider() and editor attributes (data-note/data-panel) to load content for a given branch/panel id.
+- Collaboration (Yjs) mode: the in-file tooltip logic inside `components/canvas/annotation-decorations.ts` loads branch content and applies the scrollbar when content is long.
+- Plain mode: the shared tooltip in `components/canvas/annotation-tooltip.ts` fetches branch metadata and document content, sanitizes to text, and auto-enables the scrollbar.
 
 ---
 
-## Changes by File
+## Changes by File (current state)
 
-1) `components/canvas/annotation-decorations.ts`
-- Extend the TipTap plugin to manage a floating icon element:
-  - Create once (`.annotation-hover-icon`), position near cursor/annotation.
-  - Store `data-branch-id` and `data-annotation-type` on the icon for later tooltip rendering.
-  - On `mouseenter` of the icon: show tooltip anchored to the icon; mark as hovered.
-  - On `mouseleave` of the icon: schedule hide with a short delay unless pointer is over target or tooltip.
-- Update DOM event handlers:
-  - `mouseover` on `.annotation-hover-target`: show & position icon, set `isOverTarget = true`.
-  - `mouseout` on `.annotation-hover-target`: set `isOverTarget = false`; if neither icon nor target is hovered, hide icon/tooltip soon.
-- Update `showAnnotationTooltip(anchor, branchId, type)` to accept the icon as the anchor. Keep existing positioning logic using `getBoundingClientRect()`.
-- Plain-mode preview fallback (optional but recommended): if CollaborationProvider returns no data, use `getPlainProvider()` and editor root attributes (`[role="textbox"][data-note]`) to fetch the document content and compute a short text preview.
+1) `components/canvas/annotation-decorations-hover-only.ts` (Plain mode hover UI)
+- Creates the square hover icon (SVG rect) next to annotated text, without intercepting mousedown/mouseup.
+- Delegates tooltip display to the shared `annotation-tooltip.ts` module.
 
-2) `components/canvas/tiptap-editor.tsx` and `components/canvas/tiptap-editor-plain.tsx`
-- Ensure AnnotationDecorations plugin is included (already is).
-- Inject minimal CSS for `.annotation-hover-icon` (collab + plain):
-  - Fixed positioning, small circular black background, white icon (e.g., 🔎), box-shadow, `z-index: 10000`, `pointer-events: auto`.
-- No functional editor changes required beyond style injection.
+2) `components/canvas/annotation-tooltip.ts` (Plain mode tooltip)
+- Shared tooltip implementation: fetches branch metadata and document content, converts to plain text, and applies auto-scroll when long.
 
-3) (No change required) `components/ui/tooltip.tsx` / Popover components
-- Keep the existing DOM-based tooltip produced by the plugin to minimize ripple effects. A future enhancement could replace the raw tooltip with Radix UI Tooltip/Popover.
+3) `components/canvas/webkit-annotation-cursor-fix.ts` (Cursor placement)
+- Dedicated cursor-placement fix module registered before hover UI in plain mode.
+- Note: Intended for Safari/Chrome. Current code path applies globally (no UA gating active).
+
+4) `components/canvas/annotation-decorations.ts` (Yjs mode)
+- Contains its own (emoji) hover icon and in-file tooltip logic (not using the shared tooltip module yet).
+- Applies the same scrollbar behavior on long content via `.tooltip-content` sizing and checks.
 
 ---
 
 ## Risks and Mitigations
-- Flicker between target and icon/tooltip: use small delayed hide (150–200ms) and shared over‑state flags.
+- Flicker between target and icon/tooltip: use small delayed hide (150–300ms) and shared over‑state flags.
 - Icon overlap with selection/toolbar: position near cursor with small offset; clamp to viewport.
-- Plain mode data: ensure fallback read does not block UI; consider caching short previews.
-- Accessibility: icon is purely hover‑triggered; future iteration can add keyboard navigation to the annotation tooltip.
+- Plain mode data: ensure fetch doesn’t block UI; consider caching short previews.
+- Accessibility: icon is hover‑triggered; add keyboard access in a follow-up.
+- Security: tooltip content is sanitized to text; titles are inserted via `innerHTML` and should be HTML‑escaped in future.
 
 ---
 
@@ -78,7 +73,8 @@ Manual checks:
 - Hover annotated text → icon appears; moving onto icon shows tooltip; leaving both hides tooltip.
 - Works at different zoom levels and viewport sizes.
 - Rapid hovers do not cause flicker; tooltip is stable when moving from target → icon.
-- Collab mode: preview loads from CollaborationProvider; Plain mode: preview loads via plain provider.
+- Yjs mode: in-file tooltip logic shows content and scrolls.
+- Plain mode: shared tooltip module shows content and scrolls.
 
 ---
 
@@ -97,6 +93,86 @@ Manual checks:
   - `components/canvas/tiptap-editor.tsx` (style injection for icon)
   - `components/canvas/tiptap-editor-plain.tsx` (style injection for icon)
 - Short implementation report under `reports/` with before/after notes and screenshots/gifs.
+
+---
+
+## ATTEMPT HISTORY
+
+### 2025-01-10: Safari Cursor Fix and Tooltip Restoration
+- **Issue**: Cursor not appearing when clicking annotated text in Safari/Chrome/Electron
+- **Approach**: 
+  1. Identified WebKit bug with position: relative on inline elements
+  2. Created webkit-annotation-cursor-fix.ts for browser-specific handling
+  3. Replaced AnnotationDecorations with non-blocking hover-only version
+  4. Extracted and restored original tooltip from backup repository
+- **Result**: ✅ Successfully fixed cursor placement in all browsers
+- **Files**: See report 2025-01-10-implementation-report.md
+
+---
+
+## ERRORS
+
+### Error 1: CSS Position Breaking Safari Cursor (2025-01-10)
+- **Root Cause**: WebKit bug - position: relative on inline elements hides cursor in contenteditable
+- **Reproduction**: Click any annotated text in Safari/Chrome
+- **Fix**: Removed position: relative, transform, and z-index from annotation CSS
+- **Artifacts**: components/canvas/safari-proven-fix.ts (attempted)
+
+### Error 2: Event Handlers Blocking Clicks (2025-01-10)
+- **Root Cause**: AnnotationDecorations mousedown/mouseup handlers intercepting clicks
+- **Reproduction**: Even with CSS fixed, clicks didn't place cursor
+- **Fix**: Created annotation-decorations-hover-only.ts without blocking handlers
+- **Artifacts**: components/canvas/annotation-decorations-hover-only.ts
+
+### Error 3: Tooltip Not Showing Original Design (2025-01-10)
+- **Root Cause**: New implementations didn't match original API flow and structure
+- **Reproduction**: Hover showed wrong tooltip without proper data
+- **Fix**: Copied exact implementation from backup repository
+- **Artifacts**: components/canvas/annotation-tooltip.ts from backup
+
+---
+
+## WORKING CODE SOLUTIONS
+
+### Square Hover Icon Implementation
+**File**: `components/canvas/annotation-decorations-hover-only.ts`
+- Creates square SVG icon: `<rect x="3" y="3" width="18" height="18" rx="2" ry="2">`
+- No mousedown/mouseup handlers (doesn't block clicks)
+- Connects to tooltip on hover: `showAnnotationTooltip(branchId, type, hoverIcon!)`
+- See full code: `post-implementation-fixes/working-code-solutions.md`
+
+### Tooltip with Correct Branch Data
+**File**: `components/canvas/annotation-tooltip.ts`
+- Two-step API flow:
+  1. Fetch branches: `/api/postgres-offline/branches?noteId=${noteId}`
+  2. Fetch document: `/api/postgres-offline/documents/${noteId}/${branchId}`
+- ID normalization: `branch-UUID` (UI) vs `UUID` (DB)
+- Auto-scrollbar: `checkTooltipScrollable()` function
+- See full code: `post-implementation-fixes/working-code-solutions.md`
+
+### WebKit Cursor Fix
+**File**: `components/canvas/webkit-annotation-cursor-fix.ts`
+- Detects WebKit browsers (Safari/Chrome)
+- Manually places cursor using ProseMirror's TextSelection API
+- Registered BEFORE hover plugins to handle clicks first
+
+### CSS Fix
+**File**: `components/canvas/tiptap-editor-plain.tsx`
+```css
+/* Removed these problematic properties */
+.annotation {
+  /* position: relative; REMOVED */
+  /* transform: translateY(-1px); REMOVED */
+  /* z-index: 1; REMOVED */
+}
+```
+
+### Plugin Registration Order (Critical)
+```typescript
+// Order matters - cursor fix first!
+editor.registerPlugin(WebKitAnnotationCursorFix())
+editor.registerPlugin(AnnotationDecorationsHoverOnly())
+```
 
 ---
 
