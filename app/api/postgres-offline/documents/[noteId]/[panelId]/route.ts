@@ -71,3 +71,42 @@ export async function GET(
     )
   }
 }
+
+// POST /api/postgres-offline/documents/[noteId]/[panelId] - Save a document
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ noteId: string; panelId: string }> }
+) {
+  try {
+    const { noteId, panelId } = await params
+    const body = await request.json()
+    const { content, version } = body
+    
+    // Coerce noteId slug to UUID if needed
+    const noteKey = coerceEntityId(noteId)
+    const normalizedPanelId = normalizePanelId(noteKey, panelId)
+    
+    // Prepare content - wrap string content in HTML format
+    const contentToSave = typeof content === 'string' 
+      ? { html: content }
+      : content
+    
+    // Save the document
+    const result = await pool.query(
+      `INSERT INTO document_saves (note_id, panel_id, content, version)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (note_id, panel_id, version) 
+       DO UPDATE SET content = $3, created_at = NOW()
+       RETURNING *`,
+      [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1]
+    )
+    
+    return NextResponse.json(result.rows[0])
+  } catch (error) {
+    console.error('[POST /api/postgres-offline/documents/[noteId]/[panelId]] Error:', error)
+    return NextResponse.json(
+      { error: 'Failed to save document' },
+      { status: 500 }
+    )
+  }
+}

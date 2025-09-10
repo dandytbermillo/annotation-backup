@@ -27,7 +27,7 @@ function getHealthPool(): Pool {
   return healthPool;
 }
 
-export async function HEAD(request: NextRequest) {
+export async function HEAD(_request: NextRequest) {
   const startTime = Date.now();
   
   try {
@@ -43,7 +43,7 @@ export async function HEAD(request: NextRequest) {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     });
-  } catch (error) {
+  } catch (_error) {
     // Service unavailable if DB is down
     return new NextResponse(null, {
       status: 503,
@@ -55,7 +55,7 @@ export async function HEAD(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   const startTime = Date.now();
   
   try {
@@ -70,13 +70,13 @@ export async function GET(request: NextRequest) {
     // Check queue table exists
     let queueStatus = 'unknown';
     try {
-      const queueResult = await pool.query(`
+      await pool.query(`
         SELECT COUNT(*) as queue_depth 
         FROM offline_queue 
         WHERE status = 'pending'
       `);
       queueStatus = 'healthy';
-    } catch (e) {
+    } catch (_e) {
       queueStatus = 'missing';
     }
     
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     });
-  } catch (error) {
+  } catch (_error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     const response = {
