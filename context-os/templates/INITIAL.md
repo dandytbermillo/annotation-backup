@@ -6,6 +6,7 @@
 **Created Date**: YYYY-MM-DD  
 **Status**: 📝 PLANNED  
 **Priority**: [critical | high | medium | low]  
+**Severity (Process Guide)**: [Critical | High | Medium | Low]  
 **Estimated Risk**: [high | medium | low]  
 **Target Branch**: feat/[feature-slug]  
 **Iteration Count**: 0  
@@ -14,6 +15,8 @@
 
 ## SUMMARY
 [One paragraph executive summary. What is being built and why? Maximum 3-4 sentences.]
+
+Note: This template seeds `initial.md`, `implementation.md`, or a PRP. When used as `implementation.md`, maintain ATTEMPT HISTORY and ERRORS as living logs.
 
 ---
 
@@ -55,7 +58,7 @@
 ### Authoritative Documents
 [Documents that MUST be followed - mark with ⚠️]
 - ⚠️ **Architecture Guide**: `docs/[architecture-doc].md` - All patterns must comply
-- ⚠️ **Process Guide**: `docs/proposal/DOCUMENTATION_PROCESS_GUIDE.md` - v1.4.5 compliance required
+- ⚠️ **Process Guide**: `docs/documentation_process_guide/DOCUMENTATION_PROCESS_GUIDE.md` - Compliance required
 - **Related Feature**: `docs/proposal/[related-feature]/` - Reference implementation
 
 ### External References
@@ -65,6 +68,26 @@
 
 ### Exceptions to Standards
 - [Standard Rule]: [Exception reason and approach]
+
+---
+
+## REPOSITORY LOCATION & STRUCTURE (Required)
+All paths below are relative to the repository root.
+
+- **Canonical Path**: `docs/proposal/<feature-slug>/`
+- **Migrate Files**:
+  - Move or create `docs/proposal/<feature-slug>/initial.md`
+  - Move or create `docs/proposal/<feature-slug>/implementation.md`
+  - Create subfolders:
+    - `docs/proposal/<feature-slug>/reports/` (main Implementation Report)
+    - `docs/proposal/<feature-slug>/implementation-details/`
+    - `docs/proposal/<feature-slug>/post-implementation-fixes/` (with `README.md` index)
+- **Migration Note** (add to `initial.md`): “Migrated from `<previous-path>` on YYYY-MM-DD.”
+- If migration is blocked, proceed in current location and record the deviation (see Deviation Logging); complete migration when unblocked.
+
+Migration example (for hover annotation icon):
+- Target: `docs/proposal/hover_annotation_icon/`
+- If renaming from older slug (e.g., `sticky_highlight_effect`), record rationale under “Deviations From Implementation Plan/Guide”.
 
 ---
 
@@ -256,19 +279,99 @@ npm run db:migrate
 
 ---
 
-## ERROR TRACKING
-[Living log - append after each implementation attempt]
+## ATTEMPT HISTORY
+[Append a new entry on each attempt; keep terse and factual]
 
 ```yaml
-# Example format (uncomment and fill when errors occur):
+# Example
+- attempt: 1
+  date: YYYY-MM-DD HH:MM
+  action: "Implemented X; ran tests Y"
+  result: "Passed/Failed"
+  notes: "Key observations or blockers"
+```
+
+---
+
+## ERRORS
+[Append when failures occur: root cause, reproduction, and fix]
+
+```yaml
+# Example format:
 # - attempt: 1
 #   date: YYYY-MM-DD HH:MM
 #   error: "Brief error description"
-#   cause: "Root cause"
-#   fix: "How it was/will be fixed"
+#   reproduction: "Steps or command(s) to reproduce"
+#   root_cause: "Root cause"
+#   fix: "Applied or proposed fix"
 #   command: "Command that failed"
 #   resolved: false
 ```
+
+---
+
+## DEVIATION LOGGING REQUIREMENTS
+- In `implementation.md` or the Implementation Report, include a “Deviations From Implementation Plan/Guide” section for any structural or behavioral differences.
+- In `initial.md`, append to ATTEMPT HISTORY and add an ERRORS item if canonical structure cannot be followed (reason + workaround + next steps).
+
+---
+
+## POST-IMPLEMENTATION FIXES (Mandatory)
+- **Classify Severity** per Documentation Process Guide: [Critical | High | Medium | Low]
+- **Create Fix Report** at:
+  - `docs/proposal/<feature-slug>/post-implementation-fixes/YYYY-MM-DD-<feature-slug>.md`
+- **Artifacts**:
+  - Place long logs/screenshots under:
+    - `docs/proposal/<feature-slug>/post-implementation-fixes/artifacts/`
+- **Update Index**:
+  - Edit `docs/proposal/<feature-slug>/post-implementation-fixes/README.md` to add the fix to the table/counters.
+- **Fix Report Must Include**:
+  - Summary: 1–3 sentences
+  - Files Modified: paths + brief rationale
+  - Validation: steps and observations; screenshots/log links if any
+  - Deviations From Implementation Plan/Guide: variance from `implementation.md` or structure; rationale
+  - Root Cause and Fix
+  - Follow-ups/TODOs
+- **Back‑fill This Doc**:
+  - Append to ATTEMPT HISTORY (what was attempted and when).
+  - Append to ERRORS if failures occurred (root cause, reproduction, fix).
+
+Quick skeleton for a fix report:
+```md
+# <Feature Title> — Post‑Implementation Fix (YYYY-MM-DD)
+**Severity**: [Critical/High/Medium/Low]
+**Linked Implementation**: ../implementation.md
+
+## Summary
+[1–3 sentence overview]
+
+## Files Modified
+- `path/to/file`: [rationale]
+
+## Validation
+- Steps:
+  1) [...]
+  2) [...]
+- Observations:
+  - [...]
+- Artifacts:
+  - `artifacts/<file-or-screenshot>` (link if applicable)
+
+## Deviations From Implementation Plan/Guide
+- [Describe any deviations and rationale]
+
+## Root Cause and Fix
+- Root Cause: [...]
+- Fix: [...]
+
+## Follow-ups / TODOs
+- [ ] [...]
+```
+
+Index update reminder for `post-implementation-fixes/README.md`:
+- Increment total fix counter(s)
+- Add a table row:
+  - Date | Severity | Title | Link | Status
 
 ---
 
@@ -312,9 +415,10 @@ npm run db:migrate
    - Scope boundaries (do not implement out-of-scope items)
 
 4. **MUST TRACK**:
-   - Update ERROR TRACKING section if failures occur
+   - Update ATTEMPT HISTORY after each attempt
+   - Update ERRORS section if failures occur (root cause, reproduction, fix)
    - Increment iteration_count after each attempt
-   - Document root causes and fixes
+   - Create and index Post‑Implementation Fix reports when applicable
 
 5. **MUST STOP IF**:
    - Security vulnerability detected
@@ -324,6 +428,6 @@ npm run db:migrate
 
 ---
 
-**Template Version**: 2.0.0  
-**Based On**: Context-OS requirements + PostgreSQL persistence example  
-**Last Updated**: 2025-09-06
+**Template Version**: 2.1.0  
+**Based On**: Context-OS requirements + Documentation Process Guide  
+**Last Updated**: 2025-09-10

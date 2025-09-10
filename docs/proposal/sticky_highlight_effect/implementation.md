@@ -575,3 +575,85 @@ Total: ~6 hours for complete implementation
 - Phases 2 and 3 can be delivered incrementally
 - Consider A/B testing for keyboard shortcuts
 - Monitor user feedback on boundary indicators
+
+---
+
+## ATTEMPT HISTORY
+
+### 2025-01-09: Initial Implementation
+- Created implementation plan based on user requirements
+- Implemented Phase 1 with `inclusive: false` and `keepOnSplit: false`
+- Created `ClearStoredMarksAtBoundary` plugin
+- **Result**: Partial success - some boundary issues remained
+
+### 2025-01-10: Post-Implementation Fixes
+
+#### Attempt 1: Basic Boundary Detection (FAILED)
+- Used `rangeHasMark(from, from)` for boundary detection
+- **Issue**: Zero-width range detection unreliable
+- **Files**: `clear-stored-marks-plugin.ts` v1
+
+#### Attempt 2: Three-Check System (FAILED)
+- Added `inStored`, `inHere`, `beforeHas` checks
+- **Issue**: Missing `afterHas` check, still wrong approach
+- **Files**: `clear-stored-marks-plugin.ts` v2
+
+#### Attempt 3: DOM-Level Interception (FAILED)
+- Created `AnnotationStrictBoundary` with `beforeinput` handler
+- **Issue**: Tried to prevent extension instead of allowing it
+- **Files**: `annotation-strict-boundary.ts`
+
+#### Attempt 4: Transaction Filtering (FAILED)
+- Created `AnnotationExclusionPlugin` with transaction filters
+- **Issue**: Too late in pipeline
+- **Files**: `annotation-exclusion-plugin.ts`
+
+#### Attempt 5: Apply Marks at Boundaries (SUCCESS)
+- Created `AnnotationStartBoundaryFix` to explicitly apply marks
+- Removed `inclusive: false` to work with defaults
+- **Result**: Both boundaries working correctly
+- **Files**: `annotation-start-boundary-fix.ts`
+
+#### Additional UX Fix
+- Removed annotation click handler to improve editing experience
+- Added click handler to hover icon for branch window
+- **Result**: Clean separation of editing vs navigation
+
+---
+
+## ERRORS
+
+### Error 1: Characters Detaching at Boundaries
+- **Root Cause**: Misunderstood requirements - tried to prevent extension instead of allowing it
+- **Reproduction**: Type at start/end of annotation
+- **Fix**: Apply annotation marks at boundaries instead of clearing them
+- **Prevention**: Test with vanilla behavior first
+
+### Error 2: Cursor Disappearing
+- **Root Cause**: Plugin interference with cursor positioning
+- **Reproduction**: Click at annotation boundary with all plugins enabled
+- **Fix**: Simplified plugin approach, removed aggressive handlers
+- **Prevention**: Test incrementally with plugins
+
+### Error 3: Enter Key Extending Annotation
+- **Root Cause**: `keepOnSplit: false` was commented out
+- **Reproduction**: Press Enter at annotation boundary
+- **Fix**: Properly set `keepOnSplit: false`
+- **Prevention**: Verify all configuration properties are active
+
+---
+
+## DEVIATIONS FROM ORIGINAL PLAN
+
+1. **Mark Configuration**: Plan suggested `inclusive: false`, but final solution uses default (true)
+   - **Rationale**: Default behavior correct for end boundary when combined with plugin
+
+2. **Plugin Approach**: Plan suggested boundary detection and mark clearing
+   - **Actual**: Plugin applies marks at boundaries rather than clearing
+   - **Rationale**: Fundamental misunderstanding of requirements in original plan
+
+3. **Phases**: Only Phase 1 was truly necessary
+   - **Rationale**: Core issue solved without keyboard shortcuts or visual indicators
+
+4. **Testing**: Required extensive manual testing and multiple iterations
+   - **Rationale**: Complex interaction between plugins and mark behavior

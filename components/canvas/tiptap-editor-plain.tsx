@@ -248,23 +248,22 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             color: #2c3e50;
           `,
         },
-        handleClick: (view, pos, event) => {
-          // Handle clicks on annotation spans
-          const target = event.target as HTMLElement
-          if (target.classList.contains('annotation') || target.closest('.annotation')) {
-            const annotationElement = target.classList.contains('annotation') ? target : target.closest('.annotation') as HTMLElement
-            const branchId = annotationElement.getAttribute('data-branch') || annotationElement.getAttribute('data-branch-id')
-            
-            if (branchId) {
-              // Dispatch event to open panel
-              window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId } }))
-            }
-            
-            // Prevent text selection on click
-            return true
-          }
-          return false
-        },
+        // Removed handleClick to allow normal text editing when clicking annotations
+        // The branch window will only open via the hover icon click
+        // handleClick: (view, pos, event) => {
+        //   const target = event.target as HTMLElement
+        //   if (target.classList.contains('annotation') || target.closest('.annotation')) {
+        //     const annotationElement = target.classList.contains('annotation') ? target : target.closest('.annotation') as HTMLElement
+        //     const branchId = annotationElement.getAttribute('data-branch') || annotationElement.getAttribute('data-branch-id')
+        //     
+        //     if (branchId) {
+        //       window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId } }))
+        //     }
+        //     
+        //     return true
+        //   }
+        //   return false
+        // },
       },
     })
 

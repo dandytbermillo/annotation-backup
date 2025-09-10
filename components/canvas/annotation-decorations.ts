@@ -424,6 +424,15 @@ export const AnnotationDecorations = () => {
         hoverIcon.style.cssText = 'position:fixed;display:none;z-index:10000;pointer-events:auto;'
         document.body.appendChild(hoverIcon)
         
+        // Add click handler to open branch window
+        hoverIcon.addEventListener('click', (e) => {
+          e.stopPropagation()
+          const branchId = hoverIcon.getAttribute('data-branch-id')
+          if (branchId) {
+            window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId } }))
+          }
+        })
+        
         hoverIcon.addEventListener('mouseenter', () => {
           isOverIcon = true
           // Clear any pending hide timeouts to prevent race conditions
