@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Safari Cursor Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 40px;
+    }
+    
+    .editor {
+      border: 1px solid #ccc;
+      padding: 20px;
+      min-height: 200px;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+    
+    /* Test 1: Basic inline span */
+    .test1 .annotation {
+      background: yellow;
+      padding: 2px 4px;
+    }
+    
+    /* Test 2: Inline-block span (research-backed solution) */
+    .test2 .annotation {
+      background: yellow;
+      padding: 2px 4px;
+      display: inline-block;
+      line-height: 1.2;
+      vertical-align: baseline;
+    }
+    
+    /* Test 3: With webkit-specific fixes */
+    .test3 .annotation {
+      background: yellow;
+      padding: 2px 4px;
+      display: inline-block;
+      line-height: 1.2;
+      vertical-align: baseline;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    
+    /* Test 4: Using mark tag instead of span */
+    mark {
+      padding: 2px 4px;
+    }
+    
+    h3 {
+      margin-top: 30px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>Safari Annotation Cursor Tests</h1>
+  <p>Test clicking inside the yellow highlighted text in Safari. Can you see the cursor? Can you type?</p>
+  
+  <h3>Test 1: Basic inline span (likely broken)</h3>
+  <div class="editor test1" contenteditable="true">
+    Normal text <span class="annotation">click here to test cursor</span> more text
+  </div>
+  
+  <h3>Test 2: Inline-block span (Notion/Medium solution)</h3>
+  <div class="editor test2" contenteditable="true">
+    Normal text <span class="annotation">click here to test cursor</span> more text
+  </div>
+  
+  <h3>Test 3: Inline-block with webkit fixes</h3>
+  <div class="editor test3" contenteditable="true">
+    Normal text <span class="annotation">click here to test cursor</span> more text
+  </div>
+  
+  <h3>Test 4: Using mark tag</h3>
+  <div class="editor test4" contenteditable="true">
+    Normal text <mark>click here to test cursor</mark> more text
+  </div>
+  
+  <h3>Test 5: Non-editable span (cursor at boundaries only)</h3>
+  <div class="editor test5" contenteditable="true">
+    Normal text <span contenteditable="false" style="background: yellow; padding: 2px 4px;">this is not editable</span> more text
+  </div>
+  
+  <script>
+    // Log clicks for debugging
+    document.querySelectorAll('.editor').forEach(editor => {
+      editor.addEventListener('click', (e) => {
+        const selection = window.getSelection();
+        console.log('Clicked:', e.target);
+        console.log('Selection:', selection.toString());
+        console.log('Focus node:', selection.focusNode);
+        console.log('Focus offset:', selection.focusOffset);
+      });
+    });
+  </script>
+</body>
+</html>

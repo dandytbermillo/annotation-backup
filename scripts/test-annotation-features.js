@@ -163,18 +163,16 @@ async function runTests() {
   console.log('\n📦 Testing Batch Operations...');
   
   const batchData = {
-    documents: [
+    operations: [
       {
-        note_id: 'test-note-1',
-        panel_id: 'test-panel-1',
-        content: '<p>Batch document 1</p>',
-        version: 1
+        noteId: 'test-note-1',
+        panelId: 'test-panel-1',
+        content: '<p>Batch document 1</p>'
       },
       {
-        note_id: 'test-note-2',
-        panel_id: 'test-panel-2',
-        content: '<p>Batch document 2</p>',
-        version: 1
+        noteId: 'test-note-2',
+        panelId: 'test-panel-2',
+        content: '<p>Batch document 2</p>'
       }
     ]
   };

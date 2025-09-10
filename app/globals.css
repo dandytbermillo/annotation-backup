@@ -93,6 +93,18 @@ body {
   }
 }
 
+/* Safari/WebKit specific fixes for contenteditable */
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Force Safari to show caret with transparent border trick */
+.ProseMirror {
+  border: 1px solid transparent;
+  caret-color: black;
+}
+
 /* Annotation styles */
 .annotation {
   padding: 2px 4px;
@@ -101,6 +113,9 @@ body {
   transition: all 0.2s ease;
   position: relative;
   display: inline-block;
+  /* Fix tall cursor in Safari/Electron when using inline-block */
+  line-height: 1.2;
+  vertical-align: baseline;
 }
 
 .annotation:hover {

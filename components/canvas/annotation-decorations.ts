@@ -590,9 +590,39 @@ export const AnnotationDecorations = () => {
         }
       }
       
+      // Overlay suppression during clicks (helps Safari/Electron caret)
+      let restoreTimer: any = null
+      const suppressOverlays = () => {
+        if (hoverIcon) hoverIcon.style.pointerEvents = 'none'
+        if (tooltipElement) tooltipElement.style.pointerEvents = 'none'
+        if (restoreTimer) clearTimeout(restoreTimer)
+        restoreTimer = setTimeout(() => {
+          if (hoverIcon) hoverIcon.style.pointerEvents = 'auto'
+          if (tooltipElement) tooltipElement.style.pointerEvents = 'auto'
+        }, 120)
+      }
+      const handleMouseDown = (e: MouseEvent) => {
+        const t = e.target as HTMLElement
+        if (t.closest('.annotation') || t.closest('.annotation-hover-target')) {
+          suppressOverlays()
+        }
+      }
+      const handleMouseUp = () => {
+        if (restoreTimer) {
+          // Ensure restoration shortly after mouseup
+          clearTimeout(restoreTimer)
+          restoreTimer = setTimeout(() => {
+            if (hoverIcon) hoverIcon.style.pointerEvents = 'auto'
+            if (tooltipElement) tooltipElement.style.pointerEvents = 'auto'
+          }, 60)
+        }
+      }
+
       // Attach listeners to the editor DOM
       editorView.dom.addEventListener('mouseover', handleMouseOver)
       editorView.dom.addEventListener('mouseout', handleMouseOut)
+      editorView.dom.addEventListener('mousedown', handleMouseDown)
+      editorView.dom.addEventListener('mouseup', handleMouseUp)
       
       
       return {
@@ -600,6 +630,8 @@ export const AnnotationDecorations = () => {
           // Clean up event listeners when plugin is destroyed
           editorView.dom.removeEventListener('mouseover', handleMouseOver)
           editorView.dom.removeEventListener('mouseout', handleMouseOut)
+          editorView.dom.removeEventListener('mousedown', handleMouseDown)
+          editorView.dom.removeEventListener('mouseup', handleMouseUp)
           
           // Clean up hover icon if it exists
           if (hoverIcon && hoverIcon.parentNode) {

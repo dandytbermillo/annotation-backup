@@ -15,6 +15,7 @@ import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
+import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
 // (removed unused yjs-provider import to avoid bundling Yjs in plain mode)
 
 // Custom annotation mark extension based on the source implementation
@@ -180,6 +181,8 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
         editor.registerPlugin(perfPlugin)
         // Prevent annotation marks from leaking at boundaries (IME-safe)
         editor.registerPlugin(clearMarksPlugin)
+        // Browser-specific caret placement fixes (Safari/Electron)
+        editor.registerPlugin(BrowserSpecificCursorFix())
         console.log('[TipTapEditor] Plugins registered successfully')
       },
       onUpdate: ({ editor }) => {

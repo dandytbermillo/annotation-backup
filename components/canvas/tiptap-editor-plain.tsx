@@ -21,6 +21,13 @@ import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
+// import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
+// import { WebKitAnnotationClickFix } from './webkit-annotation-click-fix'
+// import { SafariInlineBlockFix } from './safari-inline-block-fix'
+// import { SafariCursorFixFinal } from './safari-cursor-fix-final'
+// import { SafariNotionFix } from './safari-notion-fix'
+import { SafariProvenFix } from './safari-proven-fix'
+import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 
 // Custom annotation mark extension (same as Yjs version)
@@ -88,8 +95,7 @@ const Annotation = Mark.create({
     const className = `annotation annotation-${type}`
     
     return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, { 
-      class: className,
-      style: 'cursor: pointer;'
+      class: className
     }), 0]
   },
 })
@@ -173,6 +179,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         editor.registerPlugin(PerformanceMonitor())
         // Fix for annotation start boundary
         editor.registerPlugin(AnnotationStartBoundaryFix())
+        // Research-proven Safari fix: inline-block + margin + webkit-user-modify
+        editor.registerPlugin(SafariProvenFix())
+        // Manual cursor placement for Safari clicks
+        editor.registerPlugin(SafariManualCursorFix())
         // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         
         // Don't clear content or set loading false here if we're still loading
@@ -312,13 +322,25 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       style.textContent = `
         .tiptap-editor .annotation {
           background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
-          padding: 2px 6px;
-          border-radius: 4px;
-          cursor: pointer;
+          padding: 1px 2px; /* Minimal padding to avoid issues */
+          border-radius: 2px;
+          cursor: text !important;
           position: relative;
-          transition: all 0.3s ease;
+          transition: background 0.2s ease;
           font-weight: 600;
-          border-bottom: 2px solid transparent;
+          border-bottom: 1px solid transparent;
+          
+          /* PROVEN FIXES from research document */
+          display: inline-block !important;
+          margin-right: 1px; /* Helps with adjacent spans */
+          vertical-align: middle; /* Prevents tall cursor */
+          line-height: 1; /* Normalizes cursor height */
+          
+          /* Safari-specific fixes */
+          -webkit-user-modify: read-write-plaintext-only;
+          -webkit-user-select: text;
+          user-select: text;
+          caret-color: auto;
         }
         
         .tiptap-editor .annotation:hover {
@@ -425,6 +447,84 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         
         .annotation-tooltip::-webkit-scrollbar-thumb:hover {
           background: #555;
+        }
+        
+        /* Aggressive WebKit-specific fixes for cursor visibility */
+        .tiptap-editor:focus .annotation {
+          cursor: text !important;
+          -webkit-user-select: text !important;
+          user-select: text !important;
+        }
+        
+        /* Safari/WebKit-specific aggressive fixes */
+        @supports (-webkit-appearance: none) {
+          .tiptap-editor .annotation {
+            -webkit-user-modify: read-write-plaintext-only;
+            -webkit-user-select: text !important;
+            -webkit-touch-callout: none;
+            caret-color: black !important;
+            -webkit-text-fill-color: initial !important;
+          }
+          
+          /* Force cursor visibility in annotations */
+          .tiptap-editor.cursor-in-annotation {
+            caret-color: black !important;
+          }
+          
+          /* Remove any pointer events that might interfere */
+          .tiptap-editor .annotation::before,
+          .tiptap-editor .annotation::after {
+            pointer-events: none !important;
+          }
+        }
+        
+        /* Ensure proper focus outline in WebKit */
+        .editor-focused {
+          outline: none !important;
+        }
+        
+        /* WebKit fix active state */
+        .webkit-fix-active .annotation {
+          -webkit-user-select: text !important;
+          user-select: text !important;
+          pointer-events: auto !important;
+        }
+        
+        /* Force text cursor on all children of annotations */
+        .tiptap-editor .annotation * {
+          cursor: text !important;
+        }
+        
+        /* Radical WebKit-only fixes */
+        @media screen and (-webkit-min-device-pixel-ratio:0) {
+          /* Safari/Chrome specific */
+          .tiptap-editor .annotation {
+            -webkit-user-modify: read-write !important;
+            user-modify: read-write !important;
+            -webkit-user-select: text !important;
+            user-select: text !important;
+            caret-color: black !important;
+            color: inherit !important;
+            -webkit-text-fill-color: currentColor !important;
+          }
+          
+          /* Force caret visibility when focused */
+          .tiptap-editor.webkit-focused .annotation {
+            caret-color: black !important;
+            animation: webkit-caret-fix 0.1s;
+          }
+          
+          @keyframes webkit-caret-fix {
+            0% { opacity: 0.99; }
+            100% { opacity: 1; }
+          }
+          
+          /* Remove all pseudo-elements that might interfere */
+          .tiptap-editor .annotation::before,
+          .tiptap-editor .annotation::after,
+          .tiptap-editor .annotation::selection {
+            background: transparent !important;
+          }
         }
         
         .annotation-tooltip.visible {

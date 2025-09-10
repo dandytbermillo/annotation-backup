@@ -13,6 +13,7 @@ import { Mark, mergeAttributes } from '@tiptap/core'
 import { AnnotationDecorations } from './annotation-decorations'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
+import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
 
 export interface TiptapEditorHandle {
   getHTML: () => string
@@ -91,6 +92,8 @@ const TiptapEditorCollab = forwardRef<TiptapEditorHandle, TiptapEditorProps>(({
       editor.registerPlugin(PerformanceMonitor())
       // Prevent annotation marks from leaking at boundaries (IME-safe)
       editor.registerPlugin(ClearStoredMarksAtBoundary())
+      // Browser-specific cursor fix for annotations
+      editor.registerPlugin(BrowserSpecificCursorFix())
     },
     onUpdate: ({ editor }) => { onUpdate?.(editor.getHTML()) },
     onSelectionUpdate: ({ editor }) => {
