@@ -1,5 +1,12 @@
 import { Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
+import { 
+  initializeTooltip, 
+  showAnnotationTooltip, 
+  hideAnnotationTooltip, 
+  hideAnnotationTooltipSoon,
+  cleanupTooltip 
+} from './annotation-tooltip'
 
 /**
  * Annotation Decorations - Hover Only Version
@@ -101,22 +108,15 @@ export const AnnotationDecorationsHoverOnly = () => {
         }
       }
 
+      // Initialize tooltip on startup
+      initializeTooltip()
+      
       // Click handler for hover icon
       hoverIcon.addEventListener('click', (e) => {
         e.stopPropagation()
         const branchId = hoverIcon!.getAttribute('data-branch-id')
         if (branchId) {
-          // Dispatch event to show tooltip using the original implementation
-          const event = new CustomEvent('show-annotation-tooltip', {
-            detail: { 
-              branchId, 
-              element: hoverIcon,
-              type: hoverIcon!.getAttribute('data-annotation-type') || 'note'
-            }
-          })
-          window.dispatchEvent(event)
-          
-          // Also dispatch panel open event
+          // Open panel
           window.dispatchEvent(new CustomEvent('create-panel', { 
             detail: { panelId: branchId } 
           }))
@@ -133,14 +133,11 @@ export const AnnotationDecorationsHoverOnly = () => {
         hoverIcon!.style.borderColor = '#cbd5e0'
         hoverIcon!.style.transform = 'scale(1.1)'
         
-        // Dispatch event to show the original tooltip
+        // Show the original tooltip using the shared function
         const branchId = hoverIcon!.getAttribute('data-branch-id')
         const type = hoverIcon!.getAttribute('data-annotation-type') || 'note'
         if (branchId) {
-          const event = new CustomEvent('show-annotation-tooltip', {
-            detail: { branchId, element: hoverIcon, type }
-          })
-          window.dispatchEvent(event)
+          showAnnotationTooltip(branchId, type, hoverIcon!)
         }
       })
 
@@ -149,8 +146,8 @@ export const AnnotationDecorationsHoverOnly = () => {
         hoverIcon!.style.borderColor = '#e2e8f0'
         hoverIcon!.style.transform = 'scale(1)'
         
-        // Dispatch event to hide tooltip
-        window.dispatchEvent(new CustomEvent('hide-annotation-tooltip'))
+        // Hide tooltip
+        hideAnnotationTooltipSoon()
         hideHoverIcon()
       })
 
@@ -167,6 +164,9 @@ export const AnnotationDecorationsHoverOnly = () => {
             hoverIcon.parentNode.removeChild(hoverIcon)
             hoverIcon = null
           }
+          
+          // Clean up tooltip
+          cleanupTooltip()
         }
       }
     }

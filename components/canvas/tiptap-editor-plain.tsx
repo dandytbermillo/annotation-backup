@@ -18,7 +18,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
 // import { AnnotationDecorations } from './annotation-decorations'
-import { AnnotationDecorationsFixed } from './annotation-decorations-fixed'
+import { AnnotationDecorationsHoverOnly } from './annotation-decorations-hover-only'
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
@@ -201,9 +201,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           console.error('[TiptapEditorPlain] Failed to register WebKitAnnotationCursorFix:', error)
         }
         
-        // Then register AnnotationDecorationsFixed with square icon for hover UI
-        console.log('[TiptapEditorPlain] Registering AnnotationDecorationsFixed...')
-        editor.registerPlugin(AnnotationDecorationsFixed())
+        // Register AnnotationDecorationsHoverOnly with square icon for hover UI
+        console.log('[TiptapEditorPlain] Registering AnnotationDecorationsHoverOnly...')
+        editor.registerPlugin(AnnotationDecorationsHoverOnly())
         
         // KEEP DISABLED: Old Safari-specific plugins that interfere
         // - SafariProvenFix: deprecated webkitUserModify property causes issues  
@@ -446,6 +446,85 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           100% { transform: scale(1); }
         }
         */
+        
+        /* Tooltip styles with scrollbar support */
+        .annotation-tooltip {
+          position: fixed;
+          background: white;
+          border: 1px solid #e1e8ed;
+          border-radius: 8px;
+          padding: 12px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 10001;
+          max-width: 300px;
+          max-height: 400px;
+          overflow-y: auto;
+          overflow-x: hidden;
+          opacity: 0;
+          visibility: hidden;
+          transition: opacity 0.2s ease, visibility 0.2s ease, transform 0.2s ease;
+          transform: translateY(5px);
+          pointer-events: none;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar {
+          width: 6px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-track {
+          background: #f1f1f1;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb {
+          background: #888;
+          border-radius: 3px;
+        }
+        
+        .annotation-tooltip::-webkit-scrollbar-thumb:hover {
+          background: #555;
+        }
+        
+        .annotation-tooltip.visible {
+          opacity: 1;
+          visibility: visible;
+          transform: translateY(0);
+          pointer-events: auto;
+        }
+        
+        .annotation-tooltip .tooltip-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+          font-weight: 600;
+        }
+        
+        .annotation-tooltip .tooltip-content {
+          color: #666;
+          font-size: 14px;
+          line-height: 1.4;
+          max-height: 200px;
+          overflow-y: auto;
+        }
+        
+        .annotation-tooltip .tooltip-footer {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid #e1e8ed;
+          font-size: 12px;
+          color: #999;
+        }
+        
+        .annotation-tooltip .tooltip-icon {
+          font-size: 16px;
+        }
+        
+        .annotation-tooltip.has-scroll .tooltip-content {
+          padding-right: 4px;
+          border-bottom: 1px solid #e1e8ed;
+          margin-bottom: 4px;
+        }
         
         /* Hover icon styles */
         .annotation-hover-icon {

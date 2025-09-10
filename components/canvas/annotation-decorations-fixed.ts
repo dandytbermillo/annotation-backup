@@ -41,24 +41,10 @@ export const AnnotationDecorationsFixed = () => {
       `
       document.body.appendChild(hoverIcon)
 
-      // Create tooltip element
+      // Create tooltip element using the original class
       tooltipElement = document.createElement('div')
       tooltipElement.className = 'annotation-tooltip'
-      tooltipElement.style.cssText = `
-        position: fixed;
-        background: white;
-        border: 2px solid #4299e1;
-        border-radius: 6px;
-        padding: 10px 14px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.2);
-        display: none;
-        z-index: 99999;
-        max-width: 300px;
-        min-width: 150px;
-        font-size: 14px;
-        pointer-events: none;
-        opacity: 0;
-      `
+      // Don't add inline styles - use the CSS classes we added
       document.body.appendChild(tooltipElement)
 
       // Show hover icon ONLY (no tooltip when hovering annotation text)
@@ -143,9 +129,36 @@ export const AnnotationDecorationsFixed = () => {
         }
       })
 
+      // Helper function to get type icon
+      const getTypeIcon = (type: string) => {
+        switch(type) {
+          case 'note': return '📝'
+          case 'explore': return '🔍'
+          case 'promote': return '⭐'
+          default: return '📝'
+        }
+      }
+
+      // Helper function to check if tooltip is scrollable
+      const checkTooltipScrollable = () => {
+        if (!tooltipElement) return
+        
+        setTimeout(() => {
+          const contentEl = tooltipElement.querySelector('.tooltip-content') as HTMLElement
+          if (contentEl) {
+            if (contentEl.scrollHeight > contentEl.clientHeight) {
+              tooltipElement.classList.add('has-scroll')
+              contentEl.style.overflowY = 'auto'
+            } else {
+              tooltipElement.classList.remove('has-scroll')
+              contentEl.style.overflowY = 'hidden'
+            }
+          }
+        }, 10)
+      }
+
       // Show tooltip when hovering over the icon
       hoverIcon.addEventListener('mouseenter', async () => {
-        console.log('[AnnotationDecorationsFixed] Icon mouseenter event triggered')
         if (hideTimeout) {
           clearTimeout(hideTimeout)
           hideTimeout = null
@@ -157,28 +170,27 @@ export const AnnotationDecorationsFixed = () => {
         
         // Show tooltip with branch content when hovering icon
         const branchId = hoverIcon!.getAttribute('data-branch-id')
-        console.log('[AnnotationDecorationsFixed] Branch ID from icon:', branchId)
+        const type = currentAnnotation?.getAttribute('data-type') || 'note'
         
         if (branchId && tooltipElement) {
           const iconRect = hoverIcon!.getBoundingClientRect()
-          console.log('[AnnotationDecorationsFixed] Positioning tooltip at:', {
-            left: iconRect.right + 10,
-            top: iconRect.top
-          })
           
-          // Make sure tooltip is visible
+          // Position tooltip
           tooltipElement!.style.left = `${iconRect.right + 10}px`
           tooltipElement!.style.top = `${iconRect.top}px`
-          tooltipElement!.style.display = 'block'
-          tooltipElement!.style.opacity = '1' // Make it visible
-          tooltipElement!.style.visibility = 'visible' // Ensure visibility
-          tooltipElement!.style.zIndex = '99999' // Very high z-index
-          tooltipElement!.style.pointerEvents = 'none' // Ensure it doesn't block
-          tooltipElement!.style.background = 'white' // Ensure background
-          tooltipElement!.style.border = '2px solid #4299e1' // Ensure border
           
-          // Show loading state with more visible styling
-          tooltipElement!.innerHTML = `<div style="color: #718096; padding: 5px;">Loading branch content...</div>`
+          // Show loading state with proper structure
+          tooltipElement!.innerHTML = `
+            <div class="tooltip-header">
+              <span class="tooltip-icon">${getTypeIcon(type)}</span>
+              <span class="tooltip-title">Loading...</span>
+            </div>
+            <div class="tooltip-content">Loading branch content...</div>
+            <div class="tooltip-footer">Click icon to open panel</div>
+          `
+          
+          // Make tooltip visible
+          tooltipElement!.classList.add('visible')
           
           // Fetch branch content (same logic as original)
           const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
@@ -211,39 +223,19 @@ export const AnnotationDecorationsFixed = () => {
                 
                 // Don't truncate content - let scrolling handle long text
                 const fullContent = content || 'No notes added yet'
+                const title = `${type.charAt(0).toUpperCase() + type.slice(1)} annotation`
                 
                 tooltipElement!.innerHTML = `
-                  <div style="font-weight: 600; margin-bottom: 8px; color: #2d3748; font-size: 13px;">
-                    Branch Content
+                  <div class="tooltip-header">
+                    <span class="tooltip-icon">${getTypeIcon(type)}</span>
+                    <span class="tooltip-title">${title}</span>
                   </div>
-                  <div class="tooltip-content" style="
-                    color: #4a5568; 
-                    max-height: 200px; 
-                    overflow-y: auto;
-                    padding-right: 4px;
-                    line-height: 1.5;
-                    white-space: pre-wrap;
-                    word-break: break-word;
-                  ">
-                    ${fullContent}
-                  </div>
-                  <div style="
-                    color: #718096; 
-                    font-size: 11px; 
-                    margin-top: 8px; 
-                    padding-top: 8px; 
-                    border-top: 1px solid #e2e8f0;
-                  ">
-                    Click icon to open panel
-                  </div>
+                  <div class="tooltip-content">${fullContent}</div>
+                  <div class="tooltip-footer">Click icon to open panel</div>
                 `
                 
-                // Check if content is scrollable and add indicator
-                const contentDiv = tooltipElement!.querySelector('.tooltip-content') as HTMLElement
-                if (contentDiv && contentDiv.scrollHeight > contentDiv.clientHeight) {
-                  contentDiv.style.borderBottom = '2px solid #e2e8f0'
-                  contentDiv.style.paddingBottom = '4px'
-                }
+                // Check if content is scrollable
+                checkTooltipScrollable()
               })
               .catch(err => {
                 console.error('[AnnotationDecorationsFixed] Error:', err)
