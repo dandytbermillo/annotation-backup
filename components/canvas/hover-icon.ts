@@ -154,22 +154,43 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     }, 200) // Small delay to prevent flicker
   }
 
+  let noAnnotationTimeout: NodeJS.Timeout | null = null
+  
   const onMove = (e: MouseEvent) => {
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
       // Don't hide if we're over the icon itself
       if (e.target === icon || icon.contains(e.target as Node)) {
+        if (noAnnotationTimeout) {
+          clearTimeout(noAnnotationTimeout)
+          noAnnotationTimeout = null
+        }
         return
       }
       
       const anno = getAnnotationEl(e.target)
       
       if (!anno) {
-        // Only hide if not over icon
-        if (!isOverIcon) {
-          hide()
+        // Add a small delay before hiding to prevent premature hiding
+        // This fixes the issue where icon disappears immediately on first hover
+        if (!noAnnotationTimeout && !isOverIcon) {
+          noAnnotationTimeout = setTimeout(() => {
+            // Double-check we're still not over an annotation
+            const currentTarget = document.elementFromPoint(e.clientX, e.clientY)
+            const stillHasAnnotation = currentTarget && getAnnotationEl(currentTarget)
+            if (!stillHasAnnotation && !isOverIcon) {
+              hide()
+            }
+            noAnnotationTimeout = null
+          }, 100) // Small delay to confirm we've really left the annotation
         }
         return
+      }
+      
+      // Clear the timeout if we found an annotation
+      if (noAnnotationTimeout) {
+        clearTimeout(noAnnotationTimeout)
+        noAnnotationTimeout = null
       }
 
       // Check if it's the same annotation - don't reposition if so
@@ -308,11 +329,22 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     }
   })
 
+  // Add mouseover for initial detection (faster than waiting for mousemove)
+  const onMouseOver = (e: MouseEvent) => {
+    const target = e.target as HTMLElement
+    const anno = getAnnotationEl(target)
+    if (anno && anno !== lastAnno) {
+      // Immediately trigger the icon display on first hover
+      onMove(e)
+    }
+  }
+  
   // Attach event listeners with CAPTURE phase for edit mode reliability
   console.log('[HoverIcon] Attaching event listeners with capture phase')
   
   // Use capture phase (third parameter = true) to get events BEFORE editor processing
   // This is critical for edit mode where TipTap might consume events
+  view.dom.addEventListener('mouseover', onMouseOver, true) // Detect initial hover
   view.dom.addEventListener('mousemove', onMove, true) // true = capture phase
   view.dom.addEventListener('mouseleave', onLeave, { passive: true })
   window.addEventListener('scroll', onScroll, { passive: true })
@@ -330,7 +362,9 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       cancelAnimationFrame(raf)
       if (hideTimeout) clearTimeout(hideTimeout)
       if (typingFadeTO) clearTimeout(typingFadeTO)
+      if (noAnnotationTimeout) clearTimeout(noAnnotationTimeout)
       
+      view.dom.removeEventListener('mouseover', onMouseOver, true)
       view.dom.removeEventListener('mousemove', onMove, true) // Remove capture phase listener
       view.dom.removeEventListener('mouseleave', onLeave)
       window.removeEventListener('scroll', onScroll)

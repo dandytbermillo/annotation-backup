@@ -48,6 +48,7 @@ Status: ✅ COMPLETE
 [→ View all fixes and statistics](../post-implementation-fixes/README.md)
 
 Recent fixes (links):
+- [Edit-mode hover reliability (capture phase)](../post-implementation-fixes/high/2025-09-11-edit-mode-hover-fix.md)
 - Tooltip restoration (structure + auto‑scroll)
 - Safari/Chrome cursor placement (plain mode)
 - Edit‑mode interaction polish

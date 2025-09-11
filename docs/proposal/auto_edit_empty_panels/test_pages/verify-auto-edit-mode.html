@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto Edit Mode Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+        .test-case {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #f9fafb;
+        }
+        .test-case h3 {
+            margin-top: 0;
+            color: #1f2937;
+        }
+        .expected {
+            color: #059669;
+            font-weight: 500;
+        }
+        .steps {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .steps li {
+            margin: 5px 0;
+        }
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        .result-box {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            background: white;
+            border: 1px solid #d1d5db;
+        }
+    </style>
+</head>
+<body>
+    <h1>Auto Edit Mode for Empty Panels - Test Verification</h1>
+    
+    <div class="test-case">
+        <h3>Test Case 1: Empty Panel Creation</h3>
+        <p><strong>Scenario:</strong> Create a new annotation panel with no content</p>
+        <ol class="steps">
+            <li>Select text in the main document</li>
+            <li>Click on an annotation type (Note/Explore/Promote)</li>
+            <li>Observe the newly created panel</li>
+        </ol>
+        <p class="expected">✅ Expected: Panel should open in edit mode automatically (cursor visible, can type immediately)</p>
+        <div class="result-box">
+            <strong>Actual Result:</strong> <span id="test1-result">[ Test pending ]</span>
+        </div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test Case 2: Panel with Existing Content</h3>
+        <p><strong>Scenario:</strong> Open a panel that already has content</p>
+        <ol class="steps">
+            <li>Click on an existing annotation icon</li>
+            <li>Observe the panel when it opens</li>
+        </ol>
+        <p class="expected">✅ Expected: Panel should open in read-only mode (no cursor, content is read-only)</p>
+        <div class="result-box">
+            <strong>Actual Result:</strong> <span id="test2-result">[ Test pending ]</span>
+        </div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test Case 3: Toggling Edit Mode</h3>
+        <p><strong>Scenario:</strong> Toggle between edit and read modes</p>
+        <ol class="steps">
+            <li>Open any panel (empty or with content)</li>
+            <li>Click the edit/view toggle button in the toolbar</li>
+            <li>Verify mode switches correctly</li>
+        </ol>
+        <p class="expected">✅ Expected: Toggle button should work regardless of initial state</p>
+        <div class="result-box">
+            <strong>Actual Result:</strong> <span id="test3-result">[ Test pending ]</span>
+        </div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test Case 4: Empty HTML Content</h3>
+        <p><strong>Scenario:</strong> Panel with only empty HTML tags (e.g., <code>&lt;p&gt;&lt;/p&gt;</code>)</p>
+        <ol class="steps">
+            <li>Create or access a panel with empty HTML structure</li>
+            <li>Observe the initial mode</li>
+        </ol>
+        <p class="expected">✅ Expected: Should be treated as empty and start in edit mode</p>
+        <div class="result-box">
+            <strong>Actual Result:</strong> <span id="test4-result">[ Test pending ]</span>
+        </div>
+    </div>
+
+    <h2>Manual Testing Instructions</h2>
+    <ol>
+        <li>Navigate to <a href="http://localhost:3000" target="_blank">http://localhost:3000</a></li>
+        <li>Go through each test case above</li>
+        <li>Record the actual results in the result boxes</li>
+        <li>Report any unexpected behavior or edge cases</li>
+    </ol>
+
+    <h2>Implementation Details</h2>
+    <p>The auto-edit mode logic is implemented in <code>components/canvas/canvas-panel.tsx</code>:</p>
+    <ul>
+        <li>Function <code>isContentEmpty()</code> checks if content is truly empty</li>
+        <li>Handles both string HTML and ProseMirror JSON formats</li>
+        <li>Strips HTML tags and checks for actual text content</li>
+        <li>Overrides <code>isEditable</code> setting when content is empty</li>
+    </ul>
+
+    <h2>Browser Console Verification</h2>
+    <p>Run these commands in the browser console to verify:</p>
+    <pre><code>// Check if a panel is in edit mode
+document.querySelector('.ProseMirror')?.contentEditable
+
+// Check if content is empty
+document.querySelector('.ProseMirror')?.textContent?.trim().length === 0</code></pre>
+</body>
+</html>

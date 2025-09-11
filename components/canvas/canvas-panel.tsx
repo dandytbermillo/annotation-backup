@@ -26,7 +26,52 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const [isEditing, setIsEditing] = useState(branch.isEditable ?? true)
+  
+  // Check if content is empty to auto-enable edit mode
+  const isContentEmpty = () => {
+    if (!branch.content) return true
+    
+    // Check for empty HTML content or placeholder content
+    if (typeof branch.content === 'string') {
+      const stripped = branch.content.replace(/<[^>]*>/g, '').trim()
+      // Check if truly empty
+      if (stripped.length === 0) return true
+      
+      // Check if it's just the default placeholder content
+      // Default pattern: quoted text + "Start writing your [type] here..."
+      if (stripped.includes('Start writing your') && 
+          (stripped.includes('note here...') || 
+           stripped.includes('explore here...') || 
+           stripped.includes('promote here...'))) {
+        return true
+      }
+    }
+    
+    // Check for empty ProseMirror JSON
+    if (typeof branch.content === 'object' && branch.content.content) {
+      const jsonStr = JSON.stringify(branch.content)
+      // Check if has any actual text content
+      if (!jsonStr.includes('"text"')) return true
+      
+      // Check if it only contains placeholder text
+      if (jsonStr.includes('Start writing your') && 
+          (jsonStr.includes('note here') || 
+           jsonStr.includes('explore here') || 
+           jsonStr.includes('promote here'))) {
+        return true
+      }
+    }
+    
+    return false
+  }
+  
+  // Auto-enable edit mode if content is empty, otherwise respect isEditable
+  const [isEditing, setIsEditing] = useState(() => {
+    // If panel is empty, start in edit mode regardless of isEditable setting
+    if (isContentEmpty()) return true
+    // Otherwise respect the isEditable setting
+    return branch.isEditable ?? true
+  })
   const [zIndex, setZIndex] = useState(1)
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())

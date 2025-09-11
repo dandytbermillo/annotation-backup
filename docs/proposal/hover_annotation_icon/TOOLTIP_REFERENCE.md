@@ -128,3 +128,28 @@ Security & correctness
 - `DATABASE_URL` controls the connection string; no secrets are logged.
 - Server always returns the latest version (`ORDER BY version DESC LIMIT 1`).
 - Client sanitizes content to text prior to insertion; titles are not escaped (see Safety & Performance section).
+
+## Edit-Mode Hover Handling
+
+The hover icon system uses capture-phase event listeners to ensure reliable detection in both edit (focused) and non-edit modes:
+
+### Detection Approach
+- **Capture Phase**: Uses `addEventListener('mousemove', handler, true)` to intercept events before TipTap/ProseMirror
+- **Dual Detection**: Combines `mouseover` for immediate detection and `mousemove` for tracking
+- **Delay Strategy**: 100ms delay before hiding to prevent premature disappearing
+
+### Hit-Testing
+- Primary: DOM traversal via `element.closest('.annotation')`
+- Fallback: `document.elementFromPoint(x, y)` for boundary cases
+- Validation: Double-checks annotation presence before hiding
+
+### Icon Positioning & Z-Index
+- **Z-Index Policy**: Icon (10003) > Tooltip (10002) > Editor content
+- **Offset**: 8px above text in non-edit, 12px in edit mode
+- **Overlap**: Icon slightly overlaps text top edge for smooth mouse transition
+- **Non-interference**: Icon uses `pointer-events: auto` only on the button element
+
+### Browser Compatibility
+- All modern browsers support capture phase (Chrome, Safari, Firefox, Electron)
+- No touch/touchpad-specific handling implemented (desktop-only feature)
+- Long-press policy: Not applicable (no mobile support)
