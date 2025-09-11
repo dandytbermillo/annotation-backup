@@ -9,7 +9,7 @@ import type { EditorView } from '@tiptap/pm/view'
 type HoverIconOpts = {
   view: EditorView
   iconEl?: HTMLElement          // if omitted, we'll create one
-  offset?: number               // px above the line
+  offset?: number               // px above the line (reduced for closer positioning)
   editingOffset?: number        // px above the line while editing
   hideWhileTyping?: boolean
   annotationSelector?: string   // default: '.annotation'
@@ -18,8 +18,8 @@ type HoverIconOpts = {
 export function attachHoverIcon(opts: HoverIconOpts) {
   const {
     view,
-    offset = 24,
-    editingOffset = 36,
+    offset = 8,              // Much closer to text (was 24)
+    editingOffset = 12,      // Closer in edit mode too (was 36)
     hideWhileTyping = true,
     annotationSelector = '.annotation',
   } = opts
@@ -35,7 +35,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 999999;
+    z-index: 10002;
     pointer-events: none;
     overflow: visible;
   `
@@ -76,6 +76,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       transform: translateY(4px) scale(.98);
       pointer-events: auto; /* the only interactive thing in the overlay */
       cursor: pointer;
+      z-index: 10003; /* Higher than tooltip to ensure it stays on top */
     `
     overlay.appendChild(icon)
   }
@@ -119,6 +120,11 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       hideTimeout = null
     }
     
+    // If icon is already visible and we're hovering it, don't reposition
+    if (icon.style.display === 'block' && isOverIcon) {
+      return
+    }
+    
     icon.style.left = `${left}px`
     icon.style.top = `${top}px`
     
@@ -151,29 +157,12 @@ export function attachHoverIcon(opts: HoverIconOpts) {
   const onMove = (e: MouseEvent) => {
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
-      // Debug logging to understand edit mode issue
-      const isEditorFocused = view.hasFocus()
-      const targetElement = e.target as HTMLElement
-      
-      console.log('[HoverIcon] MouseMove Debug:', {
-        target: targetElement.tagName,
-        targetClass: targetElement.className,
-        isEditorFocused,
-        isEditMode: isEditing(),
-        mouseX: e.clientX,
-        mouseY: e.clientY,
-        overlayExists: !!overlay,
-        iconVisible: icon.style.display,
-        targetPath: e.composedPath ? e.composedPath().map((el: any) => el.tagName || el).slice(0, 5) : 'no path'
-      })
-      
       // Don't hide if we're over the icon itself
       if (e.target === icon || icon.contains(e.target as Node)) {
         return
       }
       
       const anno = getAnnotationEl(e.target)
-      console.log('[HoverIcon] Annotation found:', !!anno, anno?.className)
       
       if (!anno) {
         // Only hide if not over icon
@@ -183,30 +172,46 @@ export function attachHoverIcon(opts: HoverIconOpts) {
         return
       }
 
-      lastAnno = anno
-
-      // Don't reposition if we're hovering over the icon
-      if (isOverIcon && icon.style.display === 'block') {
+      // Check if it's the same annotation - don't reposition if so
+      if (lastAnno === anno && icon.style.display === 'block') {
+        // Same annotation and icon already visible, don't reposition
         return
       }
       
-      // Get the exact line rect under the mouse
-      const lineRect = getLineRectAtY(anno, e.clientY)
+      lastAnno = anno
+      
+      // Get the annotation's bounding rect
+      const annoRect = anno.getBoundingClientRect()
       const iconW = icon.offsetWidth || 24
+      const iconH = icon.offsetHeight || 24
       const currentOffset = isEditing() ? editingOffset : offset
 
-      // Calculate position in viewport coordinates (since overlay is position: fixed)
-      const viewportLeft = e.clientX - iconW / 2
-      let viewportTop = lineRect.top - currentOffset
+      // Position icon at the END of the annotation, slightly overlapping the top
+      // This keeps it close to the text so mouse can easily reach it
+      let viewportLeft = annoRect.right - iconW - 4  // Near the right edge of annotation
+      let viewportTop = annoRect.top - (iconH / 2)   // Overlapping the top of the text
+      
+      // Alternative: position near mouse but at the edge of text
+      // This follows the mouse but stays attached to the annotation
+      const mouseNearLeft = e.clientX < annoRect.left + 50
+      const mouseNearRight = e.clientX > annoRect.right - 50
+      
+      if (mouseNearLeft) {
+        viewportLeft = annoRect.left - 2  // Show at start if mouse near start
+      } else if (mouseNearRight) {
+        viewportLeft = annoRect.right - iconW + 2  // Show at end if mouse near end
+      } else {
+        viewportLeft = e.clientX - iconW / 2  // Follow mouse in the middle
+      }
 
       // Clamp to viewport boundaries
       const minLeft = 4
       const maxLeft = document.documentElement.clientWidth - iconW - 4
       const clampedLeft = clamp(viewportLeft, minLeft, maxLeft)
       
-      // If too close to top, show below instead
-      if (lineRect.top < currentOffset + 6) {
-        viewportTop = lineRect.bottom + 8
+      // If too close to top, overlap bottom instead
+      if (annoRect.top < iconH / 2) {
+        viewportTop = annoRect.bottom - (iconH / 2)
       }
       
       show(clampedLeft, viewportTop)
@@ -235,14 +240,15 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     // Recalculate position based on new scroll position
     const rect = lastAnno.getBoundingClientRect()
     const iconW = icon.offsetWidth || 24
-    const currentOffset = isEditing() ? editingOffset : offset
+    const iconH = icon.offsetHeight || 24
     
-    const viewportLeft = rect.left + rect.width / 2 - iconW / 2
-    let viewportTop = rect.top - currentOffset
+    // Keep icon at the end of annotation, overlapping top
+    const viewportLeft = rect.right - iconW - 4
+    let viewportTop = rect.top - (iconH / 2)
     
-    // If too close to top, show below instead
-    if (rect.top < currentOffset + 6) {
-      viewportTop = rect.bottom + 8
+    // If too close to top, overlap bottom instead
+    if (rect.top < iconH / 2) {
+      viewportTop = rect.bottom - (iconH / 2)
     }
     
     show(viewportLeft, viewportTop)
@@ -277,6 +283,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     
     // Ensure icon is fully visible when hovering (even in edit mode)
     icon.style.opacity = '1'
+    icon.style.display = 'block' // Ensure it stays visible
     
     // Visual feedback
     icon.style.background = '#f7fafc'
@@ -284,33 +291,29 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     icon.style.transform = 'translateY(0) scale(1.05)'
   })
 
-  icon.addEventListener('mouseleave', () => {
+  icon.addEventListener('mouseleave', (e) => {
     isOverIcon = false
     // Reset visual state
     icon.style.background = 'white'
     icon.style.borderColor = 'rgba(0,0,0,.08)'
     icon.style.transform = 'translateY(0) scale(1)'
     
-    // Only hide if not over the annotation
-    if (!lastAnno) {
+    // Check if we're moving to the tooltip
+    const relatedTarget = e.relatedTarget as HTMLElement
+    const isGoingToTooltip = relatedTarget && relatedTarget.closest('.annotation-tooltip')
+    
+    // Only hide if not over the annotation and not going to tooltip
+    if (!lastAnno && !isGoingToTooltip) {
       hide()
     }
   })
 
-  // Store reference to document handler for cleanup
-  const documentMoveHandler = (e: MouseEvent) => {
-    if (view.dom.contains(e.target as Node)) {
-      onMove(e)
-    }
-  }
+  // Attach event listeners with CAPTURE phase for edit mode reliability
+  console.log('[HoverIcon] Attaching event listeners with capture phase')
   
-  // Attach event listeners
-  console.log('[HoverIcon] Attaching event listeners to document and view.dom')
-  
-  // Listen on document level to catch all events
-  document.addEventListener('mousemove', documentMoveHandler, { passive: true })
-  
-  // Keep mouseleave on view.dom for when leaving editor
+  // Use capture phase (third parameter = true) to get events BEFORE editor processing
+  // This is critical for edit mode where TipTap might consume events
+  view.dom.addEventListener('mousemove', onMove, true) // true = capture phase
   view.dom.addEventListener('mouseleave', onLeave, { passive: true })
   window.addEventListener('scroll', onScroll, { passive: true })
   view.dom.addEventListener('input', onInput)
@@ -328,7 +331,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       if (hideTimeout) clearTimeout(hideTimeout)
       if (typingFadeTO) clearTimeout(typingFadeTO)
       
-      document.removeEventListener('mousemove', documentMoveHandler)
+      view.dom.removeEventListener('mousemove', onMove, true) // Remove capture phase listener
       view.dom.removeEventListener('mouseleave', onLeave)
       window.removeEventListener('scroll', onScroll)
       view.dom.removeEventListener('input', onInput)

@@ -1,0 +1,41 @@
+# Patch: Add document-level capture-phase mousemove as a fallback for edit-mode hover detection
+# Scope:
+#  - components/canvas/annotation-decorations.ts (Yjs editor)
+#  - components/canvas/annotation-decorations-hover-only.ts (plain mode)
+# Changes:
+#  - Attach document.addEventListener('mousemove', handleMouseMove, true) in plugin view()
+#  - Remove the document listener in plugin destroy()
+#  - Keeps existing editorView.dom listeners
+
+diff --git a/components/canvas/annotation-decorations.ts b/components/canvas/annotation-decorations.ts
+index 0000000..0000000 100644
+--- a/components/canvas/annotation-decorations.ts
++++ b/components/canvas/annotation-decorations.ts
+@@
+       editorView.dom.addEventListener('mouseover', handleMouseOver)
+       editorView.dom.addEventListener('mouseout', handleMouseOut)
+       editorView.dom.addEventListener('mousemove', handleMouseMove, true)
++      // Fallback: capture at the document level for cases where editor root misses events
++      document.addEventListener('mousemove', handleMouseMove, true)
+@@
+           editorView.dom.removeEventListener('mouseover', handleMouseOver)
+           editorView.dom.removeEventListener('mouseout', handleMouseOut)
+           editorView.dom.removeEventListener('mousemove', handleMouseMove, true)
++          document.removeEventListener('mousemove', handleMouseMove, true)
+
+diff --git a/components/canvas/annotation-decorations-hover-only.ts b/components/canvas/annotation-decorations-hover-only.ts
+index 0000000..0000000 100644
+--- a/components/canvas/annotation-decorations-hover-only.ts
++++ b/components/canvas/annotation-decorations-hover-only.ts
+@@
+       editorView.dom.addEventListener('mouseover', handleMouseOver)
+       editorView.dom.addEventListener('mouseout', handleMouseOut)
+       editorView.dom.addEventListener('mousemove', handleMouseMove, true)
++      // Fallback: capture at the document level in edit mode
++      document.addEventListener('mousemove', handleMouseMove, true)
+@@
+           editorView.dom.removeEventListener('mouseover', handleMouseOver)
+           editorView.dom.removeEventListener('mouseout', handleMouseOut)
+           editorView.dom.removeEventListener('mousemove', handleMouseMove, true)
++          document.removeEventListener('mousemove', handleMouseMove, true)
+
