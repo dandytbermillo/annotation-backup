@@ -84,6 +84,10 @@ This document explains how the annotation tooltips are built, triggered, and pop
 - Position clamping: bring the more robust Yjs clamping logic to the shared tooltip for consistency.
 - Accessibility: add keyboard support and ARIA roles for the tooltip and hover icon.
 
+## Current Known Issue
+
+- Edit-mode hover icon reliability is under investigation. An attempted fix on 2025‑09‑11 was reverted after user validation (“icon did not show in edit mode”). See `post-implementation-fixes/high/2025-09-11-edit-mode-hover-attempt-reverted.md` for status and next steps.
+
 ## Backend Retrieval (DB)
 
 This section documents exactly how tooltip content is retrieved from the source Postgres database via our API routes.

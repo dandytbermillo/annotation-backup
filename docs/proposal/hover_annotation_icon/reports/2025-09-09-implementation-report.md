@@ -15,10 +15,10 @@ Status: ✅ COMPLETE
   - Plain mode: square icon + shared tooltip module
 
 ## Key Metrics (summary)
-- Browsers supported: Safari, Chrome, Firefox, Electron — ✅
-- Cursor placement reliability: ✅ (plain mode via cursor fix plugin)
 - Tooltip correctness (branch content + auto‑scroll): ✅
-- Regressions (editing/selection): None observed ✅
+- Cursor placement reliability (plain mode): ✅ via cursor fix plugin
+- Edit-mode hover icon reliability: ❌ Pending — see 2025‑09‑11 attempt (reverted)
+- Cross-browser status: Partial — edit‑mode hover under investigation
 
 ## Code Changes (links)
 - Runtime files changed (3):
@@ -36,10 +36,10 @@ Status: ✅ COMPLETE
   - `docs/proposal/hover_annotation_icon/test_scripts/*`
 
 ## Acceptance Criteria (checkmarks only)
-- ✅ Icon appears within <100ms near cursor/annotation
+- ⏳ Icon appears within <100ms near cursor/annotation (edit mode under investigation)
 - ✅ Tooltip appears only on icon hover (not just text hover)
 - ✅ Tooltip shows correct branch data with auto‑scroll on long content
-- ✅ Works in both editors (Yjs and plain mode)
+- ⏳ Works in both editors (Yjs and plain mode) — edit‑mode hover pending
 - ✅ No regressions to text editing or selection
 
 ---
@@ -48,7 +48,7 @@ Status: ✅ COMPLETE
 [→ View all fixes and statistics](../post-implementation-fixes/README.md)
 
 Recent fixes (links):
-- [Edit-mode hover reliability (capture phase)](../post-implementation-fixes/high/2025-09-11-edit-mode-hover-fix.md)
+- [Edit-mode hover (attempt, reverted)](../post-implementation-fixes/high/2025-09-11-edit-mode-hover-attempt-reverted.md)
 - Tooltip restoration (structure + auto‑scroll)
 - Safari/Chrome cursor placement (plain mode)
 - Edit‑mode interaction polish

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-11 02:04Z] 30ca3d9: hower icon issue final solve
 - commit [2025-09-11 01:32Z] 67f6a2e: hover icons starting work well
 - commit [2025-09-10 22:53Z] f0e3053: better hover icon added
 - commit [2025-09-10 22:32Z] 008c80d: add documentation for hove annotation icon feature
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-10 13:15Z] c438c31: experiment for testing the cursor issue when edit mode make it annotated text editable
 - commit [2025-09-10 05:28Z] 0c76a90: first electron app (working)
 - commit [2025-09-10 04:49Z] 594f744: added scrollable tooltip for branch data (working)
-- commit [2025-09-10 04:26Z] 86ded30: remove click event in the annotated text (success change),transfered to hover icon
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

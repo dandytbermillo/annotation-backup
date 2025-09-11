@@ -17,7 +17,7 @@ Status: Active (tracking)
 
 | Date       | Title                                   | Severity | Link |
 |------------|-----------------------------------------|----------|------|
-| 2025-09-11 | Edit-mode hover reliability fix        | High     | ./high/2025-09-11-edit-mode-hover-fix.md |
+| 2025-09-11 | Edit-mode hover (attempt, reverted)     | High     | ./high/2025-09-11-edit-mode-hover-attempt-reverted.md |
 | 2025-01-10 | Safari/Chrome cursor placement summary  | High     | ./high/safari-cursor-fix-summary.md |
 | 2025-01-10 | Tooltip restoration fix                 | Medium   | ./medium/tooltip-restoration-fix.md |
 | 2025-01-10 | Security fix required (documentation)   | Medium   | ./medium/security-fix-required.md |
@@ -26,4 +26,3 @@ Status: Active (tracking)
 Notes:
 - “exact-code-mirrors.md” and “working-code-solutions.md” are reference documents and not counted as fixes.
 - Raw artifacts and logs (if any) live under `./artifacts/`.
-

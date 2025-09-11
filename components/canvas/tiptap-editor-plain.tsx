@@ -191,11 +191,17 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }),
       ],
       content: initialContent,
-      editable: true, // ALWAYS editable to allow cursor placement
+      editable: isEditable, // Use the prop value instead of hardcoding true
+      autofocus: isEditable ? 'end' : false, // Auto-focus at end if editable
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
         // Register ProseMirror plugins
-        console.log('[TiptapEditorPlain] Editor created, registering plugins...')
+        console.log('[TiptapEditorPlain] Editor created with:', {
+          isEditable,
+          autofocus: isEditable ? 'end' : false,
+          panelId,
+          initialContent: typeof initialContent === 'string' ? initialContent.substring(0, 100) : initialContent
+        })
         console.log('[TiptapEditorPlain] Browser info:', {
           userAgent: navigator.userAgent,
           isChrome: /chrome/i.test(navigator.userAgent),
@@ -302,6 +308,22 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.commands.clearContent()
           }
         }
+        
+        // Auto-focus if editable and content is empty or placeholder
+        if (isEditable) {
+          const text = editor.getText()
+          const isEmptyOrPlaceholder = !text || 
+            text.includes('Start writing your note') ||
+            text.includes('Start writing your explore') ||
+            text.includes('Start writing your promote')
+          
+          if (isEmptyOrPlaceholder) {
+            console.log('[TiptapEditorPlain] Auto-focusing empty/placeholder panel')
+            setTimeout(() => {
+              editor.commands.focus('end')
+            }, 200)
+          }
+        }
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON()
@@ -390,9 +412,19 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     useEffect(() => {
       // Update the ref for the read-only guard
       isEditableRef.current = isEditable
-      // Keep editor always editable for cursor placement
-      // The ReadOnlyGuard plugin handles preventing edits
-    }, [isEditable])
+      // Update the editor's editable state
+      if (editor) {
+        console.log('[TiptapEditorPlain] Updating editable state to:', isEditable)
+        editor.setEditable(isEditable)
+        // Auto-focus when becoming editable
+        if (isEditable) {
+          // Small delay to ensure DOM is ready
+          setTimeout(() => {
+            editor.commands.focus('end')
+          }, 100)
+        }
+      }
+    }, [isEditable, editor])
 
     // Update editor content when loaded content changes
     useEffect(() => {
@@ -857,7 +889,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       setEditable: (editable: boolean) => {
         // Update the ref for read-only guard
         isEditableRef.current = editable
-        // Don't change editor's editable state - keep it always true
+        // Actually update the editor's editable state
+        if (editor) {
+          editor.setEditable(editable)
+        }
       },
       executeCommand: (command: string, value?: any) => {
         if (!editor) return

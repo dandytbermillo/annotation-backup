@@ -31,18 +31,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const isContentEmpty = () => {
     if (!branch.content) return true
     
-    // Check for empty HTML content or placeholder content
+    // Check for empty string
+    if (branch.content === '') return true
+    
+    // Check for empty HTML content
     if (typeof branch.content === 'string') {
       const stripped = branch.content.replace(/<[^>]*>/g, '').trim()
-      // Check if truly empty
       if (stripped.length === 0) return true
       
-      // Check if it's just the default placeholder content
-      // Default pattern: quoted text + "Start writing your [type] here..."
-      if (stripped.includes('Start writing your') && 
-          (stripped.includes('note here...') || 
-           stripped.includes('explore here...') || 
-           stripped.includes('promote here...'))) {
+      // Also check for just placeholder paragraphs
+      if (stripped === 'Start writing your document here...' || 
+          stripped === 'Start typing...' ||
+          stripped.match(/^Start writing your (note|explore|promote)\.{0,3}$/)) {
         return true
       }
     }
@@ -53,11 +53,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       // Check if has any actual text content
       if (!jsonStr.includes('"text"')) return true
       
-      // Check if it only contains placeholder text
-      if (jsonStr.includes('Start writing your') && 
-          (jsonStr.includes('note here') || 
-           jsonStr.includes('explore here') || 
-           jsonStr.includes('promote here'))) {
+      // Check if only has empty paragraph
+      if (branch.content.content.length === 1 && 
+          branch.content.content[0].type === 'paragraph' &&
+          (!branch.content.content[0].content || branch.content.content[0].content.length === 0)) {
         return true
       }
     }
@@ -67,10 +66,56 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Auto-enable edit mode if content is empty, otherwise respect isEditable
   const [isEditing, setIsEditing] = useState(() => {
-    // If panel is empty, start in edit mode regardless of isEditable setting
-    if (isContentEmpty()) return true
-    // Otherwise respect the isEditable setting
-    return branch.isEditable ?? true
+    const isEmpty = isContentEmpty()
+    const isMain = panelId === 'main'
+    const isNew = branch.isNew === true
+    
+    // ALWAYS start in edit mode for main panel if it's truly empty
+    // Check multiple conditions to ensure we catch all empty cases
+    const isReallyEmpty = !branch.content || 
+                          branch.content === '' || 
+                          (typeof branch.content === 'string' && branch.content.trim() === '') ||
+                          (typeof branch.content === 'string' && branch.content === '<p></p>')
+    
+    console.log('[CanvasPanel] Determining edit mode:', {
+      panelId,
+      isMain,
+      isEmpty,
+      isNew,
+      isReallyEmpty,
+      branchContent: branch.content,
+      branchIsNew: branch.isNew,
+      branchIsEditable: branch.isEditable
+    })
+    
+    // Force edit mode for empty main panels
+    if (isMain && isReallyEmpty) {
+      console.log('[CanvasPanel] Main panel is really empty, forcing edit mode')
+      return true
+    }
+    
+    // New notes should always start in edit mode
+    if (isNew) {
+      console.log('[CanvasPanel] New note detected, starting in edit mode')
+      return true
+    }
+    
+    // For main panel or empty panels, start in edit mode
+    if (isMain && isEmpty) {
+      console.log('[CanvasPanel] Main panel is empty, starting in edit mode')
+      return true
+    }
+    
+    // For any empty panel, start in edit mode
+    if (isEmpty) {
+      console.log('[CanvasPanel] Panel is empty, starting in edit mode')
+      return true
+    }
+    
+    // For non-empty panels, respect the isEditable setting (default to false for main with content)
+    const defaultEditable = isMain ? false : (branch.isEditable ?? true)
+    console.log('[CanvasPanel] Using default editable setting:', defaultEditable)
+    return defaultEditable
   })
   const [zIndex, setZIndex] = useState(1)
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
@@ -189,6 +234,50 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       panelRef.current.style.top = position.y + 'px'
     }
   }, [])
+  
+  // Auto-focus editor when panel mounts if content is empty or it's the main panel
+  useEffect(() => {
+    const isEmpty = isContentEmpty()
+    const isMain = panelId === 'main'
+    
+    // Always auto-focus main panel when it's empty and editable
+    if (isEditing && isMain && isEmpty) {
+      // Multiple attempts to ensure focus works after note switch
+      const focusAttempts = [100, 300, 500, 800]
+      focusAttempts.forEach(delay => {
+        setTimeout(() => {
+          if (editorRef.current && isEditing) {
+            editorRef.current.focus()
+          }
+        }, delay)
+      })
+    } else if (isEditing && isEmpty && editorRef.current) {
+      // For non-main panels, single focus attempt
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.focus()
+        }
+      }, 300)
+    }
+  }, [noteId]) // Re-run when noteId changes (when switching notes)
+  
+  // Update edit mode when branch content changes
+  useEffect(() => {
+    const isEmpty = isContentEmpty()
+    
+    // If content is empty and we're not in edit mode, switch to edit mode
+    if (isEmpty && !isEditing) {
+      setIsEditing(true)
+      
+      // Also trigger focus
+      setTimeout(() => {
+        if (editorRef.current) {
+          editorRef.current.setEditable(true)
+          editorRef.current.focus()
+        }
+      }, 100)
+    }
+  }, [branch.content, panelId]) // Watch for content changes
   
   // Get fresh branch data from CollaborationProvider
   const branchesMap = provider.getBranchesMap()
@@ -752,7 +841,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     panelId={panelId}
                     onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
                     onSelectionChange={handleSelectionChange}
-                    placeholder={isEditing ? "Start typing..." : ""}
+                    placeholder={isEditing ? `Start writing your ${currentBranch.type || 'note'}...` : ""}
                     provider={plainProvider}
                   />
                 ) : (
@@ -783,7 +872,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     panelId={panelId}
                     onUpdate={handleUpdate}
                     onSelectionChange={handleSelectionChange}
-                    placeholder={isEditing ? "Start typing..." : ""}
+                    placeholder={isEditing ? `Start writing your ${currentBranch.type || 'note'}...` : ""}
                     ydoc={ydocState.doc as Y.Doc}
                     provider={provider.getProvider() as any}
                   />

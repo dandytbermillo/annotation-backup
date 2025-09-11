@@ -54,20 +54,38 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       // Initialize collaboration provider with YJS persistence
       const provider = UnifiedProvider.getInstance()
       
+      // Set the current note context
+      provider.setCurrentNote(noteId)
+      
+      // Check if this is a new note (check localStorage for existing data)
+      const existingData = localStorage.getItem(`note-data-${noteId}`)
+      const isNewNote = !existingData
+      
+      console.log('[AnnotationCanvas] Initializing note:', {
+        noteId,
+        hasExistingData: !!existingData,
+        isNewNote
+      })
+      
       // Define default data for new notes
       const defaultData = {
         'main': {
           title: 'New Document',
           type: 'main',
-          content: '', // Start with empty content instead of placeholder
+          content: '', // Empty content for new documents
           branches: [],
           position: { x: 2000, y: 1500 },
-          isEditable: true
+          isEditable: true,
+          // Mark as new to force edit mode
+          isNew: isNewNote
         }
       }
-
-      // Initialize the note with YJS persistence providers
-      // This will either restore from persistence or create with defaults
+      
+      console.log('[AnnotationCanvas] Default data for main panel:', defaultData.main)
+      
+      // Initialize with defaults - the provider will merge with existing data if any
+      // For new notes, this sets empty content
+      // For existing notes, this preserves their content
       provider.initializeDefaultData(noteId, defaultData)
     }
     
@@ -445,6 +463,14 @@ function PanelsRenderer({
           console.warn(`[PanelsRenderer] Branch ${panelId} not found in ${isPlainMode ? 'plain' : 'yjs'} store`)
           return null
         }
+        
+        console.log(`[PanelsRenderer] Rendering panel ${panelId}:`, {
+          hasContent: !!branch.content,
+          contentLength: typeof branch.content === 'string' ? branch.content.length : 'N/A',
+          isNew: branch.isNew,
+          isEditable: branch.isEditable
+        })
+        
         const position = branch.position || { x: 2000, y: 1500 }
         return (
           <CanvasPanel
