@@ -135,6 +135,24 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
         isEditable: true,
         branches: []
       })
+
+      // Update main panel title from the note metadata (keep familiar title like
+      // 'AI in Healthcare Research' in Option A without Yjs involvement)
+      try {
+        plainProvider.adapter.getNote(noteId).then((note) => {
+          if (note && note.title) {
+            const main = dataStore.get('main')
+            if (main) {
+              main.title = note.title
+              dataStore.set('main', main)
+              // Trigger a re-render to reflect the updated title
+              dispatch({ type: 'BRANCH_UPDATED' })
+            }
+          }
+        }).catch(() => { /* non-fatal: keep default title */ })
+      } catch {
+        // ignore; default title remains
+      }
       
       // Make dataStore globally accessible
       if (typeof window !== 'undefined') {

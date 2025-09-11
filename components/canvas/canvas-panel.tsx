@@ -9,6 +9,7 @@ import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
+import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
@@ -26,6 +27,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  
+  // Determine Option A (plain) vs collaboration mode as early as possible
+  const isPlainMode = isPlainModeActive()
   
   // Check if content is empty to auto-enable edit mode
   const isContentEmpty = () => {
@@ -64,19 +68,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return false
   }
   
-  // Auto-enable edit mode if content is empty, otherwise respect isEditable
+  // Auto-enable edit mode only in Option A (plain) if content is empty.
   const [isEditing, setIsEditing] = useState(() => {
     const isEmpty = isContentEmpty()
     const isMain = panelId === 'main'
     const isNew = branch.isNew === true
-    
-    // ALWAYS start in edit mode for main panel if it's truly empty
+    const defaultEditable = isMain ? false : (branch.isEditable ?? true)
+
     // Check multiple conditions to ensure we catch all empty cases
-    const isReallyEmpty = !branch.content || 
-                          branch.content === '' || 
-                          (typeof branch.content === 'string' && branch.content.trim() === '') ||
-                          (typeof branch.content === 'string' && branch.content === '<p></p>')
-    
+    const isReallyEmpty = !branch.content ||
+      branch.content === '' ||
+      (typeof branch.content === 'string' && (branch.content.trim() === '' || branch.content === '<p></p>'))
+
     console.log('[CanvasPanel] Determining edit mode:', {
       panelId,
       isMain,
@@ -85,35 +88,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       isReallyEmpty,
       branchContent: branch.content,
       branchIsNew: branch.isNew,
-      branchIsEditable: branch.isEditable
+      branchIsEditable: branch.isEditable,
     })
-    
-    // Force edit mode for empty main panels
-    if (isMain && isReallyEmpty) {
-      console.log('[CanvasPanel] Main panel is really empty, forcing edit mode')
-      return true
+
+    // Apply auto-edit rules only in Option A (plain mode)
+    if (isPlainMode) {
+      if (isMain && isReallyEmpty) return true
+      if (isNew) return true
+      if (isMain && isEmpty) return true
+      if (isEmpty) return true
     }
-    
-    // New notes should always start in edit mode
-    if (isNew) {
-      console.log('[CanvasPanel] New note detected, starting in edit mode')
-      return true
-    }
-    
-    // For main panel or empty panels, start in edit mode
-    if (isMain && isEmpty) {
-      console.log('[CanvasPanel] Main panel is empty, starting in edit mode')
-      return true
-    }
-    
-    // For any empty panel, start in edit mode
-    if (isEmpty) {
-      console.log('[CanvasPanel] Panel is empty, starting in edit mode')
-      return true
-    }
-    
-    // For non-empty panels, respect the isEditable setting (default to false for main with content)
-    const defaultEditable = isMain ? false : (branch.isEditable ?? true)
+
+    // Otherwise, respect default/editable flags
     console.log('[CanvasPanel] Using default editable setting:', defaultEditable)
     return defaultEditable
   })
@@ -123,13 +109,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
   const [plainProvider, setPlainProvider] = useState<PlainOfflineProvider | null>(null)
+  const postLoadEditApplied = useRef(false)
   
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
-  
-  // Check if plain mode is enabled
-  const isPlainMode = process.env.NEXT_PUBLIC_COLLAB_MODE === 'plain' || 
-                     (typeof window !== 'undefined' && localStorage.getItem('collab-mode') === 'plain')
   
   // Use ref to maintain dragging state across renders
   const dragState = useRef({
@@ -260,9 +243,50 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       }, 300)
     }
   }, [noteId]) // Re-run when noteId changes (when switching notes)
-  
-  // Update edit mode when branch content changes
+
+  // Option A fallback: once the plain provider is ready, load the actual
+  // document for this panel and enforce edit mode if truly empty. This
+  // covers async timing where initial state may evaluate before content loads.
   useEffect(() => {
+    if (!isPlainMode) return
+    if (panelId !== 'main') return
+    if (!plainProvider || !currentNoteId) return
+    if (postLoadEditApplied.current) return
+
+    postLoadEditApplied.current = true
+    ;(async () => {
+      try {
+        const loaded = await plainProvider.loadDocument(currentNoteId, panelId)
+        let isEmpty = false
+        if (!loaded) {
+          isEmpty = true
+        } else if (typeof loaded === 'string') {
+          const stripped = loaded.replace(/<[^>]*>/g, '').trim()
+          isEmpty = stripped.length === 0 || loaded === '<p></p>'
+        } else if (typeof loaded === 'object') {
+          // ProseMirror JSON case
+          const content = (loaded as any).content
+          isEmpty = !content || content.length === 0
+        }
+
+        if (isEmpty) {
+          setIsEditing(true)
+          setTimeout(() => {
+            if (editorRef.current) {
+              editorRef.current.setEditable(true as any)
+              editorRef.current.focus()
+            }
+          }, 120)
+        }
+      } catch {
+        // Non-fatal; leave current state
+      }
+    })()
+  }, [isPlainMode, panelId, plainProvider, currentNoteId])
+  
+  // Update edit mode when branch content changes (Option A only)
+  useEffect(() => {
+    if (!isPlainMode) return
     const isEmpty = isContentEmpty()
     
     // If content is empty and we're not in edit mode, switch to edit mode
@@ -277,7 +301,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }
       }, 100)
     }
-  }, [branch.content, panelId]) // Watch for content changes
+  }, [branch.content, panelId, isEditing, isPlainMode]) // Watch for content changes
   
   // Get fresh branch data from CollaborationProvider
   const branchesMap = provider.getBranchesMap()
@@ -549,6 +573,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const isMainPanel = panelId === 'main'
   const showToolbar = isMainPanel || isEditing
 
+  // Reinforce focus after mount or load when entering edit mode (Option A only)
+  useEffect(() => {
+    if (!isPlainMode) return
+    if (isEditing && !isContentLoading && editorRef.current) {
+      const delays = [50, 200, 400]
+      delays.forEach((d) => setTimeout(() => editorRef.current?.focus(), d))
+    }
+  }, [isEditing, isContentLoading, isPlainMode])
+
   // Filter branches based on active filter
   // In plain mode, get branches from dataStore; otherwise use provider
   const allBranches = isPlainMode 
@@ -819,6 +852,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   editorRef={editorRef}
                   isMainPanel={isMainPanel}
                   onToggleEditing={isMainPanel ? handleToggleEditing : undefined}
+                  isEditing={isEditing}
+                  isPlainMode={isPlainMode}
                 />
               )}
               

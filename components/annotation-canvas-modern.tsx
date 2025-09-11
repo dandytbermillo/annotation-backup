@@ -4,7 +4,8 @@ import { useEffect, useState, forwardRef, useImperativeHandle } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
-import { UnifiedProvider, getPlainProvider } from "@/lib/provider-switcher"
+import { UnifiedProvider } from "@/lib/provider-switcher"
+import { isPlainModeActive } from "@/lib/collab-mode"
 import { CanvasControls } from "./canvas/canvas-controls"
 import { Minimap } from "./canvas/minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
@@ -46,9 +47,8 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     // The composite key system (noteId-panelId) already isolates docs between notes
     // This allows content to load immediately when switching back to a previously viewed note
     
-    // Check if we're in plain mode
-    const plainProvider = getPlainProvider()
-    const isPlainMode = !!plainProvider
+    // Check if we're in plain mode (explicit flag; avoids provider init race)
+    const isPlainMode = isPlainModeActive()
     
     if (!isPlainMode) {
       // Initialize collaboration provider with YJS persistence
@@ -172,8 +172,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     console.log('[AnnotationCanvas] Creating panel:', panelId)
     
     // Check if we're in plain mode
-    const plainProvider = getPlainProvider()
-    const isPlainMode = !!plainProvider
+    const isPlainMode = isPlainModeActive()
     
     setPanels(prev => {
       // Only add if not already present
@@ -283,7 +282,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       const getPanelPosition = (id: string): { x: number; y: number } | null => {
         // 1) Try collaboration map if not in plain mode
         const provider = UnifiedProvider.getInstance()
-        if (getPlainProvider() == null) {
+        if (!isPlainModeActive()) {
           const branchesMap = provider.getBranchesMap()
           const branch = branchesMap?.get(id)
           if (branch?.position) return branch.position
@@ -445,8 +444,7 @@ function PanelsRenderer({
   onClose: (id: string) => void
 }) {
   const { dataStore } = useCanvas()
-  const plainProvider = getPlainProvider()
-  const isPlainMode = !!plainProvider
+  const isPlainMode = isPlainModeActive()
   
   // Yjs access only when not in plain mode
   const provider = UnifiedProvider.getInstance()

@@ -7,12 +7,22 @@ interface EditorToolbarProps {
   editorRef: React.RefObject<TiptapEditorHandle>
   isMainPanel?: boolean
   onToggleEditing?: () => void
+  // When true, the toolbar is already in edit mode; hide the Edit toggle.
+  // Optional for backward compatibility; when undefined, behavior matches previous default.
+  isEditing?: boolean
+  // When true (Option A), hide the Edit toggle while editing. In collab, always show.
+  isPlainMode?: boolean
 }
 
-export function EditorToolbar({ panelId, editorRef, isMainPanel, onToggleEditing }: EditorToolbarProps) {
+export function EditorToolbar({ panelId, editorRef, isMainPanel, onToggleEditing, isEditing, isPlainMode }: EditorToolbarProps) {
   const executeCommand = (command: string, value?: any) => {
     editorRef.current?.executeCommand(command, value)
   }
+
+  // Show the Edit toggle when:
+  // - Not Option A (collab): always show for main panel
+  // - Option A: only when not already editing
+  const showEditToggle = isMainPanel && (!isPlainMode || isEditing !== true)
 
   return (
     <div 
@@ -361,7 +371,7 @@ export function EditorToolbar({ panelId, editorRef, isMainPanel, onToggleEditing
         ✕
       </button>
 
-      {isMainPanel && (
+      {showEditToggle && (
         <>
           <div style={{ marginLeft: "auto" }} />
           <button
