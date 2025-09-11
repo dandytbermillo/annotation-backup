@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Mode Hover Icon Verification</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #f5f5f5;
+        }
+        
+        .test-container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .test-description {
+            color: #666;
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .test-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        
+        .test-case {
+            padding: 20px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            background: #fafbfc;
+        }
+        
+        .test-case h3 {
+            margin-top: 0;
+            color: #495057;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            margin-left: 10px;
+        }
+        
+        .status-pass {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-fail {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .checklist {
+            list-style: none;
+            padding: 0;
+            margin: 15px 0;
+        }
+        
+        .checklist li {
+            padding: 8px 0;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+        }
+        
+        .checklist li:last-child {
+            border-bottom: none;
+        }
+        
+        .check-box {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #dee2e6;
+            border-radius: 4px;
+            margin-right: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .check-box.checked {
+            background: #28a745;
+            border-color: #28a745;
+        }
+        
+        .check-box.checked::after {
+            content: '✓';
+            color: white;
+            font-weight: bold;
+        }
+        
+        .test-note {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 15px;
+            font-size: 14px;
+            color: #6c757d;
+        }
+        
+        .iframe-container {
+            width: 100%;
+            height: 400px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 20px;
+        }
+        
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        
+        .timestamp {
+            text-align: right;
+            color: #6c757d;
+            font-size: 14px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Edit Mode Hover Icon Verification
+            <span class="status-indicator status-pending" id="overall-status">Testing</span>
+        </h1>
+        
+        <div class="test-description">
+            <strong>Purpose:</strong> Verify that the hover icon remains stable and functional in both edit and non-edit modes after the fix.
+            <br><br>
+            <strong>Fix Applied:</strong> Added <code>isOverIcon</code> state management to prevent icon from disappearing when hovering in edit mode.
+        </div>
+        
+        <div class="test-grid">
+            <div class="test-case">
+                <h3>Non-Edit Mode (Read Only)</h3>
+                <ul class="checklist">
+                    <li>
+                        <div class="check-box" data-test="non-edit-hover"></div>
+                        <span>Hover annotated text → square icon appears</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="non-edit-icon-stable"></div>
+                        <span>Icon remains stable when hovering over it</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="non-edit-tooltip"></div>
+                        <span>Tooltip appears after 300ms delay</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="non-edit-click"></div>
+                        <span>Icon can be clicked before tooltip appears</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="non-edit-multiline"></div>
+                        <span>Icon follows cursor on multi-line annotations</span>
+                    </li>
+                </ul>
+                <div class="test-note">
+                    <strong>Expected:</strong> Icon should be fully functional without interference
+                </div>
+            </div>
+            
+            <div class="test-case">
+                <h3>Edit Mode (Cursor Active)</h3>
+                <ul class="checklist">
+                    <li>
+                        <div class="check-box" data-test="edit-hover"></div>
+                        <span>Hover annotated text → square icon appears</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="edit-icon-stable"></div>
+                        <span>Icon STAYS visible when hovering over it ✨</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="edit-tooltip"></div>
+                        <span>Tooltip appears and remains stable</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="edit-typing"></div>
+                        <span>Icon fades during typing (0.35 opacity)</span>
+                    </li>
+                    <li>
+                        <div class="check-box" data-test="edit-cursor"></div>
+                        <span>Cursor placement works on annotated text</span>
+                    </li>
+                </ul>
+                <div class="test-note">
+                    <strong>Fixed Issue:</strong> Icon no longer disappears when hovering in edit mode
+                </div>
+            </div>
+        </div>
+        
+        <div class="iframe-container">
+            <iframe src="http://localhost:3001/notes/test-note" id="test-frame"></iframe>
+        </div>
+        
+        <div class="timestamp">
+            Test performed: <span id="test-time"></span>
+        </div>
+    </div>
+    
+    <div class="test-container">
+        <h2>Browser Compatibility Matrix</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8f9fa;">
+                    <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Browser</th>
+                    <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Non-Edit Mode</th>
+                    <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Edit Mode</th>
+                    <th style="padding: 12px; text-align: left; border: 1px solid #dee2e6;">Cursor Placement</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">Safari</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="safari-non-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="safari-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="safari-cursor">Pending</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">Chrome</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="chrome-non-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="chrome-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="chrome-cursor">Pending</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">Firefox</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="firefox-non-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="firefox-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="firefox-cursor">Pending</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;">Electron</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="electron-non-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="electron-edit">Pending</td>
+                    <td style="padding: 12px; border: 1px solid #dee2e6;" class="browser-test" data-browser="electron-cursor">Pending</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <script>
+        // Set timestamp
+        document.getElementById('test-time').textContent = new Date().toLocaleString();
+        
+        // Checkbox functionality
+        document.querySelectorAll('.check-box').forEach(box => {
+            box.addEventListener('click', function() {
+                this.classList.toggle('checked');
+                updateOverallStatus();
+            });
+        });
+        
+        // Browser test cells
+        document.querySelectorAll('.browser-test').forEach(cell => {
+            cell.style.cursor = 'pointer';
+            cell.addEventListener('click', function() {
+                if (this.textContent === 'Pending') {
+                    this.textContent = '✅ Pass';
+                    this.style.background = '#d4edda';
+                    this.style.color = '#155724';
+                } else if (this.textContent === '✅ Pass') {
+                    this.textContent = '❌ Fail';
+                    this.style.background = '#f8d7da';
+                    this.style.color = '#721c24';
+                } else {
+                    this.textContent = 'Pending';
+                    this.style.background = '';
+                    this.style.color = '';
+                }
+            });
+        });
+        
+        function updateOverallStatus() {
+            const allBoxes = document.querySelectorAll('.check-box');
+            const checkedBoxes = document.querySelectorAll('.check-box.checked');
+            const statusEl = document.getElementById('overall-status');
+            
+            if (checkedBoxes.length === allBoxes.length) {
+                statusEl.textContent = 'All Pass';
+                statusEl.className = 'status-indicator status-pass';
+            } else if (checkedBoxes.length > 0) {
+                statusEl.textContent = `${checkedBoxes.length}/${allBoxes.length} Pass`;
+                statusEl.className = 'status-indicator status-pending';
+            }
+        }
+    </script>
+</body>
+</html>

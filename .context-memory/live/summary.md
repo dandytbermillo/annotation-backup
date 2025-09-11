@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-10 22:53Z] f0e3053: better hover icon added
 - commit [2025-09-10 22:32Z] 008c80d: add documentation for hove annotation icon feature
 - commit [2025-09-10 21:45Z] 0e51298: tooltips success
 - commit [2025-09-10 21:13Z] 63b1817: square shape icon added
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-10 04:49Z] 594f744: added scrollable tooltip for branch data (working)
 - commit [2025-09-10 04:26Z] 86ded30: remove click event in the annotated text (success change),transfered to hover icon
 - commit [2025-09-10 02:11Z] ba3dc25: Enter key creates new line annotation
-- commit [2025-09-10 00:29Z] 077dfed: sticky highlight feature implemented
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

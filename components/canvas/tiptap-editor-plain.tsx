@@ -22,6 +22,7 @@ import { Mark, mergeAttributes } from '@tiptap/core'
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
 import { attachHoverIcon } from './hover-icon'
 import { showAnnotationTooltip, hideAnnotationTooltipSoon, initializeTooltip } from './annotation-tooltip'
+import { AnnotationHoverPlugin } from './annotation-hover-plugin'
 import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
@@ -213,54 +214,56 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           console.error('[TiptapEditorPlain] Failed to register WebKitAnnotationCursorFix:', error)
         }
         
-        // Initialize the overlay-based hover icon (replaces AnnotationDecorationsHoverOnly)
-        console.log('[TiptapEditorPlain] Attaching overlay hover icon...')
+        // Use ProseMirror Plugin approach for hover detection (production-grade pattern)
+        console.log('[TiptapEditorPlain] Registering AnnotationHoverPlugin...')
         
         // Initialize tooltip first
         initializeTooltip()
         
-        // Attach the hover icon that lives outside the editor DOM
-        const hoverIcon = attachHoverIcon({
-          view: editor.view,
-          annotationSelector: '.annotation',
-          offset: 24,           // Normal distance above text
-          editingOffset: 36,    // Extra distance when editing
-          hideWhileTyping: true // Fade during typing
-        })
-        
-        // Connect hover icon to tooltip
-        hoverIcon.element.addEventListener('mouseenter', () => {
-          const branchId = hoverIcon.element.getAttribute('data-branch-id')
-          const type = hoverIcon.element.getAttribute('data-annotation-type') || 'note'
+        // Register the hover plugin - this handles hover in BOTH edit and non-edit modes
+        try {
+          const hoverPlugin = AnnotationHoverPlugin()
+          editor.registerPlugin(hoverPlugin)
+          console.log('[TiptapEditorPlain] AnnotationHoverPlugin registered successfully')
           
-          if (branchId) {
-            console.log('[TiptapEditorPlain] Showing tooltip for branch:', branchId)
-            showAnnotationTooltip(branchId, type, hoverIcon.element)
+          // Connect plugin's icon to tooltip system
+          // Listen for the icon element to be created and connect tooltip
+          const connectTooltip = () => {
+            const iconEl = document.querySelector('.annotation-hover-icon-plugin') as HTMLElement
+            if (iconEl) {
+              let tooltipTimeout: NodeJS.Timeout | null = null
+              
+              iconEl.addEventListener('mouseenter', () => {
+                // Small delay before showing tooltip to allow clicking
+                tooltipTimeout = setTimeout(() => {
+                  const branchId = iconEl.getAttribute('data-branch-id')
+                  const type = iconEl.getAttribute('data-annotation-type') || 'note'
+                  
+                  if (branchId) {
+                    console.log('[TiptapEditorPlain] Showing tooltip for branch:', branchId)
+                    showAnnotationTooltip(branchId, type, iconEl)
+                  }
+                }, 300) // 300ms delay allows time to click
+              })
+              
+              iconEl.addEventListener('mouseleave', () => {
+                // Cancel tooltip if leaving quickly (allows click)
+                if (tooltipTimeout) {
+                  clearTimeout(tooltipTimeout)
+                  tooltipTimeout = null
+                }
+                console.log('[TiptapEditorPlain] Hiding tooltip')
+                hideAnnotationTooltipSoon()
+              })
+            }
           }
-        })
-        
-        hoverIcon.element.addEventListener('mouseleave', () => {
-          console.log('[TiptapEditorPlain] Hiding tooltip')
-          hideAnnotationTooltipSoon()
-        })
-        
-        // Click handler to open panel
-        hoverIcon.element.addEventListener('click', (e) => {
-          e.stopPropagation()
-          const branchId = hoverIcon.element.getAttribute('data-branch-id')
-          if (branchId) {
-            console.log('[TiptapEditorPlain] Opening panel for branch:', branchId)
-            window.dispatchEvent(new CustomEvent('create-panel', { 
-              detail: { panelId: branchId } 
-            }))
-          }
-        })
-        
-        // Store cleanup function
-        editor.on('destroy', () => {
-          console.log('[TiptapEditorPlain] Cleaning up hover icon')
-          hoverIcon.destroy()
-        })
+          
+          // Connect after a brief delay to ensure plugin is initialized
+          setTimeout(connectTooltip, 100)
+          
+        } catch (error) {
+          console.error('[TiptapEditorPlain] Failed to register AnnotationHoverPlugin:', error)
+        }
         
         // KEEP DISABLED: Old Safari-specific plugins that interfere
         // - SafariProvenFix: deprecated webkitUserModify property causes issues  

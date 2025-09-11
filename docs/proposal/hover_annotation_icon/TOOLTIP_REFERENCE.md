@@ -84,3 +84,47 @@ This document explains how the annotation tooltips are built, triggered, and pop
 - Position clamping: bring the more robust Yjs clamping logic to the shared tooltip for consistency.
 - Accessibility: add keyboard support and ARIA roles for the tooltip and hover icon.
 
+## Backend Retrieval (DB)
+
+This section documents exactly how tooltip content is retrieved from the source Postgres database via our API routes.
+
+Sources and schemas
+- Branch metadata: `app/api/postgres-offline/branches/route.ts`
+  - Table: `branches`
+  - Key fields in response: `id`, `noteId`, `parentId`, `type`, `originalText`, `metadata`, `anchors`.
+
+- Document content: `app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts`
+  - Table: `document_saves`
+  - Selection: latest row by `version` for a given `(note_id, panel_id)` pair.
+  - Response: `{ content, version }` where `content` is either an HTML string (`{ html: string }` stored; returned as `string`) or ProseMirror JSON.
+
+ID normalization details
+- Note IDs: Tooling accepts slugs or UUIDs. On the server, `coerceEntityId(noteId)` maps slugs deterministically to a UUID v5 namespace (`ID_NAMESPACE`), ensuring stable keys across services.
+- Panel IDs: If `panelId` is not a UUID (e.g., UI identifiers like `main` or `branch-<uuid>`), the server computes a deterministic v5 UUID using `normalizePanelId(noteId, panelId)`; this becomes the `panel_id` used in `document_saves`.
+
+Tooltip request flow (plain mode shared module; Yjs mirrors the same endpoints)
+1) Determine `noteId` from the path `/note/:noteId` or from `[data-note-id]`/`[data-note]` attributes.
+2) Normalize the UI-facing branch/panel ID:
+   - UI format may be `branch-<uuid>`; UI code strips the `branch-` prefix for branch metadata comparisons.
+3) Fetch branch metadata to validate existence and get title/type:
+   - `GET /api/postgres-offline/branches?noteId=:noteId`
+   - Client filters for the matching `id === <raw uuid>`.
+4) Fetch the latest document content for the panel:
+   - `GET /api/postgres-offline/documents/:noteId/:panelId`
+   - Note: `:panelId` is the UI value (e.g., `branch-<uuid>`). The server normalizes this to the internal `panel_id` UUID.
+5) Extract text for display:
+   - If `typeof content === 'string'` → strip HTML tags and trim.
+   - Else (ProseMirror JSON) → recursively collect text nodes.
+6) Render into `.tooltip-content`; auto-scroll activates if it exceeds the configured max height.
+
+Response shapes (simplified)
+- Branches list (200): `Array<{ id: string; noteId: string; parentId: string | null; type: 'note'|'explore'|'promote'; originalText: string; metadata: object; anchors: object | null; createdAt: string; updatedAt: string }>`
+- Document (200): `{ content: string | ProseMirrorJSON; version: number }`
+- Not found (404): `{ error: 'Document not found' }`
+- Errors (500): `{ error: 'Failed to load document' }`
+
+Security & correctness
+- All queries are parameterized via `pg` `Pool`.
+- `DATABASE_URL` controls the connection string; no secrets are logged.
+- Server always returns the latest version (`ORDER BY version DESC LIMIT 1`).
+- Client sanitizes content to text prior to insertion; titles are not escaped (see Safety & Performance section).

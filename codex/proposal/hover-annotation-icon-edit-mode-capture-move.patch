@@ -1,0 +1,123 @@
+# Patch: Make hover icon reliable in edit mode by capturing mousemove inside editor plugins
+# Scope:
+#  - components/canvas/annotation-decorations.ts (Yjs editor)
+#  - components/canvas/annotation-decorations-hover-only.ts (plain mode)
+# Changes:
+#  - Add capture-phase mousemove handler on editorView.dom to detect hover in edit mode
+#  - Keep existing mouseover/mouseout logic; use mousemove to maintain/position icon while focused
+#  - Raise hover icon z-index above tooltip to avoid stacking issues
+#  - No mousedown/mouseup interception; caret/typing remain unaffected
+
+diff --git a/components/canvas/annotation-decorations.ts b/components/canvas/annotation-decorations.ts
+index 0000000..0000000 100644
+--- a/components/canvas/annotation-decorations.ts
++++ b/components/canvas/annotation-decorations.ts
+@@
+-        hoverIcon.style.cssText = 'position:fixed;display:none;z-index:10000;pointer-events:auto;'
++        // Increase z-index above tooltip to avoid stacking issues
++        hoverIcon.style.cssText = 'position:fixed;display:none;z-index:10002;pointer-events:auto;'
+         document.body.appendChild(hoverIcon)
+@@
+-      // Set up event listeners on the editor's DOM element
++      // Set up event listeners on the editor's DOM element
++      // Capture-phase mousemove ensures we see events even when the editor is focused (edit mode)
++      const handleMouseMove = (event: MouseEvent) => {
++        const target = event.target as HTMLElement
++        let annotationEl = target.closest('.annotation-hover-target') as HTMLElement
++        if (!annotationEl) {
++          annotationEl = target.closest('.annotation') as HTMLElement
++        }
++
++        if (annotationEl) {
++          const branchId = annotationEl.getAttribute('data-branch-id') ||
++                           annotationEl.getAttribute('data-branch') ||
++                           'temp-' + Date.now()
++          const type = annotationEl.getAttribute('data-annotation-type') ||
++                       annotationEl.getAttribute('data-type') ||
++                       (annotationEl.className.match(/annotation-(\w+)/)?.[1]) ||
++                       'note'
++          isOverTarget = true
++          showHoverIcon(annotationEl, branchId, type, event)
++        } else {
++          isOverTarget = false
++          hideHoverIconSoon()
++          hideAnnotationTooltipSoon()
++        }
++      }
+@@
+-      editorView.dom.addEventListener('mouseover', handleMouseOver)
+-      editorView.dom.addEventListener('mouseout', handleMouseOut)
++      editorView.dom.addEventListener('mouseover', handleMouseOver)
++      editorView.dom.addEventListener('mouseout', handleMouseOut)
++      editorView.dom.addEventListener('mousemove', handleMouseMove, true)
+@@
+-          editorView.dom.removeEventListener('mouseover', handleMouseOver)
+-          editorView.dom.removeEventListener('mouseout', handleMouseOut)
++          editorView.dom.removeEventListener('mouseover', handleMouseOver)
++          editorView.dom.removeEventListener('mouseout', handleMouseOut)
++          editorView.dom.removeEventListener('mousemove', handleMouseMove, true)
+
+diff --git a/components/canvas/annotation-decorations-hover-only.ts b/components/canvas/annotation-decorations-hover-only.ts
+index 0000000..0000000 100644
+--- a/components/canvas/annotation-decorations-hover-only.ts
++++ b/components/canvas/annotation-decorations-hover-only.ts
+@@
+-      hoverIcon.style.cssText = `
+-        position: absolute;
+-        width: 24px;
+-        height: 24px;
+-        background: white;
+-        border: 1px solid #e2e8f0;
+-        border-radius: 4px;
+-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+-        cursor: pointer;
+-        display: none;
+-        z-index: 1000;
+-        padding: 3px;
+-        pointer-events: auto;
+-        transition: all 0.2s ease;
+-      `
++      hoverIcon.style.cssText = `
++        position: absolute;
++        width: 24px;
++        height: 24px;
++        background: white;
++        border: 1px solid #e2e8f0;
++        border-radius: 4px;
++        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
++        cursor: pointer;
++        display: none;
++        z-index: 10002;
++        padding: 3px;
++        pointer-events: auto;
++        transition: all 0.2s ease;
++      `
+       document.body.appendChild(hoverIcon)
+@@
+-      // Attach listeners to editor
+-      editorView.dom.addEventListener('mouseover', handleMouseOver)
+-      editorView.dom.addEventListener('mouseout', handleMouseOut)
++      // Capture-phase mousemove improves reliability in edit mode (focused)
++      const handleMouseMove = (e: MouseEvent) => {
++        const target = e.target as HTMLElement
++        const annotation = target.classList.contains('annotation')
++          ? target
++          : (target.closest('.annotation') as HTMLElement)
++        if (annotation) {
++          showHoverIcon(annotation)
++        } else {
++          hideHoverIcon()
++        }
++      }
++
++      // Attach listeners to editor
++      editorView.dom.addEventListener('mouseover', handleMouseOver)
++      editorView.dom.addEventListener('mouseout', handleMouseOut)
++      editorView.dom.addEventListener('mousemove', handleMouseMove, true)
+@@
+-          editorView.dom.removeEventListener('mouseover', handleMouseOver)
+-          editorView.dom.removeEventListener('mouseout', handleMouseOut)
++          editorView.dom.removeEventListener('mouseover', handleMouseOver)
++          editorView.dom.removeEventListener('mouseout', handleMouseOut)
++          editorView.dom.removeEventListener('mousemove', handleMouseMove, true)
+

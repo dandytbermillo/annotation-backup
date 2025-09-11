@@ -24,8 +24,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     annotationSelector = '.annotation',
   } = opts
   
-  console.log('[HoverIcon] Initializing with selector:', annotationSelector)
-  console.log('[HoverIcon] Editor view:', view)
+  // Initialization complete
 
   // Overlay root appended to <body>, not inside the editor
   const overlay = document.createElement('div')
@@ -36,12 +35,18 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     left: 0;
     width: 100%;
     height: 100%;
-    z-index: 9999;
+    z-index: 999999;
     pointer-events: none;
     overflow: visible;
   `
   document.body.appendChild(overlay)
-  console.log('[HoverIcon] Overlay appended to body:', overlay)
+  
+  console.log('[HoverIcon] Overlay created and attached:', {
+    parent: overlay.parentElement?.tagName,
+    zIndex: overlay.style.zIndex,
+    pointerEvents: overlay.style.pointerEvents,
+    position: overlay.style.position
+  })
 
   // Create or use provided icon element
   const icon = opts.iconEl ?? document.createElement('button')
@@ -73,9 +78,6 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       cursor: pointer;
     `
     overlay.appendChild(icon)
-    console.log('[HoverIcon] Icon element created and added to overlay:', icon)
-  } else {
-    console.log('[HoverIcon] Using provided icon element:', icon)
   }
 
   let raf = 0
@@ -109,16 +111,9 @@ export function attachHoverIcon(opts: HoverIconOpts) {
   }
 
   const isEditing = () =>
-    view.hasFocus() && view.state.selection.from === view.state.selection.to
+    view.hasFocus()
 
   const show = (left: number, top: number) => {
-    console.log('[HoverIcon] Showing icon at:', left, top)
-    console.log('[HoverIcon] Current icon state:', {
-      display: icon.style.display,
-      opacity: icon.style.opacity,
-      transform: icon.style.transform
-    })
-    
     if (hideTimeout) {
       clearTimeout(hideTimeout)
       hideTimeout = null
@@ -137,7 +132,6 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     requestAnimationFrame(() => {
       icon.style.opacity = '1'
       icon.style.transform = 'translateY(0) scale(1)'
-      console.log('[HoverIcon] Icon animation applied')
     })
   }
 
@@ -149,7 +143,6 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       icon.style.transform = 'translateY(4px) scale(.98)'
       setTimeout(() => {
         icon.style.display = 'none'
-        console.log('[HoverIcon] Icon hidden')
       }, 120)
       lastAnno = null
     }, 200) // Small delay to prevent flicker
@@ -158,22 +151,45 @@ export function attachHoverIcon(opts: HoverIconOpts) {
   const onMove = (e: MouseEvent) => {
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
-      const anno = getAnnotationEl(e.target)
+      // Debug logging to understand edit mode issue
+      const isEditorFocused = view.hasFocus()
+      const targetElement = e.target as HTMLElement
       
-      // Debug logging
-      if (e.target instanceof Element && (e.target as Element).classList.contains('annotation')) {
-        console.log('[HoverIcon] Mouse over annotation element:', e.target, anno)
-      }
+      console.log('[HoverIcon] MouseMove Debug:', {
+        target: targetElement.tagName,
+        targetClass: targetElement.className,
+        isEditorFocused,
+        isEditMode: isEditing(),
+        mouseX: e.clientX,
+        mouseY: e.clientY,
+        overlayExists: !!overlay,
+        iconVisible: icon.style.display,
+        targetPath: e.composedPath ? e.composedPath().map((el: any) => el.tagName || el).slice(0, 5) : 'no path'
+      })
       
-      if (!anno) {
-        hide()
+      // Don't hide if we're over the icon itself
+      if (e.target === icon || icon.contains(e.target as Node)) {
         return
       }
       
-      console.log('[HoverIcon] Annotation detected:', anno)
+      const anno = getAnnotationEl(e.target)
+      console.log('[HoverIcon] Annotation found:', !!anno, anno?.className)
+      
+      if (!anno) {
+        // Only hide if not over icon
+        if (!isOverIcon) {
+          hide()
+        }
+        return
+      }
 
       lastAnno = anno
 
+      // Don't reposition if we're hovering over the icon
+      if (isOverIcon && icon.style.display === 'block') {
+        return
+      }
+      
       // Get the exact line rect under the mouse
       const lineRect = getLineRectAtY(anno, e.clientY)
       const iconW = icon.offsetWidth || 24
@@ -193,15 +209,6 @@ export function attachHoverIcon(opts: HoverIconOpts) {
         viewportTop = lineRect.bottom + 8
       }
       
-      console.log('[HoverIcon] Position calculation:', {
-        mouseX: e.clientX,
-        mouseY: e.clientY,
-        lineRect: { top: lineRect.top, bottom: lineRect.bottom, left: lineRect.left, right: lineRect.right },
-        calculatedLeft: clampedLeft,
-        calculatedTop: viewportTop,
-        viewport: { width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
-      })
-
       show(clampedLeft, viewportTop)
 
       // Store annotation data for tooltip
@@ -244,6 +251,9 @@ export function attachHoverIcon(opts: HoverIconOpts) {
   const onInput = () => {
     if (!hideWhileTyping) return
     
+    // Don't fade if hovering over the icon
+    if (isOverIcon) return
+    
     // Fade icon during typing
     if (icon.style.display === 'block') {
       icon.style.opacity = '0.35'
@@ -251,7 +261,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     
     if (typingFadeTO) clearTimeout(typingFadeTO)
     typingFadeTO = window.setTimeout(() => {
-      if (icon.style.display === 'block') {
+      if (icon.style.display === 'block' && !isOverIcon) {
         icon.style.opacity = '1'
       }
     }, 250)
@@ -264,6 +274,10 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       clearTimeout(hideTimeout)
       hideTimeout = null
     }
+    
+    // Ensure icon is fully visible when hovering (even in edit mode)
+    icon.style.opacity = '1'
+    
     // Visual feedback
     icon.style.background = '#f7fafc'
     icon.style.borderColor = '#cbd5e0'
@@ -276,21 +290,30 @@ export function attachHoverIcon(opts: HoverIconOpts) {
     icon.style.background = 'white'
     icon.style.borderColor = 'rgba(0,0,0,.08)'
     icon.style.transform = 'translateY(0) scale(1)'
-    hide()
+    
+    // Only hide if not over the annotation
+    if (!lastAnno) {
+      hide()
+    }
   })
 
+  // Store reference to document handler for cleanup
+  const documentMoveHandler = (e: MouseEvent) => {
+    if (view.dom.contains(e.target as Node)) {
+      onMove(e)
+    }
+  }
+  
   // Attach event listeners
-  console.log('[HoverIcon] Attaching listeners to:', view.dom)
-  view.dom.addEventListener('mousemove', onMove, { passive: true })
+  console.log('[HoverIcon] Attaching event listeners to document and view.dom')
+  
+  // Listen on document level to catch all events
+  document.addEventListener('mousemove', documentMoveHandler, { passive: true })
+  
+  // Keep mouseleave on view.dom for when leaving editor
   view.dom.addEventListener('mouseleave', onLeave, { passive: true })
   window.addEventListener('scroll', onScroll, { passive: true })
   view.dom.addEventListener('input', onInput)
-  
-  // Test: Check if there are any annotations already in the DOM
-  setTimeout(() => {
-    const annotations = view.dom.querySelectorAll(annotationSelector)
-    console.log('[HoverIcon] Found annotations in DOM:', annotations.length, annotations)
-  }, 1000)
 
   // Accessibility: respect reduced motion preference
   const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -305,7 +328,7 @@ export function attachHoverIcon(opts: HoverIconOpts) {
       if (hideTimeout) clearTimeout(hideTimeout)
       if (typingFadeTO) clearTimeout(typingFadeTO)
       
-      view.dom.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mousemove', documentMoveHandler)
       view.dom.removeEventListener('mouseleave', onLeave)
       window.removeEventListener('scroll', onScroll)
       view.dom.removeEventListener('input', onInput)

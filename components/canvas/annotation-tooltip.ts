@@ -124,10 +124,29 @@ export async function showAnnotationTooltip(branchId: string, type: string, elem
       <div class="tooltip-footer">Click icon to open panel</div>
     `
     
-    // Position and show tooltip
+    // Position and show tooltip - offset more to the right to not cover the icon
     const rect = element.getBoundingClientRect()
-    tooltipElement.style.left = `${rect.right + 10}px`
-    tooltipElement.style.top = `${rect.top}px`
+    
+    // Position tooltip to the right of the icon with more spacing
+    let left = rect.right + 15
+    let top = rect.top
+    
+    // Check if tooltip would go off the right edge of the screen
+    const tooltipWidth = 300 // approximate width
+    if (left + tooltipWidth > window.innerWidth - 10) {
+      // Position to the left of the icon instead
+      left = rect.left - tooltipWidth - 15
+    }
+    
+    // Check if tooltip would go off the bottom of the screen
+    const tooltipHeight = 200 // approximate max height
+    if (top + tooltipHeight > window.innerHeight - 10) {
+      // Adjust top position
+      top = window.innerHeight - tooltipHeight - 10
+    }
+    
+    tooltipElement.style.left = `${left}px`
+    tooltipElement.style.top = `${top}px`
     tooltipElement.classList.add('visible')
     
     // First fetch branch metadata (API uses raw UUID)
@@ -243,10 +262,29 @@ export async function showAnnotationTooltip(branchId: string, type: string, elem
       <div class="tooltip-footer">Click icon to open panel</div>
     `
     
-    // Position and show tooltip
+    // Position and show tooltip - offset more to the right to not cover the icon
     const rect = element.getBoundingClientRect()
-    tooltipElement.style.left = `${rect.right + 10}px`
-    tooltipElement.style.top = `${rect.top}px`
+    
+    // Position tooltip to the right of the icon with more spacing
+    let left = rect.right + 15
+    let top = rect.top
+    
+    // Check if tooltip would go off the right edge of the screen
+    const tooltipWidth = 300 // approximate width
+    if (left + tooltipWidth > window.innerWidth - 10) {
+      // Position to the left of the icon instead
+      left = rect.left - tooltipWidth - 15
+    }
+    
+    // Check if tooltip would go off the bottom of the screen
+    const tooltipHeight = 200 // approximate max height
+    if (top + tooltipHeight > window.innerHeight - 10) {
+      // Adjust top position
+      top = window.innerHeight - tooltipHeight - 10
+    }
+    
+    tooltipElement.style.left = `${left}px`
+    tooltipElement.style.top = `${top}px`
     tooltipElement.classList.add('visible')
     checkTooltipScrollable()
   }
