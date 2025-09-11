@@ -151,12 +151,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     // SIMPLIFIED APPROACH - match the working example
     useEffect(() => {
       if (!provider || !noteId) {
-        console.log(`[TiptapEditorPlain-${panelId}] No provider or noteId, skipping load`)
+        // No provider or noteId, skipping load
         setIsContentLoading(false)
         return
       }
       
-      console.log(`[TiptapEditorPlain-${panelId}] Loading content for noteId: ${noteId}, panelId: ${panelId}`)
+      // Loading content for noteId and panelId
       debugLog('TiptapEditorPlain', 'START_LOAD', {
         noteId,
         panelId,
@@ -169,7 +169,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       
       // Load content from provider asynchronously
       provider.loadDocument(noteId, panelId).then(loadedDoc => {
-        console.log(`[TiptapEditorPlain-${panelId}] Loaded document:`, loadedDoc)
+        // Document loaded successfully
         debugLog('TiptapEditorPlain', 'CONTENT_LOADED', {
           noteId,
           panelId,
@@ -222,25 +222,20 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           panelId,
           initialContent: typeof initialContent === 'string' ? initialContent.substring(0, 100) : initialContent
         })
-        console.log('[TiptapEditorPlain] Browser info:', {
-          userAgent: navigator.userAgent,
-          isChrome: /chrome/i.test(navigator.userAgent),
-          isSafari: /safari/i.test(navigator.userAgent) && !/chrome/i.test(navigator.userAgent),
-          isFirefox: /firefox/i.test(navigator.userAgent)
-        })
+        // Browser detection for compatibility
         
         // WebKit-specific fix FIRST to handle clicks before other plugins
-        console.log('[TiptapEditorPlain] Registering WebKitAnnotationCursorFix...')
+        // Register WebKit-specific fix
         try {
           const plugin = WebKitAnnotationCursorFix()
           editor.registerPlugin(plugin)
-          console.log('[TiptapEditorPlain] WebKitAnnotationCursorFix registered successfully')
+          // WebKitAnnotationCursorFix registered
         } catch (error) {
           console.error('[TiptapEditorPlain] Failed to register WebKitAnnotationCursorFix:', error)
         }
         
         // Use direct DOM listener with CAPTURE phase (based on patch solution)
-        console.log('[TiptapEditorPlain] Attaching hover icon with capture phase...')
+        // Attach hover icon with capture phase
         
         // Initialize tooltip first
         initializeTooltip()
@@ -264,7 +259,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             const type = hoverIcon.element.getAttribute('data-annotation-type') || 'note'
             
             if (branchId) {
-              console.log('[TiptapEditorPlain] Showing tooltip for branch:', branchId)
+              // Show tooltip for branch
               showAnnotationTooltip(branchId, type, hoverIcon.element)
             }
           }, 300) // 300ms delay allows time to click
@@ -305,7 +300,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         
         // Store cleanup function
         editor.on('destroy', () => {
-          console.log('[TiptapEditorPlain] Cleaning up hover icon')
+          // Clean up hover icon
           hoverIcon.destroy()
         })
         
@@ -339,7 +334,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             text.includes('Start writing your promote')
           
           if (isEmptyOrPlaceholder) {
-            console.log('[TiptapEditorPlain] Auto-focusing empty/placeholder panel')
+            // Auto-focus empty/placeholder panel
             setTimeout(() => {
               // Only focus, don't clear content
               editor.commands.focus('end')
@@ -359,7 +354,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
         // CRITICAL: Don't save empty content if we're still loading
         if (isContentLoading) {
-          console.log(`[TiptapEditorPlain-${panelId}] Skipping save - still loading content`)
+          // Skip save - still loading content
           return
         }
 
@@ -471,7 +466,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             const json = editor.getJSON()
             // Use synchronous save if available, or at least try
             provider.saveDocument(noteId, panelId, json)
-            console.log(`[TiptapEditorPlain] Emergency save on page unload`)
+            // Emergency save on page unload
           }
         }
       }
@@ -489,7 +484,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       isEditableRef.current = isEditable
       // Update the editor's editable state
       if (editor) {
-        console.log('[TiptapEditorPlain] Updating editable state to:', isEditable)
+        // Update editable state
         editor.setEditable(isEditable)
         // Auto-focus when becoming editable
         if (isEditable) {
@@ -503,28 +498,19 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
     // Update editor content when loaded content changes
     useEffect(() => {
-      console.log(`[TiptapEditorPlain-${panelId}] Content update effect triggered:`, {
-        hasEditor: !!editor,
-        hasLoadedContent: !!loadedContent,
-        isContentLoading,
-        loadedContentPreview: loadedContent ? JSON.stringify(loadedContent).substring(0, 100) : null
-      })
+      // Content update effect triggered
       
       if (editor && loadedContent && !isContentLoading) {
-        console.log(`[TiptapEditorPlain-${panelId}] Setting loaded content in editor:`, loadedContent)
         // Use a slight delay to ensure editor is fully ready
         setTimeout(() => {
           if (editor && !editor.isDestroyed) {
             const beforeContent = editor.getJSON()
-            console.log(`[TiptapEditorPlain-${panelId}] Before setContent:`, beforeContent)
             
             editor.commands.setContent(loadedContent, false)
             // Force a view update
             editor.view.updateState(editor.view.state)
             
             const afterContent = editor.getJSON()
-            console.log(`[TiptapEditorPlain-${panelId}] After setContent:`, afterContent)
-            console.log(`[TiptapEditorPlain-${panelId}] Content applied successfully`)
             
             debugLog('TiptapEditorPlain', 'CONTENT_SET_IN_EDITOR', {
               noteId,
@@ -537,11 +523,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
               }
             })
           } else {
-            console.log(`[TiptapEditorPlain-${panelId}] Editor destroyed, cannot set content`)
+            // Editor destroyed, cannot set content
           }
         }, 0) // Match example: 0ms delay
       } else {
-        console.log(`[TiptapEditorPlain-${panelId}] Skipping content update - conditions not met`)
+        // Skip content update - conditions not met
       }
     }, [editor, loadedContent, isContentLoading, panelId, noteId]) // Added noteId to dependencies
 
@@ -563,7 +549,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           (newContent.content.length === 1 && newContent.content[0].type === 'paragraph' && !newContent.content[0].content)
         
         if (!isEmpty && JSON.stringify(currentJSON) !== JSON.stringify(newContent)) {
-          console.log(`[TiptapEditorPlain-${panelId}] Setting fallback content (no provider mode)`)
+          // Set fallback content (no provider mode)
           editor.commands.setContent(newContent)
         }
       }

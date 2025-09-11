@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const { noteId, panelId, content, version } = body
     
-    console.log('[POST Document] Request:', { noteId, panelId, version, contentType: typeof content })
+    // Process document save request
     
     if (!noteId || !panelId || !content || version === undefined) {
       return NextResponse.json(
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     
     // Coerce noteId slug to UUID if needed (same as GET endpoint)
     const noteKey = coerceEntityId(noteId)
-    console.log('[POST Document] Coerced noteId:', noteKey)
+    // Coerced noteId to UUID
     
     // Store content as JSONB
     const contentJson = typeof content === 'string' 
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       : content
     
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
-    console.log('[POST Document] Normalized panelId:', normalizedPanelId)
+    // Normalized panelId
     
     const result = await pool.query(
       `INSERT INTO document_saves 
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
     )
     
-    console.log('[POST Document] Save successful, document ID:', result.rows[0]?.id)
+    // Save successful
     
     return NextResponse.json({ success: true, id: result.rows[0]?.id })
   } catch (error) {

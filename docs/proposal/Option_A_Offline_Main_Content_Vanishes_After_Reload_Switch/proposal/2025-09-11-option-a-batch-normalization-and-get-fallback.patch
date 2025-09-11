@@ -1,0 +1,146 @@
+diff --git a/app/api/postgres-offline/documents/batch/route.ts b/app/api/postgres-offline/documents/batch/route.ts
+index abcdef1..abcdef2 100644
+--- a/app/api/postgres-offline/documents/batch/route.ts
++++ b/app/api/postgres-offline/documents/batch/route.ts
+@@
+-// Normalize panelId helper (same as in regular documents route)
+-const normalizePanelId = (noteId: string, panelId: string): string => {
+-  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
+-  if (isUuid.test(panelId)) return panelId
+-  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+-}
++// Normalize panelId helper (aligned with GET and single-save routes)
++// - Accepts the coerced note UUID (noteKey)
++// - Uses uuid.validate for correctness (8-4-4-4-12)
++const normalizePanelId = (noteKey: string, panelId: string): string => {
++  if (validateUuid(panelId)) return panelId
++  return uuidv5(`${noteKey}:${panelId}`, uuidv5.DNS)
++}
+@@
+-    for (const op of operations) {
++    for (const op of operations) {
+       // Check idempotency
+       if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+         const cached = store.map.get(op.idempotencyKey)
+         results.push({ ...cached?.result, cached: true })
+         continue
+       }
+       
+       try {
+         // Validate required fields (server will compute version)
+         const { noteId, panelId, content } = op
+         
+         if (!noteId || !panelId || !content) {
+           results.push({ 
+             error: 'Missing required fields', 
+             operation: op 
+           })
+           continue
+         }
+         
+-        const normalizedPanelId = normalizePanelId(noteId, panelId)
++        // Coerce noteId first, then derive panel UUID with v5(noteKey:panelId)
++        const noteKey = coerceEntityId(noteId)
++        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+         
+         const contentJson = typeof content === 'string' ? { html: content } : content
+-        byPanel.set(`${noteId}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
++        // Use canonical composite key (noteKey + normalizedPanelId) for coalescing
++        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+       } catch (error) {
+         console.error('[Batch API - Documents] Operation failed:', error)
+         results.push({ 
+           error: 'Operation failed', 
+           message: error instanceof Error ? error.message : 'Unknown error',
+           operation: op 
+         })
+       }
+     }
+@@
+-    for (const op of operations) {
++    for (const op of operations) {
+       // Check idempotency
+       if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+         const cached = store.map.get(op.idempotencyKey)
+         results.push({ ...cached?.result, cached: true })
+         continue
+       }
+       
+       try {
+         // Extract data; server computes version
+         const data = op.data || op
+         const { noteId, panelId, content } = data
+         
+         if (!noteId || !panelId || !content) {
+           results.push({ 
+             error: 'Missing required fields', 
+             operation: op 
+           })
+           continue
+         }
+         
+-        const normalizedPanelId = normalizePanelId(noteId, panelId)
++        // Coerce noteId first, then derive panel UUID with v5(noteKey:panelId)
++        const noteKey = coerceEntityId(noteId)
++        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+         
+         const contentJson = typeof content === 'string' ? { html: content } : content
+-        byPanel.set(`${noteId}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
++        // Use canonical composite key (noteKey + normalizedPanelId) for coalescing
++        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+       } catch (error) {
+         console.error('[Batch API - Documents] Operation failed:', error)
+         results.push({ 
+           error: 'Operation failed', 
+           message: error instanceof Error ? error.message : 'Unknown error',
+           operation: op 
+         })
+       }
+     }
+
+diff --git a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+index abcdef3..abcdef4 100644
+--- a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
++++ b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+@@
+   const result = await pool.query(
+       `SELECT content, version 
+        FROM document_saves 
+        WHERE note_id = $1 AND panel_id = $2
+        ORDER BY version DESC
+        LIMIT 1`,
+      [noteKey, normalizedPanelId]
+    )
+    
+-  if (result.rows.length === 0) {
+-    return NextResponse.json(
+-      { error: 'Document not found' },
+-      { status: 404 }
+-    )
+-  }
++  if (result.rows.length === 0) {
++    // Fallback: try legacy panel key derived from RAW noteId (pre-fix behavior)
++    // Only attempt when both ids are non-UUID slugs (avoids unnecessary work for proper UUIDs)
++    if (!validateUuid(noteId) && !validateUuid(panelId)) {
++      const legacyPanelId = uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
++      const legacy = await pool.query(
++        `SELECT content, version 
++         FROM document_saves 
++         WHERE note_id = $1 AND panel_id = $2
++         ORDER BY version DESC
++         LIMIT 1`,
++        [noteKey, legacyPanelId]
++      )
++      if (legacy.rows.length > 0) {
++        const { content, version } = legacy.rows[0]
++        if (content.html && typeof content.html === 'string') {
++          return NextResponse.json({ content: content.html, version })
++        }
++        return NextResponse.json({ content, version })
++      }
++    }
++    return NextResponse.json(
++      { error: 'Document not found' },
++      { status: 404 }
++    )
++  }
