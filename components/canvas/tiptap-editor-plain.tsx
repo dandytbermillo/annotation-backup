@@ -172,6 +172,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setLoadedContent({ type: 'doc', content: [] })
         setIsContentLoading(false)
       })
+      
     }, [provider, noteId, panelId])
     
     // Don't use any initial content if we're loading from provider
@@ -407,6 +408,44 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // },
       },
     })
+    
+    // Save content before browser unload
+    useEffect(() => {
+      const handleBeforeUnload = () => {
+        if (editor && provider && noteId) {
+          const key = `${noteId}:${panelId}`
+          const pendingSave = (window as any).__debouncedSave?.get(key)
+          if (pendingSave) {
+            clearTimeout(pendingSave)
+            const json = editor.getJSON()
+            // Use synchronous save if available, or at least try
+            provider.saveDocument(noteId, panelId, json, Date.now())
+            console.log(`[TiptapEditorPlain] Emergency save on page unload`)
+          }
+        }
+      }
+      
+      window.addEventListener('beforeunload', handleBeforeUnload)
+      return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    }, [editor, provider, noteId, panelId])
+    
+    // Save pending content when switching notes
+    useEffect(() => {
+      // Cleanup function runs when noteId changes
+      return () => {
+        if (editor && provider && noteId) {
+          const key = `${noteId}:${panelId}`
+          const pendingSave = (window as any).__debouncedSave?.get(key)
+          if (pendingSave) {
+            clearTimeout(pendingSave)
+            ;(window as any).__debouncedSave.delete(key)
+            const json = editor.getJSON()
+            provider.saveDocument(noteId, panelId, json, Date.now())
+            console.log(`[TiptapEditorPlain] Force saved content on note switch`)
+          }
+        }
+      }
+    }, [noteId, editor, provider, panelId])
 
     // Update editable state when prop changes
     useEffect(() => {

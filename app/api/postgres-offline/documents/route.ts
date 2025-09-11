@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
-import { v5 as uuidv5 } from 'uuid'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 // Create connection pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 })
+
+// Deterministic mapping for non-UUID IDs (slugs) → UUID
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
 // deterministic UUID per note using UUID v5 in the DNS namespace.
@@ -35,20 +39,16 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Validate noteId is a UUID
-    if (!isUuid(noteId)) {
-      return NextResponse.json(
-        { error: 'Invalid noteId: must be a valid UUID' },
-        { status: 400 }
-      )
-    }
+    // Coerce noteId slug to UUID if needed (same as GET endpoint)
+    const noteKey = coerceEntityId(noteId)
+    console.log('[POST Document] Coerced noteId:', noteKey)
     
     // Store content as JSONB
     const contentJson = typeof content === 'string' 
       ? { html: content } 
       : content
     
-    const normalizedPanelId = normalizePanelId(noteId, panelId)
+    const normalizedPanelId = normalizePanelId(noteKey, panelId)
     console.log('[POST Document] Normalized panelId:', normalizedPanelId)
     
     const result = await pool.query(
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
        ON CONFLICT (note_id, panel_id, version)
        DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
        RETURNING id`,
-      [noteId, normalizedPanelId, JSON.stringify(contentJson), version]
+      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
     )
     
     console.log('[POST Document] Save successful, document ID:', result.rows[0]?.id)
