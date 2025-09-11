@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content Persistence Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-section {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #0070f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #0051cc;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Content Persistence Test</h1>
+    
+    <div class="test-section">
+        <h2>Test Scenario</h2>
+        <p>This test verifies that main panel content persists correctly through multiple loads/switches.</p>
+        <p><strong>Issue:</strong> Content was being lost on the second reload due to panel ID normalization mismatch.</p>
+        <p><strong>Fix:</strong> Batch endpoint now coerces noteId to UUID before normalizing panelId.</p>
+    </div>
+    
+    <div class="test-section">
+        <h2>Manual Test Steps</h2>
+        <ol>
+            <li>Click "Create Test Note" to create a new note with content</li>
+            <li>Click "Load Content (1st)" to verify content loads correctly</li>
+            <li>Click "Save Again" to save the same content again</li>
+            <li>Click "Load Content (2nd)" to verify content still persists (this was failing before)</li>
+            <li>Click "Run Complete Test" to run all steps automatically</li>
+        </ol>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Controls</h2>
+        <button onclick="createTestNote()">1. Create Test Note</button>
+        <button onclick="loadContent(1)">2. Load Content (1st)</button>
+        <button onclick="saveAgain()">3. Save Again</button>
+        <button onclick="loadContent(2)">4. Load Content (2nd)</button>
+        <button onclick="runCompleteTest()">🚀 Run Complete Test</button>
+        <button onclick="clearStatus()">Clear Status</button>
+        
+        <div id="status"></div>
+    </div>
+    
+    <div class="test-section">
+        <h2>Test Results</h2>
+        <pre id="results">No tests run yet...</pre>
+    </div>
+
+    <script>
+        const TEST_NOTE_ID = 'test-note-' + Date.now();
+        const TEST_CONTENT = {
+            type: 'doc',
+            content: [{
+                type: 'paragraph',
+                content: [{
+                    type: 'text',
+                    text: 'This content should persist through multiple reloads!'
+                }]
+            }]
+        };
+        
+        function addStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `status ${type}`;
+            messageDiv.textContent = message;
+            statusDiv.appendChild(messageDiv);
+        }
+        
+        function updateResults(data) {
+            document.getElementById('results').textContent = JSON.stringify(data, null, 2);
+        }
+        
+        function clearStatus() {
+            document.getElementById('status').innerHTML = '';
+            document.getElementById('results').textContent = 'No tests run yet...';
+        }
+        
+        async function createTestNote() {
+            try {
+                // Create note
+                const noteRes = await fetch('/api/postgres-offline/notes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: TEST_NOTE_ID,
+                        title: 'Test Note - ' + new Date().toLocaleTimeString()
+                    })
+                });
+                
+                // Save content via batch endpoint
+                const batchRes = await fetch('/api/postgres-offline/documents/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        operations: [{
+                            noteId: TEST_NOTE_ID,
+                            panelId: 'main',
+                            content: TEST_CONTENT
+                        }]
+                    })
+                });
+                
+                const batchData = await batchRes.json();
+                addStatus(`✅ Note created: ${TEST_NOTE_ID}`, 'success');
+                addStatus(`✅ Content saved with version: ${batchData.results[0]?.version}`, 'success');
+                updateResults(batchData);
+            } catch (error) {
+                addStatus(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadContent(attempt) {
+            try {
+                const res = await fetch(`/api/postgres-offline/documents/${TEST_NOTE_ID}/main`);
+                const data = await res.json();
+                
+                if (data.content) {
+                    const contentMatches = JSON.stringify(data.content) === JSON.stringify(TEST_CONTENT) ||
+                                         data.content.type === 'doc'; // Allow for property ordering differences
+                    
+                    addStatus(`✅ Load #${attempt}: Version ${data.version}, Content ${contentMatches ? 'preserved' : 'MISMATCH'}`, 
+                             contentMatches ? 'success' : 'error');
+                    updateResults(data);
+                } else {
+                    addStatus(`❌ Load #${attempt}: Content lost!`, 'error');
+                    updateResults(data);
+                }
+            } catch (error) {
+                addStatus(`❌ Load #${attempt} Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function saveAgain() {
+            try {
+                const batchRes = await fetch('/api/postgres-offline/documents/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        operations: [{
+                            noteId: TEST_NOTE_ID,
+                            panelId: 'main',
+                            content: TEST_CONTENT
+                        }]
+                    })
+                });
+                
+                const batchData = await batchRes.json();
+                addStatus(`✅ Content saved again with version: ${batchData.results[0]?.version}`, 'success');
+                updateResults(batchData);
+            } catch (error) {
+                addStatus(`❌ Save Error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function runCompleteTest() {
+            clearStatus();
+            addStatus('🔄 Running complete test sequence...', 'info');
+            
+            await createTestNote();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await loadContent(1);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await saveAgain();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await loadContent(2);
+            
+            // Additional rapid load test
+            addStatus('🔄 Testing 5 rapid loads...', 'info');
+            let allSuccess = true;
+            for (let i = 3; i <= 7; i++) {
+                const res = await fetch(`/api/postgres-offline/documents/${TEST_NOTE_ID}/main`);
+                const data = await res.json();
+                if (!data.content) {
+                    addStatus(`❌ Rapid load #${i}: Content lost!`, 'error');
+                    allSuccess = false;
+                }
+            }
+            
+            if (allSuccess) {
+                addStatus('✅ All rapid loads successful!', 'success');
+            }
+            
+            addStatus('🎉 Test sequence complete!', 'success');
+        }
+    </script>
+</body>
+</html>

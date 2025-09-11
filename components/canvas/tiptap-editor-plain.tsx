@@ -35,6 +35,7 @@ import { SafariProvenFix } from './safari-proven-fix'
 import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
+import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
@@ -147,18 +148,35 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
     
     // Load content from provider when noteId/panelId changes
+    // SIMPLIFIED APPROACH - match the working example
     useEffect(() => {
       if (!provider || !noteId) {
+        console.log(`[TiptapEditorPlain-${panelId}] No provider or noteId, skipping load`)
         setIsContentLoading(false)
         return
       }
       
-      console.log(`[TiptapEditorPlain] Loading content for noteId: ${noteId}, panelId: ${panelId}`)
+      console.log(`[TiptapEditorPlain-${panelId}] Loading content for noteId: ${noteId}, panelId: ${panelId}`)
+      debugLog('TiptapEditorPlain', 'START_LOAD', {
+        noteId,
+        panelId,
+        metadata: { component: 'editor', action: 'start_load' }
+      })
+      
       setIsContentLoading(true)
+      // DON'T clear loaded content here - it causes the fallback effect to trigger
+      // The loaded content will be updated when the new content arrives
       
       // Load content from provider asynchronously
       provider.loadDocument(noteId, panelId).then(loadedDoc => {
-        console.log(`[TiptapEditorPlain] Loaded document:`, loadedDoc)
+        console.log(`[TiptapEditorPlain-${panelId}] Loaded document:`, loadedDoc)
+        debugLog('TiptapEditorPlain', 'CONTENT_LOADED', {
+          noteId,
+          panelId,
+          contentPreview: createContentPreview(loadedDoc),
+          metadata: { hasContent: !!loadedDoc, contentType: typeof loadedDoc }
+        })
+        
         if (loadedDoc) {
           // loadDocument returns the content directly (ProseMirrorJSON or HtmlString)
           setLoadedContent(loadedDoc)
@@ -168,16 +186,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
         setIsContentLoading(false)
       }).catch(error => {
-        console.error('[TiptapEditorPlain] Failed to load content:', error)
+        console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
         setLoadedContent({ type: 'doc', content: [] })
         setIsContentLoading(false)
       })
-      
     }, [provider, noteId, panelId])
     
-    // Don't use any initial content if we're loading from provider
-    // This prevents the editor from being initialized with empty content
-    const initialContent = isContentLoading && provider ? undefined : (loadedContent || content || '')
+    // CRITICAL: Always use undefined as initial content when we have a provider
+    // This prevents the editor from being recreated when loading state changes
+    // Content will ALWAYS be set via useEffect after loading
+    const initialContent = provider ? undefined : (content || '')
     
     const editor = useEditor({
       extensions: [
@@ -196,6 +214,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       autofocus: isEditable ? 'end' : false, // Auto-focus at end if editable
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
+        console.log(`[TiptapEditorPlain-${panelId}] Editor CREATED for note ${noteId}, initialContent:`, initialContent)
         // Register ProseMirror plugins
         console.log('[TiptapEditorPlain] Editor created with:', {
           isEditable,
@@ -301,17 +320,18 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         editor.registerPlugin(ReadOnlyGuard(isEditableRef))
         // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         
-        // Don't clear content or set loading false here if we're still loading
-        if (!isContentLoading) {
-          // Fix #1: Prevent duplicate "Start writing..."
-          const currentContent = editor.getHTML()
-          if (!currentContent || currentContent === '<p></p>' || currentContent.trim() === '') {
-            editor.commands.clearContent()
-          }
-        }
+        // DISABLED: Do not clear content in onCreate as it interferes with async loading
+        // Content is managed by the loadedContent state and provider
+        // if (!isContentLoading && !provider) {
+        //   const currentContent = editor.getHTML()
+        //   if (!currentContent || currentContent === '<p></p>' || currentContent.trim() === '') {
+        //     editor.commands.clearContent()
+        //   }
+        // }
         
         // Auto-focus if editable and content is empty or placeholder
-        if (isEditable) {
+        // But only if we're not loading content from provider
+        if (isEditable && !isContentLoading) {
           const text = editor.getText()
           const isEmptyOrPlaceholder = !text || 
             text.includes('Start writing your note') ||
@@ -321,6 +341,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           if (isEmptyOrPlaceholder) {
             console.log('[TiptapEditorPlain] Auto-focusing empty/placeholder panel')
             setTimeout(() => {
+              // Only focus, don't clear content
               editor.commands.focus('end')
             }, 200)
           }
@@ -336,6 +357,34 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         if (prev === contentStr) return
         (window as any).__lastContentHash.set(key, contentStr)
 
+        // CRITICAL: Don't save empty content if we're still loading
+        if (isContentLoading) {
+          console.log(`[TiptapEditorPlain-${panelId}] Skipping save - still loading content`)
+          return
+        }
+
+        // Log when we're about to save empty content
+        const isEmpty = !json.content || json.content.length === 0 || 
+          (json.content.length === 1 && json.content[0].type === 'paragraph' && !json.content[0].content)
+        
+        if (isEmpty) {
+          console.warn(`[TiptapEditorPlain-${panelId}] WARNING: Saving empty content for note ${noteId}, panel ${panelId}`)
+          debugLog('TiptapEditorPlain', 'EMPTY_CONTENT_SAVE', {
+            noteId,
+            panelId,
+            contentPreview: createContentPreview(json),
+            metadata: { 
+              isLoading: isContentLoading,
+              hasLoadedContent: !!loadedContent,
+              trigger: 'onUpdate'
+            }
+          })
+        }
+
+        // Store the latest content globally for emergency saves
+        ;(window as any).__latestContent = (window as any).__latestContent || new Map()
+        ;(window as any).__latestContent.set(key, json)
+        
         // Debounce saves to reduce version churn
         ;(window as any).__debouncedSave = (window as any).__debouncedSave || new Map()
         const existing = (window as any).__debouncedSave.get(key)
@@ -373,6 +422,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           onSelectionChange?.('', null)
         }
       },
+      // IMPORTANT: Don't recreate editor when noteId changes
+      // We'll update content via useEffect instead
       editorProps: {
         attributes: {
           class: 'prose prose-lg max-w-none focus:outline-none tiptap-editor',
@@ -419,7 +470,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             clearTimeout(pendingSave)
             const json = editor.getJSON()
             // Use synchronous save if available, or at least try
-            provider.saveDocument(noteId, panelId, json, Date.now())
+            provider.saveDocument(noteId, panelId, json)
             console.log(`[TiptapEditorPlain] Emergency save on page unload`)
           }
         }
@@ -429,23 +480,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       return () => window.removeEventListener('beforeunload', handleBeforeUnload)
     }, [editor, provider, noteId, panelId])
     
-    // Save pending content when switching notes
-    useEffect(() => {
-      // Cleanup function runs when noteId changes
-      return () => {
-        if (editor && provider && noteId) {
-          const key = `${noteId}:${panelId}`
-          const pendingSave = (window as any).__debouncedSave?.get(key)
-          if (pendingSave) {
-            clearTimeout(pendingSave)
-            ;(window as any).__debouncedSave.delete(key)
-            const json = editor.getJSON()
-            provider.saveDocument(noteId, panelId, json, Date.now())
-            console.log(`[TiptapEditorPlain] Force saved content on note switch`)
-          }
-        }
-      }
-    }, [noteId, editor, provider, panelId])
+    // REMOVED: Complex note switching cleanup - not needed with simplified approach
+    // The provider handles saving through the onUpdate handler with debouncing
 
     // Update editable state when prop changes
     useEffect(() => {
@@ -467,33 +503,71 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
     // Update editor content when loaded content changes
     useEffect(() => {
+      console.log(`[TiptapEditorPlain-${panelId}] Content update effect triggered:`, {
+        hasEditor: !!editor,
+        hasLoadedContent: !!loadedContent,
+        isContentLoading,
+        loadedContentPreview: loadedContent ? JSON.stringify(loadedContent).substring(0, 100) : null
+      })
+      
       if (editor && loadedContent && !isContentLoading) {
-        console.log('[TiptapEditorPlain] Setting loaded content in editor:', loadedContent)
+        console.log(`[TiptapEditorPlain-${panelId}] Setting loaded content in editor:`, loadedContent)
         // Use a slight delay to ensure editor is fully ready
         setTimeout(() => {
           if (editor && !editor.isDestroyed) {
+            const beforeContent = editor.getJSON()
+            console.log(`[TiptapEditorPlain-${panelId}] Before setContent:`, beforeContent)
+            
             editor.commands.setContent(loadedContent, false)
             // Force a view update
             editor.view.updateState(editor.view.state)
+            
+            const afterContent = editor.getJSON()
+            console.log(`[TiptapEditorPlain-${panelId}] After setContent:`, afterContent)
+            console.log(`[TiptapEditorPlain-${panelId}] Content applied successfully`)
+            
+            debugLog('TiptapEditorPlain', 'CONTENT_SET_IN_EDITOR', {
+              noteId,
+              panelId,
+              contentPreview: createContentPreview(afterContent),
+              metadata: { 
+                beforeEmpty: !beforeContent.content || beforeContent.content.length === 0,
+                afterEmpty: !afterContent.content || afterContent.content.length === 0,
+                success: true
+              }
+            })
+          } else {
+            console.log(`[TiptapEditorPlain-${panelId}] Editor destroyed, cannot set content`)
           }
-        }, 0)
+        }, 0) // Match example: 0ms delay
+      } else {
+        console.log(`[TiptapEditorPlain-${panelId}] Skipping content update - conditions not met`)
       }
-    }, [editor, loadedContent, isContentLoading])
+    }, [editor, loadedContent, isContentLoading, panelId, noteId]) // Added noteId to dependencies
 
     // Fix #2 & #5: Handle content updates with composite key awareness
+    // CRITICAL: Only use fallback content if we DON'T have a provider
+    // If we have a provider, content should ONLY come from loadedContent
     useEffect(() => {
-      if (editor && !isContentLoading && !loadedContent && content !== undefined) {
+      // NEVER use fallback content when we have a provider
+      if (provider) return
+      
+      if (editor && !isContentLoading && !loadedContent && content !== undefined && content !== '') {
         const currentJSON = editor.getJSON()
         const newContent = typeof content === 'string' 
           ? { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: content }] }] }
           : content
         
-        // Only update if content actually changed
-        if (JSON.stringify(currentJSON) !== JSON.stringify(newContent)) {
+        // Only update if content actually changed and is not empty
+        const isEmpty = !newContent.content || newContent.content.length === 0 ||
+          (newContent.content.length === 1 && newContent.content[0].type === 'paragraph' && !newContent.content[0].content)
+        
+        if (!isEmpty && JSON.stringify(currentJSON) !== JSON.stringify(newContent)) {
+          console.log(`[TiptapEditorPlain-${panelId}] Setting fallback content (no provider mode)`)
           editor.commands.setContent(newContent)
         }
       }
-    }, [editor, content, isContentLoading, loadedContent])
+    }, [editor, content, isContentLoading, loadedContent, provider, panelId])
 
     // Add styles for annotations and decorations (same as Yjs version)
     useEffect(() => {

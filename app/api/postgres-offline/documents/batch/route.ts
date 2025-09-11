@@ -39,7 +39,8 @@ function cleanupProcessedKeys(): void {
 
 // Normalize panelId helper (same as in regular documents route)
 const normalizePanelId = (noteId: string, panelId: string): string => {
-  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
+  // Fixed regex: UUID format is 8-4-4-4-12, not 8-8-8-12
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
   if (isUuid.test(panelId)) return panelId
   return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
 }
@@ -90,10 +91,13 @@ export async function POST(request: NextRequest) {
           continue
         }
         
-        const normalizedPanelId = normalizePanelId(noteId, panelId)
+        // Coerce noteId to UUID first, THEN normalize panelId
+        const noteKey = coerceEntityId(noteId)
+        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+        console.log(`[Batch] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
         
         const contentJson = typeof content === 'string' ? { html: content } : content
-        byPanel.set(`${noteId}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
       } catch (error) {
         console.error('[Batch API - Documents] Operation failed:', error)
         results.push({ 
@@ -106,9 +110,9 @@ export async function POST(request: NextRequest) {
     
     // Persist one row per (noteId, panelId) with server-computed version
     for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
-      // Coerce slugs to UUIDs
-      const noteKey = coerceEntityId(noteId)
-      const panelKey = coerceEntityId(panelId)
+      // noteId and panelId are already processed - use as-is
+      const noteKey = noteId  // Already coerced UUID
+      const panelKey = panelId  // Already normalized panel ID
       
       // Ensure the note exists (auto-create if missing)
       await client.query(
@@ -236,10 +240,13 @@ export async function PUT(request: NextRequest) {
           continue
         }
         
-        const normalizedPanelId = normalizePanelId(noteId, panelId)
+        // Coerce noteId to UUID first, THEN normalize panelId
+        const noteKey = coerceEntityId(noteId)
+        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+        console.log(`[Batch PUT] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
         
         const contentJson = typeof content === 'string' ? { html: content } : content
-        byPanel.set(`${noteId}:${normalizedPanelId}`, { noteId, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
       } catch (error) {
         console.error('[Batch API - Documents] Operation failed:', error)
         results.push({ 
@@ -252,9 +259,9 @@ export async function PUT(request: NextRequest) {
     
     // Persist one row per (noteId, panelId) with server-computed version
     for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
-      // Coerce slugs to UUIDs
-      const noteKey = coerceEntityId(noteId)
-      const panelKey = coerceEntityId(panelId)
+      // noteId and panelId are already processed - use as-is
+      const noteKey = noteId  // Already coerced UUID
+      const panelKey = panelId  // Already normalized panel ID
       
       // Ensure the note exists (auto-create if missing)
       await client.query(

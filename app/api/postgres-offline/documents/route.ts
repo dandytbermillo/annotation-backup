@@ -14,8 +14,7 @@ const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NA
 // Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
 // deterministic UUID per note using UUID v5 in the DNS namespace.
 const normalizePanelId = (noteId: string, panelId: string): string => {
-  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
-  if (isUuid.test(panelId)) return panelId
+  if (isUuid(panelId)) return panelId
   return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
 }
 
