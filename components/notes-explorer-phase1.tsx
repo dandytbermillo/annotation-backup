@@ -126,6 +126,13 @@ export function NotesExplorerPhase1({
   const [isLoadingAPI, setIsLoadingAPI] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   
+  // Phase 2: Create note dialog state
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [newNoteName, setNewNoteName] = useState("")
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [availableFolders, setAvailableFolders] = useState<Array<{id: string, name: string, path: string}>>([])
+  const [lastUsedFolderId, setLastUsedFolderId] = useLocalStorage<string | null>('last-folder', null)
+  
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
     if (usePhase1API) {
@@ -285,17 +292,64 @@ export function NotesExplorerPhase1({
     }
   }, [selectedNoteId, enableTreeView, usePhase1API, buildTreeFromBranches])
 
+  // Phase 2: Fetch available folders for selection
+  const fetchAvailableFolders = useCallback(async () => {
+    if (!usePhase1API) return
+    
+    try {
+      const response = await fetch('/api/items?type=folder')
+      if (!response.ok) return
+      
+      const data = await response.json()
+      const folders = data.items.map((item: ItemFromAPI) => ({
+        id: item.id,
+        name: item.name,
+        path: item.path
+      }))
+      setAvailableFolders(folders)
+    } catch (error) {
+      console.error('Failed to fetch folders:', error)
+    }
+  }, [usePhase1API])
+
+  // Load folders when dialog opens
+  useEffect(() => {
+    if (showCreateDialog && usePhase1API) {
+      fetchAvailableFolders()
+      // Set default folder after a short delay to allow folders to load
+      if (lastUsedFolderId) {
+        setSelectedFolderId(lastUsedFolderId)
+      } else {
+        // Will set default in a separate effect after folders load
+        setSelectedFolderId(null)
+      }
+    }
+  }, [showCreateDialog, usePhase1API, fetchAvailableFolders, lastUsedFolderId]) // Fixed deps - removed availableFolders to prevent loop
+  
+  // Set default folder once folders are loaded
+  useEffect(() => {
+    if (showCreateDialog && availableFolders.length > 0 && !selectedFolderId && !lastUsedFolderId) {
+      const uncategorized = availableFolders.find(f => f.name === 'Uncategorized')
+      if (uncategorized) {
+        setSelectedFolderId(uncategorized.id)
+      }
+    }
+  }, [availableFolders, showCreateDialog, selectedFolderId, lastUsedFolderId])
+
   const createNewNote = async () => {
     try {
       if (usePhase1API) {
-        // Phase 1: Create via items API
+        // Phase 2: Create with folder selection
+        const noteName = newNoteName.trim() || `New Note ${notes.length + 1}`
+        const folderId = selectedFolderId || availableFolders.find(f => f.name === 'Uncategorized')?.id || null
+        
         const response = await fetch('/api/items', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             type: 'note',
-            name: `New Note ${notes.length + 1}`,
-            parentId: null, // Could be selected folder ID
+            name: noteName,
+            parentId: folderId, // User-selected folder
             metadata: {}
           })
         })
@@ -312,6 +366,19 @@ export function NotesExplorerPhase1({
         
         setNotes([...notes, newNote])
         await fetchTreeFromAPI() // Refresh tree
+        await fetchRecentFromAPI() // Refresh recent notes
+        
+        // Phase 2: Remember the folder for next time
+        if (folderId) {
+          setLastUsedFolderId(folderId)
+        }
+        
+        // Reset dialog state
+        setShowCreateDialog(false)
+        setNewNoteName("")
+        
+        // Open the new note
+        onNoteSelect(data.item.id)
       } else {
         // Phase 0: Create via notes API
         const response = await fetch('/api/postgres-offline/notes', {
@@ -345,15 +412,43 @@ export function NotesExplorerPhase1({
   const deleteNote = async (noteId: string) => {
     if (confirm('Are you sure you want to delete this note?')) {
       try {
+        console.log('Deleting note with ID:', noteId)
+        
         if (usePhase1API) {
           // Phase 1: Delete via API
           const response = await fetch(`/api/items/${noteId}`, {
-            method: 'DELETE'
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json'
+            }
           })
           
-          if (!response.ok) throw new Error('Failed to delete note')
+          if (!response.ok) {
+            const errorText = await response.text()
+            console.error('Delete API error:', response.status, errorText)
+            
+            // If it's a 404, the note might already be deleted
+            if (response.status === 404) {
+              console.log('Note not found, removing from local state')
+            } else {
+              throw new Error(`Failed to delete note: ${response.status}`)
+            }
+          }
           
           await fetchTreeFromAPI() // Refresh tree
+          await fetchRecentFromAPI() // Refresh recent notes
+          
+          // Also refresh the main notes list
+          const notesResponse = await fetch('/api/postgres-offline/notes')
+          if (notesResponse.ok) {
+            const notesData = await notesResponse.json()
+            setNotes(notesData.map((note: any) => ({
+              id: note.id,
+              title: note.title,
+              createdAt: new Date(note.created_at),
+              lastModified: new Date(note.updated_at)
+            })))
+          }
         }
         
         // Update local state (both phases)
@@ -617,18 +712,24 @@ export function NotesExplorerPhase1({
           </div>
         )}
 
-        {/* Tree View */}
+        {/* Tree View - Simplified after removing Recent folder */}
         {enableTreeView && (usePhase1API ? apiTreeData.length > 0 : (selectedNoteId && treeData.length > 0)) && (
           <div className="p-2 border-b border-gray-800">
             <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-gray-400 uppercase">
               <Folder size={14} />
-              <span>{usePhase1API ? 'Knowledge Base' : 'Branch Tree'}</span>
+              <span>Organization</span>
             </div>
             {isLoadingAPI ? (
               <div className="p-4 text-center text-gray-500">Loading...</div>
             ) : (
-              <div className="mt-1" role="tree" aria-label="Note hierarchy">
-                {(usePhase1API ? apiTreeData : treeData).map(node => renderTreeNode(node))}
+              <div className="mt-1" role="tree" aria-label="Note organization">
+                {(usePhase1API ? apiTreeData : treeData).map(node => {
+                  // Auto-expand Knowledge Base since it's now the only root
+                  if (usePhase1API && node.name === 'Knowledge Base' && expandedNodes[node.id] === undefined) {
+                    expandedNodes[node.id] = true
+                  }
+                  return renderTreeNode(node)
+                })}
               </div>
             )}
           </div>
@@ -687,7 +788,13 @@ export function NotesExplorerPhase1({
       {/* Create Note Button */}
       <div className="p-4 border-t border-gray-800">
         <button
-          onClick={createNewNote}
+          onClick={() => {
+            if (usePhase1API) {
+              setShowCreateDialog(true) // Phase 2: Open dialog
+            } else {
+              createNewNote() // Phase 0: Direct creation
+            }
+          }}
           className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors mb-4"
         >
           <Plus size={18} />
@@ -743,6 +850,75 @@ export function NotesExplorerPhase1({
               {showConnections ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
               <span>Toggle Lines</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 2: Create Note Dialog */}
+      {showCreateDialog && usePhase1API && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+          <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-[90vw]">
+            <h2 className="text-xl font-semibold mb-4 text-white">Create New Note</h2>
+            
+            {/* Note Name Input */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Note Name
+              </label>
+              <input
+                type="text"
+                value={newNoteName}
+                onChange={(e) => setNewNoteName(e.target.value)}
+                placeholder="Enter note name..."
+                className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                autoFocus
+              />
+            </div>
+            
+            {/* Folder Selector */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Save to Folder
+              </label>
+              <select
+                value={selectedFolderId || ''}
+                onChange={(e) => setSelectedFolderId(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Select a folder...</option>
+                {availableFolders.map(folder => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.path.replace('/knowledge-base/', '')}
+                  </option>
+                ))}
+              </select>
+              {selectedFolderId && (
+                <p className="mt-2 text-xs text-gray-400">
+                  Will be saved to: {availableFolders.find(f => f.id === selectedFolderId)?.path}
+                </p>
+              )}
+            </div>
+            
+            {/* Dialog Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowCreateDialog(false)
+                  setNewNoteName("")
+                  setSelectedFolderId(null)
+                  setAvailableFolders([]) // Clear folders to prevent stale data
+                }}
+                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createNewNote}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
+              >
+                Create Note
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -36,6 +36,20 @@ export async function GET(request: NextRequest) {
       values = [`%${search}%`]
       if (type) values.push(type)
       values.push(limit)
+    } else if (type && !parentId) {
+      // Filter by type only
+      query = `
+        SELECT 
+          id, type, parent_id, path, name, slug, position,
+          metadata, icon, color, last_accessed_at,
+          created_at, updated_at
+        FROM items 
+        WHERE deleted_at IS NULL
+          AND type = $1
+        ORDER BY path
+        LIMIT $2
+      `
+      values = [type, limit]
     } else if (parentId !== undefined) {
       // Get children of specific parent
       query = `
