@@ -128,7 +128,7 @@ export function NotesExplorerPhase1({
   const [columnWidths, setColumnWidths] = useState<number[]>([]) // Track column widths
   const [resizingColumn, setResizingColumn] = useState<number | null>(null)
   
-  // Cascading popover state - now supports multiple popups
+  // Cascading popover state - now supports multiple popups with dragging
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
     id: string
     folder: TreeNode | null
@@ -136,9 +136,14 @@ export function NotesExplorerPhase1({
     isLoading: boolean
     parentId?: string // To track relationships for connection lines
     level: number // Depth level for positioning
+    isDragging?: boolean // Track if popup is being dragged
   }>>(new Map())
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
+  
+  // Dragging state for popups
+  const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
+  const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])
@@ -171,6 +176,61 @@ export function NotesExplorerPhase1({
   const [newFolderName, setNewFolderName] = useState("")
   const [customFolderInput, setCustomFolderInput] = useState("")
   const [showCustomFolder, setShowCustomFolder] = useState(false)
+  
+  // Handle global mouse events for dragging
+  useEffect(() => {
+    if (!draggingPopup) return
+    
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      e.preventDefault()
+      
+      // Allow dragging with minimal constraints - just keep header visible
+      const minVisible = 50 // Minimum pixels that must remain visible
+      const newPosition = {
+        x: Math.max(-250, Math.min(window.innerWidth - minVisible, e.clientX - dragOffset.x)),
+        y: Math.max(0, Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y))
+      }
+      
+      setHoverPopovers(prev => {
+        const newMap = new Map(prev)
+        const popup = newMap.get(draggingPopup)
+        if (popup) {
+          newMap.set(draggingPopup, {
+            ...popup,
+            position: newPosition,
+            isDragging: true
+          })
+        }
+        return newMap
+      })
+    }
+    
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+      e.preventDefault()
+      
+      setHoverPopovers(prev => {
+        const newMap = new Map(prev)
+        const popup = newMap.get(draggingPopup)
+        if (popup) {
+          newMap.set(draggingPopup, { ...popup, isDragging: false })
+        }
+        return newMap
+      })
+      
+      setDraggingPopup(null)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    
+    // Use capture phase for better responsiveness
+    document.addEventListener('mousemove', handleGlobalMouseMove, true)
+    document.addEventListener('mouseup', handleGlobalMouseUp, true)
+    
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove, true)
+      document.removeEventListener('mouseup', handleGlobalMouseUp, true)
+    }
+  }, [draggingPopup, dragOffset])
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
@@ -837,6 +897,7 @@ export function NotesExplorerPhase1({
     
     // Clear all popovers
     setHoverPopovers(new Map())
+    setDraggingPopup(null)
   }
   
   // Close specific popover and its children
@@ -859,6 +920,76 @@ export function NotesExplorerPhase1({
       toRemove.forEach(id => newMap.delete(id))
       return newMap
     })
+    
+    // Clear dragging state if this popup was being dragged
+    if (draggingPopup === popoverId) {
+      setDraggingPopup(null)
+    }
+  }
+  
+  // Handle popup drag start
+  const handlePopupDragStart = (popupId: string, e: React.MouseEvent) => {
+    e.preventDefault() // Prevent text selection during drag
+    e.stopPropagation() // Prevent event bubbling
+    
+    const popup = hoverPopovers.get(popupId)
+    if (!popup) return
+    
+    // Get the exact position of the header element
+    const rect = e.currentTarget.getBoundingClientRect()
+    
+    // Calculate offset from mouse to popup position
+    const offset = {
+      x: e.clientX - popup.position.x,
+      y: e.clientY - popup.position.y
+    }
+    
+    setDragOffset(offset)
+    setDraggingPopup(popupId)
+    
+    // Mark popup as being dragged
+    setHoverPopovers(prev => {
+      const newMap = new Map(prev)
+      const existingPopup = newMap.get(popupId)
+      if (existingPopup) {
+        newMap.set(popupId, { ...existingPopup, isDragging: true })
+      }
+      return newMap
+    })
+    
+    // Add cursor style to body during drag
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+  }
+  
+  // Handle popup drag (now handled by global mouse events)
+  const handlePopupDrag = (e: React.MouseEvent) => {
+    // This is now handled by the global mouse move in useEffect
+    // Keeping this function for compatibility but it doesn't need to do anything
+    if (draggingPopup) {
+      e.preventDefault()
+    }
+  }
+  
+  // Handle popup drag end
+  const handlePopupDragEnd = () => {
+    if (!draggingPopup) return
+    
+    // Remove dragging state
+    setHoverPopovers(prev => {
+      const newMap = new Map(prev)
+      const popup = newMap.get(draggingPopup)
+      if (popup) {
+        newMap.set(draggingPopup, { ...popup, isDragging: false })
+      }
+      return newMap
+    })
+    
+    setDraggingPopup(null)
+    
+    // Reset cursor
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
   }
 
   const handleBrowseFolder = async (folder: TreeNode, event: React.MouseEvent) => {
@@ -2104,17 +2235,19 @@ export function NotesExplorerPhase1({
         </div>
       )}
 
-      {/* Cascading Hover Popovers for Quick Preview */}
+      {/* Cascading Hover Popovers for Quick Preview - Now Draggable! */}
       {Array.from(hoverPopovers.values()).map((popover) => (
         <div
           key={popover.id}
           className="fixed bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
           style={{
-            zIndex: 9999 + popover.level, // Higher z-index for deeper levels
+            zIndex: popover.isDragging ? 10000 : 9999 + popover.level, // Highest z-index when dragging
             left: `${popover.position.x}px`,
             top: `${popover.position.y}px`,
-            maxWidth: '300px',
-            maxHeight: '400px'
+            width: '300px',
+            maxHeight: '80vh', // Use viewport height for better flexibility
+            cursor: popover.isDragging ? 'grabbing' : 'default',
+            transition: popover.isDragging ? 'none' : 'box-shadow 0.2s ease'
           }}
           onMouseEnter={() => {
             // Keep popover open when hovering over it
@@ -2124,9 +2257,15 @@ export function NotesExplorerPhase1({
             // closePopover(popover.id)
           }}
         >
-          {/* Popover Header */}
-          <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          {/* Popover Header - Draggable Area */}
+          <div 
+            className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+            onMouseDown={(e) => handlePopupDragStart(popover.id, e)}
+            style={{
+              backgroundColor: popover.isDragging ? '#374151' : 'transparent'
+            }}
+          >
+            <div className="flex items-center gap-2 pointer-events-none">
               <Folder className="w-4 h-4 text-blue-400" />
               <span className="text-sm font-medium text-white truncate">
                 {popover.folder?.name || 'Loading...'}
@@ -2134,14 +2273,15 @@ export function NotesExplorerPhase1({
             </div>
             <button
               onClick={() => closePopover(popover.id)}
-              className="p-0.5 hover:bg-gray-700 rounded"
+              onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking X
+              className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
             >
               <X className="w-3.5 h-3.5 text-gray-400" />
             </button>
           </div>
           
           {/* Popover Content */}
-          <div className="max-h-[320px] overflow-y-auto">
+          <div className="overflow-y-auto" style={{ maxHeight: 'calc(80vh - 100px)' }}>
             {popover.isLoading ? (
               <div className="p-4 text-center text-gray-500 text-sm">
                 Loading...
@@ -2196,40 +2336,259 @@ export function NotesExplorerPhase1({
         </div>
       ))}
       
-      {/* Connection Lines Between Related Popovers */}
-      <svg
-        className="fixed pointer-events-none"
-        style={{
-          zIndex: 9998,
-          left: 0,
-          top: 0,
-          width: '100%',
-          height: '100%'
-        }}
-      >
-        {Array.from(hoverPopovers.values()).map((popover) => {
-          if (!popover.parentId) return null
-          const parent = hoverPopovers.get(popover.parentId)
-          if (!parent) return null
+      {/* Connection Lines Between Related Popovers - Annotation Style Bezier Curves */}
+      {hoverPopovers.size > 0 && (
+        <svg
+          className="fixed pointer-events-none"
+          style={{
+            zIndex: 9998,
+            left: 0,
+            top: 0,
+            width: '100vw',
+            height: '100vh',
+            position: 'fixed'
+          }}
+        >
+          <defs>
+            {/* Gradient for connection lines */}
+            <linearGradient id="connectionGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="rgba(99, 102, 241, 0.8)" />
+              <stop offset="100%" stopColor="rgba(139, 92, 246, 0.6)" />
+            </linearGradient>
+            
+            {/* Glow filter for hover/drag state */}
+            <filter id="glow">
+              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+              <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+            
+            {/* Arrow marker for connection direction */}
+            <marker
+              id="arrowEnd"
+              markerWidth="10"
+              markerHeight="10"
+              refX="8"
+              refY="5"
+              orient="auto"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 L 3 5 Z" fill="rgba(139, 92, 246, 0.8)" />
+            </marker>
+          </defs>
           
-          // Draw a subtle connection line from parent to child
-          return (
-            <line
-              key={`line-${popover.id}`}
-              x1={parent.position.x + 280} // Approximate popup width
-              y1={parent.position.y + 40} // Approximate header height
-              x2={popover.position.x}
-              y2={popover.position.y + 40}
-              stroke="rgba(59, 130, 246, 0.3)" // Blue with transparency
-              strokeWidth="1"
-              strokeDasharray="4 2"
-            />
-          )
-        })}
-      </svg>
+          {Array.from(hoverPopovers.values()).map((popover) => {
+            if (!popover.parentId) return null
+            const parent = hoverPopovers.get(popover.parentId)
+            if (!parent) return null
+            
+            // Smart connection point calculation
+            // Popup dimensions (fixed width, variable height)
+            const popupWidth = 300
+            // Use actual popup position to estimate height (or use a ref to get actual height)
+            const popupHeight = Math.min(400, window.innerHeight * 0.8) // Max 80% of viewport
+            const headerHeight = 45
+            
+            // Calculate actual popup boundaries
+            const parentBounds = {
+              left: parent.position.x,
+              right: parent.position.x + popupWidth,
+              top: parent.position.y,
+              bottom: parent.position.y + popupHeight,
+              centerX: parent.position.x + popupWidth / 2,
+              centerY: parent.position.y + popupHeight / 2
+            }
+            
+            const childBounds = {
+              left: popover.position.x,
+              right: popover.position.x + popupWidth,
+              top: popover.position.y,
+              bottom: popover.position.y + popupHeight,
+              centerX: popover.position.x + popupWidth / 2,
+              centerY: popover.position.y + popupHeight / 2
+            }
+            
+            // Calculate relative position more accurately
+            const deltaX = childBounds.centerX - parentBounds.centerX
+            const deltaY = childBounds.centerY - parentBounds.centerY
+            
+            // Smart connection points based on relative positions
+            let startX, startY, endX, endY
+            
+            // Check for primarily horizontal vs vertical separation
+            const horizontalSeparation = Math.abs(deltaX)
+            const verticalSeparation = Math.abs(deltaY)
+            
+            if (horizontalSeparation > verticalSeparation * 1.5) {
+              // Primarily horizontal relationship
+              if (deltaX > 0) {
+                // Child is to the right
+                startX = parentBounds.right - 5
+                startY = parentBounds.centerY
+                endX = childBounds.left + 5
+                endY = childBounds.centerY
+              } else {
+                // Child is to the left
+                startX = parentBounds.left + 5
+                startY = parentBounds.centerY
+                endX = childBounds.right - 5
+                endY = childBounds.centerY
+              }
+            } else if (verticalSeparation > horizontalSeparation * 1.5) {
+              // Primarily vertical relationship
+              if (deltaY > 0) {
+                // Child is below
+                startX = parentBounds.centerX
+                startY = parentBounds.bottom - 10
+                endX = childBounds.centerX
+                endY = childBounds.top + headerHeight
+              } else {
+                // Child is above
+                startX = parentBounds.centerX
+                startY = parentBounds.top + headerHeight
+                endX = childBounds.centerX
+                endY = childBounds.bottom - 10
+              }
+            } else {
+              // Diagonal relationship - connect nearest corners
+              if (deltaX > 0 && deltaY > 0) {
+                // Child is bottom-right
+                startX = parentBounds.right - 20
+                startY = parentBounds.bottom - 20
+                endX = childBounds.left + 20
+                endY = childBounds.top + headerHeight
+              } else if (deltaX > 0 && deltaY < 0) {
+                // Child is top-right
+                startX = parentBounds.right - 20
+                startY = parentBounds.top + headerHeight + 20
+                endX = childBounds.left + 20
+                endY = childBounds.bottom - 20
+              } else if (deltaX < 0 && deltaY > 0) {
+                // Child is bottom-left
+                startX = parentBounds.left + 20
+                startY = parentBounds.bottom - 20
+                endX = childBounds.right - 20
+                endY = childBounds.top + headerHeight
+              } else {
+                // Child is top-left
+                startX = parentBounds.left + 20
+                startY = parentBounds.top + headerHeight + 20
+                endX = childBounds.right - 20
+                endY = childBounds.bottom - 20
+              }
+            }
+            
+            // Calculate smart control points for smooth bezier curves
+            const distance = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2))
+            const controlOffset = Math.min(distance * 0.5, 100)
+            
+            let control1X, control1Y, control2X, control2Y
+            
+            // Determine control points based on the connection type
+            if (horizontalSeparation > verticalSeparation * 1.5) {
+              // Horizontal connection - use horizontal control points
+              const direction = deltaX > 0 ? 1 : -1
+              control1X = startX + controlOffset * direction
+              control1Y = startY
+              control2X = endX - controlOffset * direction
+              control2Y = endY
+            } else if (verticalSeparation > horizontalSeparation * 1.5) {
+              // Vertical connection - use vertical control points
+              const direction = deltaY > 0 ? 1 : -1
+              control1X = startX
+              control1Y = startY + controlOffset * direction
+              control2X = endX
+              control2Y = endY - controlOffset * direction
+            } else {
+              // Diagonal connection - use mixed control points for smooth curve
+              const xDirection = deltaX > 0 ? 1 : -1
+              const yDirection = deltaY > 0 ? 1 : -1
+              control1X = startX + (controlOffset * 0.7) * xDirection
+              control1Y = startY + (controlOffset * 0.3) * yDirection
+              control2X = endX - (controlOffset * 0.7) * xDirection
+              control2Y = endY - (controlOffset * 0.3) * yDirection
+            }
+            
+            // Create the bezier path
+            const pathData = `M ${startX} ${startY} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${endX} ${endY}`
+            
+            // Styling based on drag state
+            const isDragging = popover.isDragging || parent.isDragging
+            const strokeWidth = isDragging ? 3 : 2
+            const opacity = isDragging ? 1 : 0.7
+            
+            return (
+              <g key={`connection-${popover.id}`}>
+                {/* Shadow/glow path for depth */}
+                <path
+                  d={pathData}
+                  stroke="rgba(0, 0, 0, 0.2)"
+                  strokeWidth={strokeWidth + 2}
+                  fill="none"
+                  strokeLinecap="round"
+                  transform="translate(2, 2)"
+                />
+                
+                {/* Main connection path */}
+                <path
+                  d={pathData}
+                  stroke="url(#connectionGradient)"
+                  strokeWidth={strokeWidth}
+                  fill="none"
+                  opacity={opacity}
+                  strokeLinecap="round"
+                  filter={isDragging ? "url(#glow)" : ""}
+                  markerEnd="url(#arrowEnd)"
+                  style={{
+                    transition: 'all 0.2s ease'
+                  }}
+                />
+                
+                {/* Connection point indicators */}
+                {/* Start point */}
+                <g>
+                  <circle
+                    cx={startX}
+                    cy={startY}
+                    r="5"
+                    fill="rgba(99, 102, 241, 0.2)"
+                    stroke="rgba(99, 102, 241, 0.8)"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx={startX}
+                    cy={startY}
+                    r="2.5"
+                    fill="rgba(99, 102, 241, 1)"
+                  />
+                </g>
+                
+                {/* End point */}
+                <g>
+                  <circle
+                    cx={endX}
+                    cy={endY}
+                    r="5"
+                    fill="rgba(139, 92, 246, 0.2)"
+                    stroke="rgba(139, 92, 246, 0.8)"
+                    strokeWidth="2"
+                  />
+                  <circle
+                    cx={endX}
+                    cy={endY}
+                    r="2.5"
+                    fill="rgba(139, 92, 246, 1)"
+                  />
+                </g>
+              </g>
+            )
+          })}
+        </svg>
+      )}
       
       {/* Click outside to close all popovers */}
-      {hoverPopovers.size > 0 && (
+      {hoverPopovers.size > 0 && !draggingPopup && (
         <div
           className="fixed inset-0"
           style={{ zIndex: 9997 }}
