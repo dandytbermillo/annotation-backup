@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-12 04:45Z] a0aa50b: phase 2 almost done
 - commit [2025-09-12 03:52Z] 51c2eef: phase 0-1 successfully tested of user friendly tree view
 - commit [2025-09-11 23:22Z] 42c7504: Option_A_Offline_Main_Content_Vanishes_After_Reload_Switch finalized
 - commit [2025-09-11 19:14Z] 62686f3: successfull fix the missing content of the main branch when attempting to reopen the second time
@@ -15,7 +16,6 @@ Recent Activity
 - note [2025-09-11 04:38Z]: 
 - commit [2025-09-11 04:34Z] 80a4697: testing automatic edit when note is empty
 - commit [2025-09-11 02:04Z] 30ca3d9: hower icon issue final solve
-- commit [2025-09-11 01:32Z] 67f6a2e: hover icons starting work well
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

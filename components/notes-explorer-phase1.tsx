@@ -130,8 +130,20 @@ export function NotesExplorerPhase1({
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newNoteName, setNewNoteName] = useState("")
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
-  const [availableFolders, setAvailableFolders] = useState<Array<{id: string, name: string, path: string}>>([])
+  const [availableFolders, setAvailableFolders] = useState<Array<{
+    id: string
+    name: string
+    path: string
+    parentId?: string
+    depth?: number
+  }>>([])
   const [lastUsedFolderId, setLastUsedFolderId] = useLocalStorage<string | null>('last-folder', null)
+  
+  // Phase 3: Folder creation state
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState("")
+  const [customFolderInput, setCustomFolderInput] = useState("")
+  const [showCustomFolder, setShowCustomFolder] = useState(false)
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
@@ -292,7 +304,7 @@ export function NotesExplorerPhase1({
     }
   }, [selectedNoteId, enableTreeView, usePhase1API, buildTreeFromBranches])
 
-  // Phase 2: Fetch available folders for selection
+  // Phase 3.1: Fetch ALL folders including nested ones for selection
   const fetchAvailableFolders = useCallback(async () => {
     if (!usePhase1API) return
     
@@ -301,11 +313,18 @@ export function NotesExplorerPhase1({
       if (!response.ok) return
       
       const data = await response.json()
-      const folders = data.items.map((item: ItemFromAPI) => ({
-        id: item.id,
-        name: item.name,
-        path: item.path
-      }))
+      // Sort folders by path to ensure proper hierarchy display
+      const folders = data.items
+        .map((item: ItemFromAPI) => ({
+          id: item.id,
+          name: item.name,
+          path: item.path,
+          parentId: item.parentId,
+          // Calculate depth for indentation
+          depth: item.path.split('/').length - 2
+        }))
+        .sort((a: any, b: any) => a.path.localeCompare(b.path))
+      
       setAvailableFolders(folders)
     } catch (error) {
       console.error('Failed to fetch folders:', error)
@@ -336,12 +355,83 @@ export function NotesExplorerPhase1({
     }
   }, [availableFolders, showCreateDialog, selectedFolderId, lastUsedFolderId])
 
+  // Phase 3: Create new folder
+  const createNewFolder = async (folderName: string, parentId?: string) => {
+    try {
+      const parentFolderId = parentId || availableFolders.find(f => f.name === 'Knowledge Base')?.id || null
+      
+      const response = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'folder',
+          name: folderName,
+          parentId: parentFolderId,
+          metadata: {}
+        })
+      })
+      
+      if (!response.ok) throw new Error('Failed to create folder')
+      
+      const data = await response.json()
+      const newFolder = {
+        id: data.item.id,
+        name: data.item.name,
+        path: data.item.path
+      }
+      
+      // Update available folders
+      setAvailableFolders([...availableFolders, newFolder])
+      
+      // Select the new folder
+      setSelectedFolderId(newFolder.id)
+      
+      // Refresh tree
+      await fetchTreeFromAPI()
+      
+      return newFolder
+    } catch (error) {
+      console.error('Failed to create folder:', error)
+      alert('Failed to create folder. Please try again.')
+      return null
+    }
+  }
+
   const createNewNote = async () => {
     try {
       if (usePhase1API) {
+        // Phase 3: Handle custom folder creation first
+        let finalFolderId = selectedFolderId
+        
+        // If user typed a custom path, create the folder(s) first
+        if (showCustomFolder && customFolderInput.trim()) {
+          const pathParts = customFolderInput.trim().split('/').filter(p => p)
+          let parentId = availableFolders.find(f => f.name === 'Knowledge Base')?.id || null
+          
+          // Create each folder in the path if it doesn't exist
+          for (const folderName of pathParts) {
+            const existingFolder = availableFolders.find(f => 
+              f.parentId === parentId && f.name === folderName
+            )
+            
+            if (existingFolder) {
+              parentId = existingFolder.id
+            } else {
+              const newFolder = await createNewFolder(folderName, parentId)
+              if (newFolder) {
+                parentId = newFolder.id
+              } else {
+                throw new Error('Failed to create folder path')
+              }
+            }
+          }
+          
+          finalFolderId = parentId
+        }
+        
         // Phase 2: Create with folder selection
         const noteName = newNoteName.trim() || `New Note ${notes.length + 1}`
-        const folderId = selectedFolderId || availableFolders.find(f => f.name === 'Uncategorized')?.id || null
+        const folderId = finalFolderId || availableFolders.find(f => f.name === 'Uncategorized')?.id || null
         
         const response = await fetch('/api/items', {
           method: 'POST',
@@ -376,6 +466,10 @@ export function NotesExplorerPhase1({
         // Reset dialog state
         setShowCreateDialog(false)
         setNewNoteName("")
+        setIsCreatingFolder(false)
+        setNewFolderName("")
+        setShowCustomFolder(false)
+        setCustomFolderInput("")
         
         // Open the new note
         onNoteSelect(data.item.id)
@@ -875,24 +969,132 @@ export function NotesExplorerPhase1({
               />
             </div>
             
-            {/* Folder Selector */}
+            {/* Folder Selector - Phase 3 Enhanced */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Save to Folder
               </label>
-              <select
-                value={selectedFolderId || ''}
-                onChange={(e) => setSelectedFolderId(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">Select a folder...</option>
-                {availableFolders.map(folder => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.path.replace('/knowledge-base/', '')}
-                  </option>
-                ))}
-              </select>
-              {selectedFolderId && (
+              
+              {!showCustomFolder ? (
+                <>
+                  <select
+                    value={selectedFolderId || 'create-new'}
+                    onChange={async (e) => {
+                      const value = e.target.value
+                      if (value === 'create-new') {
+                        setIsCreatingFolder(true)
+                        setShowCustomFolder(false)
+                      } else if (value === 'type-custom') {
+                        setShowCustomFolder(true)
+                        setIsCreatingFolder(false)
+                      } else {
+                        setSelectedFolderId(value)
+                        setIsCreatingFolder(false)
+                        setShowCustomFolder(false)
+                      }
+                    }}
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Select a folder...</option>
+                    <option value="create-new" className="font-semibold text-indigo-400">
+                      + Create New Folder...
+                    </option>
+                    <option value="type-custom" className="font-semibold text-green-400">
+                      ✏️ Type Custom Path...
+                    </option>
+                    <optgroup label="Existing Folders">
+                      {availableFolders.map(folder => {
+                        // Create visual hierarchy with indentation
+                        const indent = '　'.repeat(folder.depth || 0)
+                        const displayName = folder.path === '/knowledge-base' 
+                          ? 'Knowledge Base' 
+                          : folder.name
+                        
+                        return (
+                          <option key={folder.id} value={folder.id}>
+                            {indent}{(folder.depth || 0) > 0 ? '└─ ' : ''}{displayName}
+                          </option>
+                        )
+                      })}
+                    </optgroup>
+                  </select>
+                  
+                  {/* New Folder Name Input */}
+                  {isCreatingFolder && (
+                    <div className="mt-3 space-y-2">
+                      <input
+                        type="text"
+                        value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        placeholder="Enter folder name..."
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        autoFocus
+                      />
+                      <select
+                        value={selectedFolderId || ''}
+                        onChange={(e) => setSelectedFolderId(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                      >
+                        <option value="">Create under Knowledge Base (root)</option>
+                        {availableFolders.map(folder => (
+                          <option key={folder.id} value={folder.id}>
+                            Create under: {folder.path.replace('/knowledge-base/', '') || 'Knowledge Base'}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={async () => {
+                          if (newFolderName.trim()) {
+                            const folder = await createNewFolder(newFolderName.trim(), selectedFolderId || undefined)
+                            if (folder) {
+                              setIsCreatingFolder(false)
+                              setNewFolderName("")
+                              // Re-fetch folders to update the list
+                              await fetchAvailableFolders()
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium"
+                      >
+                        Create Folder
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Type-to-Create Pattern */
+                <div>
+                  <input
+                    type="text"
+                    value={customFolderInput}
+                    onChange={(e) => setCustomFolderInput(e.target.value)}
+                    placeholder="e.g., Projects/Web/MyApp or just MyFolder"
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setShowCustomFolder(false)
+                        setCustomFolderInput("")
+                      }}
+                      className="text-xs text-gray-400 hover:text-gray-300"
+                    >
+                      ← Back to dropdown
+                    </button>
+                    {customFolderInput && !availableFolders.some(f => 
+                      f.path.endsWith('/' + customFolderInput) || 
+                      f.name === customFolderInput
+                    ) && (
+                      <span className="text-xs text-green-400">
+                        Will create: {customFolderInput}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {selectedFolderId && !isCreatingFolder && !showCustomFolder && (
                 <p className="mt-2 text-xs text-gray-400">
                   Will be saved to: {availableFolders.find(f => f.id === selectedFolderId)?.path}
                 </p>
@@ -907,6 +1109,10 @@ export function NotesExplorerPhase1({
                   setNewNoteName("")
                   setSelectedFolderId(null)
                   setAvailableFolders([]) // Clear folders to prevent stale data
+                  setIsCreatingFolder(false)
+                  setNewFolderName("")
+                  setShowCustomFolder(false)
+                  setCustomFolderInput("")
                 }}
                 className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
               >

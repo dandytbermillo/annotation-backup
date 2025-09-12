@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Nested Folder Selection</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .test-section {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        h1 { color: #4fc3f7; }
+        h2 { color: #81c784; }
+        .step {
+            background: #333;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 3px solid #4fc3f7;
+        }
+        .expected {
+            background: #1b5e20;
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 3px;
+        }
+        code {
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #ffeb3b;
+        }
+        .tree {
+            font-family: monospace;
+            line-height: 1.5;
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Test: Nested Folder Selection in Create Note Dialog</h1>
+    
+    <div class="test-section">
+        <h2>Current Folder Structure</h2>
+        <div class="tree">
+📁 Knowledge Base<br>
+├── 📁 Projects<br>
+│   └── 📁 Web<br>
+├── 📁 documents<br>
+│   └── 📁 drafts<br>
+└── 📁 Uncategorized
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Scenario 1: Verify Dropdown Shows All Folders</h2>
+        <div class="step">
+            <strong>Step 1:</strong> Click "Create New Note" button
+        </div>
+        <div class="step">
+            <strong>Step 2:</strong> Click on the "Select a folder..." dropdown
+            <div class="expected">
+                <strong>✅ Expected:</strong> Dropdown should show:
+                <ul>
+                    <li>+ Create New Folder... (blue text)</li>
+                    <li>✏️ Type Custom Path... (green text)</li>
+                    <li>--- Existing Folders ---</li>
+                    <li>Knowledge Base (root level)</li>
+                    <li>　└─ Projects</li>
+                    <li>　　└─ Web</li>
+                    <li>　└─ documents</li>
+                    <li>　　└─ drafts</li>
+                    <li>　└─ Uncategorized</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Scenario 2: Save Note to Nested Folder</h2>
+        <div class="step">
+            <strong>Step 1:</strong> Open Create Note dialog
+        </div>
+        <div class="step">
+            <strong>Step 2:</strong> Enter note name: <code>Test Note in Drafts</code>
+        </div>
+        <div class="step">
+            <strong>Step 3:</strong> Select folder: <code>　　└─ drafts</code>
+            <div class="expected">
+                <strong>✅ Expected:</strong> Shows "Will be saved to: /knowledge-base/documents/drafts"
+            </div>
+        </div>
+        <div class="step">
+            <strong>Step 4:</strong> Click "Create Note"
+            <div class="expected">
+                <strong>✅ Expected:</strong> Note appears in tree under documents → drafts
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Scenario 3: Create New Folder Under Existing</h2>
+        <div class="step">
+            <strong>Step 1:</strong> Select "+ Create New Folder..."
+        </div>
+        <div class="step">
+            <strong>Step 2:</strong> Enter folder name: <code>Archive</code>
+        </div>
+        <div class="step">
+            <strong>Step 3:</strong> Select parent: <code>Create under: documents</code>
+            <div class="expected">
+                <strong>✅ Expected:</strong> New folder appears as documents → Archive
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Scenario 4: Type Custom Path</h2>
+        <div class="step">
+            <strong>Step 1:</strong> Select "✏️ Type Custom Path..."
+        </div>
+        <div class="step">
+            <strong>Step 2:</strong> Type: <code>Projects/Mobile/iOS</code>
+            <div class="expected">
+                <strong>✅ Expected:</strong> Shows "Will create: Projects/Mobile/iOS"
+            </div>
+        </div>
+        <div class="step">
+            <strong>Step 3:</strong> Create note
+            <div class="expected">
+                <strong>✅ Expected:</strong> Creates Mobile folder under Projects, iOS under Mobile
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>API Verification Commands</h2>
+        <div class="tree">
+# Check all folders with hierarchy
+curl -s "http://localhost:3000/api/items?type=folder" | jq '.items[] | {name, path, depth: (.path | split("/") | length - 2)}'
+
+# Create test note in nested folder
+DRAFTS_ID=$(curl -s "http://localhost:3000/api/items?type=folder" | jq -r '.items[] | select(.path == "/knowledge-base/documents/drafts") | .id')
+curl -X POST "http://localhost:3000/api/items" \
+  -H "Content-Type: application/json" \
+  -d "{\"type\": \"note\", \"name\": \"Test Note\", \"parentId\": \"$DRAFTS_ID\", \"content\": \"Test content\"}"
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>✨ Success Criteria</h2>
+        <ul>
+            <li>✅ All nested folders visible in dropdown with proper indentation</li>
+            <li>✅ Visual hierarchy clear with └─ symbols</li>
+            <li>✅ Can select any folder at any depth</li>
+            <li>✅ Notes saved to correct nested location</li>
+            <li>✅ Tree view updates to show new notes in nested folders</li>
+            <li>✅ Parent folder selection works when creating new folders</li>
+        </ul>
+    </div>
+</body>
+</html>
