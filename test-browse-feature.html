@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse Feature Test Instructions</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        h1 {
+            color: #4a9eff;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #6ab7ff;
+            margin-top: 30px;
+        }
+        .feature-box {
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .step {
+            background: #333;
+            border-left: 3px solid #4a9eff;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .step-number {
+            color: #4a9eff;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        code {
+            background: #444;
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: #ffcc80;
+        }
+        .highlight {
+            background: #3a3a3a;
+            border: 1px solid #555;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        .icon-demo {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            background: #333;
+            border-radius: 4px;
+            margin: 5px;
+        }
+        ul {
+            line-height: 1.8;
+        }
+        .warning {
+            background: #4a3900;
+            border: 1px solid #8b6f00;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+        .success {
+            background: #1a3a1a;
+            border: 1px solid #4a7c4a;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Browse Folder Feature - Testing Guide</h1>
+
+    <div class="feature-box">
+        <h2>✨ What's New</h2>
+        <p>A new <strong>Browse</strong> feature has been added to the folder nodes in the tree view. This allows you to quickly view and navigate folder contents in a modal window without expanding the entire tree.</p>
+    </div>
+
+    <div class="feature-box">
+        <h2>🎯 How to Test</h2>
+        
+        <div class="step">
+            <span class="step-number">Step 1:</span>
+            <strong>Open the Application</strong>
+            <p>Navigate to <code>http://localhost:3001</code> in your browser</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">Step 2:</span>
+            <strong>Locate a Folder</strong>
+            <p>In the left sidebar tree view, find any folder (e.g., "Knowledge Base" or any subfolder)</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">Step 3:</span>
+            <strong>Hover Over the Folder</strong>
+            <p>When you hover over a folder, you'll see an <span class="icon-demo">👁️ Eye icon</span> appear on the right side of the folder name</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">Step 4:</span>
+            <strong>Click the Browse Icon</strong>
+            <p>Click the eye icon to open the browse modal</p>
+        </div>
+
+        <div class="step">
+            <span class="step-number">Step 5:</span>
+            <strong>Explore the Modal</strong>
+            <p>In the modal, you can:</p>
+            <ul>
+                <li>See all items in the folder displayed in a grid layout</li>
+                <li>Click on notes to open them directly</li>
+                <li>Click on subfolders to navigate into them</li>
+                <li>View the folder path at the bottom</li>
+                <li>See the item count</li>
+                <li>Close the modal with the X button or by clicking outside</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="feature-box">
+        <h2>🔧 Implementation Details</h2>
+        <div class="highlight">
+            <h3>Key Features:</h3>
+            <ul>
+                <li><strong>Modal Overlay:</strong> A dark overlay that appears over the main content</li>
+                <li><strong>Grid Layout:</strong> Items are displayed in a 2-column grid for easy scanning</li>
+                <li><strong>Navigation:</strong> Click folders to drill down, click notes to open them</li>
+                <li><strong>Visual Feedback:</strong> Hover effects and clear icons for folders vs notes</li>
+                <li><strong>Context Info:</strong> Shows current folder name, path, and item count</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="feature-box">
+        <h2>🎨 Design Choices</h2>
+        <p><strong>Why a Modal Instead of a Popup?</strong></p>
+        <ul>
+            <li>Better UX - stays within the same window context</li>
+            <li>More space to display content clearly</li>
+            <li>Easier navigation between folders</li>
+            <li>Consistent with modern web applications</li>
+            <li>No browser popup blockers or window management issues</li>
+        </ul>
+    </div>
+
+    <div class="success">
+        <strong>✅ Expected Behavior:</strong>
+        <ul>
+            <li>Eye icon only appears on hover for folders (not notes)</li>
+            <li>Modal opens centered on screen with smooth animation</li>
+            <li>Empty folders show an "empty" message</li>
+            <li>Clicking a note opens it and closes the modal</li>
+            <li>Clicking a subfolder navigates into it within the same modal</li>
+        </ul>
+    </div>
+
+    <div class="warning">
+        <strong>⚠️ Known Limitations:</strong>
+        <ul>
+            <li>The modal currently doesn't have breadcrumb navigation (can be added if needed)</li>
+            <li>No search functionality within the modal (can be added)</li>
+            <li>No sorting options (currently uses default order)</li>
+        </ul>
+    </div>
+
+    <div class="feature-box">
+        <h2>🚀 Try It Now!</h2>
+        <p>The feature is live and ready to test. Open your browser to <code>http://localhost:3001</code> and try browsing some folders!</p>
+    </div>
+</body>
+</html>

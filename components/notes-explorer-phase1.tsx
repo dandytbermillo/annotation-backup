@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { 
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
-  FolderOpen, Folder, Database, WifiOff
+  FolderOpen, Folder, Database, WifiOff, Eye
 } from "lucide-react"
 
 interface Note {
@@ -120,6 +120,11 @@ export function NotesExplorerPhase1({
   // Drag and drop state
   const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set())
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+  const [browseModalOpen, setBrowseModalOpen] = useState(false)
+  const [browseFolder, setBrowseFolder] = useState<TreeNode | null>(null)
+  const [selectedBrowseItem, setSelectedBrowseItem] = useState<string | null>(null)
+  const [isBrowseLoading, setIsBrowseLoading] = useState(false)
+  const [browseColumns, setBrowseColumns] = useState<TreeNode[]>([]) // Multi-column view
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])
@@ -632,6 +637,153 @@ export function NotesExplorerPhase1({
     return parent1 === parent2
   }
 
+  const handleBrowseFolder = async (folder: TreeNode, event: React.MouseEvent) => {
+    event.stopPropagation()
+    setBrowseModalOpen(true)
+    setIsBrowseLoading(true)
+    
+    // Load folder contents directly if not already loaded
+    if (folder.type === 'folder' && (!folder.children || folder.children.length === 0)) {
+      try {
+        const response = await fetch(`/api/items/${folder.id}/children`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.children && data.children.length > 0) {
+            // Create an updated folder with the loaded children
+            const updatedFolder = {
+              ...folder,
+              children: data.children.map((child: ItemFromAPI) => ({
+                id: child.id,
+                name: child.name,
+                type: child.type,
+                parentId: child.parentId,
+                path: child.path,
+                icon: child.icon,
+                color: child.color,
+                children: [],
+                hasChildren: child.type === 'folder'
+              }))
+            }
+            setBrowseFolder(updatedFolder)
+            setBrowseColumns([updatedFolder]) // Initialize with first column
+            
+            // Also update the main tree for consistency
+            await loadNodeChildren(folder.id)
+          } else {
+            // Folder is empty
+            setBrowseFolder({ ...folder, children: [] })
+            setBrowseColumns([{ ...folder, children: [] }])
+          }
+        } else {
+          setBrowseFolder(folder)
+          setBrowseColumns([folder])
+        }
+      } catch (error) {
+        console.error('Error loading folder contents:', error)
+        setBrowseFolder(folder)
+        setBrowseColumns([folder])
+      }
+    } else {
+      setBrowseFolder(folder)
+      setBrowseColumns([folder])
+    }
+    
+    setIsBrowseLoading(false)
+  }
+
+  const closeBrowseModal = () => {
+    setBrowseModalOpen(false)
+    setBrowseFolder(null)
+    setSelectedBrowseItem(null)
+    setBrowseColumns([])
+  }
+
+  const handleBrowseSubfolder = async (folder: TreeNode, columnIndex: number) => {
+    // Remove columns after the current one and add new column
+    const newColumns = browseColumns.slice(0, columnIndex + 1)
+    
+    setIsBrowseLoading(true)
+    setSelectedBrowseItem(folder.id)
+    
+    // Load folder contents directly
+    if (folder.type === 'folder' && (!folder.children || folder.children.length === 0)) {
+      try {
+        const response = await fetch(`/api/items/${folder.id}/children`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.children && data.children.length > 0) {
+            const updatedFolder = {
+              ...folder,
+              children: data.children.map((child: ItemFromAPI) => ({
+                id: child.id,
+                name: child.name,
+                type: child.type,
+                parentId: child.parentId,
+                path: child.path,
+                icon: child.icon,
+                color: child.color,
+                children: [],
+                hasChildren: child.type === 'folder'
+              }))
+            }
+            setBrowseColumns([...newColumns, updatedFolder])
+          } else {
+            setBrowseColumns([...newColumns, { ...folder, children: [] }])
+          }
+        }
+      } catch (error) {
+        console.error('Error loading folder contents:', error)
+      }
+    } else if (folder.children) {
+      setBrowseColumns([...newColumns, folder])
+    }
+    
+    setIsBrowseLoading(false)
+  }
+
+  const handleBrowseFolderNavigation = async (folder: TreeNode) => {
+    setIsBrowseLoading(true)
+    setSelectedBrowseItem(null)
+    
+    // Load folder contents directly
+    if (folder.type === 'folder' && (!folder.children || folder.children.length === 0)) {
+      try {
+        const response = await fetch(`/api/items/${folder.id}/children`)
+        if (response.ok) {
+          const data = await response.json()
+          if (data.children && data.children.length > 0) {
+            const updatedFolder = {
+              ...folder,
+              children: data.children.map((child: ItemFromAPI) => ({
+                id: child.id,
+                name: child.name,
+                type: child.type,
+                parentId: child.parentId,
+                path: child.path,
+                icon: child.icon,
+                color: child.color,
+                children: [],
+                hasChildren: child.type === 'folder'
+              }))
+            }
+            setBrowseFolder(updatedFolder)
+          } else {
+            setBrowseFolder({ ...folder, children: [] })
+          }
+        } else {
+          setBrowseFolder(folder)
+        }
+      } catch (error) {
+        console.error('Error loading folder contents:', error)
+        setBrowseFolder(folder)
+      }
+    } else {
+      setBrowseFolder(folder)
+    }
+    
+    setIsBrowseLoading(false)
+  }
+
   const handleNoteSelect = (noteId: string, event?: React.MouseEvent, openNote: boolean = false) => {
     const isMultiSelect = event && (event.metaKey || event.ctrlKey)
     const isShiftSelect = event && event.shiftKey
@@ -989,7 +1141,7 @@ export function NotesExplorerPhase1({
     return (
       <div key={node.id} role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
         <div
-          className={`flex items-center gap-1 py-1 px-2 rounded cursor-pointer transition-all ${
+          className={`group flex items-center gap-1 py-1 px-2 rounded cursor-pointer transition-all ${
             isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500' :
             isPrimarySelected ? 'bg-indigo-600 text-white' :
             isSelected ? 'bg-indigo-500 bg-opacity-50' :
@@ -1041,6 +1193,15 @@ export function NotesExplorerPhase1({
             }
           </span>
           <span className="text-sm truncate flex-1">{node.name || node.title}</span>
+          {isFolder && (
+            <button
+              onClick={(e) => handleBrowseFolder(node, e)}
+              className="p-1 hover:bg-gray-600 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Browse folder contents"
+            >
+              <Eye className="w-3.5 h-3.5 text-gray-400" />
+            </button>
+          )}
         </div>
         {hasChildren && isExpanded && (
           <div role="group">
@@ -1513,6 +1674,126 @@ export function NotesExplorerPhase1({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Browse Panel - Multi-Column Finder Style */}
+      {browseModalOpen && browseColumns.length > 0 && (
+        <div 
+          className={`fixed top-0 h-screen bg-gray-900 border-l border-gray-800 z-40 flex transition-all duration-300 ease-out`}
+          style={{ 
+            left: '320px',
+            width: `${Math.min(browseColumns.length * 280, typeof window !== 'undefined' ? window.innerWidth - 320 : 1400)}px`
+          }}
+        >
+          {/* Header */}
+          <div className="absolute top-0 right-0 p-4 z-10">
+            <button
+              onClick={closeBrowseModal}
+              className="p-2 bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+              title="Close"
+            >
+              <X className="w-4 h-4 text-gray-400" />
+            </button>
+          </div>
+          
+          {/* Column View */}
+          <div className="flex h-full overflow-x-auto">
+            {browseColumns.map((column, columnIndex) => (
+              <div key={`${column.id}-${columnIndex}`} className="flex-shrink-0 w-[280px] h-full border-r border-gray-800 flex flex-col">
+                {/* Column Header */}
+                <div className="px-4 py-3 border-b border-gray-800 bg-gray-850">
+                  <div className="flex items-center gap-2">
+                    <Folder className="w-4 h-4 text-blue-400" />
+                    <h3 className="text-sm font-medium text-white truncate">{column.name}</h3>
+                  </div>
+                </div>
+                
+                {/* Column Content */}
+                <div className="flex-1 overflow-y-auto">
+                  {column.children && column.children.length > 0 ? (
+                    <div className="divide-y divide-gray-800">
+                      {column.children.map((child) => (
+                        <div
+                          key={child.id}
+                          className={`flex items-center gap-2 px-4 py-2 cursor-pointer transition-colors group ${
+                            selectedBrowseItem === child.id 
+                              ? 'bg-blue-600 bg-opacity-20 border-l-2 border-blue-400' 
+                              : 'hover:bg-gray-800'
+                          }`}
+                          onClick={(e) => {
+                            setSelectedBrowseItem(child.id)
+                            if (child.type === 'note') {
+                              if (e.detail === 2) { // Double click to open
+                                onNoteSelect(child.id)
+                                closeBrowseModal()
+                              }
+                            } else if (child.type === 'folder') {
+                              // Single click on folder loads it in next column
+                              handleBrowseSubfolder(child, columnIndex)
+                            }
+                          }}
+                        >
+                          {/* Icon */}
+                          <div className="flex-shrink-0">
+                            {child.type === 'folder' ? (
+                              <Folder className="w-4 h-4 text-blue-400" />
+                            ) : (
+                              <FileText className="w-4 h-4 text-gray-400" />
+                            )}
+                          </div>
+                          
+                          {/* Name */}
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm text-gray-200 truncate block">
+                              {child.icon && <span className="mr-1">{child.icon}</span>}
+                              {child.name || child.title || 'Untitled'}
+                            </span>
+                          </div>
+                          
+                          {/* Eye icon for folders to browse */}
+                          {child.type === 'folder' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleBrowseSubfolder(child, columnIndex)
+                              }}
+                              className="p-1 hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Browse folder"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-gray-400" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center text-gray-500">
+                        <Folder className="w-12 h-12 mx-auto mb-2 text-gray-600" />
+                        <p className="text-sm">Empty folder</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                
+                {/* Column Footer */}
+                <div className="px-4 py-2 border-t border-gray-800 bg-gray-850">
+                  <div className="text-xs text-gray-500">
+                    {column.children?.length || 0} items
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Backdrop for Browse Panel */}
+      {browseModalOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-30 z-30"
+          onClick={closeBrowseModal}
+        />
       )}
     </div>
   )

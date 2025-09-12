@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-12 12:21Z] e6797ce: tree view functionality working
 - commit [2025-09-12 05:40Z] 019ac61: adding folder and subfolder for note creation a success
 - commit [2025-09-12 04:45Z] a0aa50b: phase 2 almost done
 - commit [2025-09-12 03:52Z] 51c2eef: phase 0-1 successfully tested of user friendly tree view
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-11 05:55Z] 864d568: auto edit mode when empty is a success
 - note [2025-09-11 05:10Z]: 
 - note [2025-09-11 04:38Z]: 
-- commit [2025-09-11 04:34Z] 80a4697: testing automatic edit when note is empty
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
