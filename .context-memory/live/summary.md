@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-12 21:16Z] 4be3a23: dragging system applied almost perfect
 - commit [2025-09-12 20:35Z] 0929a67: adding cascading popup successfully
 - commit [2025-09-12 18:51Z] 0b6790b: browse modal for files is working
 - commit [2025-09-12 12:21Z] e6797ce: tree view functionality working
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-11 23:22Z] 42c7504: Option_A_Offline_Main_Content_Vanishes_After_Reload_Switch finalized
 - commit [2025-09-11 19:14Z] 62686f3: successfull fix the missing content of the main branch when attempting to reopen the second time
 - commit [2025-09-11 14:20Z] 7835599: fixing main branch window
-- commit [2025-09-11 05:55Z] 864d568: auto edit mode when empty is a success
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

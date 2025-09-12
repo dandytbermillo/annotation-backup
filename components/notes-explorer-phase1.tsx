@@ -137,6 +137,7 @@ export function NotesExplorerPhase1({
     parentId?: string // To track relationships for connection lines
     level: number // Depth level for positioning
     isDragging?: boolean // Track if popup is being dragged
+    height?: number // Actual height of the popup
   }>>(new Map())
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
@@ -176,6 +177,27 @@ export function NotesExplorerPhase1({
   const [newFolderName, setNewFolderName] = useState("")
   const [customFolderInput, setCustomFolderInput] = useState("")
   const [showCustomFolder, setShowCustomFolder] = useState(false)
+  
+  // Update popup heights after render
+  useEffect(() => {
+    // Check and update actual heights of all popups
+    hoverPopovers.forEach((popover, id) => {
+      const popupElement = document.getElementById(`popup-${id}`)
+      if (popupElement && !popover.isDragging) {
+        const actualHeight = popupElement.offsetHeight
+        if (actualHeight && actualHeight !== popover.height) {
+          setHoverPopovers(prev => {
+            const newMap = new Map(prev)
+            const existing = newMap.get(id)
+            if (existing && existing.height !== actualHeight) {
+              newMap.set(id, { ...existing, height: actualHeight })
+            }
+            return newMap
+          })
+        }
+      }
+    })
+  }, [hoverPopovers.size]) // Only re-run when number of popovers changes
   
   // Handle global mouse events for dragging
   useEffect(() => {
@@ -715,9 +737,25 @@ export function NotesExplorerPhase1({
   const handleFolderHover = async (folder: TreeNode, event: React.MouseEvent, parentPopoverId?: string) => {
     // Get position for popover FIRST (before any async calls)
     const rect = event.currentTarget.getBoundingClientRect()
-    const position = {
-      x: rect.right + 10, // 10px to the right of the icon
-      y: rect.top
+    
+    // Smart positioning - check available space
+    const spaceRight = window.innerWidth - rect.right
+    const spaceBelow = window.innerHeight - rect.bottom
+    
+    let position = { x: 0, y: 0 }
+    
+    if (spaceRight > 320) {
+      // Enough space to the right
+      position.x = rect.right + 10
+      position.y = rect.top
+    } else if (spaceBelow > 200) {
+      // Not enough space right, place below
+      position.x = rect.left
+      position.y = rect.bottom + 10
+    } else {
+      // Place to the left if no space right or below
+      position.x = rect.left - 310
+      position.y = rect.top
     }
     
     // Clear any existing timeout for this folder
@@ -758,10 +796,21 @@ export function NotesExplorerPhase1({
         ? (hoverPopovers.get(parentPopoverId)?.level || 0) + 1 
         : 0
       
-      // Adjust position for cascading effect
-      const adjustedPosition = {
-        x: position.x + (level * 20), // Slight offset for each level
-        y: position.y + (level * 10)
+      // Adjust position for cascading effect - allow both right and down positioning
+      let adjustedPosition = {
+        x: position.x,
+        y: position.y
+      }
+      
+      // Smart positioning: if too far right, cascade downward instead
+      if (position.x > window.innerWidth - 400) {
+        // Position below instead of to the right
+        adjustedPosition.x = position.x - 300
+        adjustedPosition.y = position.y + 100
+      } else {
+        // Normal cascading to the right
+        adjustedPosition.x = position.x + (level * 20)
+        adjustedPosition.y = position.y + (level * 10)
       }
       
       // Add new popover to the map
@@ -802,10 +851,15 @@ export function NotesExplorerPhase1({
               const newMap = new Map(prev)
               const popup = newMap.get(popoverId)
               if (popup) {
+                // Calculate height based on loaded content
+                const itemCount = updatedFolder.children?.length || 0
+                const height = 45 + Math.min(itemCount * 36, 320) + 30 + 20
+                
                 newMap.set(popoverId, {
                   ...popup,
                   folder: updatedFolder,
-                  isLoading: false
+                  isLoading: false,
+                  height
                 })
               }
               return newMap
@@ -837,10 +891,14 @@ export function NotesExplorerPhase1({
             const newMap = new Map(prev)
             const popup = newMap.get(popoverId)
             if (popup) {
+              // Empty folder - minimal height
+              const height = 45 + 60 + 30 + 20 // Header + empty message + footer + padding
+              
               newMap.set(popoverId, {
                 ...popup,
                 folder: { ...folder, children: [] },
-                isLoading: false
+                isLoading: false,
+                height
               })
             }
             return newMap
@@ -851,10 +909,15 @@ export function NotesExplorerPhase1({
           const newMap = new Map(prev)
           const popup = newMap.get(popoverId)
           if (popup) {
+            // Calculate height based on existing children
+            const itemCount = folder.children?.length || 0
+            const height = 45 + Math.min(itemCount * 36, 320) + 30 + 20
+            
             newMap.set(popoverId, {
               ...popup,
               folder,
-              isLoading: false
+              isLoading: false,
+              height
             })
           }
           return newMap
@@ -2239,6 +2302,7 @@ export function NotesExplorerPhase1({
       {Array.from(hoverPopovers.values()).map((popover) => (
         <div
           key={popover.id}
+          id={`popup-${popover.id}`}
           className="fixed bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
           style={{
             zIndex: popover.isDragging ? 10000 : 9999 + popover.level, // Highest z-index when dragging
@@ -2384,10 +2448,24 @@ export function NotesExplorerPhase1({
             if (!parent) return null
             
             // Smart connection point calculation
-            // Popup dimensions (fixed width, variable height)
+            // Popup dimensions
             const popupWidth = 300
-            // Use actual popup position to estimate height (or use a ref to get actual height)
-            const popupHeight = Math.min(400, window.innerHeight * 0.8) // Max 80% of viewport
+            
+            // Calculate actual popup height based on content
+            // Header: 45px, Footer: 30px, Each item: ~36px, Padding: 20px
+            const calculatePopupHeight = (folder: TreeNode | null) => {
+              if (!folder || !folder.children) return 150 // Min height for empty/loading
+              const itemCount = folder.children.length
+              const headerHeight = 45
+              const footerHeight = 30
+              const itemHeight = 36
+              const padding = 20
+              const contentHeight = Math.min(itemCount * itemHeight, 320) // Max content area
+              return headerHeight + contentHeight + footerHeight + padding
+            }
+            
+            const parentHeight = parent.height || calculatePopupHeight(parent.folder)
+            const childHeight = popover.height || calculatePopupHeight(popover.folder)
             const headerHeight = 45
             
             // Calculate actual popup boundaries
@@ -2395,87 +2473,60 @@ export function NotesExplorerPhase1({
               left: parent.position.x,
               right: parent.position.x + popupWidth,
               top: parent.position.y,
-              bottom: parent.position.y + popupHeight,
+              bottom: parent.position.y + parentHeight,
               centerX: parent.position.x + popupWidth / 2,
-              centerY: parent.position.y + popupHeight / 2
+              centerY: parent.position.y + parentHeight / 2
             }
             
             const childBounds = {
               left: popover.position.x,
               right: popover.position.x + popupWidth,
               top: popover.position.y,
-              bottom: popover.position.y + popupHeight,
+              bottom: popover.position.y + childHeight,
               centerX: popover.position.x + popupWidth / 2,
-              centerY: popover.position.y + popupHeight / 2
+              centerY: popover.position.y + childHeight / 2
             }
             
             // Calculate relative position more accurately
             const deltaX = childBounds.centerX - parentBounds.centerX
             const deltaY = childBounds.centerY - parentBounds.centerY
             
-            // Smart connection points based on relative positions
-            let startX, startY, endX, endY
-            
-            // Check for primarily horizontal vs vertical separation
+            // Always connect from exact center of edges
             const horizontalSeparation = Math.abs(deltaX)
             const verticalSeparation = Math.abs(deltaY)
             
-            if (horizontalSeparation > verticalSeparation * 1.5) {
-              // Primarily horizontal relationship
+            // Determine which edges to connect based on relative positions
+            let startX, startY, endX, endY
+            
+            if (horizontalSeparation > verticalSeparation) {
+              // Primarily horizontal - connect left/right edges at their exact centers
               if (deltaX > 0) {
                 // Child is to the right
-                startX = parentBounds.right - 5
-                startY = parentBounds.centerY
-                endX = childBounds.left + 5
-                endY = childBounds.centerY
+                startX = parentBounds.right  // Right edge
+                startY = parentBounds.centerY // Exact vertical center
+                endX = childBounds.left       // Left edge
+                endY = childBounds.centerY    // Exact vertical center
               } else {
                 // Child is to the left
-                startX = parentBounds.left + 5
-                startY = parentBounds.centerY
-                endX = childBounds.right - 5
-                endY = childBounds.centerY
-              }
-            } else if (verticalSeparation > horizontalSeparation * 1.5) {
-              // Primarily vertical relationship
-              if (deltaY > 0) {
-                // Child is below
-                startX = parentBounds.centerX
-                startY = parentBounds.bottom - 10
-                endX = childBounds.centerX
-                endY = childBounds.top + headerHeight
-              } else {
-                // Child is above
-                startX = parentBounds.centerX
-                startY = parentBounds.top + headerHeight
-                endX = childBounds.centerX
-                endY = childBounds.bottom - 10
+                startX = parentBounds.left    // Left edge
+                startY = parentBounds.centerY // Exact vertical center
+                endX = childBounds.right      // Right edge
+                endY = childBounds.centerY    // Exact vertical center
               }
             } else {
-              // Diagonal relationship - connect nearest corners
-              if (deltaX > 0 && deltaY > 0) {
-                // Child is bottom-right
-                startX = parentBounds.right - 20
-                startY = parentBounds.bottom - 20
-                endX = childBounds.left + 20
-                endY = childBounds.top + headerHeight
-              } else if (deltaX > 0 && deltaY < 0) {
-                // Child is top-right
-                startX = parentBounds.right - 20
-                startY = parentBounds.top + headerHeight + 20
-                endX = childBounds.left + 20
-                endY = childBounds.bottom - 20
-              } else if (deltaX < 0 && deltaY > 0) {
-                // Child is bottom-left
-                startX = parentBounds.left + 20
-                startY = parentBounds.bottom - 20
-                endX = childBounds.right - 20
-                endY = childBounds.top + headerHeight
+              // Primarily vertical - connect top/bottom edges at their exact centers
+              if (deltaY > 0) {
+                // Child is below
+                startX = parentBounds.centerX // Exact horizontal center
+                startY = parentBounds.bottom  // Bottom edge
+                endX = childBounds.centerX    // Exact horizontal center
+                endY = childBounds.top        // Top edge (not offset by header)
               } else {
-                // Child is top-left
-                startX = parentBounds.left + 20
-                startY = parentBounds.top + headerHeight + 20
-                endX = childBounds.right - 20
-                endY = childBounds.bottom - 20
+                // Child is above
+                startX = parentBounds.centerX // Exact horizontal center
+                startY = parentBounds.top     // Top edge
+                endX = childBounds.centerX    // Exact horizontal center
+                endY = childBounds.bottom     // Bottom edge
               }
             }
             
@@ -2545,40 +2596,44 @@ export function NotesExplorerPhase1({
                   }}
                 />
                 
-                {/* Connection point indicators */}
-                {/* Start point */}
+                {/* Connection point indicators - positioned at edge centers */}
+                {/* Start point dot */}
                 <g>
+                  {/* Outer ring */}
                   <circle
                     cx={startX}
                     cy={startY}
-                    r="5"
-                    fill="rgba(99, 102, 241, 0.2)"
-                    stroke="rgba(99, 102, 241, 0.8)"
-                    strokeWidth="2"
+                    r="6"
+                    fill="rgba(99, 102, 241, 0.1)"
+                    stroke="rgba(99, 102, 241, 0.6)"
+                    strokeWidth="1.5"
                   />
+                  {/* Inner dot */}
                   <circle
                     cx={startX}
                     cy={startY}
-                    r="2.5"
-                    fill="rgba(99, 102, 241, 1)"
+                    r="3"
+                    fill="rgba(99, 102, 241, 0.9)"
                   />
                 </g>
                 
-                {/* End point */}
+                {/* End point dot */}
                 <g>
+                  {/* Outer ring */}
                   <circle
                     cx={endX}
                     cy={endY}
-                    r="5"
-                    fill="rgba(139, 92, 246, 0.2)"
-                    stroke="rgba(139, 92, 246, 0.8)"
-                    strokeWidth="2"
+                    r="6"
+                    fill="rgba(139, 92, 246, 0.1)"
+                    stroke="rgba(139, 92, 246, 0.6)"
+                    strokeWidth="1.5"
                   />
+                  {/* Inner dot */}
                   <circle
                     cx={endX}
                     cy={endY}
-                    r="2.5"
-                    fill="rgba(139, 92, 246, 1)"
+                    r="3"
+                    fill="rgba(139, 92, 246, 0.9)"
                   />
                 </g>
               </g>
