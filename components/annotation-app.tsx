@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect } from "react"
 import dynamic from 'next/dynamic'
-import { NotesExplorer } from "./notes-explorer"
+// Phase 1: Using notes explorer with API integration and feature flag
+import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
 import { Menu } from "lucide-react"
 
 const ModernAnnotationCanvas = dynamic(
@@ -100,6 +101,9 @@ export function AnnotationApp() {
     }
   }
 
+  // Feature flag for Phase 1 API (can be toggled via environment variable or UI)
+  const usePhase1API = process.env.NEXT_PUBLIC_USE_PHASE1_API === 'true' || false
+  
   return (
     <div className="flex h-screen w-screen overflow-hidden relative">
       {/* Mode Indicator Badge */}
@@ -129,6 +133,8 @@ export function AnnotationApp() {
         onResetView={handleResetView}
         onToggleConnections={handleToggleConnections}
         showConnections={canvasState.showConnections}
+        enableTreeView={true}
+        usePhase1API={usePhase1API}
       />
       
       {/* Toggle Button - Shows when explorer is closed */}
