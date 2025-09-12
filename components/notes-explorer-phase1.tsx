@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { 
-  Trash2, Plus, FileText, Search, X, Home, ZoomIn, ZoomOut, 
-  ToggleLeft, ToggleRight, ChevronRight, ChevronDown, Clock,
+  Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff
 } from "lucide-react"
 
@@ -50,13 +49,13 @@ interface NotesExplorerProps {
   onNoteSelect: (noteId: string) => void
   isOpen: boolean
   onClose: () => void
-  // Navigation controls props
-  zoom?: number
-  onZoomIn?: () => void
-  onZoomOut?: () => void
-  onResetView?: () => void
-  onToggleConnections?: () => void
-  showConnections?: boolean
+  // Navigation controls props - disabled for now
+  // zoom?: number
+  // onZoomIn?: () => void
+  // onZoomOut?: () => void
+  // onResetView?: () => void
+  // onToggleConnections?: () => void
+  // showConnections?: boolean
   // Feature flags
   enableTreeView?: boolean
   usePhase1API?: boolean // New flag for Phase 1
@@ -98,12 +97,13 @@ export function NotesExplorerPhase1({
   onNoteSelect, 
   isOpen, 
   onClose,
-  zoom = 100,
-  onZoomIn,
-  onZoomOut,
-  onResetView,
-  onToggleConnections,
-  showConnections = true,
+  // Navigation props disabled for now
+  // zoom = 100,
+  // onZoomIn,
+  // onZoomOut,
+  // onResetView,
+  // onToggleConnections,
+  // showConnections = true,
   enableTreeView = true,
   usePhase1API = false // Default to Phase 0 behavior
 }: NotesExplorerProps) {
@@ -112,6 +112,14 @@ export function NotesExplorerPhase1({
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState("")
+  
+  // Multi-select state
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
+  
+  // Drag and drop state
+  const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set())
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null)
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])
@@ -563,10 +571,186 @@ export function NotesExplorerPhase1({
     }
   }
 
-  const handleNoteSelect = (noteId: string) => {
-    setSelectedNoteId(noteId)
-    trackNoteAccess(noteId)
-    onNoteSelect(noteId)
+  // Helper function to get all selectable items in visual order
+  // Returns items with context about where they appear
+  const getAllSelectableItemsWithContext = (): Array<{id: string, section: 'recent' | 'tree', parentId?: string}> => {
+    const items: Array<{id: string, section: 'recent' | 'tree', parentId?: string}> = []
+    
+    // Add recent notes
+    if (recentNotesWithData.length > 0) {
+      recentNotesWithData.forEach(note => {
+        items.push({ id: note.id, section: 'recent' })
+      })
+    }
+    
+    // Then traverse the tree and collect only visible notes
+    const traverse = (nodeList: TreeNode[], parentId?: string) => {
+      for (const node of nodeList) {
+        if (node.type === 'note') {
+          items.push({ id: node.id, section: 'tree', parentId })
+        }
+        // Always traverse children if the folder is expanded
+        if (node.children && expandedNodes[node.id]) {
+          traverse(node.children, node.id)
+        }
+      }
+    }
+    traverse(apiTreeData)
+    
+    return items
+  }
+  
+  // Helper to check if two items are in the same section
+  const areItemsInSameSection = (id1: string, id2: string): boolean => {
+    // Check if both are in recent notes
+    const inRecent1 = recentNotesWithData.some(note => note.id === id1)
+    const inRecent2 = recentNotesWithData.some(note => note.id === id2)
+    
+    // If one is in recent and other is not, they're in different sections
+    if (inRecent1 !== inRecent2) return false
+    
+    // If both in recent, they're in same section
+    if (inRecent1 && inRecent2) return true
+    
+    // Otherwise both are in tree, check if they're under the same parent folder
+    const findParent = (nodeId: string, nodes: TreeNode[] = apiTreeData): string | null => {
+      for (const node of nodes) {
+        if (node.children?.some(child => child.id === nodeId)) {
+          return node.id
+        }
+        if (node.children) {
+          const parent = findParent(nodeId, node.children)
+          if (parent) return parent
+        }
+      }
+      return null
+    }
+    
+    const parent1 = findParent(id1)
+    const parent2 = findParent(id2)
+    
+    return parent1 === parent2
+  }
+
+  const handleNoteSelect = (noteId: string, event?: React.MouseEvent, openNote: boolean = false) => {
+    const isMultiSelect = event && (event.metaKey || event.ctrlKey)
+    const isShiftSelect = event && event.shiftKey
+    const isDoubleClick = event && event.detail === 2
+    
+    if (isMultiSelect) {
+      // Ctrl/Cmd+click: Toggle selection
+      const newSelection = new Set(selectedItems)
+      if (newSelection.has(noteId)) {
+        newSelection.delete(noteId)
+      } else {
+        newSelection.add(noteId)
+      }
+      setSelectedItems(newSelection)
+      setLastSelectedId(noteId)
+      
+      // Set as selected but don't open the note
+      if (newSelection.size === 1) {
+        setSelectedNoteId(noteId)
+        // Don't call onNoteSelect here - only select, don't open
+      }
+    } else if (isShiftSelect && lastSelectedId) {
+      // Shift+click: Select range only within the same logical group
+      const allItemsWithContext = getAllSelectableItemsWithContext()
+      
+      // Find the exact context of clicked items (where they appear in the UI)
+      let startItem = null
+      let endItem = null
+      let startIndex = -1
+      let endIndex = -1
+      
+      // Find items in tree section first (prefer tree over recent for duplicates)
+      for (let i = 0; i < allItemsWithContext.length; i++) {
+        const item = allItemsWithContext[i]
+        if (item.id === lastSelectedId && item.section === 'tree') {
+          startItem = item
+          startIndex = i
+        }
+        if (item.id === noteId && item.section === 'tree') {
+          endItem = item
+          endIndex = i
+        }
+      }
+      
+      // If not found in tree, look in recent
+      if (startIndex === -1) {
+        for (let i = 0; i < allItemsWithContext.length; i++) {
+          const item = allItemsWithContext[i]
+          if (item.id === lastSelectedId && item.section === 'recent') {
+            startItem = item
+            startIndex = i
+            break
+          }
+        }
+      }
+      
+      if (endIndex === -1) {
+        for (let i = 0; i < allItemsWithContext.length; i++) {
+          const item = allItemsWithContext[i]
+          if (item.id === noteId && item.section === 'recent') {
+            endItem = item
+            endIndex = i
+            break
+          }
+        }
+      }
+      
+      if (startIndex !== -1 && endIndex !== -1 && startItem && endItem) {
+        // Check if both items are in the same section and parent
+        if (startItem.section !== endItem.section || startItem.parentId !== endItem.parentId) {
+          // Different sections or parents - just select the clicked item
+          setSelectedItems(new Set([noteId]))
+          setSelectedNoteId(noteId)
+          setLastSelectedId(noteId)
+          // Don't open - just select
+          return
+        }
+        
+        // Select range within the same section/parent
+        const minIndex = Math.min(startIndex, endIndex)
+        const maxIndex = Math.max(startIndex, endIndex)
+        const rangeItems = allItemsWithContext.slice(minIndex, maxIndex + 1)
+        
+        // Filter to only include items from the same section and parent
+        const filteredRange = rangeItems
+          .filter(item => 
+            item.section === startItem.section && 
+            item.parentId === startItem.parentId
+          )
+          .map(item => item.id)
+        
+        // Create new selection with only the range items
+        const newSelection = new Set(filteredRange)
+        setSelectedItems(newSelection)
+        
+        // Set the clicked item as primary selected but don't open
+        setSelectedNoteId(noteId)
+        // Don't track access or open - just select
+      } else {
+        // Fallback to single selection if range can't be determined
+        setSelectedItems(new Set([noteId]))
+        setSelectedNoteId(noteId)
+        setLastSelectedId(noteId)
+        // Don't open - just select
+      }
+    } else {
+      // Regular click: Single select (clear multi-selection)
+      setSelectedItems(new Set([noteId]))
+      setSelectedNoteId(noteId)
+      setLastSelectedId(noteId)
+      
+      // Only open the note on double-click or when explicitly requested
+      if (isDoubleClick || openNote) {
+        trackNoteAccess(noteId)
+        onNoteSelect(noteId)
+        // Clear selection when opening a note to hide the action bar
+        setSelectedItems(new Set())
+      }
+    }
   }
 
   // Load children for a node on demand (Phase 1)
@@ -668,12 +852,132 @@ export function NotesExplorerPhase1({
   const filteredNotes = notes.filter(note =>
     note.title.toLowerCase().includes(searchTerm.toLowerCase())
   )
+  
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, nodeId: string) => {
+    // If the dragged item is selected, drag all selected items
+    const itemsToDrag = selectedItems.has(nodeId) ? selectedItems : new Set([nodeId])
+    setDraggedItems(itemsToDrag)
+    
+    // Set drag data
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', Array.from(itemsToDrag).join(','))
+    
+    // Add a custom drag image showing count if multiple items
+    if (itemsToDrag.size > 1) {
+      const dragPreview = document.createElement('div')
+      dragPreview.className = 'bg-indigo-600 text-white px-2 py-1 rounded'
+      dragPreview.textContent = `${itemsToDrag.size} items`
+      dragPreview.style.position = 'absolute'
+      dragPreview.style.top = '-1000px'
+      document.body.appendChild(dragPreview)
+      e.dataTransfer.setDragImage(dragPreview, 0, 0)
+      setTimeout(() => document.body.removeChild(dragPreview), 0)
+    }
+  }
+  
+  const handleDragEnd = () => {
+    setDraggedItems(new Set())
+    setDropTargetId(null)
+  }
+  
+  const handleDragOver = (e: React.DragEvent, nodeId: string, isFolder: boolean) => {
+    if (!isFolder) return
+    
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropTargetId(nodeId)
+  }
+  
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only clear if we're leaving the drop zone entirely
+    const related = e.relatedTarget as HTMLElement
+    if (!related || !related.closest('[data-drop-zone]')) {
+      setDropTargetId(null)
+    }
+  }
+  
+  const handleDrop = async (e: React.DragEvent, targetId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    const itemIds = Array.from(draggedItems)
+    if (itemIds.length === 0) return
+    
+    // Don't allow dropping on itself
+    if (itemIds.includes(targetId)) {
+      setDropTargetId(null)
+      return
+    }
+    
+    try {
+      const response = await fetch('/api/items/bulk-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemIds,
+          targetFolderId: targetId
+        })
+      })
+      
+      if (!response.ok) throw new Error('Failed to move items')
+      
+      // Auto-expand the target folder to show the moved items
+      setExpandedNodes(prev => ({
+        ...prev,
+        [targetId]: true
+      }))
+      
+      // Load the target folder's children to show the moved items
+      await loadNodeChildren(targetId)
+      
+      // Also reload the source parent folders to remove moved items
+      const sourceParentIds = new Set<string>()
+      for (const itemId of itemIds) {
+        // Find the parent of each moved item
+        const findParent = (nodes: TreeNode[]): string | null => {
+          for (const node of nodes) {
+            if (node.children?.some(child => child.id === itemId)) {
+              return node.id
+            }
+            if (node.children) {
+              const parent = findParent(node.children)
+              if (parent) return parent
+            }
+          }
+          return null
+        }
+        const parentId = findParent(apiTreeData)
+        if (parentId) sourceParentIds.add(parentId)
+      }
+      
+      // Reload each source parent to update their children
+      for (const parentId of sourceParentIds) {
+        await loadNodeChildren(parentId)
+      }
+      
+      // Clear selections
+      setSelectedItems(new Set())
+      setDraggedItems(new Set())
+      setDropTargetId(null)
+      
+    } catch (error) {
+      console.error('Failed to move items:', error)
+      alert('Failed to move items. Please try again.')
+    }
+  }
 
   // Render tree node recursively
   const renderTreeNode = (node: TreeNode, depth: number = 0) => {
     const isExpanded = expandedNodes[node.id]
     // Check both: actual children OR the hasChildren flag (for unloaded folders)
     const hasChildren = (node.children && node.children.length > 0) || node.hasChildren === true
+    const isFolder = node.type === 'folder'
+    const isSelected = selectedItems.has(node.id)
+    const isPrimarySelected = selectedNoteId === node.id
+    const isDragging = draggedItems.has(node.id)
+    const isDropTarget = dropTargetId === node.id && isFolder
+    
     const typeColors = {
       main: 'text-blue-400',
       note: 'text-green-400',
@@ -685,11 +989,36 @@ export function NotesExplorerPhase1({
     return (
       <div key={node.id} role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
         <div
-          className="flex items-center gap-1 py-1 px-2 hover:bg-gray-700 rounded cursor-pointer"
+          className={`flex items-center gap-1 py-1 px-2 rounded cursor-pointer transition-all ${
+            isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500' :
+            isPrimarySelected ? 'bg-indigo-600 text-white' :
+            isSelected ? 'bg-indigo-500 bg-opacity-50' :
+            isDragging ? 'opacity-50' :
+            'hover:bg-gray-700'
+          }`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          onClick={() => {
-            if (hasChildren) toggleTreeNode(node.id)
-            if (node.type === 'note') handleNoteSelect(node.id)
+          draggable={node.type === 'note' || isFolder}
+          onDragStart={(e) => handleDragStart(e, node.id)}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleDragOver(e, node.id, isFolder)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => isFolder && handleDrop(e, node.id)}
+          data-drop-zone={isFolder ? 'true' : undefined}
+          onClick={(e) => {
+            // Single click: Select only
+            handleNoteSelect(node.id, e)
+            
+            // For folders, toggle expand/collapse on single click
+            if (hasChildren && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+              toggleTreeNode(node.id)
+            }
+          }}
+          onDoubleClick={(e) => {
+            // Double click: Open the note
+            if (node.type === 'note') {
+              e.stopPropagation()
+              handleNoteSelect(node.id, e, true) // true = open note
+            }
           }}
         >
           {hasChildren && (
@@ -789,16 +1118,34 @@ export function NotesExplorerPhase1({
                 return (
                   <div
                     key={note.id}
-                    onClick={() => handleNoteSelect(note.id)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors ${
-                      selectedNoteId === note.id
-                        ? 'bg-indigo-600 text-white'
-                        : 'hover:bg-gray-800'
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, note.id)}
+                    onDragEnd={handleDragEnd}
+                    onClick={(e) => handleNoteSelect(note.id, e)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation()
+                      handleNoteSelect(note.id, e, true) // true = open note
+                    }}
+                    className={`group flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors ${
+                      draggedItems.has(note.id) ? 'opacity-50' :
+                      selectedNoteId === note.id ? 'bg-indigo-600 text-white' :
+                      selectedItems.has(note.id) ? 'bg-indigo-500 bg-opacity-50' :
+                      'hover:bg-gray-800'
                     }`}
                   >
                     <FileText size={14} />
                     <span className="flex-1 text-sm truncate">{note.title}</span>
                     <span className="text-xs text-gray-400">{timeStr}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteNote(note.id)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-600 rounded transition-all"
+                      aria-label="Delete note"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 )
               })}
@@ -829,8 +1176,8 @@ export function NotesExplorerPhase1({
           </div>
         )}
 
-        {/* All Notes List */}
-        <div className="p-2">
+        {/* All Notes List - Removed since tree view shows all notes */}
+        {/* <div className="p-2">
           <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-gray-400 uppercase">
             <FileText size={14} />
             <span>All Notes</span>
@@ -876,8 +1223,47 @@ export function NotesExplorerPhase1({
               ))}
             </div>
           )}
-        </div>
+        </div> */}
       </div>
+
+      {/* Multi-select Actions Bar */}
+      {selectedItems.size > 0 && (
+        <div className="p-3 bg-gray-800 border-t border-gray-700">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-gray-300">
+              {selectedItems.size} {selectedItems.size === 1 ? 'item' : 'items'} selected
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  // TODO: Implement move functionality
+                  alert(`Move ${selectedItems.size} items - Coming soon!`)
+                }}
+                className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded"
+              >
+                Move
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Delete ${selectedItems.size} items?`)) {
+                    selectedItems.forEach(id => deleteNote(id))
+                    setSelectedItems(new Set())
+                  }
+                }}
+                className="px-3 py-1 text-xs bg-red-600 hover:bg-red-700 rounded"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setSelectedItems(new Set())}
+                className="px-3 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Note Button */}
       <div className="p-4 border-t border-gray-800">
@@ -896,8 +1282,8 @@ export function NotesExplorerPhase1({
         </button>
       </div>
 
-      {/* Navigation Controls */}
-      {selectedNoteId && (
+      {/* Navigation Controls - Disabled for now */}
+      {/* {selectedNoteId && (
         <div className="px-4 pb-4">
           <div className="mb-4">
             <div className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Navigation</div>
@@ -946,7 +1332,7 @@ export function NotesExplorerPhase1({
             </button>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* Phase 2: Create Note Dialog */}
       {showCreateDialog && usePhase1API && (
