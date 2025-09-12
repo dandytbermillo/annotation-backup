@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import React, { useState, useEffect, useMemo, useCallback } from "react"
 import { 
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff, Eye
@@ -125,6 +125,20 @@ export function NotesExplorerPhase1({
   const [selectedBrowseItem, setSelectedBrowseItem] = useState<string | null>(null)
   const [isBrowseLoading, setIsBrowseLoading] = useState(false)
   const [browseColumns, setBrowseColumns] = useState<TreeNode[]>([]) // Multi-column view
+  const [columnWidths, setColumnWidths] = useState<number[]>([]) // Track column widths
+  const [resizingColumn, setResizingColumn] = useState<number | null>(null)
+  
+  // Cascading popover state - now supports multiple popups
+  const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
+    id: string
+    folder: TreeNode | null
+    position: { x: number, y: number }
+    isLoading: boolean
+    parentId?: string // To track relationships for connection lines
+    level: number // Depth level for positioning
+  }>>(new Map())
+  const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const popoverIdCounter = React.useRef(0)
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])
@@ -637,6 +651,216 @@ export function NotesExplorerPhase1({
     return parent1 === parent2
   }
 
+  // Handle hover popover with support for cascading
+  const handleFolderHover = async (folder: TreeNode, event: React.MouseEvent, parentPopoverId?: string) => {
+    // Get position for popover FIRST (before any async calls)
+    const rect = event.currentTarget.getBoundingClientRect()
+    const position = {
+      x: rect.right + 10, // 10px to the right of the icon
+      y: rect.top
+    }
+    
+    // Clear any existing timeout for this folder
+    const timeoutKey = parentPopoverId ? `${parentPopoverId}-${folder.id}` : folder.id
+    if (hoverTimeoutRef.current.has(timeoutKey)) {
+      clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
+    }
+    
+    // Log to database (non-blocking, don't await)
+    fetch('/api/debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        component: 'notes-explorer',
+        action: 'hover_triggered',
+        metadata: { folderName: folder.name, folderId: folder.id, position }
+      })
+    })
+    
+    // Show popover after 500ms delay
+    const timeout = setTimeout(async () => {
+      // Log loading state (non-blocking)
+      fetch('/api/debug-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          component: 'notes-explorer',
+          action: 'popover_loading',
+          metadata: { folderName: folder.name, state: 'loading' }
+        })
+      })
+      
+      // Generate unique ID for this popup
+      const popoverId = `popup-${++popoverIdCounter.current}`
+      
+      // Calculate level based on parent
+      const level = parentPopoverId 
+        ? (hoverPopovers.get(parentPopoverId)?.level || 0) + 1 
+        : 0
+      
+      // Adjust position for cascading effect
+      const adjustedPosition = {
+        x: position.x + (level * 20), // Slight offset for each level
+        y: position.y + (level * 10)
+      }
+      
+      // Add new popover to the map
+      setHoverPopovers(prev => {
+        const newMap = new Map(prev)
+        newMap.set(popoverId, {
+          id: popoverId,
+          folder: null,
+          position: adjustedPosition,
+          isLoading: true,
+          parentId: parentPopoverId,
+          level
+        })
+        return newMap
+      })
+      
+      // Load folder contents if needed
+      if (folder.type === 'folder' && (!folder.children || folder.children.length === 0)) {
+        try {
+          const response = await fetch(`/api/items/${folder.id}/children`)
+          if (response.ok) {
+            const data = await response.json()
+            const updatedFolder = {
+              ...folder,
+              children: data.children?.map((child: ItemFromAPI) => ({
+                id: child.id,
+                name: child.name,
+                type: child.type,
+                parentId: child.parentId,
+                path: child.path,
+                icon: child.icon,
+                color: child.color,
+                children: [],
+                hasChildren: child.type === 'folder'
+              })) || []
+            }
+            setHoverPopovers(prev => {
+              const newMap = new Map(prev)
+              const popup = newMap.get(popoverId)
+              if (popup) {
+                newMap.set(popoverId, {
+                  ...popup,
+                  folder: updatedFolder,
+                  isLoading: false
+                })
+              }
+              return newMap
+            })
+            
+            // Log success (non-blocking)
+            fetch('/api/debug-log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                component: 'notes-explorer',
+                action: 'popover_loaded',
+                metadata: { folderName: folder.name, childrenCount: updatedFolder.children.length }
+              })
+            })
+          }
+        } catch (error) {
+          // Log error (non-blocking)
+          fetch('/api/debug-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              component: 'notes-explorer',
+              action: 'popover_error',
+              metadata: { folderName: folder.name, error: error.message }
+            })
+          })
+          setHoverPopovers(prev => {
+            const newMap = new Map(prev)
+            const popup = newMap.get(popoverId)
+            if (popup) {
+              newMap.set(popoverId, {
+                ...popup,
+                folder: { ...folder, children: [] },
+                isLoading: false
+              })
+            }
+            return newMap
+          })
+        }
+      } else {
+        setHoverPopovers(prev => {
+          const newMap = new Map(prev)
+          const popup = newMap.get(popoverId)
+          if (popup) {
+            newMap.set(popoverId, {
+              ...popup,
+              folder,
+              isLoading: false
+            })
+          }
+          return newMap
+        })
+        
+        // Log shown (non-blocking)
+        fetch('/api/debug-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            component: 'notes-explorer',
+            action: 'popover_shown',
+            metadata: { folderName: folder.name, childrenCount: folder.children?.length || 0 }
+          })
+        })
+      }
+    }, 500) // 500ms delay before showing
+    
+    // Store timeout reference
+    hoverTimeoutRef.current.set(timeoutKey, timeout)
+  }
+  
+  const handleFolderHoverLeave = (folderId?: string, parentPopoverId?: string) => {
+    // Clear timeout if hovering out before popover shows
+    const timeoutKey = parentPopoverId ? `${parentPopoverId}-${folderId}` : folderId || ''
+    if (hoverTimeoutRef.current.has(timeoutKey)) {
+      clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
+      hoverTimeoutRef.current.delete(timeoutKey)
+    }
+    
+    // Don't automatically hide popovers - they stay visible until explicitly closed
+    // This allows cascading effect where multiple popovers remain visible
+  }
+  
+  // Close all popovers
+  const closeAllPopovers = () => {
+    // Clear all timeouts
+    hoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
+    hoverTimeoutRef.current.clear()
+    
+    // Clear all popovers
+    setHoverPopovers(new Map())
+  }
+  
+  // Close specific popover and its children
+  const closePopover = (popoverId: string) => {
+    setHoverPopovers(prev => {
+      const newMap = new Map(prev)
+      
+      // Find and remove this popover and all its children
+      const toRemove = [popoverId]
+      const findChildren = (parentId: string) => {
+        prev.forEach((popup, id) => {
+          if (popup.parentId === parentId) {
+            toRemove.push(id)
+            findChildren(id) // Recursively find children
+          }
+        })
+      }
+      findChildren(popoverId)
+      
+      toRemove.forEach(id => newMap.delete(id))
+      return newMap
+    })
+  }
+
   const handleBrowseFolder = async (folder: TreeNode, event: React.MouseEvent) => {
     event.stopPropagation()
     setBrowseModalOpen(true)
@@ -666,6 +890,7 @@ export function NotesExplorerPhase1({
             }
             setBrowseFolder(updatedFolder)
             setBrowseColumns([updatedFolder]) // Initialize with first column
+            setColumnWidths([280]) // Default width
             
             // Also update the main tree for consistency
             await loadNodeChildren(folder.id)
@@ -673,19 +898,23 @@ export function NotesExplorerPhase1({
             // Folder is empty
             setBrowseFolder({ ...folder, children: [] })
             setBrowseColumns([{ ...folder, children: [] }])
+            setColumnWidths([280])
           }
         } else {
           setBrowseFolder(folder)
           setBrowseColumns([folder])
+          setColumnWidths([280])
         }
       } catch (error) {
         console.error('Error loading folder contents:', error)
         setBrowseFolder(folder)
         setBrowseColumns([folder])
+        setColumnWidths([280])
       }
     } else {
       setBrowseFolder(folder)
       setBrowseColumns([folder])
+      setColumnWidths([280])
     }
     
     setIsBrowseLoading(false)
@@ -696,7 +925,41 @@ export function NotesExplorerPhase1({
     setBrowseFolder(null)
     setSelectedBrowseItem(null)
     setBrowseColumns([])
+    setColumnWidths([])
   }
+
+  const handleColumnResize = (columnIndex: number, newWidth: number) => {
+    const newWidths = [...columnWidths]
+    newWidths[columnIndex] = Math.max(200, Math.min(500, newWidth)) // Min 200px, Max 500px
+    setColumnWidths(newWidths)
+  }
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (resizingColumn !== null && columnWidths[resizingColumn] !== undefined) {
+      const startX = columnWidths.slice(0, resizingColumn).reduce((sum, w) => sum + w, 320) // 320 is sidebar offset
+      const newWidth = e.clientX - startX
+      handleColumnResize(resizingColumn, newWidth)
+    }
+  }
+
+  const handleMouseUp = () => {
+    setResizingColumn(null)
+  }
+
+  // Add mouse event listeners when resizing
+  React.useEffect(() => {
+    if (resizingColumn !== null) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = 'col-resize'
+      
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.style.cursor = 'auto'
+      }
+    }
+  }, [resizingColumn, columnWidths])
 
   const handleBrowseSubfolder = async (folder: TreeNode, columnIndex: number) => {
     // Remove columns after the current one and add new column
@@ -727,8 +990,10 @@ export function NotesExplorerPhase1({
               }))
             }
             setBrowseColumns([...newColumns, updatedFolder])
+            setColumnWidths([...columnWidths.slice(0, columnIndex + 1), 280])
           } else {
             setBrowseColumns([...newColumns, { ...folder, children: [] }])
+            setColumnWidths([...columnWidths.slice(0, columnIndex + 1), 280])
           }
         }
       } catch (error) {
@@ -736,6 +1001,7 @@ export function NotesExplorerPhase1({
       }
     } else if (folder.children) {
       setBrowseColumns([...newColumns, folder])
+      setColumnWidths([...columnWidths.slice(0, columnIndex + 1), 280])
     }
     
     setIsBrowseLoading(false)
@@ -1195,9 +1461,19 @@ export function NotesExplorerPhase1({
           <span className="text-sm truncate flex-1">{node.name || node.title}</span>
           {isFolder && (
             <button
-              onClick={(e) => handleBrowseFolder(node, e)}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleBrowseFolder(node, e)
+              }}
+              onMouseEnter={(e) => {
+                e.stopPropagation()
+                handleFolderHover(node, e)
+              }}
+              onMouseLeave={(e) => {
+                e.stopPropagation()
+                handleFolderHoverLeave(node.id)
+              }}
               className="p-1 hover:bg-gray-600 rounded transition-colors opacity-0 group-hover:opacity-100"
-              title="Browse folder contents"
             >
               <Eye className="w-3.5 h-3.5 text-gray-400" />
             </button>
@@ -1676,13 +1952,13 @@ export function NotesExplorerPhase1({
         </div>
       )}
 
-      {/* Browse Panel - Multi-Column Finder Style */}
+      {/* Browse Panel - Sidebar (Non-Modal) */}
       {browseModalOpen && browseColumns.length > 0 && (
         <div 
-          className={`fixed top-0 h-screen bg-gray-900 border-l border-gray-800 z-40 flex transition-all duration-300 ease-out`}
+          className="fixed top-0 h-screen bg-gray-900 border-l border-gray-800 z-30 flex"
           style={{ 
             left: '320px',
-            width: `${Math.min(browseColumns.length * 280, typeof window !== 'undefined' ? window.innerWidth - 320 : 1400)}px`
+            width: `${columnWidths.reduce((sum, w) => sum + w, 0)}px`
           }}
         >
           {/* Header */}
@@ -1697,11 +1973,15 @@ export function NotesExplorerPhase1({
           </div>
           
           {/* Column View */}
-          <div className="flex h-full overflow-x-auto">
+          <div className="flex h-full overflow-x-auto relative">
             {browseColumns.map((column, columnIndex) => (
-              <div key={`${column.id}-${columnIndex}`} className="flex-shrink-0 w-[280px] h-full border-r border-gray-800 flex flex-col">
+              <React.Fragment key={`${column.id}-${columnIndex}`}>
+                <div 
+                  className="flex-shrink-0 h-full flex flex-col relative bg-gray-900"
+                  style={{ width: `${columnWidths[columnIndex] || 280}px` }}
+                >
                 {/* Column Header */}
-                <div className="px-4 py-3 border-b border-gray-800 bg-gray-850">
+                <div className="px-4 py-3 border-b border-gray-800" style={{ backgroundColor: '#1a1d23' }}>
                   <div className="flex items-center gap-2">
                     <Folder className="w-4 h-4 text-blue-400" />
                     <h3 className="text-sm font-medium text-white truncate">{column.name}</h3>
@@ -1757,8 +2037,15 @@ export function NotesExplorerPhase1({
                                 e.stopPropagation()
                                 handleBrowseSubfolder(child, columnIndex)
                               }}
+                              onMouseEnter={(e) => {
+                                e.stopPropagation()
+                                handleFolderHover(child, e)
+                              }}
+                              onMouseLeave={(e) => {
+                                e.stopPropagation()
+                                handleFolderHoverLeave(child.id)
+                              }}
                               className="p-1 hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Browse folder"
                             >
                               <Eye className="w-3.5 h-3.5 text-gray-400" />
                             </button>
@@ -1777,22 +2064,176 @@ export function NotesExplorerPhase1({
                 </div>
                 
                 {/* Column Footer */}
-                <div className="px-4 py-2 border-t border-gray-800 bg-gray-850">
+                <div className="px-4 py-2 border-t border-gray-800" style={{ backgroundColor: '#1a1d23' }}>
                   <div className="text-xs text-gray-500">
                     {column.children?.length || 0} items
                   </div>
                 </div>
               </div>
+              
+              {/* Resize Handle */}
+              {columnIndex < browseColumns.length - 1 && (
+                <div
+                  className={`relative w-1 flex-shrink-0 ${
+                    resizingColumn === columnIndex ? 'z-50' : 'z-10'
+                  }`}
+                  style={{
+                    background: resizingColumn === columnIndex ? '#3B82F6' : '#4B5563',
+                    cursor: 'col-resize'
+                  }}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    setResizingColumn(columnIndex)
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#3B82F6'
+                  }}
+                  onMouseLeave={(e) => {
+                    if (resizingColumn !== columnIndex) {
+                      e.currentTarget.style.background = '#4B5563'
+                    }
+                  }}
+                >
+                  {/* Larger hit area for easier grabbing */}
+                  <div className="absolute inset-y-0 -left-2 -right-2" style={{ cursor: 'col-resize' }} />
+                </div>
+              )}
+            </React.Fragment>
             ))}
           </div>
         </div>
       )}
 
-      {/* Backdrop for Browse Panel */}
-      {browseModalOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-30 z-30"
-          onClick={closeBrowseModal}
+      {/* Cascading Hover Popovers for Quick Preview */}
+      {Array.from(hoverPopovers.values()).map((popover) => (
+        <div
+          key={popover.id}
+          className="fixed bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
+          style={{
+            zIndex: 9999 + popover.level, // Higher z-index for deeper levels
+            left: `${popover.position.x}px`,
+            top: `${popover.position.y}px`,
+            maxWidth: '300px',
+            maxHeight: '400px'
+          }}
+          onMouseEnter={() => {
+            // Keep popover open when hovering over it
+          }}
+          onMouseLeave={() => {
+            // Optional: could close this popover and its children
+            // closePopover(popover.id)
+          }}
+        >
+          {/* Popover Header */}
+          <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Folder className="w-4 h-4 text-blue-400" />
+              <span className="text-sm font-medium text-white truncate">
+                {popover.folder?.name || 'Loading...'}
+              </span>
+            </div>
+            <button
+              onClick={() => closePopover(popover.id)}
+              className="p-0.5 hover:bg-gray-700 rounded"
+            >
+              <X className="w-3.5 h-3.5 text-gray-400" />
+            </button>
+          </div>
+          
+          {/* Popover Content */}
+          <div className="max-h-[320px] overflow-y-auto">
+            {popover.isLoading ? (
+              <div className="p-4 text-center text-gray-500 text-sm">
+                Loading...
+              </div>
+            ) : popover.folder?.children && popover.folder.children.length > 0 ? (
+              <div className="py-1">
+                {popover.folder.children.map((child) => (
+                  <div
+                    key={child.id}
+                    className="group px-3 py-1.5 hover:bg-gray-700 flex items-center gap-2 cursor-default"
+                  >
+                    {child.type === 'folder' ? (
+                      <Folder className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                    ) : (
+                      <FileText className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                    )}
+                    <span className="flex-1 text-sm text-gray-200 truncate">
+                      {child.icon && <span className="mr-1">{child.icon}</span>}
+                      {child.name || child.title || 'Untitled'}
+                    </span>
+                    
+                    {/* Eye icon for folders within popups - cascading effect */}
+                    {child.type === 'folder' && (
+                      <button
+                        onMouseEnter={(e) => {
+                          e.stopPropagation()
+                          handleFolderHover(child, e, popover.id)
+                        }}
+                        onMouseLeave={(e) => {
+                          e.stopPropagation()
+                          handleFolderHoverLeave(child.id, popover.id)
+                        }}
+                        className="p-0.5 hover:bg-gray-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Eye className="w-3 h-3 text-gray-400" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="p-4 text-center text-gray-500 text-sm">
+                Empty folder
+              </div>
+            )}
+          </div>
+          
+          {/* Popover Footer */}
+          <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+            {popover.folder?.children?.length || 0} items
+          </div>
+        </div>
+      ))}
+      
+      {/* Connection Lines Between Related Popovers */}
+      <svg
+        className="fixed pointer-events-none"
+        style={{
+          zIndex: 9998,
+          left: 0,
+          top: 0,
+          width: '100%',
+          height: '100%'
+        }}
+      >
+        {Array.from(hoverPopovers.values()).map((popover) => {
+          if (!popover.parentId) return null
+          const parent = hoverPopovers.get(popover.parentId)
+          if (!parent) return null
+          
+          // Draw a subtle connection line from parent to child
+          return (
+            <line
+              key={`line-${popover.id}`}
+              x1={parent.position.x + 280} // Approximate popup width
+              y1={parent.position.y + 40} // Approximate header height
+              x2={popover.position.x}
+              y2={popover.position.y + 40}
+              stroke="rgba(59, 130, 246, 0.3)" // Blue with transparency
+              strokeWidth="1"
+              strokeDasharray="4 2"
+            />
+          )
+        })}
+      </svg>
+      
+      {/* Click outside to close all popovers */}
+      {hoverPopovers.size > 0 && (
+        <div
+          className="fixed inset-0"
+          style={{ zIndex: 9997 }}
+          onClick={closeAllPopovers}
         />
       )}
     </div>

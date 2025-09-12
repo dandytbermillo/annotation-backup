@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-12 18:51Z] 0b6790b: browse modal for files is working
 - commit [2025-09-12 12:21Z] e6797ce: tree view functionality working
 - commit [2025-09-12 05:40Z] 019ac61: adding folder and subfolder for note creation a success
 - commit [2025-09-12 04:45Z] a0aa50b: phase 2 almost done
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-11 14:20Z] 7835599: fixing main branch window
 - commit [2025-09-11 05:55Z] 864d568: auto edit mode when empty is a success
 - note [2025-09-11 05:10Z]: 
-- note [2025-09-11 04:38Z]: 
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
