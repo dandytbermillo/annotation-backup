@@ -5,6 +5,8 @@ import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
 import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
 import { Menu } from "lucide-react"
+import { useLayer } from "@/components/canvas/layer-provider"
+import { useFeatureFlag } from "@/lib/offline/feature-flags"
 
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
@@ -38,6 +40,10 @@ export function AnnotationApp() {
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
+  
+  // Multi-layer canvas feature
+  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  const layerContext = useLayer()
   
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
@@ -148,9 +154,18 @@ export function AnnotationApp() {
       )}
       
       {/* Canvas Area - Full width when explorer is closed */}
-      <div className={`flex-1 relative transition-all duration-300 ease-in-out ${
-        isNotesExplorerOpen ? 'lg:ml-80' : 'ml-0'
-      }`}>
+      <div 
+        className={`flex-1 relative transition-all duration-300 ease-in-out ${
+          isNotesExplorerOpen ? 'lg:ml-80' : 'ml-0'
+        }`}
+        style={{
+          // Disable pointer events when popup layer is active
+          pointerEvents: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 'none' : 'auto',
+          // Dim the canvas when popup layer is active
+          opacity: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 0.6 : 1,
+          transition: 'opacity 0.3s ease'
+        }}
+      >
         {selectedNoteId ? (
           <ModernAnnotationCanvas 
             key={selectedNoteId} 

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useMemo, useCallback } from "react"
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { 
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff, Eye
@@ -181,18 +181,26 @@ function NotesExplorerContent({
     return adapted
   }, [hoverPopovers, multiLayerEnabled, layerContext])
   
-  // Hybrid sync: Auto-switch layers based on popup count
+  // Hybrid sync: Auto-switch layers based on popup count changes
+  const prevPopupCountRef = useRef(hoverPopovers.size)
+  
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) return
     
-    // Use PopupStateAdapter logic for auto-switching
-    const autoSwitch = PopupStateAdapter.shouldAutoSwitch(
-      hoverPopovers.size,
-      layerContext.activeLayer
-    )
+    const currentPopupCount = hoverPopovers.size
+    const prevPopupCount = prevPopupCountRef.current
     
-    if (autoSwitch.shouldSwitch) {
-      layerContext.setActiveLayer(autoSwitch.targetLayer)
+    // Only auto-switch when popup count actually changes
+    if (prevPopupCount !== currentPopupCount) {
+      prevPopupCountRef.current = currentPopupCount
+      
+      if (currentPopupCount > 0) {
+        // Any popups open - switch to popup layer
+        layerContext.setActiveLayer('popups')
+      } else {
+        // No popups - switch back to notes
+        layerContext.setActiveLayer('notes')
+      }
     }
   }, [hoverPopovers.size, multiLayerEnabled, layerContext])
   
@@ -2461,6 +2469,8 @@ function NotesExplorerContent({
           draggingPopup={draggingPopup}
           onClosePopup={closePopover}
           onDragStart={handlePopupDragStart}
+          onHoverFolder={handleFolderHover}
+          onLeaveFolder={handleFolderHoverLeave}
         />
       ) : (
         // Legacy popup rendering

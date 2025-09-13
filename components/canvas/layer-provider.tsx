@@ -92,19 +92,8 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     return defaultLayers;
   });
   
-  // Auto-switch based on popup count
-  useEffect(() => {
-    if (!multiLayerEnabled) return;
-    
-    const autoSwitch = PopupStateAdapter.shouldAutoSwitch(
-      initialPopupCount,
-      activeLayer
-    );
-    
-    if (autoSwitch.shouldSwitch) {
-      setActiveLayerState(autoSwitch.targetLayer);
-    }
-  }, [initialPopupCount, activeLayer, multiLayerEnabled]);
+  // Note: Auto-switch logic is now handled in notes-explorer-phase1.tsx
+  // to avoid conflicts and ensure proper coordination with popup state
   
   // Update transform for a specific layer with RAF batching
   const updateTransform = useCallback((id: LayerId, transform: Partial<Transform>) => {

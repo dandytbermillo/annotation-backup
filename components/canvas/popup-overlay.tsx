@@ -7,7 +7,7 @@ import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-li
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
-import { X, Folder } from 'lucide-react';
+import { X, Folder, FileText, Eye } from 'lucide-react';
 
 interface PopupData extends PopupState {
   id: string;
@@ -25,6 +25,8 @@ interface PopupOverlayProps {
   draggingPopup: string | null;
   onClosePopup: (id: string) => void;
   onDragStart?: (id: string, event: React.MouseEvent) => void;
+  onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string) => void;
+  onLeaveFolder?: () => void;
 }
 
 /**
@@ -36,22 +38,30 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   draggingPopup,
   onClosePopup,
   onDragStart,
+  onHoverFolder,
+  onLeaveFolder,
 }) => {
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
   
   // Use the same LayerProvider context as the explorer
   const layerContext = useLayer();
-  const { transforms, layers, activeLayer, setActiveLayer } = layerContext;
   
   const overlayRef = useRef<HTMLDivElement>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout>();
+  
+  // Early return if context is not available
+  if (!multiLayerEnabled || !layerContext) {
+    return null; // Feature not enabled or context not available
+  }
+  
+  const { transforms, layers, activeLayer, setActiveLayer } = layerContext;
   
   // Get popup layer state from LayerProvider
   const popupLayer = layers.get('popups');
   const popupTransform = transforms.popups || { x: 0, y: 0, scale: 1 };
   
-  if (!multiLayerEnabled || !popupLayer) {
-    return null; // Feature not enabled or layer not initialized
+  if (!popupLayer) {
+    return null; // Layer not initialized
   }
   
   // Note: Auto-switch is already handled by the explorer component
@@ -220,10 +230,36 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </div>
               ) : popup.folder?.children && popup.folder.children.length > 0 ? (
                 <div className="py-1">
-                  {/* Folder content would be rendered here */}
-                  <div className="px-3 py-2 text-sm text-gray-400">
-                    {popup.folder.children.length} items
-                  </div>
+                  {popup.folder.children.map((child: any) => (
+                    <div
+                      key={child.id}
+                      className="px-3 py-2 hover:bg-gray-700 cursor-pointer flex items-center justify-between text-sm group"
+                    >
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        {child.type === 'folder' ? (
+                          <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                        )}
+                        <span className="text-gray-200 truncate">{child.name}</span>
+                      </div>
+                      {child.type === 'folder' && (
+                        <div
+                          onMouseEnter={(e) => {
+                            e.stopPropagation();
+                            onHoverFolder?.(child, e, popup.id);
+                          }}
+                          onMouseLeave={(e) => {
+                            e.stopPropagation();
+                            onLeaveFolder?.();
+                          }}
+                          className="p-1 -m-1"
+                        >
+                          <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="p-4 text-center text-gray-500 text-sm">

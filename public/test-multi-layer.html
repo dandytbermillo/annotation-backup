@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Layer Canvas Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #3b82f6;
+            margin-bottom: 10px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        .success {
+            background: #065f46;
+            color: #6ee7b7;
+            border: 1px solid #10b981;
+        }
+        .error {
+            background: #7f1d1d;
+            color: #fca5a5;
+            border: 1px solid #ef4444;
+        }
+        .info {
+            background: #1e3a8a;
+            color: #93c5fd;
+            border: 1px solid #3b82f6;
+        }
+        .test-section {
+            background: #262626;
+            border: 1px solid #404040;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .test-section h2 {
+            color: #60a5fa;
+            margin-top: 0;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        button:disabled {
+            background: #4b5563;
+            cursor: not-allowed;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .result {
+            background: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .iframe-container {
+            width: 100%;
+            height: 600px;
+            border: 2px solid #404040;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        code {
+            background: #374151;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+        .test-passed {
+            color: #10b981;
+        }
+        .test-failed {
+            color: #ef4444;
+        }
+        .test-pending {
+            color: #f59e0b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 Multi-Layer Canvas Live Test</h1>
+        <div id="status" class="status info">Initializing test environment...</div>
+
+        <div class="test-section">
+            <h2>1. Feature Flag Setup</h2>
+            <div class="button-group">
+                <button onclick="enableFeature()">Enable Multi-Layer Canvas</button>
+                <button onclick="checkFeatureStatus()">Check Feature Status</button>
+                <button onclick="disableFeature()">Disable Feature</button>
+            </div>
+            <div id="feature-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>2. Application Frame</h2>
+            <p>The application will load below. After enabling the feature, refresh the frame to see changes.</p>
+            <div class="button-group">
+                <button onclick="refreshFrame()">Refresh Application</button>
+                <button onclick="openNotesExplorer()">Open Notes Explorer</button>
+            </div>
+            <div class="iframe-container">
+                <iframe id="app-frame" src="http://localhost:3000"></iframe>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>3. Component Tests</h2>
+            <div class="button-group">
+                <button onclick="testLayerProvider()">Test LayerProvider</button>
+                <button onclick="testLayerControls()">Test Layer Controls</button>
+                <button onclick="testPopupOverlay()">Test Popup Overlay</button>
+                <button onclick="testKeyboardShortcuts()">Test Keyboard Shortcuts</button>
+            </div>
+            <div id="component-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>4. Functional Tests</h2>
+            <div class="button-group">
+                <button onclick="testLayerSwitching()">Test Layer Switching</button>
+                <button onclick="testOpacityControl()">Test Opacity Control</button>
+                <button onclick="testVisibilityToggle()">Test Visibility Toggle</button>
+                <button onclick="testSyncControls()">Test Sync Controls</button>
+            </div>
+            <div id="functional-result" class="result"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>5. Test Results Summary</h2>
+            <div id="summary" class="result">
+                <p>Tests not yet run. Click the buttons above to test each feature.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const frame = document.getElementById('app-frame');
+        const status = document.getElementById('status');
+        
+        // Wait for frame to load
+        frame.onload = () => {
+            status.className = 'status success';
+            status.textContent = '✅ Application loaded successfully! You can now run tests.';
+            checkFeatureStatus();
+        };
+
+        function enableFeature() {
+            try {
+                const frameWindow = frame.contentWindow;
+                frameWindow.localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': true }));
+                
+                document.getElementById('feature-result').innerHTML = `
+                    <span class="test-passed">✅ Feature flag enabled!</span><br>
+                    <code>localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': true }))</code><br>
+                    <br>
+                    <strong>Next step:</strong> Click "Refresh Application" to apply changes.
+                `;
+            } catch (e) {
+                document.getElementById('feature-result').innerHTML = `
+                    <span class="test-failed">❌ Error: ${e.message}</span>
+                `;
+            }
+        }
+
+        function checkFeatureStatus() {
+            try {
+                const frameWindow = frame.contentWindow;
+                const flags = JSON.parse(frameWindow.localStorage.getItem('offlineFeatureFlags') || '{}');
+                const isEnabled = flags['ui.multiLayerCanvas'] === true;
+                
+                document.getElementById('feature-result').innerHTML = `
+                    Feature Status: <span class="${isEnabled ? 'test-passed' : 'test-pending'}">
+                        ${isEnabled ? '✅ ENABLED' : '⚠️ DISABLED'}
+                    </span><br>
+                    <br>
+                    Current flags: <code>${JSON.stringify(flags, null, 2)}</code>
+                `;
+            } catch (e) {
+                document.getElementById('feature-result').innerHTML = `
+                    <span class="test-failed">❌ Error: ${e.message}</span>
+                `;
+            }
+        }
+
+        function disableFeature() {
+            try {
+                const frameWindow = frame.contentWindow;
+                frameWindow.localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': false }));
+                
+                document.getElementById('feature-result').innerHTML = `
+                    <span class="test-pending">⚠️ Feature flag disabled. Refresh to apply.</span>
+                `;
+            } catch (e) {
+                document.getElementById('feature-result').innerHTML = `
+                    <span class="test-failed">❌ Error: ${e.message}</span>
+                `;
+            }
+        }
+
+        function refreshFrame() {
+            frame.src = frame.src;
+            status.className = 'status info';
+            status.textContent = '🔄 Reloading application...';
+        }
+
+        function openNotesExplorer() {
+            try {
+                // This would need to trigger the UI to open the notes explorer
+                // For now, show instructions
+                document.getElementById('component-result').innerHTML = `
+                    <strong>Manual Step Required:</strong><br>
+                    Click the sidebar button in the application to open Notes Explorer.<br>
+                    <br>
+                    Once open, you should see:<br>
+                    • Notes Explorer sidebar on the left<br>
+                    • Layer Controls in the bottom-right (if feature is enabled)<br>
+                    • Visual layer indicator at the top-center
+                `;
+            } catch (e) {
+                document.getElementById('component-result').innerHTML = `
+                    <span class="test-failed">❌ Error: ${e.message}</span>
+                `;
+            }
+        }
+
+        function testLayerProvider() {
+            document.getElementById('component-result').innerHTML = `
+                <strong>Testing LayerProvider...</strong><br>
+                <br>
+                Open React DevTools and look for:<br>
+                • <code>LayerProvider</code> component wrapping <code>NotesExplorerPhase1</code><br>
+                • Context value with: activeLayer, transforms, layers, syncPan, syncZoom<br>
+                <br>
+                In console, run: <code>$r.props.value</code> when LayerProvider is selected
+            `;
+        }
+
+        function testLayerControls() {
+            document.getElementById('component-result').innerHTML = `
+                <strong>Testing Layer Controls...</strong><br>
+                <br>
+                Look for in bottom-right corner:<br>
+                ✅ "Layer Controls" panel header<br>
+                ✅ Active Layer selector (Notes/Popups buttons)<br>
+                ✅ Layer Settings (visibility eyes and opacity sliders)<br>
+                ✅ Sync Settings (Pan/Zoom toggle buttons)<br>
+                ✅ Action buttons (Reset, Sidebar, Keyboard icon)<br>
+                <br>
+                Visual indicator at top-center should show active layer.
+            `;
+        }
+
+        function testPopupOverlay() {
+            document.getElementById('component-result').innerHTML = `
+                <strong>Testing Popup Overlay...</strong><br>
+                <br>
+                1. Hover over a folder's eye icon in Notes Explorer<br>
+                2. A popup should appear<br>
+                3. Check that:<br>
+                   • Popup appears in overlay layer<br>
+                   • Auto-switch to popups layer occurs<br>
+                   • Toast notification appears (if implemented)<br>
+                   • Popup can be dragged by header<br>
+            `;
+        }
+
+        function testKeyboardShortcuts() {
+            document.getElementById('component-result').innerHTML = `
+                <strong>Keyboard Shortcuts to Test:</strong><br>
+                <br>
+                • <code>Tab</code> - Toggle between Notes/Popups layers<br>
+                • <code>Escape</code> - Focus Notes layer<br>
+                • <code>Cmd/Ctrl + 1</code> - Switch to Notes<br>
+                • <code>Cmd/Ctrl + 2</code> - Switch to Popups<br>
+                • <code>Cmd/Ctrl + B</code> - Toggle sidebar<br>
+                • <code>Cmd/Ctrl + 0</code> - Reset view<br>
+                • <code>Alt + Drag</code> - Pan popup layer only<br>
+                • <code>Space + Drag</code> - Pan active layer<br>
+                <br>
+                Watch the Layer Controls UI update as you use shortcuts!
+            `;
+        }
+
+        function testLayerSwitching() {
+            document.getElementById('functional-result').innerHTML = `
+                <strong>Layer Switching Test:</strong><br>
+                <br>
+                1. Click "Notes" button in Layer Controls<br>
+                   → Notes layer should be active (blue highlight)<br>
+                2. Click "Popups" button<br>
+                   → Popups layer should be active (purple highlight)<br>
+                3. Press Tab key<br>
+                   → Should toggle between layers<br>
+                4. Visual indicator at top should update<br>
+                <br>
+                <span class="test-pending">⏳ Perform manual test and verify</span>
+            `;
+        }
+
+        function testOpacityControl() {
+            document.getElementById('functional-result').innerHTML = `
+                <strong>Opacity Control Test:</strong><br>
+                <br>
+                1. Drag Notes opacity slider to 50%<br>
+                   → Notes should become semi-transparent<br>
+                2. Drag to 0%<br>
+                   → Notes should be invisible<br>
+                3. Drag to 100%<br>
+                   → Notes should be fully opaque<br>
+                4. Repeat for Popups layer<br>
+                <br>
+                <span class="test-pending">⏳ Perform manual test and verify</span>
+            `;
+        }
+
+        function testVisibilityToggle() {
+            document.getElementById('functional-result').innerHTML = `
+                <strong>Visibility Toggle Test:</strong><br>
+                <br>
+                1. Click eye icon next to "Notes"<br>
+                   → Notes layer should hide (eye becomes eye-off)<br>
+                2. Click eye-off icon<br>
+                   → Notes layer should show again<br>
+                3. Repeat for Popups layer<br>
+                <br>
+                <span class="test-pending">⏳ Perform manual test and verify</span>
+            `;
+        }
+
+        function testSyncControls() {
+            document.getElementById('functional-result').innerHTML = `
+                <strong>Sync Controls Test:</strong><br>
+                <br>
+                1. Click "Pan" button (should toggle green/gray)<br>
+                2. When gray (unsynced):<br>
+                   • Space+Drag on Notes → Only Notes moves<br>
+                   • Switch to Popups, Space+Drag → Only Popups moves<br>
+                3. When green (synced):<br>
+                   • Both layers move together<br>
+                4. Test "Zoom" sync similarly<br>
+                <br>
+                <span class="test-pending">⏳ Perform manual test and verify</span>
+            `;
+        }
+    </script>
+</body>
+</html>

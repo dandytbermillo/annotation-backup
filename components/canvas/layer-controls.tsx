@@ -290,8 +290,8 @@ export const LayerControls: React.FC<LayerControlsProps> = ({
       )}
       
       {/* Visual Layer Indicator Overlay */}
-      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 pointer-events-none z-[1999]">
-        <div className="bg-gray-900 bg-opacity-90 border border-gray-700 rounded-full px-4 py-2 shadow-lg">
+      <div className="fixed top-16 left-1/2 transform -translate-x-1/2 pointer-events-none" style={{ zIndex: 2500 }}>
+        <div className="bg-gray-900 bg-opacity-95 border border-gray-700 rounded-full px-4 py-2 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5">
               <div className={`w-2 h-2 rounded-full ${activeLayer === 'notes' ? 'bg-blue-400' : 'bg-gray-600'}`} />

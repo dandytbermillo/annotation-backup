@@ -363,3 +363,38 @@ interface PathData { d: string; stroke: string; strokeWidth: number; opacity: nu
 - Rollout/rollback, risks, acceptance criteria, and milestones
   - Why: Operational clarity for enabling, disabling, and defining “done”; improves predictability and mitigates deployment risk.
   - If omitted: Hard rollbacks, scope creep, ambiguous acceptance, and schedule slippage.
+
+## Implementation Status (Phase 0/1)
+
+- Phase 0 (Preparation & Migration): Complete
+  - Added feature flag `ui.multiLayerCanvas` (runtime-togglable via `offlineFeatureFlags`).
+  - Introduced `Z_INDEX` tokens and `CoordinateBridge` helpers (no double scaling).
+  - Created React overlay skeleton and adapters (popup state, connection lines) per Option A (UI‑ephemeral state).
+
+- Phase 1 (Foundation Integration): Complete
+  - Unified state via `LayerProvider` (Explorer and PopupOverlay share the same transforms and activeLayer).
+  - Keyboard interactions: Alt+Drag pans popup layer; Space+Drag pans active layer.
+  - Single auto-switch (no duplicate toasts); viewport culling; rAF-batched transform updates.
+
+Note: If a toast on layer change is desired, see “Optional Toast”.
+
+## Unified State Notes
+
+- Single source of truth: `LayerProvider` (React context) exposes `transforms`, `activeLayer`, and update APIs; both Explorer and PopupOverlay consume `useLayer()`.
+- No duplicate auto-switch logic: handled in Explorer only to avoid double notifications and race conditions.
+- Overlay container applies a single transform; popups/lines render from canvas coordinates derived via `CoordinateBridge`.
+
+## Verification
+
+- Script: `docs/proposal/multi_layer_canvas/test_scripts/verify-unified-state.js`
+- Key checks:
+  - Feature flag enables: `localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': true }))`.
+  - Alt+Drag pans popup layer; Space+Drag pans active layer (watch transforms update in DevTools).
+  - Explorer and PopupOverlay read the same `transforms` object from `LayerProvider`.
+  - Auto-switch triggers once (one toast if enabled; see below).
+  - Viewport culling keeps only visible popups in DOM; motion is smooth due to rAF batching.
+
+## Optional Toast
+
+- If you want a toast when layer auto-switches (first popup → popups; last → notes), add a toast call in the Explorer’s auto-switch effect.
+- Default Phase 1 behavior is silent switching (toast optional) to minimize noise while validating interactions.
