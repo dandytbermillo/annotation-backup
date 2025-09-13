@@ -9,6 +9,14 @@ import { useFeatureFlag } from '@/lib/offline/feature-flags';
 // Types
 type LayerTransforms = Record<LayerId, Transform>;
 
+// Gesture types
+type GestureType = 'none' | 'overlay-pan' | 'popup-drag' | 'notes-pan';
+
+interface GestureState {
+  type: GestureType;
+  txId: number;
+}
+
 interface LayerContextValue {
   activeLayer: 'notes' | 'popups';
   transforms: LayerTransforms;
@@ -17,6 +25,7 @@ interface LayerContextValue {
   syncZoom: boolean;
   setActiveLayer: (id: 'notes' | 'popups') => void;
   updateTransform: (id: LayerId, transform: Partial<Transform>) => void;
+  updateTransformByDelta: (layer: LayerId, delta: { dx: number; dy: number }, opts?: { syncPan?: boolean; txId?: number }) => void;
   updateLayerOpacity: (id: LayerId, opacity: number) => void;
   updateLayerVisibility: (id: LayerId, visible: boolean) => void;
   toggleSyncPan: () => void;
@@ -24,6 +33,8 @@ interface LayerContextValue {
   resetView: () => void;
   toggleSidebar: () => void;
   isSidebarVisible: boolean;
+  currentGesture: GestureState | null;
+  setGesture: (type: GestureType) => void;
 }
 
 // Create context
@@ -55,6 +66,7 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
         syncZoom: false,
         setActiveLayer: () => {},
         updateTransform: () => {},
+        updateTransformByDelta: () => {},
         updateLayerOpacity: () => {},
         updateLayerVisibility: () => {},
         toggleSyncPan: () => {},
@@ -62,6 +74,8 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
         resetView: () => {},
         toggleSidebar: () => {},
         isSidebarVisible: true,
+        currentGesture: null,
+        setGesture: () => {},
       }}>
         {children}
       </LayerContext.Provider>
@@ -73,6 +87,10 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
   const [syncPan, setSyncPan] = useState(true);
   const [syncZoom, setSyncZoom] = useState(true);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+  
+  // Gesture arbiter state
+  const [currentGesture, setCurrentGesture] = useState<GestureState | null>(null);
+  const nextTxIdRef = useRef(1);
   
   // Layer transforms
   const [transforms, setTransforms] = useState<LayerTransforms>({
@@ -120,14 +138,42 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
   // to avoid conflicts and ensure proper coordination with popup state
   
   // Update transform for a specific layer with RAF batching
-  const updateTransform = useCallback((id: LayerId, transform: Partial<Transform>) => {
+  // NOTE: This treats the input as DELTA values, not absolute positions
+  const updateTransform = useCallback((id: LayerId, delta: Partial<Transform>) => {
+    console.log('[LayerProvider] updateTransform called:', { id, delta, syncPan });
+    
     if (id === 'sidebar') return; // Sidebar never transforms
     
-    // Batch transform updates
-    pendingTransformsRef.current[id] = {
-      ...(pendingTransformsRef.current[id] || transforms[id]),
-      ...transform,
-    };
+    // If syncPan is enabled and we're panning (x or y delta), apply to both layers
+    if (syncPan && (delta.x !== undefined || delta.y !== undefined)) {
+      // Apply the same delta to both notes and popups
+      ['notes', 'popups'].forEach(layerId => {
+        const currentTransform = pendingTransformsRef.current[layerId as LayerId] || 
+                                transforms[layerId as LayerId] || 
+                                { x: 0, y: 0, scale: 1 };
+        
+        pendingTransformsRef.current[layerId as LayerId] = {
+          x: currentTransform.x + (delta.x || 0),
+          y: currentTransform.y + (delta.y || 0),
+          scale: delta.scale !== undefined ? delta.scale : currentTransform.scale,
+        };
+      });
+    } else {
+      // Only update the specified layer
+      const currentTransform = pendingTransformsRef.current[id] || transforms[id] || { x: 0, y: 0, scale: 1 };
+      
+      // Apply delta to current transform
+      const newTransform = {
+        x: currentTransform.x + (delta.x || 0),
+        y: currentTransform.y + (delta.y || 0),
+        scale: delta.scale !== undefined ? delta.scale : currentTransform.scale,
+      };
+      
+      console.log('[LayerProvider] New transform:', { id, currentTransform, newTransform });
+      
+      // Store the new absolute transform
+      pendingTransformsRef.current[id] = newTransform;
+    }
     
     // Cancel previous RAF if exists
     if (rafIdRef.current !== null) {
@@ -137,20 +183,8 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     // Schedule update on next frame
     rafIdRef.current = requestAnimationFrame(() => {
       setTransforms(prev => {
+        // Sync is already handled in updateTransform, just apply pending transforms
         const newTransforms = { ...prev, ...pendingTransformsRef.current };
-        
-        // Apply sync if enabled
-        if (syncPan || syncZoom) {
-          const synced = PopupStateAdapter.syncTransforms(
-            newTransforms.notes,
-            newTransforms.popups,
-            syncPan,
-            syncZoom
-          );
-          newTransforms.notes = synced.notes;
-          newTransforms.popups = synced.popups;
-        }
-        
         return newTransforms;
       });
       
@@ -175,7 +209,36 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
       pendingTransformsRef.current = {};
       rafIdRef.current = null;
     });
-  }, [syncPan, syncZoom, transforms]);
+  }, [syncPan, transforms]);
+  
+  // New explicit delta API
+  const updateTransformByDelta = useCallback((
+    layer: LayerId,
+    delta: { dx: number; dy: number },
+    opts?: { syncPan?: boolean; txId?: number }
+  ) => {
+    // Check if this gesture is allowed based on current gesture state
+    if (currentGesture && opts?.txId && currentGesture.txId !== opts.txId) {
+      // Different gesture is in progress, ignore this update
+      return;
+    }
+    
+    // Use provided sync override or default to current setting
+    const shouldSync = opts?.syncPan !== undefined ? opts.syncPan : syncPan;
+    
+    // Convert delta to transform format and call existing updateTransform
+    updateTransform(layer, { x: delta.dx, y: delta.dy });
+  }, [currentGesture, syncPan, updateTransform]);
+  
+  // Gesture arbiter
+  const setGesture = useCallback((type: GestureType) => {
+    if (type === 'none') {
+      setCurrentGesture(null);
+    } else {
+      const txId = nextTxIdRef.current++;
+      setCurrentGesture({ type, txId });
+    }
+  }, []);
   
   // Set active layer
   const setActiveLayer = useCallback((id: 'notes' | 'popups') => {
@@ -283,6 +346,7 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     syncZoom,
     setActiveLayer,
     updateTransform,
+    updateTransformByDelta,
     updateLayerOpacity,
     updateLayerVisibility,
     toggleSyncPan,
@@ -290,6 +354,8 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     resetView,
     toggleSidebar,
     isSidebarVisible,
+    currentGesture,
+    setGesture,
   };
   
   // Cleanup RAF on unmount
@@ -332,6 +398,7 @@ export const useLayer = () => {
       syncZoom: true,
       setActiveLayer: () => {},
       updateTransform: () => {},
+      updateTransformByDelta: () => {},
       updateLayerOpacity: () => {},
       updateLayerVisibility: () => {},
       toggleSyncPan: () => {},
@@ -339,6 +406,8 @@ export const useLayer = () => {
       resetView: () => {},
       toggleSidebar: () => {},
       isSidebarVisible: true,
+      currentGesture: null,
+      setGesture: () => {},
     };
   }
   return context;

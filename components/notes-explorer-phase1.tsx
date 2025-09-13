@@ -146,7 +146,8 @@ function NotesExplorerContent({
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
     id: string
     folder: TreeNode | null
-    position: { x: number, y: number }
+    position: { x: number, y: number } // Screen position (for legacy mode)
+    canvasPosition?: { x: number, y: number } // Canvas position (for multi-layer mode) - stored once, not recalculated
     isLoading: boolean
     parentId?: string // To track relationships for connection lines
     level: number // Depth level for positioning
@@ -165,16 +166,13 @@ function NotesExplorerContent({
     if (!multiLayerEnabled || !layerContext) return null
     
     const adapted = new Map()
-    const popupTransform = layerContext.transforms.popups || { x: 0, y: 0, scale: 1 }
     
     hoverPopovers.forEach((popup, id) => {
       adapted.set(id, {
         ...popup,
-        // Use CoordinateBridge instead of non-existent method
-        canvasPosition: CoordinateBridge.screenToCanvas(
-          popup.position,
-          popupTransform // Use actual popup layer transform
-        )
+        // Use stored canvas position if available, don't recalculate!
+        // This prevents position/transform cancellation
+        canvasPosition: popup.canvasPosition || popup.position // Fallback to screen position if canvas not set
       })
     })
     return adapted
@@ -329,7 +327,11 @@ function NotesExplorerContent({
             const newMap = new Map(prev)
             const existing = newMap.get(id)
             if (existing && existing.height !== actualHeight) {
-              newMap.set(id, { ...existing, height: actualHeight })
+              newMap.set(id, { 
+                ...existing, 
+                height: actualHeight,
+                canvasPosition: existing.canvasPosition // Preserve canvas position
+              })
             }
             return newMap
           })
@@ -369,9 +371,20 @@ function NotesExplorerContent({
         const newMap = new Map(prev)
         const popup = newMap.get(draggingPopup)
         if (popup) {
+          // Update canvas position for multi-layer mode
+          let updatedCanvasPosition = popup.canvasPosition
+          if (multiLayerEnabled && layerContext && popup.canvasPosition) {
+            // Update canvas position directly by delta (no transform recalculation)
+            updatedCanvasPosition = {
+              x: popup.canvasPosition.x + delta.x,
+              y: popup.canvasPosition.y + delta.y
+            }
+          }
+          
           newMap.set(draggingPopup, {
             ...popup,
             position: newPosition,
+            canvasPosition: updatedCanvasPosition,
             isDragging: true
           })
         }
@@ -397,7 +410,11 @@ function NotesExplorerContent({
         const newMap = new Map(prev)
         const popup = newMap.get(draggingPopup)
         if (popup) {
-          newMap.set(draggingPopup, { ...popup, isDragging: false })
+          newMap.set(draggingPopup, { 
+            ...popup, 
+            isDragging: false,
+            canvasPosition: popup.canvasPosition // Preserve canvas position
+          })
         }
         return newMap
       })
@@ -979,10 +996,19 @@ function NotesExplorerContent({
       // Add new popover to the map
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
+        
+        // Calculate canvas position once when creating popup (for multi-layer mode)
+        let canvasPosition = undefined
+        if (multiLayerEnabled && layerContext) {
+          const popupTransform = layerContext.transforms.popups || { x: 0, y: 0, scale: 1 }
+          canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, popupTransform)
+        }
+        
         newMap.set(popoverId, {
           id: popoverId,
           folder: null,
           position: adjustedPosition,
+          canvasPosition, // Store canvas position once, don't recalculate on render
           isLoading: true,
           parentId: parentPopoverId,
           level
@@ -1022,7 +1048,8 @@ function NotesExplorerContent({
                   ...popup,
                   folder: updatedFolder,
                   isLoading: false,
-                  height
+                  height,
+                  canvasPosition: popup.canvasPosition // Preserve canvas position
                 })
               }
               return newMap
@@ -1061,7 +1088,8 @@ function NotesExplorerContent({
                 ...popup,
                 folder: { ...folder, children: [] },
                 isLoading: false,
-                height
+                height,
+                canvasPosition: popup.canvasPosition // Preserve canvas position
               })
             }
             return newMap
@@ -1080,7 +1108,8 @@ function NotesExplorerContent({
               ...popup,
               folder,
               isLoading: false,
-              height
+              height,
+              canvasPosition: popup.canvasPosition // Preserve canvas position
             })
           }
           return newMap
@@ -1178,7 +1207,11 @@ function NotesExplorerContent({
       const newMap = new Map(prev)
       const existingPopup = newMap.get(popupId)
       if (existingPopup) {
-        newMap.set(popupId, { ...existingPopup, isDragging: true })
+        newMap.set(popupId, { 
+          ...existingPopup, 
+          isDragging: true,
+          canvasPosition: existingPopup.canvasPosition // Preserve canvas position
+        })
       }
       return newMap
     })
@@ -1206,7 +1239,11 @@ function NotesExplorerContent({
       const newMap = new Map(prev)
       const popup = newMap.get(draggingPopup)
       if (popup) {
-        newMap.set(draggingPopup, { ...popup, isDragging: false })
+        newMap.set(draggingPopup, { 
+          ...popup, 
+          isDragging: false,
+          canvasPosition: popup.canvasPosition // Preserve canvas position
+        })
       }
       return newMap
     })
