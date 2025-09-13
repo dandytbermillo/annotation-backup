@@ -201,87 +201,18 @@ function NotesExplorerContent({
     }
   }, [hoverPopovers.size, multiLayerEnabled, layerContext])
   
-  // Handle canvas panning with Space/Alt drag (multi-layer mode)
+  // DISABLED: Space/Alt drag handler was preventing space bar in text editors
+  // and interfering with direct popup overlay panning
+  // The popup overlay now handles its own panning with plain click+drag
+  /*
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) return
-    
-    let isPanning = false
-    let panStart = { x: 0, y: 0 }
-    let panMode: 'active-layer' | 'popup-only' | null = null
-    
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !isPanning) {
-        e.preventDefault()
-        panMode = 'active-layer'
-        document.body.style.cursor = 'grab'
-      } else if (e.altKey && !isPanning) {
-        panMode = 'popup-only'
-        document.body.style.cursor = 'grab'
-      }
-    }
-    
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if ((e.code === 'Space' && panMode === 'active-layer') ||
-          (!e.altKey && panMode === 'popup-only')) {
-        panMode = null
-        isPanning = false
-        document.body.style.cursor = ''
-      }
-    }
-    
-    const handleMouseDown = (e: MouseEvent) => {
-      if (panMode && !isPanning) {
-        isPanning = true
-        panStart = { x: e.clientX, y: e.clientY }
-        document.body.style.cursor = 'grabbing'
-        e.preventDefault()
-      }
-    }
-    
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isPanning && panMode) {
-        const delta = {
-          x: e.clientX - panStart.x,
-          y: e.clientY - panStart.y
-        }
-        
-        if (panMode === 'active-layer') {
-          // Pan the active layer
-          layerContext.updateTransform(layerContext.activeLayer, delta)
-        } else if (panMode === 'popup-only') {
-          // Pan only the popup layer
-          layerContext.updateTransform('popups', delta)
-        }
-        
-        panStart = { x: e.clientX, y: e.clientY }
-        e.preventDefault()
-      }
-    }
-    
-    const handleMouseUp = () => {
-      if (isPanning) {
-        isPanning = false
-        if (panMode) {
-          document.body.style.cursor = 'grab'
-        }
-      }
-    }
-    
-    document.addEventListener('keydown', handleKeyDown)
-    document.addEventListener('keyup', handleKeyUp)
-    document.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      document.removeEventListener('keyup', handleKeyUp)
-      document.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = ''
-    }
+    // Removed Space/Alt drag handling - was causing:
+    // 1. Space bar not working in text editors
+    // 2. Interference with popup overlay's native pan handling
+    // 3. Confusion with plain click+drag expectation
   }, [multiLayerEnabled, layerContext])
+  */
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-13 22:06Z] 81a5122: space + dragging move the components together
 - commit [2025-09-13 19:47Z] 8c5f426: the notes canvas is disabled when popups canvas is active
 - commit [2025-09-13 12:32Z] c242963: still testing the multi layer system
 - commit [2025-09-13 04:56Z] cb5a80e: phase 0-2 implemented, 2 not tested yet
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-12 20:35Z] 0929a67: adding cascading popup successfully
 - commit [2025-09-12 18:51Z] 0b6790b: browse modal for files is working
 - commit [2025-09-12 12:21Z] e6797ce: tree view functionality working
-- commit [2025-09-12 05:40Z] 019ac61: adding folder and subfolder for note creation a success
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

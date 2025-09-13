@@ -89,20 +89,40 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Check if the pointer event is on empty space (not on interactive elements)
   const isOverlayEmptySpace = useCallback((e: React.PointerEvent) => {
     const target = e.target as HTMLElement;
-    // Check if clicking on the overlay background or non-interactive areas
-    return target.id === 'popup-overlay' || 
-           target.classList.contains('popup-background') ||
-           (!target.closest('.popup-card') && !target.closest('button'));
+    // Check if we're NOT clicking on a popup card or button
+    // This allows clicking on any background element including transform containers
+    const isOnPopup = !!target.closest('.popup-card');
+    const isOnButton = !!target.closest('button');
+    
+    // Empty space = not on popup card and not on button
+    return !isOnPopup && !isOnButton;
   }, []);
   
   // Handle pan start
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    const target = e.target as HTMLElement;
+    const targetInfo = {
+      id: target.id,
+      className: target.className,
+      tagName: target.tagName,
+      closestPopup: !!target.closest('.popup-card'),
+      closestButton: !!target.closest('button')
+    };
+    
     // Only pan when popup layer is active and clicking on empty space
-    if (activeLayer !== 'popups' || !isOverlayEmptySpace(e)) {
-      debugLog('PopupOverlay', 'pan_blocked', { 
-        activeLayer, 
-        isEmptySpace: isOverlayEmptySpace(e),
-        target: (e.target as HTMLElement).className 
+    if (activeLayer !== 'popups') {
+      debugLog('PopupOverlay', 'pan_blocked_wrong_layer', { 
+        activeLayer,
+        targetInfo
+      });
+      return;
+    }
+    
+    if (!isOverlayEmptySpace(e)) {
+      debugLog('PopupOverlay', 'pan_blocked_not_empty', { 
+        targetInfo,
+        isBackground: target.classList.contains('popup-background'),
+        isOverlay: target.id === 'popup-overlay'
       });
       return;
     }
@@ -117,11 +137,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
     
     const overlay = overlayRef.current;
-    if (!overlay) return;
+    if (!overlay) {
+      debugLog('PopupOverlay', 'no_overlay_ref', {});
+      return;
+    }
     
     debugLog('PopupOverlay', 'pan_start', { 
       clientX: e.clientX, 
-      clientY: e.clientY 
+      clientY: e.clientY,
+      pointerId: e.pointerId
     });
     
     // Start overlay pan gesture

@@ -75,3 +75,4 @@
 {"ts":"2025-09-13T04:56:19.280Z","type":"commit","sha":"cb5a80ea87a1a1b4e5dcfebc1f73f0433d2df2af","files_changed":22,"message":"phase 0-2 implemented, 2 not tested yet"}
 {"ts":"2025-09-13T12:32:48.313Z","type":"commit","sha":"c242963257cb7c79da25e1abf037925116c3c4a1","files_changed":9,"message":"still testing the multi layer system"}
 {"ts":"2025-09-13T19:47:44.404Z","type":"commit","sha":"8c5f4260a1782a6e0f7ba5cf5ee3c76efd211bfb","files_changed":13,"message":"the notes canvas is disabled when popups canvas is active"}
+{"ts":"2025-09-13T22:06:22.410Z","type":"commit","sha":"81a5122136c9211261a370b09a65d53854193405","files_changed":9,"message":"space + dragging move the components together"}
