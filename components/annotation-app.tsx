@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
 import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
 import { Menu } from "lucide-react"
-import { useLayer } from "@/components/canvas/layer-provider"
+import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 
 const ModernAnnotationCanvas = dynamic(
@@ -20,7 +20,7 @@ const ModernAnnotationCanvas = dynamic(
   }
 )
 
-export function AnnotationApp() {
+function AnnotationAppContent() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [isNotesExplorerOpen, setIsNotesExplorerOpen] = useState(true)
   const [canvasState, setCanvasState] = useState({
@@ -163,7 +163,11 @@ export function AnnotationApp() {
           pointerEvents: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 'none' : 'auto',
           // Dim the canvas when popup layer is active
           opacity: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 0.6 : 1,
-          transition: 'opacity 0.3s ease'
+          // Add transition for smooth visual feedback
+          transition: 'opacity 0.3s ease',
+          // Ensure canvas stays below popups even with z-index escalation
+          position: 'relative',
+          zIndex: 1
         }}
       >
         {selectedNoteId ? (
@@ -196,5 +200,14 @@ export function AnnotationApp() {
         )}
       </div>
     </div>
+  )
+}
+
+export function AnnotationApp() {
+  // Always provide LayerProvider - it will internally check feature flag
+  return (
+    <LayerProvider initialPopupCount={0}>
+      <AnnotationAppContent />
+    </LayerProvider>
   )
 } 

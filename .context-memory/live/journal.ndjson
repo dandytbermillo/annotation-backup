@@ -73,3 +73,4 @@
 {"ts":"2025-09-12T21:36:30.605Z","type":"commit","sha":"fc7bf672f8377b518dd84bd279738eb1a7a28c3f","files_changed":3,"message":"connection lines is working almost perfect"}
 {"ts":"2025-09-13T02:59:41.736Z","type":"commit","sha":"cf67435fd6fc824c5bbb2b73ec0bbe5f3d251e66","files_changed":7,"message":"adding 3 layers system"}
 {"ts":"2025-09-13T04:56:19.280Z","type":"commit","sha":"cb5a80ea87a1a1b4e5dcfebc1f73f0433d2df2af","files_changed":22,"message":"phase 0-2 implemented, 2 not tested yet"}
+{"ts":"2025-09-13T12:32:48.313Z","type":"commit","sha":"c242963257cb7c79da25e1abf037925116c3c4a1","files_changed":9,"message":"still testing the multi layer system"}

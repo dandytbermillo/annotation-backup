@@ -44,6 +44,30 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
 }) => {
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
   
+  // If feature is disabled, provide minimal stub context
+  if (!multiLayerEnabled) {
+    return (
+      <LayerContext.Provider value={{
+        activeLayer: 'notes',
+        layers: new Map(),
+        transforms: {},
+        syncPan: false,
+        syncZoom: false,
+        setActiveLayer: () => {},
+        updateTransform: () => {},
+        updateLayerOpacity: () => {},
+        updateLayerVisibility: () => {},
+        toggleSyncPan: () => {},
+        toggleSyncZoom: () => {},
+        resetView: () => {},
+        toggleSidebar: () => {},
+        isSidebarVisible: true,
+      }}>
+        {children}
+      </LayerContext.Provider>
+    );
+  }
+  
   // Initialize state from UILayerState singleton
   const [activeLayer, setActiveLayerState] = useState<'notes' | 'popups'>('notes');
   const [syncPan, setSyncPan] = useState(true);

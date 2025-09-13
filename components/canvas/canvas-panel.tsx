@@ -11,8 +11,24 @@ import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
+import { useLayer } from "@/components/canvas/layer-provider"
+import { useFeatureFlag } from "@/lib/offline/feature-flags"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
+
+// Z-index management for panels
+// Keep below popup overlay (100+) but allow stacking
+const PANEL_Z_INDEX = {
+  base: 10,      // Default z-index for panels
+  active: 50,    // Z-index for the currently active/dragged panel
+  max: 90        // Maximum z-index to stay below popups
+}
+
+// Track which panel is currently active/topmost
+let activePanelId: string | null = null
+
+// Simple counter for breaking ties when multiple panels are at same level
+let panelOrder = 0
 
 interface CanvasPanelProps {
   panelId: string
@@ -27,6 +43,20 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  
+  // Multi-layer canvas context
+  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  const layerContext = useLayer()
+  
+  // Use refs to avoid stale closures in event handlers
+  const multiLayerEnabledRef = useRef(multiLayerEnabled)
+  const layerContextRef = useRef(layerContext)
+  
+  // Update refs when values change
+  useEffect(() => {
+    multiLayerEnabledRef.current = multiLayerEnabled
+    layerContextRef.current = layerContext
+  }, [multiLayerEnabled, layerContext])
   
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
@@ -460,9 +490,26 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       return
     }
     
+    // Update header cursor based on layer state
+    const updateHeaderCursor = () => {
+      if (multiLayerEnabledRef.current && layerContextRef.current?.activeLayer === 'popups') {
+        header.style.cursor = 'not-allowed'
+      } else {
+        header.style.cursor = 'move'
+      }
+    }
+    updateHeaderCursor()
+    
     const handleMouseDown = (e: MouseEvent) => {
       // Don't start drag if clicking on close button
       if ((e.target as HTMLElement).closest('.panel-close')) {
+        return
+      }
+      
+      // Block drag if popup layer is active - USE REFS for current values
+      if (multiLayerEnabledRef.current && layerContextRef.current?.activeLayer === 'popups') {
+        e.preventDefault()
+        e.stopPropagation()
         return
       }
       
@@ -478,8 +525,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       dragState.current.offsetX = e.clientX - currentLeft
       dragState.current.offsetY = e.clientY - currentTop
 
-      // Bring panel to front
-      setZIndex(Date.now())
+      // Bring panel to front with controlled z-index
+      setZIndex(() => {
+        activePanelId = panelId
+        panelOrder = (panelOrder + 1) % 1000 // Reset periodically to avoid overflow
+        // Active panel gets higher z-index, with small offset for order
+        return PANEL_Z_INDEX.active + (panelOrder * 0.001)
+      })
       
       // Prevent text selection while dragging
       document.body.style.userSelect = 'none'
@@ -508,6 +560,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (!dragState.current.isDragging) return
       
       dragState.current.isDragging = false
+      
+      // Reset z-index to base level after drag
+      setTimeout(() => {
+        if (activePanelId === panelId) {
+          setZIndex(PANEL_Z_INDEX.base + (panelOrder * 0.001))
+          activePanelId = null
+        }
+      }, 100)
       
       // Get final position
       const finalX = parseInt(panel.style.left || '0', 10)
@@ -544,6 +604,21 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       document.body.style.cursor = ''
     }
   }, []) // Remove dependencies to prevent recreating handlers
+
+  // Update cursor when layer state changes
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    
+    const header = panel.querySelector('.panel-header') as HTMLElement
+    if (!header) return
+    
+    if (multiLayerEnabledRef.current && layerContextRef.current?.activeLayer === 'popups') {
+      header.style.cursor = 'not-allowed'
+    } else {
+      header.style.cursor = 'move'
+    }
+  }, [layerContext?.activeLayer]) // Re-run when active layer changes
 
   const isMainPanel = panelId === 'main'
   const showToolbar = isMainPanel || isEditing

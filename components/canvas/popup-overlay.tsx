@@ -145,7 +145,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       id="popup-overlay"
       className="fixed inset-0 pointer-events-none"
       style={{
-        zIndex: Z_INDEX.POPUP_OVERLAY,
+        // Ensure popup overlay is always above canvas panels
+        zIndex: Math.max(Z_INDEX.POPUP_OVERLAY, 100),
         ...containerStyle,
       }}
       data-layer="popups"

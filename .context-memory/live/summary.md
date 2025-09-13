@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-13 12:32Z] c242963: still testing the multi layer system
 - commit [2025-09-13 04:56Z] cb5a80e: phase 0-2 implemented, 2 not tested yet
 - commit [2025-09-13 02:59Z] cf67435: adding 3 layers system
 - commit [2025-09-12 21:36Z] fc7bf67: connection lines is working almost perfect
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-12 12:21Z] e6797ce: tree view functionality working
 - commit [2025-09-12 05:40Z] 019ac61: adding folder and subfolder for note creation a success
 - commit [2025-09-12 04:45Z] a0aa50b: phase 2 almost done
-- commit [2025-09-12 03:52Z] 51c2eef: phase 0-1 successfully tested of user friendly tree view
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

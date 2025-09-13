@@ -5,7 +5,6 @@ import {
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff, Eye
 } from "lucide-react"
-import { LayerProvider } from "@/components/canvas/layer-provider"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { LayerControls, layerControlsStyles } from "@/components/canvas/layer-controls"
@@ -2819,11 +2818,22 @@ function NotesExplorerContent({
       )}
       
       {/* Click outside to close all popovers */}
-      {hoverPopovers.size > 0 && !draggingPopup && (
+      {hoverPopovers.size > 0 && (
         <div
           className="fixed inset-0"
           style={{ zIndex: 9997 }}
-          onClick={closeAllPopovers}
+          onClick={(e) => {
+            // Only close if not currently dragging
+            if (!draggingPopup) {
+              closeAllPopovers()
+            }
+          }}
+          onMouseDown={(e) => {
+            // Prevent closing while starting a drag
+            if (draggingPopup) {
+              e.preventDefault()
+            }
+          }}
         />
       )}
       
@@ -2842,13 +2852,6 @@ function NotesExplorerContent({
 export function NotesExplorerPhase1(props: NotesExplorerProps) {
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
   
-  if (multiLayerEnabled) {
-    return (
-      <LayerProvider initialPopupCount={0}>
-        <NotesExplorerContent {...props} multiLayerEnabled={true} />
-      </LayerProvider>
-    )
-  }
-  
-  return <NotesExplorerContent {...props} multiLayerEnabled={false} />
+  // LayerProvider is provided at the app level (annotation-app.tsx)
+  return <NotesExplorerContent {...props} multiLayerEnabled={multiLayerEnabled} />
 }
