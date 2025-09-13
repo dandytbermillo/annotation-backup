@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Popup Panning</title>
+    <style>
+        body { 
+            margin: 0; 
+            font-family: sans-serif;
+            background: #1a1a1a;
+            color: white;
+        }
+        .instructions {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 10000;
+            max-width: 400px;
+        }
+        h2 { margin-top: 0; }
+        .step { margin: 10px 0; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 4px; }
+        .code { 
+            background: #333; 
+            padding: 10px; 
+            border-radius: 4px; 
+            font-family: monospace;
+            margin: 10px 0;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #45a049; }
+    </style>
+</head>
+<body>
+    <div class="instructions">
+        <h2>🧪 Popup Canvas Panning Test</h2>
+        
+        <div class="step">
+            <strong>Step 1: Enable Feature Flag</strong>
+            <button onclick="enableFeature()">Enable Multi-Layer Canvas</button>
+            <div id="status1"></div>
+        </div>
+        
+        <div class="step">
+            <strong>Step 2: Open Application</strong>
+            <button onclick="window.open('http://localhost:3001', '_blank')">Open App in New Tab</button>
+        </div>
+        
+        <div class="step">
+            <strong>Step 3: Test Panning</strong>
+            <ol>
+                <li>Open notes explorer (menu button)</li>
+                <li>Select a note</li>
+                <li>Hover folder → click eye icon to open popups</li>
+                <li>Check layer indicator shows "Popups"</li>
+                <li><strong>Click and drag on empty space</strong> → All popups should move together</li>
+            </ol>
+        </div>
+        
+        <div class="step">
+            <strong>Step 4: Check Console</strong>
+            <button onclick="checkConsole()">Open Console (F12)</button>
+            <p>Look for these messages:</p>
+            <div class="code">
+                Panning active layer: popups {x: 10, y: 5}<br>
+                Updating popups transform: ...<br>
+                Popup overlay transform: {x: 10, y: 5, scale: 1}
+            </div>
+        </div>
+        
+        <div class="step">
+            <strong>Expected Behavior:</strong>
+            <ul>
+                <li>✅ Click+drag on empty space pans entire popup canvas</li>
+                <li>✅ All popups move together as one layer</li>
+                <li>✅ Cannot edit notes when popup layer active</li>
+                <li>✅ Individual popup headers still draggable</li>
+            </ul>
+        </div>
+        
+        <div class="step" style="background: rgba(255,0,0,0.2);">
+            <strong>Known Issues to Fix:</strong>
+            <ul>
+                <li>❌ Can still type in notes (should be blocked)</li>
+                <li>❓ Popup canvas panning may not work (debugging)</li>
+            </ul>
+        </div>
+    </div>
+    
+    <script>
+        function enableFeature() {
+            // This runs in the context of this test page
+            // User needs to run it in the app's console
+            const code = `localStorage.setItem('offlineFeatureFlags', JSON.stringify({
+  'ui.multiLayerCanvas': true
+}));
+location.reload();`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(code).then(() => {
+                document.getElementById('status1').innerHTML = 
+                    '<div style="color: #4CAF50; margin-top: 10px;">✅ Code copied! Paste in app console and press Enter</div>' +
+                    '<div class="code" style="font-size: 12px;">' + code.replace(/\n/g, '<br>') + '</div>';
+            });
+        }
+        
+        function checkConsole() {
+            alert('Press F12 to open DevTools, then click Console tab to see debug messages');
+        }
+    </script>
+</body>
+</html>

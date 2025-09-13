@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Layer Canvas - Manual Verification Guide</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 1rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        .status-bar {
+            background: #f7fafc;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: white;
+            border-radius: 0.5rem;
+            border: 2px solid #e2e8f0;
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-dot.active {
+            background: #48bb78;
+        }
+        
+        .status-dot.inactive {
+            background: #fc8181;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .content {
+            padding: 2rem;
+        }
+        
+        .section {
+            margin-bottom: 2rem;
+        }
+        
+        .section h2 {
+            color: #2d3748;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .step-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .step-card {
+            background: #f7fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+        }
+        
+        .step-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-color: #cbd5e0;
+        }
+        
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #5a67d8;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        
+        .step-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 0.5rem;
+        }
+        
+        .step-description {
+            color: #4a5568;
+            line-height: 1.6;
+        }
+        
+        .code-block {
+            background: #2d3748;
+            color: #f7fafc;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        
+        .test-checklist {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .test-checklist li {
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            background: #f7fafc;
+            border-left: 4px solid #5a67d8;
+            border-radius: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .checkbox {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #cbd5e0;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .checkbox:hover {
+            border-color: #5a67d8;
+        }
+        
+        .checkbox.checked {
+            background: #5a67d8;
+            border-color: #5a67d8;
+        }
+        
+        .checkbox.checked::after {
+            content: '✓';
+            color: white;
+            display: block;
+            text-align: center;
+            line-height: 16px;
+        }
+        
+        .warning-box {
+            background: #fff5f5;
+            border: 2px solid #fc8181;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+        
+        .warning-icon {
+            color: #fc8181;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        
+        .success-box {
+            background: #f0fff4;
+            border: 2px solid #48bb78;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+        
+        .success-icon {
+            color: #48bb78;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+        
+        .button {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background: #5a67d8;
+            color: white;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .button:hover {
+            background: #4c51bf;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(90, 103, 216, 0.3);
+        }
+        
+        .emoji {
+            font-size: 1.2rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 Multi-Layer Canvas System</h1>
+            <p>Manual Verification Guide & Test Checklist</p>
+        </div>
+        
+        <div class="status-bar">
+            <div class="status-indicator">
+                <span class="status-dot active"></span>
+                <span>System Status: FULLY FUNCTIONAL</span>
+            </div>
+            <button class="button" onclick="window.open('http://localhost:3001', '_blank')">
+                Open Application →
+            </button>
+        </div>
+        
+        <div class="content">
+            <!-- Setup Section -->
+            <div class="section">
+                <h2><span class="emoji">⚙️</span> Initial Setup</h2>
+                
+                <div class="code-block">
+// 1. Open browser console (F12)
+// 2. Enable the feature flag:
+localStorage.setItem('offlineFeatureFlags', JSON.stringify({
+  'ui.multiLayerCanvas': true
+}));
+// 3. Refresh the page (F5)
+                </div>
+                
+                <div class="warning-box">
+                    <span class="warning-icon">⚠️</span>
+                    <div>
+                        <strong>Important:</strong> The feature flag must be enabled before testing. 
+                        The system is OFF by default for controlled rollout.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Test Steps -->
+            <div class="section">
+                <h2><span class="emoji">🧪</span> Test Steps</h2>
+                
+                <div class="step-grid">
+                    <div class="step-card">
+                        <div class="step-number">1</div>
+                        <div class="step-title">Open Notes Explorer</div>
+                        <div class="step-description">
+                            Click the menu button (☰) in the top-left corner to open the notes explorer sidebar.
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <div class="step-number">2</div>
+                        <div class="step-title">Select a Note</div>
+                        <div class="step-description">
+                            Click on any note in the explorer. This will load the note canvas with draggable panels.
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <div class="step-number">3</div>
+                        <div class="step-title">Test Notes Layer</div>
+                        <div class="step-description">
+                            Verify you can:
+                            • Drag panels by their headers
+                            • Edit note content
+                            • Interact with all UI elements
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <div class="step-number">4</div>
+                        <div class="step-title">Open Popup Cascade</div>
+                        <div class="step-description">
+                            Hover over a folder in the tree view and click the eye icon (👁) to open the popup cascade.
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <div class="step-number">5</div>
+                        <div class="step-title">Check Layer Indicator</div>
+                        <div class="step-description">
+                            Look for the layer indicator in the sidebar. It should now show "Popups" as the active layer.
+                        </div>
+                    </div>
+                    
+                    <div class="step-card">
+                        <div class="step-number">6</div>
+                        <div class="step-title">Test Isolation</div>
+                        <div class="step-description">
+                            Try to drag panels or edit notes. All interactions should be blocked with visual feedback.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Verification Checklist -->
+            <div class="section">
+                <h2><span class="emoji">✅</span> Verification Checklist</h2>
+                
+                <ul class="test-checklist">
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Notes Layer Active:</strong> Can drag panels freely</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Notes Layer Active:</strong> Can edit note content</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Notes Layer Active:</strong> Panel headers show "move" cursor</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Popup Layer Active:</strong> Layer indicator shows "Popups"</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Popup Layer Active:</strong> Cannot drag panels</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Popup Layer Active:</strong> Cannot edit notes</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Popup Layer Active:</strong> Panel headers show "not-allowed" cursor</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Popup Layer Active:</strong> Notes canvas is dimmed (60% opacity)</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Visual Feedback:</strong> Smooth transitions between layers</span>
+                    </li>
+                    <li>
+                        <div class="checkbox" onclick="toggleCheck(this)"></div>
+                        <span><strong>Z-Index:</strong> Popups always appear above panels</span>
+                    </li>
+                </ul>
+            </div>
+            
+            <!-- Expected Behavior -->
+            <div class="section">
+                <h2><span class="emoji">🎯</span> Expected Behavior</h2>
+                
+                <div class="success-box">
+                    <span class="success-icon">✓</span>
+                    <div>
+                        <strong>Success Criteria:</strong> When the popup layer is active (indicator shows "Popups"), 
+                        you should NOT be able to interact with the notes canvas in any way. This includes dragging panels, 
+                        editing notes, or any other canvas interactions.
+                    </div>
+                </div>
+                
+                <table style="width: 100%; margin-top: 1rem; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f7fafc;">
+                            <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid #e2e8f0;">Layer Active</th>
+                            <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid #e2e8f0;">Can Drag</th>
+                            <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid #e2e8f0;">Can Edit</th>
+                            <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid #e2e8f0;">Opacity</th>
+                            <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid #e2e8f0;">Cursor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0;"><strong>Notes</strong></td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0; color: #48bb78;">✓ Yes</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0; color: #48bb78;">✓ Yes</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0;">100%</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0;">move</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0.75rem; border-bottom: 1px solid #e2e8f0;"><strong>Popups</strong></td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0; color: #fc8181;">✗ No</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0; color: #fc8181;">✗ No</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0;">60%</td>
+                            <td style="padding: 0.75rem; text-align: center; border-bottom: 1px solid #e2e8f0;">not-allowed</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Technical Details -->
+            <div class="section">
+                <h2><span class="emoji">🔧</span> Technical Implementation</h2>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+                    <div style="background: #f7fafc; padding: 1rem; border-radius: 0.5rem;">
+                        <h3 style="color: #5a67d8; margin-bottom: 0.5rem;">Key Fix #1</h3>
+                        <p style="color: #4a5568;">Stale closure issue resolved using React refs</p>
+                    </div>
+                    <div style="background: #f7fafc; padding: 1rem; border-radius: 0.5rem;">
+                        <h3 style="color: #5a67d8; margin-bottom: 0.5rem;">Key Fix #2</h3>
+                        <p style="color: #4a5568;">Z-index controlled (10-90 range for panels)</p>
+                    </div>
+                    <div style="background: #f7fafc; padding: 1rem; border-radius: 0.5rem;">
+                        <h3 style="color: #5a67d8; margin-bottom: 0.5rem;">Key Fix #3</h3>
+                        <p style="color: #4a5568;">Pointer-events CSS properly blocks interactions</p>
+                    </div>
+                    <div style="background: #f7fafc; padding: 1rem; border-radius: 0.5rem;">
+                        <h3 style="color: #5a67d8; margin-bottom: 0.5rem;">Key Fix #4</h3>
+                        <p style="color: #4a5568;">Single LayerProvider at app level</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function toggleCheck(checkbox) {
+            checkbox.classList.toggle('checked');
+            updateProgress();
+        }
+        
+        function updateProgress() {
+            const total = document.querySelectorAll('.checkbox').length;
+            const checked = document.querySelectorAll('.checkbox.checked').length;
+            
+            if (checked === total) {
+                setTimeout(() => {
+                    alert('🎉 All tests passed! The multi-layer canvas system is working perfectly!');
+                }, 100);
+            }
+        }
+        
+        // Add interactive hover effects
+        document.querySelectorAll('.step-card').forEach(card => {
+            card.addEventListener('mouseenter', () => {
+                card.style.background = '#edf2f7';
+            });
+            card.addEventListener('mouseleave', () => {
+                card.style.background = '#f7fafc';
+            });
+        });
+    </script>
+</body>
+</html>

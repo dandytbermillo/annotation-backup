@@ -98,9 +98,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return false
   }
   
-  // TEMPORARILY: Always enable edit mode to simplify debugging
+  // Edit mode state - now respects layer state
   const [isEditing, setIsEditing] = useState(true)
   const [zIndex, setZIndex] = useState(1)
+  
+  // Compute whether the editor should be editable based on layer state
+  const isLayerInteractive = !multiLayerEnabled || !layerContext || layerContext.activeLayer === 'notes'
+  const actuallyEditable = isEditing && isLayerInteractive
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
@@ -110,6 +114,26 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
+  
+  // Blur editor when switching to popup layer
+  useEffect(() => {
+    if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'popups') {
+      // Blur any focused editor to prevent keyboard input
+      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
+        editorRef.current.setEditable(false)
+        // Also blur the DOM element
+        const activeElement = document.activeElement as HTMLElement
+        if (activeElement && activeElement.closest('.ProseMirror')) {
+          activeElement.blur()
+        }
+      }
+    } else if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'notes') {
+      // Re-enable editing when returning to notes layer
+      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
+        editorRef.current.setEditable(isEditing)
+      }
+    }
+  }, [layerContext?.activeLayer, multiLayerEnabled, isEditing])
   
   // Use ref to maintain dragging state across renders
   const dragState = useRef({
@@ -226,7 +250,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const focusAttempts = [100, 300, 500, 800]
       focusAttempts.forEach(delay => {
         setTimeout(() => {
-          if (editorRef.current && isEditing) {
+          if (editorRef.current && isEditing && isLayerInteractive) {
             editorRef.current.focus()
           }
         }, delay)
@@ -234,7 +258,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     } else if (isEditing && isEmpty && editorRef.current) {
       // For non-main panels, single focus attempt
       setTimeout(() => {
-        if (editorRef.current) {
+        if (editorRef.current && isLayerInteractive) {
           editorRef.current.focus()
         }
       }, 300)
@@ -626,11 +650,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // Reinforce focus after mount or load when entering edit mode (Option A only)
   useEffect(() => {
     if (!isPlainMode) return
-    if (isEditing && !isContentLoading && editorRef.current) {
+    if (isEditing && !isContentLoading && editorRef.current && isLayerInteractive) {
       const delays = [50, 200, 400]
-      delays.forEach((d) => setTimeout(() => editorRef.current?.focus(), d))
+      delays.forEach((d) => setTimeout(() => {
+        // Double-check layer state at time of focus
+        if (layerContextRef.current?.activeLayer === 'notes' || !multiLayerEnabledRef.current) {
+          editorRef.current?.focus()
+        }
+      }, d))
     }
-  }, [isEditing, isContentLoading, isPlainMode])
+  }, [isEditing, isContentLoading, isPlainMode, isLayerInteractive])
 
   // Filter branches based on active filter
   // In plain mode, get branches from dataStore; otherwise use provider
@@ -921,7 +950,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   <TiptapEditorPlain
                     ref={editorRef as any}
                     // DON'T pass content when using provider to avoid triggering fallback effect
-                    isEditable={true}  // TEMPORARILY: Always editable
+                    isEditable={actuallyEditable}  // Respects layer state
                     noteId={currentNoteId || ''}
                     panelId={panelId}
                     onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
@@ -953,7 +982,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   <TiptapEditorCollab
                     ref={editorRef}
                     content={''}
-                    isEditable={true}  // TEMPORARILY: Always editable
+                    isEditable={actuallyEditable}  // Respects layer state
                     panelId={panelId}
                     onUpdate={handleUpdate}
                     onSelectionChange={handleSelectionChange}
