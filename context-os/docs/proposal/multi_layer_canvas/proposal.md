@@ -257,6 +257,32 @@ Viewport culling implementation notes:
 - Week 3: Performance (culling), A11y/shortcuts polish; tests.
 - Week 4: Validation gates, docs, canary rollout plan.
 
+## Phasing Notes: What Lands First vs. Later
+
+Must‑Haves First (prerequisites for a stable MVP):
+- Feature flag: add `ui.multiLayerCanvas` to `lib/offline/feature-flags.ts` and gate overlay logic with `useFeatureFlag`.
+- React overlay skeleton: implement `PopupOverlay` with a single container transform (translate+scale on root only).
+- CoordinateBridge usage: compute `canvasPosition` on popup open; lines/popups render from canvas coords (prevents double scaling).
+- SSR & pointer-events policy: guard `window/document`; overlay root `pointer-events: none`, popups `pointer-events: auto`.
+- Z‑index tokens: define and use `NOTES_CANVAS=1`, `POPUP_OVERLAY=100`, `SIDEBAR=1000`, `TOAST=2000` consistently.
+
+Risky to Defer (small but UX/operationally critical):
+- Auto‑switch logic: first popup → popups layer; last popup → notes (+toast).
+- Tests and CLAUDE gates: unit tests (CoordinateBridge, z‑index), basic E2E (open/close, overlap). These need to pass before broad enablement.
+
+Safe To Defer (polish/perf that can follow MVP):
+- Viewport culling & perf tuning: rAF‑batched culling, path simplification for lines when needed.
+- Alt+Drag independent pan polish: after core pan/sync behavior works.
+- Optional Postgres preferences: only if persisting UI prefs later; remain UI‑ephemeral for Option A.
+- Additional diagrams/docs polish.
+
+Suggested Implementation Order:
+1) Add feature flag + z‑index tokens.
+2) Implement `PopupOverlay` (container transform) and compute `canvasPosition` via `CoordinateBridge` on popup open.
+3) Apply pointer‑events policy and auto‑switch behavior.
+4) Add culling/perf enhancements and Alt+Drag independent pan.
+5) Add unit/E2E tests and run CLAUDE validation gates (lint, type, unit, integration if prefs added, plain‑mode script, E2E).
+
 ## Hybrid Migration Steps (Screen → Canvas Coordinates)
 
 1) On popup open: compute `canvasPosition = screenToCanvas(anchorRect, overlayTransform)` and store it alongside legacy screen `position`.

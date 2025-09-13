@@ -5,6 +5,14 @@ import {
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff, Eye
 } from "lucide-react"
+import { LayerProvider } from "@/components/canvas/layer-provider"
+import { PopupOverlay } from "@/components/canvas/popup-overlay"
+import { useLayer } from "@/components/canvas/layer-provider"
+import { LayerControls, layerControlsStyles } from "@/components/canvas/layer-controls"
+import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortcuts"
+import { useFeatureFlag } from "@/lib/offline/feature-flags"
+import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
+import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 
 interface Note {
   id: string
@@ -93,25 +101,32 @@ function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T) => voi
   return [storedValue, setValue]
 }
 
-export function NotesExplorerPhase1({ 
-  onNoteSelect, 
-  isOpen, 
+// Inner component that uses layer hooks
+function NotesExplorerContent({
+  onNoteSelect,
+  isOpen,
   onClose,
-  // Navigation props disabled for now
-  // zoom = 100,
-  // onZoomIn,
-  // onZoomOut,
-  // onResetView,
-  // onToggleConnections,
-  // showConnections = true,
   enableTreeView = true,
-  usePhase1API = false // Default to Phase 0 behavior
-}: NotesExplorerProps) {
+  usePhase1API = false,
+  multiLayerEnabled = false
+}: NotesExplorerProps & { multiLayerEnabled: boolean }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState("")
+  
+  // Multi-layer canvas hooks
+  const layerContext = multiLayerEnabled ? useLayer() : null
+  const shortcuts = multiLayerEnabled ? useLayerKeyboardShortcuts({
+    toggleLayer: () => layerContext?.setActiveLayer(
+      layerContext.activeLayer === 'notes' ? 'popups' : 'notes'
+    ),
+    switchToNotes: () => layerContext?.setActiveLayer('notes'),
+    switchToPopups: () => layerContext?.setActiveLayer('popups'),
+    toggleSidebar: () => layerContext?.toggleSidebar(),
+    resetView: () => layerContext?.resetView(),
+  }) : null
   
   // Multi-select state
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
@@ -145,6 +160,123 @@ export function NotesExplorerPhase1({
   // Dragging state for popups
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  
+  // Convert popup state for multi-layer canvas
+  const adaptedPopups = useMemo(() => {
+    if (!multiLayerEnabled || !layerContext) return null
+    
+    const adapted = new Map()
+    const popupTransform = layerContext.transforms.popups || { x: 0, y: 0, scale: 1 }
+    
+    hoverPopovers.forEach((popup, id) => {
+      adapted.set(id, {
+        ...popup,
+        // Use CoordinateBridge instead of non-existent method
+        canvasPosition: CoordinateBridge.screenToCanvas(
+          popup.position,
+          popupTransform // Use actual popup layer transform
+        )
+      })
+    })
+    return adapted
+  }, [hoverPopovers, multiLayerEnabled, layerContext])
+  
+  // Hybrid sync: Auto-switch layers based on popup count
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+    
+    // Use PopupStateAdapter logic for auto-switching
+    const autoSwitch = PopupStateAdapter.shouldAutoSwitch(
+      hoverPopovers.size,
+      layerContext.activeLayer
+    )
+    
+    if (autoSwitch.shouldSwitch) {
+      layerContext.setActiveLayer(autoSwitch.targetLayer)
+    }
+  }, [hoverPopovers.size, multiLayerEnabled, layerContext])
+  
+  // Handle canvas panning with Space/Alt drag (multi-layer mode)
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+    
+    let isPanning = false
+    let panStart = { x: 0, y: 0 }
+    let panMode: 'active-layer' | 'popup-only' | null = null
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !isPanning) {
+        e.preventDefault()
+        panMode = 'active-layer'
+        document.body.style.cursor = 'grab'
+      } else if (e.altKey && !isPanning) {
+        panMode = 'popup-only'
+        document.body.style.cursor = 'grab'
+      }
+    }
+    
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if ((e.code === 'Space' && panMode === 'active-layer') ||
+          (!e.altKey && panMode === 'popup-only')) {
+        panMode = null
+        isPanning = false
+        document.body.style.cursor = ''
+      }
+    }
+    
+    const handleMouseDown = (e: MouseEvent) => {
+      if (panMode && !isPanning) {
+        isPanning = true
+        panStart = { x: e.clientX, y: e.clientY }
+        document.body.style.cursor = 'grabbing'
+        e.preventDefault()
+      }
+    }
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isPanning && panMode) {
+        const delta = {
+          x: e.clientX - panStart.x,
+          y: e.clientY - panStart.y
+        }
+        
+        if (panMode === 'active-layer') {
+          // Pan the active layer
+          layerContext.updateTransform(layerContext.activeLayer, delta)
+        } else if (panMode === 'popup-only') {
+          // Pan only the popup layer
+          layerContext.updateTransform('popups', delta)
+        }
+        
+        panStart = { x: e.clientX, y: e.clientY }
+        e.preventDefault()
+      }
+    }
+    
+    const handleMouseUp = () => {
+      if (isPanning) {
+        isPanning = false
+        if (panMode) {
+          document.body.style.cursor = 'grab'
+        }
+      }
+    }
+    
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+    }
+  }, [multiLayerEnabled, layerContext])
   
   // Phase 0: Recent Notes tracking (localStorage)
   const [recentNotes, setRecentNotes] = useLocalStorage<RecentNote[]>('recent-notes', [])
@@ -203,6 +335,12 @@ export function NotesExplorerPhase1({
   useEffect(() => {
     if (!draggingPopup) return
     
+    let lastPosition = { x: 0, y: 0 }
+    const popup = hoverPopovers.get(draggingPopup)
+    if (popup) {
+      lastPosition = popup.position
+    }
+    
     const handleGlobalMouseMove = (e: MouseEvent) => {
       e.preventDefault()
       
@@ -213,6 +351,13 @@ export function NotesExplorerPhase1({
         y: Math.max(0, Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y))
       }
       
+      // Calculate delta for layer transform update
+      const delta = {
+        x: newPosition.x - lastPosition.x,
+        y: newPosition.y - lastPosition.y
+      }
+      
+      // Update popup position
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
         const popup = newMap.get(draggingPopup)
@@ -225,6 +370,17 @@ export function NotesExplorerPhase1({
         }
         return newMap
       })
+      
+      // Update layer transform if in multi-layer mode
+      if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'popups') {
+        // When dragging a popup while the popup layer is active,
+        // we could optionally pan the entire layer. For now, we'll
+        // just let individual popups move.
+        // Uncomment below to pan the entire layer:
+        // layerContext.updateTransform('popups', delta)
+      }
+      
+      lastPosition = newPosition
     }
     
     const handleGlobalMouseUp = (e: MouseEvent) => {
@@ -252,7 +408,7 @@ export function NotesExplorerPhase1({
       document.removeEventListener('mousemove', handleGlobalMouseMove, true)
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
     }
-  }, [draggingPopup, dragOffset])
+  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, hoverPopovers])
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
@@ -2298,8 +2454,17 @@ export function NotesExplorerPhase1({
         </div>
       )}
 
-      {/* Cascading Hover Popovers for Quick Preview - Now Draggable! */}
-      {Array.from(hoverPopovers.values()).map((popover) => (
+      {/* Render popups - use PopupOverlay for multi-layer mode or fallback to legacy */}
+      {multiLayerEnabled && adaptedPopups ? (
+        <PopupOverlay
+          popups={adaptedPopups}
+          draggingPopup={draggingPopup}
+          onClosePopup={closePopover}
+          onDragStart={handlePopupDragStart}
+        />
+      ) : (
+        // Legacy popup rendering
+        Array.from(hoverPopovers.values()).map((popover) => (
         <div
           key={popover.id}
           id={`popup-${popover.id}`}
@@ -2398,10 +2563,11 @@ export function NotesExplorerPhase1({
             {popover.folder?.children?.length || 0} items
           </div>
         </div>
-      ))}
+      ))
+      )}
       
       {/* Connection Lines Between Related Popovers - Annotation Style Bezier Curves */}
-      {hoverPopovers.size > 0 && (
+      {!multiLayerEnabled && hoverPopovers.size > 0 && (
         <svg
           className="fixed pointer-events-none"
           style={{
@@ -2650,6 +2816,29 @@ export function NotesExplorerPhase1({
           onClick={closeAllPopovers}
         />
       )}
+      
+      {/* Layer Controls UI (Phase 2) */}
+      {multiLayerEnabled && (
+        <>
+          <LayerControls position="bottom-right" />
+          <style>{layerControlsStyles}</style>
+        </>
+      )}
     </div>
   )
+}
+
+// Main export component that wraps with LayerProvider if needed
+export function NotesExplorerPhase1(props: NotesExplorerProps) {
+  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  
+  if (multiLayerEnabled) {
+    return (
+      <LayerProvider initialPopupCount={0}>
+        <NotesExplorerContent {...props} multiLayerEnabled={true} />
+      </LayerProvider>
+    )
+  }
+  
+  return <NotesExplorerContent {...props} multiLayerEnabled={false} />
 }

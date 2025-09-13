@@ -5,6 +5,7 @@
  * - offline.circuitBreaker: Phase 1 - Smart network detection with circuit breaker
  * - offline.swCaching: Phase 2 - Service Worker caching and write replay
  * - offline.conflictUI: Phase 3 - Conflict resolution dialog
+ * - ui.multiLayerCanvas: Multi-layer canvas system with independent popup overlay
  * 
  * Default: All OFF until acceptance criteria met per phase
  */
@@ -13,6 +14,7 @@ interface FeatureFlags {
   'offline.circuitBreaker': boolean;
   'offline.swCaching': boolean;
   'offline.conflictUI': boolean;
+  'ui.multiLayerCanvas': boolean;
 }
 
 // Default feature flag values (all OFF initially)
@@ -20,6 +22,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   'offline.circuitBreaker': false,
   'offline.swCaching': false,
   'offline.conflictUI': false,
+  'ui.multiLayerCanvas': false,
 };
 
 // Environment-specific overrides

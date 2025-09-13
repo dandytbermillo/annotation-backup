@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-13 02:59Z] cf67435: adding 3 layers system
 - commit [2025-09-12 21:36Z] fc7bf67: connection lines is working almost perfect
 - commit [2025-09-12 21:16Z] 4be3a23: dragging system applied almost perfect
 - commit [2025-09-12 20:35Z] 0929a67: adding cascading popup successfully
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-12 04:45Z] a0aa50b: phase 2 almost done
 - commit [2025-09-12 03:52Z] 51c2eef: phase 0-1 successfully tested of user friendly tree view
 - commit [2025-09-11 23:22Z] 42c7504: Option_A_Offline_Main_Content_Vanishes_After_Reload_Switch finalized
-- commit [2025-09-11 19:14Z] 62686f3: successfull fix the missing content of the main branch when attempting to reopen the second time
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
