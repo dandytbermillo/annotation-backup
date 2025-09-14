@@ -441,6 +441,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
         // Popup overlay should be below sidebar (z-50) but above canvas
         zIndex: 40, // Below sidebar z-50, above canvas
+        // Ensure overlay content does not spill into sidebar area
+        overflow: 'hidden',
         // Only interactive when correct layer and popups exist (or during active pan)
         pointerEvents: (isPanning || (isActiveLayer && popups.size > 0)) ? 'auto' : 'none',
         // Prevent browser touch gestures only when interactive

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 05:00Z] 673af71: finally the overlay canvas works
 - commit [2025-09-14 04:49Z] a7aa7b9: space bar issue fixed
 - commit [2025-09-13 23:24Z] 6b2d43d: before implementing frm infinite canvas
 - commit [2025-09-13 22:06Z] 81a5122: space + dragging move the components together
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-13 02:59Z] cf67435: adding 3 layers system
 - commit [2025-09-12 21:36Z] fc7bf67: connection lines is working almost perfect
 - commit [2025-09-12 21:16Z] 4be3a23: dragging system applied almost perfect
-- commit [2025-09-12 20:35Z] 0929a67: adding cascading popup successfully
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
