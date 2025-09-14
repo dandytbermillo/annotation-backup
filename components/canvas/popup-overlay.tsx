@@ -70,6 +70,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Track the on-screen bounds of the canvas container to scope the overlay
+  const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const panStartRef = useRef({ x: 0, y: 0 });
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const pointerIdRef = useRef<number | null>(null);
@@ -151,7 +153,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
     
-    // Gate by popups presence only (temporarily bypass layer check for testing)
+    // Require at least one popup present
     const hasPopups = popups.size > 0;
     if (!hasPopups) {
       debugLog('PopupOverlay', 'pan_blocked', { 
@@ -162,13 +164,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
       return;
     }
-    
-    // Log layer state but don't block
-    debugLog('PopupOverlay', 'layer_check_bypassed', {
-      isActiveLayer,
-      layerCtx: layerCtx?.activeLayer || 'none',
-      message: 'Temporarily bypassing layer check for testing'
-    });
+    // Also require correct active layer to avoid accidental interception
+    if (!isActiveLayer) {
+      debugLog('PopupOverlay', 'pan_blocked_inactive_layer', {
+        isActiveLayer,
+        layerCtx: layerCtx?.activeLayer || 'none',
+        reason: 'inactive_layer'
+      });
+      return;
+    }
     
     console.log('[PopupOverlay] PAN START!', {
       clientX: e.clientX,
@@ -350,6 +354,39 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     transformOrigin: '0 0',
     willChange: isPanning ? 'transform' : 'auto'
   };
+
+  // Recompute overlay bounds to match the canvas area (avoids hardcoded offsets)
+  const recomputeOverlayBounds = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const canvasEl = document.getElementById('canvas-container');
+    if (canvasEl) {
+      const rect = canvasEl.getBoundingClientRect();
+      setOverlayBounds({
+        top: Math.max(0, rect.top),
+        left: Math.max(0, rect.left),
+        width: Math.max(0, rect.width),
+        height: Math.max(0, rect.height),
+      });
+      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect });
+    } else {
+      // Fallback: full viewport minus sidebar (legacy)
+      setOverlayBounds({ top: 0, left: 320, width: window.innerWidth - 320, height: window.innerHeight });
+      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: 320 });
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial compute and on resize
+    recomputeOverlayBounds();
+    const onResize = () => recomputeOverlayBounds();
+    window.addEventListener('resize', onResize);
+    // Recompute after short delay to catch sidebar transitions
+    const t = setTimeout(recomputeOverlayBounds, 300);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      clearTimeout(t);
+    };
+  }, [recomputeOverlayBounds]);
   
   // Debug log container style
   useEffect(() => {
@@ -398,18 +435,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       id="popup-overlay"
       className="fixed"
       style={{
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: '320px', // Don't cover the sidebar
+        top: overlayBounds ? `${overlayBounds.top}px` : 0,
+        left: overlayBounds ? `${overlayBounds.left}px` : '320px',
+        width: overlayBounds ? `${overlayBounds.width}px` : `calc(100vw - 320px)`,
+        height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
         // Popup overlay should be below sidebar (z-50) but above canvas
         zIndex: 40, // Below sidebar z-50, above canvas
-        // CRITICAL: Only capture events when actually panning or have popups
-        pointerEvents: (isPanning || popups.size > 0) ? 'auto' : 'none',
+        // Only interactive when correct layer and popups exist (or during active pan)
+        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0)) ? 'auto' : 'none',
         // Prevent browser touch gestures only when interactive
-        touchAction: isPanning ? 'none' : 'auto',
+        touchAction: (isPanning || (isActiveLayer && popups.size > 0)) ? 'none' : 'auto',
         // Show grab cursor when hovering empty space
-        cursor: isPanning ? 'grabbing' : (popups.size > 0 ? 'grab' : 'default'),
+        cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
