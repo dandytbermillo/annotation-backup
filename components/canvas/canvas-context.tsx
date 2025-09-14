@@ -89,6 +89,13 @@ function canvasReducer(state: CanvasState, action: any): CanvasState {
         // Force a new object to trigger re-render
         lastUpdate: Date.now(),
       }
+    case "SET_PANELS":
+      // Bulk set all panels (used for loading saved state)
+      return {
+        ...state,
+        panels: action.payload,
+        panelOrder: Array.from(action.payload.keys()),
+      }
     default:
       return state
   }

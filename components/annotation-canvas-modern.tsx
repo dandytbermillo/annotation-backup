@@ -7,9 +7,11 @@ import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import { CanvasControls } from "./canvas/canvas-controls"
+import { EnhancedControlPanel } from "./canvas/enhanced-control-panel"
 import { Minimap } from "./canvas/minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
 import { panToPanel } from "@/lib/canvas/pan-animations"
+import { Settings } from "lucide-react"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -41,6 +43,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   })
 
   const [panels, setPanels] = useState<string[]>([])
+  const [showControlPanel, setShowControlPanel] = useState(false)
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
     onSelectStart: (e: Event) => void;
@@ -417,6 +420,21 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             showConnections={canvasState.showConnections}
           />
         )}
+        
+        {/* Control Panel Toggle Button - Always visible */}
+        <button
+          onClick={() => setShowControlPanel(!showControlPanel)}
+          className="fixed top-16 right-4 z-[900] p-3 bg-gray-900 hover:bg-gray-800 text-white rounded-lg shadow-lg transition-all duration-200 hover:scale-110"
+          title="Toggle Control Panel"
+        >
+          <Settings size={20} />
+        </button>
+
+        {/* Enhanced Control Panel */}
+        <EnhancedControlPanel 
+          visible={showControlPanel}
+          onClose={() => setShowControlPanel(false)}
+        />
 
         {/* Minimap */}
         <Minimap 

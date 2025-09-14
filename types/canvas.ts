@@ -7,6 +7,7 @@ export interface CanvasState {
     lastMouseX: number
     lastMouseY: number
     showConnections: boolean
+    isPanMode?: boolean
   }
   panels: Map<string, { element: HTMLDivElement | null; branchId: string }>
   panelOrder: string[]
