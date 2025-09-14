@@ -3,14 +3,10 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { useCanvas } from './canvas-context'
 import { ChevronUp, ChevronDown } from 'lucide-react'
+import { CanvasItem, isPanel, isComponent } from '@/types/canvas-items'
 
 interface MinimapProps {
-  panels: string[]
-  components?: Array<{
-    id: string
-    type: 'calculator' | 'timer' | 'editor' | 'dragtest'
-    position: { x: number; y: number }
-  }>
+  canvasItems: CanvasItem[]
   canvasState: {
     zoom: number
     translateX: number
@@ -19,7 +15,7 @@ interface MinimapProps {
   onNavigate: (x: number, y: number) => void
 }
 
-export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProps) {
+export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: MinimapProps) {
   const { state, dataStore } = useCanvas()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapSize = 280
@@ -63,9 +59,13 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
     }
   }, [])
   
-  // Calculate panel bounds
+  // Extract panels and components from canvasItems
+  const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])
+  const components = useMemo(() => canvasItems.filter(isComponent), [canvasItems])
+  
+  // Calculate bounds for all items
   const bounds = useMemo(() => {
-    if (panels.length === 0) {
+    if (canvasItems.length === 0) {
       return { minX: 1500, maxX: 3500, minY: 1000, maxY: 2500 }
     }
     
@@ -74,14 +74,25 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
     let minY = Infinity
     let maxY = -Infinity
     
-    panels.forEach(panelId => {
-      const branch = dataStore.get(panelId)
+    // Process panels
+    panels.forEach(panel => {
+      const branch = dataStore.get(panel.panelId!)
       if (branch) {
         minX = Math.min(minX, branch.position.x)
         maxX = Math.max(maxX, branch.position.x + (branch.dimensions?.width || 500))
         minY = Math.min(minY, branch.position.y)
         maxY = Math.max(maxY, branch.position.y + (branch.dimensions?.height || 400))
       }
+    })
+    
+    // Process components
+    components.forEach(component => {
+      const width = component.dimensions?.width || 350
+      const height = component.dimensions?.height || 300
+      minX = Math.min(minX, component.position.x)
+      maxX = Math.max(maxX, component.position.x + width)
+      minY = Math.min(minY, component.position.y)
+      maxY = Math.max(maxY, component.position.y + height)
     })
     
     const padding = 200
@@ -91,7 +102,7 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
       minY: minY - padding,
       maxY: maxY + padding
     }
-  }, [panels, dataStore])
+  }, [canvasItems, panels, components, dataStore])
   
   // Calculate scale to fit all panels
   const scale = useMemo(() => {
@@ -157,8 +168,8 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
     ctx.strokeRect(0.5, 0.5, minimapSize - 1, minimapSize - 1)
     
     // Draw panels
-    panels.forEach(panelId => {
-      const branch = dataStore.get(panelId)
+    panels.forEach(panel => {
+      const branch = dataStore.get(panel.panelId!)
       if (!branch) return
       
       const pos = worldToMinimap(branch.position.x, branch.position.y)
@@ -183,7 +194,7 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
       }
       
       // Special colors for states
-      if (panelId === hoveredComponent) {
+      if (panel.panelId === hoveredComponent) {
         fillColor = 'rgba(251, 191, 36, 0.9)' // Yellow for hover
       }
       if (branch.selected) {
@@ -196,6 +207,43 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
       // Draw border
       ctx.strokeStyle = branch.selected ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.2)'
       ctx.lineWidth = branch.selected ? 2 : 1
+      ctx.strokeRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
+    })
+    
+    // Draw components
+    components.forEach(component => {
+      const pos = worldToMinimap(component.position.x, component.position.y)
+      const width = (component.dimensions?.width || 350) * scale
+      const height = (component.dimensions?.height || 300) * scale
+      
+      // Different colors for different component types
+      let fillColor = 'rgba(100, 100, 100, 0.8)'
+      switch (component.componentType) {
+        case 'calculator':
+          fillColor = 'rgba(59, 130, 246, 0.8)' // Blue
+          break
+        case 'timer':
+          fillColor = 'rgba(34, 197, 94, 0.8)' // Green
+          break
+        case 'editor':
+          fillColor = 'rgba(168, 85, 247, 0.8)' // Purple
+          break
+        case 'dragtest':
+          fillColor = 'rgba(251, 146, 60, 0.8)' // Orange
+          break
+      }
+      
+      // Highlight on hover
+      if (component.id === hoveredComponent) {
+        fillColor = 'rgba(251, 191, 36, 0.9)' // Yellow for hover
+      }
+      
+      ctx.fillStyle = fillColor
+      ctx.fillRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
+      
+      // Draw border
+      ctx.strokeStyle = component.id === hoveredComponent ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.2)'
+      ctx.lineWidth = component.id === hoveredComponent ? 2 : 1
       ctx.strokeRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
     })
     
@@ -215,7 +263,7 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
     // Fill viewport with semi-transparent overlay
     ctx.fillStyle = 'rgba(239, 68, 68, 0.1)'
     ctx.fillRect(viewportMinimap.x, viewportMinimap.y, viewportSize.width, viewportSize.height)
-  }, [panels, dataStore, worldToMinimap, scale, viewport, hoveredComponent])
+  }, [canvasItems, panels, components, dataStore, worldToMinimap, scale, viewport, hoveredComponent])
   
   // Redraw when dependencies change
   useEffect(() => {
@@ -345,11 +393,12 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
     const minimapX = e.clientX - rect.left
     const minimapY = e.clientY - rect.top
     
-    // Find panel at position
-    let foundPanel: string | null = null
+    // Find item at position
+    let foundItem: string | null = null
     
-    panels.forEach(panelId => {
-      const branch = dataStore.get(panelId)
+    // Check panels
+    panels.forEach(panel => {
+      const branch = dataStore.get(panel.panelId!)
       if (!branch) return
       
       const pos = worldToMinimap(branch.position.x, branch.position.y)
@@ -358,12 +407,24 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
       
       if (minimapX >= pos.x && minimapX <= pos.x + width &&
           minimapY >= pos.y && minimapY <= pos.y + height) {
-        foundPanel = panelId
+        foundItem = panel.panelId!
       }
     })
     
-    setHoveredComponent(foundPanel)
-  }, [panels, dataStore, worldToMinimap, scale, isDraggingMinimap])
+    // Check components
+    components.forEach(component => {
+      const pos = worldToMinimap(component.position.x, component.position.y)
+      const width = (component.dimensions?.width || 350) * scale
+      const height = (component.dimensions?.height || 300) * scale
+      
+      if (minimapX >= pos.x && minimapX <= pos.x + width &&
+          minimapY >= pos.y && minimapY <= pos.y + height) {
+        foundItem = component.id
+      }
+    })
+    
+    setHoveredComponent(foundItem)
+  }, [panels, components, dataStore, worldToMinimap, scale, isDraggingMinimap])
   
   if (!isExpanded) {
     return (
@@ -459,8 +520,12 @@ export function EnhancedMinimap({ panels, canvasState, onNavigate }: MinimapProp
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-gray-400">Components:</span>
+          <span className="text-gray-400">Panels:</span>
           <span className="text-white font-semibold">{panels.length}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Components:</span>
+          <span className="text-white font-semibold">{components.length}</span>
         </div>
       </div>
       

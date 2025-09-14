@@ -96,3 +96,4 @@
 {"ts":"2025-09-14T19:16:32.052Z","kind":"note","actor":"assistant","scope":"lod-visible-lines","message":"Added LOD: IntersectionObserver to track visible popups and limit connection line generation to visible set. Kept virtualization for large popup lists and RAF-driven panning/dragging."}
 {"ts":"2025-09-14T19:34:41.464Z","type":"commit","sha":"a4dc755352320060df1a2c3d7f113ea7c8a3edc5","files_changed":5,"message":"lod is adopted"}
 {"ts":"2025-09-14T20:16:07.165Z","type":"commit","sha":"5d7582c8290dff9e57d0413e188490692c9cfed6","files_changed":6,"message":"control panel is added"}
+{"ts":"2025-09-14T22:04:47.526Z","type":"commit","sha":"f2d7f67d4a5fea074a408fe4079e5dabf5a3448b","files_changed":15,"message":"added minimap,component(testing)"}

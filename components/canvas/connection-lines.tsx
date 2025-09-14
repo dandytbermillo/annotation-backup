@@ -4,15 +4,20 @@ import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getAnnotationColor } from "@/lib/models/annotation"
 import { useCanvas } from "./canvas-context"
+import { CanvasItem, isPanel } from "@/types/canvas-items"
 
 interface ConnectionLinesProps {
-  panels: string[]
+  canvasItems: CanvasItem[]
 }
 
-export function ConnectionLines({ panels }: ConnectionLinesProps) {
+export function ConnectionLines({ canvasItems }: ConnectionLinesProps) {
   const { dataStore } = useCanvas()
   const plainProvider = getPlainProvider()
   const isPlainMode = !!plainProvider
+  
+  // Filter panels from canvasItems
+  const panels = canvasItems.filter(isPanel)
+  const panelIds = panels.map(p => p.panelId!)
   
   // Get branches based on mode
   const branches = isPlainMode 
@@ -25,13 +30,14 @@ export function ConnectionLines({ panels }: ConnectionLinesProps) {
     type: 'note' | 'explore' | 'promote';
   }> = []
   
-  // Build connections array
-  panels.forEach(panelId => {
+  // Build connections array (only for panels, not components)
+  panels.forEach(panel => {
+    const panelId = panel.panelId!
     const branch = branches.get(panelId)
     if (!branch || !branch.parentId) return
     
     const parentBranch = branches.get(branch.parentId)
-    if (!parentBranch || !panels.includes(branch.parentId)) return
+    if (!parentBranch || !panelIds.includes(branch.parentId)) return
     
     // Calculate connection points
     const fromX = parentBranch.position.x + 800 // Panel width

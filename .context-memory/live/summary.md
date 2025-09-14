@@ -6,12 +6,12 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 22:04Z] f2d7f67: added minimap,component(testing)
 - commit [2025-09-14 20:16Z] 5d7582c: control panel is added
 - commit [2025-09-14 19:34Z] a4dc755: lod is adopted
 - commit [2025-09-14 19:02Z] 21f39fe: both individual and entire cancas dragging work so well
 - commit [2025-09-14 18:41Z] b784337: smooth popup panning
 - commit [2025-09-14 17:40Z] da75661: dragging with many open popup with larger files work well
-- commit [2025-09-14 15:05Z] 691bf1f: blinking text when drag fixed
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

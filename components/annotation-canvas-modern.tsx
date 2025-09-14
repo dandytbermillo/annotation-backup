@@ -14,6 +14,7 @@ import { panToPanel } from "@/lib/canvas/pan-animations"
 import { Settings, Plus } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
+import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent } from "@/types/canvas-items"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -44,14 +45,10 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     showConnections: true
   })
 
-  const [panels, setPanels] = useState<string[]>([])
+  // Unified canvas items state
+  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([])
   const [showControlPanel, setShowControlPanel] = useState(false)
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
-  const [components, setComponents] = useState<Array<{
-    id: string
-    type: 'calculator' | 'timer' | 'editor' | 'dragtest'
-    position: { x: number; y: number }
-  }>>([])
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
     onSelectStart: (e: Event) => void;
@@ -131,7 +128,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     }
     
     // Set main panel as the initial panel
-    setPanels(['main'])
+    setCanvasItems([createPanelItem('main', { x: 2000, y: 1500 }, 'main')])
 
     return () => {
       // Don't destroy note when switching - only cleanup when truly unmounting
@@ -211,7 +208,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   }, [canvasState.isDragging, canvasState.lastMouseX, canvasState.lastMouseY])
 
   const handlePanelClose = (panelId: string) => {
-    setPanels(prev => prev.filter(id => id !== panelId))
+    setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
   }
 
   const handleCreatePanel = (panelId: string) => {
@@ -220,9 +217,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     // Check if we're in plain mode
     const isPlainMode = isPlainModeActive()
     
-    setPanels(prev => {
+    setCanvasItems(prev => {
       // Only add if not already present
-      if (prev.includes(panelId)) {
+      if (prev.some(item => isPanel(item) && item.panelId === panelId)) {
         return prev
       }
       
@@ -273,14 +270,17 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         )
       }, 100) // Small delay to ensure panel is rendered
       
-      return [...prev, panelId]
+      // Determine panel type based on panelId
+      const panelType = panelId === 'main' ? 'main' : 
+                       panelId.includes('explore') ? 'explore' : 
+                       panelId.includes('promote') ? 'promote' : 'note'
+      
+      return [...prev, createPanelItem(panelId, { x: 2000, y: 1500 }, panelType)]
     })
   }
   
   // Handle adding components
   const handleAddComponent = (type: string, position?: { x: number; y: number }) => {
-    const id = `component-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    
     // Calculate position - center of viewport in world coordinates
     // The canvas translate is the offset, so we need to negate it to get world position
     const viewportCenterX = window.innerWidth / 2
@@ -297,20 +297,21 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       y: worldY - 150
     }
     
-    setComponents(prev => [...prev, {
-      id,
-      type: type as 'calculator' | 'timer' | 'editor' | 'dragtest',
-      position: finalPosition
-    }])
+    const newComponent = createComponentItem(
+      type as 'calculator' | 'timer' | 'editor' | 'dragtest',
+      finalPosition
+    )
+    
+    setCanvasItems(prev => [...prev, newComponent])
   }
   
   const handleComponentClose = (id: string) => {
-    setComponents(prev => prev.filter(c => c.id !== id))
+    setCanvasItems(prev => prev.filter(item => item.id !== id))
   }
   
   const handleComponentPositionChange = (id: string, position: { x: number; y: number }) => {
-    setComponents(prev => prev.map(c => 
-      c.id === id ? { ...c, position } : c
+    setCanvasItems(prev => prev.map(item => 
+      item.id === id ? { ...item, position } : item
     ))
   }
 
@@ -494,7 +495,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 
         {/* Enhanced Minimap */}
         <EnhancedMinimap 
-          panels={panels}
+          canvasItems={canvasItems}
           canvasState={canvasState}
           onNavigate={(x, y) => setCanvasState(prev => ({ ...prev, translateX: x, translateY: y }))}
         />
@@ -543,22 +544,22 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           >
             {/* Connection Lines */}
             {canvasState.showConnections && (
-              <ConnectionLines panels={panels} />
+              <ConnectionLines canvasItems={canvasItems} />
             )}
 
             {/* Panels */}
             <PanelsRenderer
               noteId={noteId}
-              panels={panels}
+              canvasItems={canvasItems}
               onClose={handlePanelClose}
             />
             
             {/* Component Panels */}
-            {components.map(component => (
+            {canvasItems.filter(isComponent).map(component => (
               <ComponentPanel
                 key={component.id}
                 id={component.id}
-                type={component.type}
+                type={component.componentType!}
                 position={component.position}
                 onClose={handleComponentClose}
                 onPositionChange={handleComponentPositionChange}
@@ -579,11 +580,11 @@ ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 // Renders panels using plain dataStore in plain mode, Yjs map otherwise
 function PanelsRenderer({
   noteId,
-  panels,
+  canvasItems,
   onClose,
 }: {
   noteId: string
-  panels: string[]
+  canvasItems: CanvasItem[]
   onClose: (id: string) => void
 }) {
   const { dataStore } = useCanvas()
@@ -596,9 +597,12 @@ function PanelsRenderer({
   }
   const branchesMap = !isPlainMode ? provider.getBranchesMap() : null
   
+  const panels = canvasItems.filter(isPanel)
+  
   return (
     <>
-      {panels.map((panelId) => {
+      {panels.map((panel) => {
+        const panelId = panel.panelId!
         const branch = isPlainMode ? dataStore.get(panelId) : branchesMap?.get(panelId)
         if (!branch) {
           console.warn(`[PanelsRenderer] Branch ${panelId} not found in ${isPlainMode ? 'plain' : 'yjs'} store`)
