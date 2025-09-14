@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { createPortal } from 'react-dom'
 import { 
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
   FolderOpen, Folder, Database, WifiOff, Eye
@@ -141,6 +142,14 @@ function NotesExplorerContent({
   const [browseColumns, setBrowseColumns] = useState<TreeNode[]>([]) // Multi-column view
   const [columnWidths, setColumnWidths] = useState<number[]>([]) // Track column widths
   const [resizingColumn, setResizingColumn] = useState<number | null>(null)
+  // Canvas container target for mounting scoped overlays (prevents covering the sidebar)
+  const [canvasContainer, setCanvasContainer] = useState<HTMLElement | null>(null)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setCanvasContainer(document.getElementById('canvas-container'))
+    }
+  }, [])
   
   // Cascading popover state - now supports multiple popups with dragging
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
@@ -1815,6 +1824,7 @@ function NotesExplorerContent({
 
   return (
     <div 
+      data-sidebar="sidebar"
       className={`h-screen w-80 bg-gray-900 text-white flex flex-col border-r border-gray-800 fixed left-0 top-0 z-50 transition-transform duration-300 ease-in-out ${
         isOpen ? 'translate-x-0' : '-translate-x-full'
       }`}
@@ -2787,22 +2797,24 @@ function NotesExplorerContent({
       
       {/* Click outside to close all popovers */}
       {hoverPopovers.size > 0 && (
-        <div
-          className="fixed inset-0"
-          style={{ zIndex: 9997 }}
-          onClick={(e) => {
-            // Only close if not currently dragging
-            if (!draggingPopup) {
-              closeAllPopovers()
-            }
-          }}
-          onMouseDown={(e) => {
-            // Prevent closing while starting a drag
-            if (draggingPopup) {
-              e.preventDefault()
-            }
-          }}
-        />
+        canvasContainer
+          ? createPortal(
+              <div
+                className="absolute inset-0"
+                style={{ zIndex: 9997 }}
+                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
+                onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
+              />,
+              canvasContainer
+            )
+          : (
+              <div
+                className="fixed"
+                style={{ top: 0, left: 320, right: 0, bottom: 0, zIndex: 9997 }}
+                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
+                onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
+              />
+            )
       )}
       
       {/* Layer Controls UI (Phase 2) */}

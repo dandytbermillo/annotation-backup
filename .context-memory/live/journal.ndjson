@@ -79,3 +79,4 @@
 {"ts":"2025-09-13T23:24:56.365Z","type":"commit","sha":"6b2d43d2c77da23cd139e9a0a596ec40799f7fbd","files_changed":5,"message":"before implementing frm infinite canvas"}
 {"ts":"2025-09-14T04:49:14.403Z","type":"commit","sha":"a7aa7b9054e80c569b9f6c1989fc6c2304ae166f","files_changed":18,"message":"space bar issue fixed"}
 {"ts":"2025-09-14T05:00:15.702Z","type":"commit","sha":"673af71ecffe7a58e3a0fe261dad016c448fdd81","files_changed":3,"message":"finally the overlay canvas works"}
+{"ts":"2025-09-14T05:12:58.502Z","type":"commit","sha":"495c7c61e1ff682c367e16aa4a4e64148c63831d","files_changed":3,"message":"popup can succesgfully go under the sidebar"}

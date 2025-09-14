@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useFeatureFlag } from '@/lib/offline/feature-flags';
 import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
@@ -72,6 +73,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the on-screen bounds of the canvas container to scope the overlay
   const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  // Preferred: mount overlay inside the canvas container via React portal
+  const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
+  const [isPointerInside, setIsPointerInside] = useState<boolean>(false);
+  const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0 });
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const pointerIdRef = useRef<number | null>(null);
@@ -361,12 +366,28 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     const canvasEl = document.getElementById('canvas-container');
     if (canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
+      // If a sidebar is present, subtract its area from the interactive bounds
+      const sidebarEl = document.querySelector('[data-sidebar]') as HTMLElement | null;
+      let effectiveLeft = rect.left;
+      let effectiveWidth = rect.width;
+      if (sidebarEl) {
+        const s = sidebarEl.getBoundingClientRect();
+        // If the sidebar overlaps the left portion of the canvas horizontally,
+        // shift the interactive area to start at the sidebar's right edge
+        const overlap = Math.max(0, s.right - rect.left);
+        if (overlap > 0) {
+          effectiveLeft = rect.left + overlap;
+          effectiveWidth = Math.max(0, rect.width - overlap);
+        }
+      }
       setOverlayBounds({
         top: Math.max(0, rect.top),
-        left: Math.max(0, rect.left),
-        width: Math.max(0, rect.width),
+        left: Math.max(0, effectiveLeft),
+        width: Math.max(0, effectiveWidth),
         height: Math.max(0, rect.height),
       });
+      // Track container for portal mounting
+      setOverlayContainer(canvasEl as HTMLElement);
       debugLog('PopupOverlay', 'overlay_bounds_updated', { rect });
     } else {
       // Fallback: full viewport minus sidebar (legacy)
@@ -380,13 +401,41 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     recomputeOverlayBounds();
     const onResize = () => recomputeOverlayBounds();
     window.addEventListener('resize', onResize);
+    const onScroll = () => recomputeOverlayBounds();
+    window.addEventListener('scroll', onScroll, { passive: true });
     // Recompute after short delay to catch sidebar transitions
     const t = setTimeout(recomputeOverlayBounds, 300);
     return () => {
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll as any);
       clearTimeout(t);
     };
   }, [recomputeOverlayBounds]);
+
+  // Gate overlay interactivity based on pointer location relative to canvas container
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      // If pointer is over any sidebar element, treat as outside overlay
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('[data-sidebar]')) {
+        setIsPointerInside(false);
+        return;
+      }
+      let rect: DOMRect | null = null;
+      if (overlayContainer) {
+        rect = overlayContainer.getBoundingClientRect();
+      } else if (overlayBounds) {
+        rect = new DOMRect(overlayBounds.left, overlayBounds.top, overlayBounds.width, overlayBounds.height);
+      }
+      if (!rect) return;
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      setIsPointerInside(inside);
+    };
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onPointerMove);
+  }, [overlayContainer, overlayBounds]);
+
+  // No global pointer tracking needed when overlay is confined to canvas container via portal.
   
   // Debug log container style
   useEffect(() => {
@@ -429,6 +478,141 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     })
   }, [popups, transform])
   
+  // Build overlay contents (absolute inside canvas container)
+  const overlayInner = (
+    <div
+      ref={overlayRef}
+      id="popup-overlay"
+      className="absolute inset-0"
+      style={{
+        // Keep overlay above canvas content but below sidebar (sidebar lives outside container)
+        zIndex: 40,
+        overflow: 'hidden',
+        // Only accept events while hovered (or when actively panning)
+        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0 && isPointerInside)) ? 'auto' : 'none',
+        touchAction: (isPanning || (isActiveLayer && popups.size > 0)) ? 'none' : 'auto',
+        cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+      }}
+      data-layer="popups"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+      onPointerEnter={() => setIsOverlayHovered(true)}
+      onPointerLeave={() => setIsOverlayHovered(false)}
+    >
+      {/* Transform container - applies pan/zoom to all children */}
+      <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
+        {/* Invisible background to catch clicks on empty space */}
+        <div className="absolute inset-0 popup-background" style={{ backgroundColor: 'transparent' }} aria-hidden="true" />
+        {/* Connection lines (canvas coords) */}
+        <svg className="absolute inset-0 pointer-events-none" style={{ overflow: 'visible' }}>
+          {connectionPaths.map((path, index) => (
+            <path key={index} d={path.d} stroke={path.stroke} strokeWidth={path.strokeWidth} opacity={path.opacity} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          ))}
+        </svg>
+        {/* Popups (canvas coords) - only render visible ones */}
+        {visiblePopups.map((popup) => {
+          const position = popup.canvasPosition || popup.position;
+          if (!position) return null;
+          const zIndex = getPopupZIndex(
+            popup.level,
+            popup.isDragging || popup.id === draggingPopup,
+            true
+          );
+          return (
+            <div
+              key={popup.id}
+              id={`popup-${popup.id}`}
+              className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
+              style={{
+                left: `${position.x}px`,
+                top: `${position.y}px`,
+                width: '300px',
+                maxHeight: '400px',
+                zIndex,
+                cursor: popup.isDragging ? 'grabbing' : 'default',
+              }}
+            >
+              {/* Popup Header */}
+              <div
+                className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+                onMouseDown={(e) => onDragStart?.(popup.id, e)}
+                style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
+              >
+                <div className="flex items-center gap-2">
+                  <Folder className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm font-medium text-white truncate">
+                    {popup.folder?.name || 'Loading...'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => onClosePopup(popup.id)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                  aria-label="Close popup"
+                >
+                  <X className="w-4 h-4 text-gray-400" />
+                </button>
+              </div>
+              {/* Popup Content */}
+              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)' }}>
+                {popup.isLoading ? (
+                  <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
+                ) : popup.folder?.children && popup.folder.children.length > 0 ? (
+                  <div className="py-1">
+                    {popup.folder.children.map((child: any) => (
+                      <div
+                        key={child.id}
+                        className="px-3 py-2 hover:bg-gray-700 cursor-pointer flex items-center justify-between text-sm group"
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {child.type === 'folder' ? (
+                            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                          ) : (
+                            <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          )}
+                          <span className="text-gray-200 truncate">{child.name}</span>
+                        </div>
+                        {child.type === 'folder' && (
+                          <div
+                            onMouseEnter={(e) => {
+                              e.stopPropagation();
+                              onHoverFolder?.(child, e, popup.id);
+                            }}
+                            onMouseLeave={(e) => {
+                              e.stopPropagation();
+                              onLeaveFolder?.();
+                            }}
+                            className="p-1 -m-1"
+                          >
+                            <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
+                )}
+              </div>
+              {/* Popup Footer */}
+              <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+                Level {popup.level} • {popup.folder?.children?.length || 0} items
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  // Prefer mounting inside canvas container when available
+  if (typeof window !== 'undefined' && overlayContainer) {
+    return createPortal(overlayInner, overlayContainer);
+  }
+
+  // Fallback: fixed overlay aligned to canvas bounds
   return (
     <div
       ref={overlayRef}
@@ -443,8 +627,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         zIndex: 40, // Below sidebar z-50, above canvas
         // Ensure overlay content does not spill into sidebar area
         overflow: 'hidden',
-        // Only interactive when correct layer and popups exist (or during active pan)
-        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0)) ? 'auto' : 'none',
+        // Only accept events while hovered (or when actively panning)
+        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0 && isPointerInside)) ? 'auto' : 'none',
         // Prevent browser touch gestures only when interactive
         touchAction: (isPanning || (isActiveLayer && popups.size > 0)) ? 'none' : 'auto',
         // Show grab cursor when hovering empty space
@@ -455,6 +639,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={handlePointerEnd}
+      onPointerEnter={() => setIsOverlayHovered(true)}
+      onPointerLeave={() => setIsOverlayHovered(false)}
     >
       {/* Transform container - applies pan/zoom to all children */}
       <div
