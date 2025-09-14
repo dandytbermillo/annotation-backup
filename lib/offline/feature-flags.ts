@@ -22,7 +22,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   'offline.circuitBreaker': false,
   'offline.swCaching': false,
   'offline.conflictUI': false,
-  'ui.multiLayerCanvas': false,
+  'ui.multiLayerCanvas': true, // ENABLED for multi-layer canvas testing
 };
 
 // Environment-specific overrides

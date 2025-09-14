@@ -42,6 +42,17 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     if (!multiLayerEnabled) return;
     
+    // Do not intercept Space when typing in editors or inputs
+    const isEditableTarget = (el: EventTarget | null): boolean => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      if (t.isContentEditable) return true;
+      const tag = t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (t.closest('[contenteditable], .ProseMirror, [role="textbox"], input, textarea, select')) return true;
+      return false;
+    };
+
     // Add key to pressed set
     keysPressed.current.add(event.code);
     
@@ -53,10 +64,14 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
     }
     
     if (event.code === 'Space' && !isSpacePressed.current) {
+      // Let editors/inputs receive Space normally
+      if (isEditableTarget(event.target)) {
+        return;
+      }
       isSpacePressed.current = true;
       document.body.dataset.dragMode = 'active-layer';
       callbacks.onSpaceDrag?.(true);
-      // Prevent page scroll
+      // Prevent page scroll only when we own the gesture
       event.preventDefault();
     }
     

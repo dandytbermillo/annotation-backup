@@ -21,23 +21,43 @@ export interface DebugLogData {
 
 /**
  * Log debug information to PostgreSQL
+ * Supports both object format and legacy 3-parameter format
  */
-export async function debugLog(data: DebugLogData): Promise<void> {
+export async function debugLog(
+  dataOrContext: DebugLogData | string,
+  event?: string,
+  details?: any
+): Promise<void> {
   try {
+    let logData: DebugLogData;
+    
+    // Support both calling styles
+    if (typeof dataOrContext === 'string') {
+      // Legacy 3-parameter style: debugLog('Context', 'event', {...})
+      logData = {
+        component: dataOrContext,
+        action: event || 'unknown',
+        metadata: details
+      };
+    } else {
+      // New object style: debugLog({ component: '...', action: '...', ... })
+      logData = dataOrContext;
+    }
+    
     await fetch('/api/debug/log', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        ...data,
+        ...logData,
         session_id: getSessionId(),
         timestamp: new Date().toISOString(),
       }),
     });
   } catch (error) {
     // Fallback to console if API fails
-    console.log('[DEBUG]', data);
+    console.log('[DEBUG]', dataOrContext, event, details);
   }
 }
 

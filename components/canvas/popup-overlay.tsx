@@ -44,47 +44,71 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 }) => {
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
   
-  // Use the same LayerProvider context as the explorer
-  const layerContext = useLayer();
+  // Debug log on mount
+  useEffect(() => {
+    debugLog('PopupOverlay', 'component_mounted', {
+      multiLayerEnabled,
+      popupCount: popups.size,
+      timestamp: new Date().toISOString()
+    });
+    
+    return () => {
+      debugLog('PopupOverlay', 'component_unmounted', {
+        timestamp: new Date().toISOString()
+      });
+    };
+  }, []);
+  
+  // Self-contained transform state (infinite-canvas pattern)
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [engaged, setEngaged] = useState(false); // hysteresis engaged
+  
+  // Use LayerProvider to gate interactivity by active layer
+  const layerCtx = useLayer();
+  const isActiveLayer = !!layerCtx && layerCtx.activeLayer === 'popups';
   
   const overlayRef = useRef<HTMLDivElement>(null);
-  const toastTimeoutRef = useRef<NodeJS.Timeout>();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panStartRef = useRef({ x: 0, y: 0 });
+  const lastMouseRef = useRef({ x: 0, y: 0 });
+  const pointerIdRef = useRef<number | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Pan gesture state
-  const [isPanning, setIsPanning] = useState(false);
-  const panGestureRef = useRef({
-    startX: 0,
-    startY: 0,
-    lastDx: 0,
-    lastDy: 0,
-    pointerId: -1,
-    engaged: false
-  });
-  
-  // Early return if context is not available
-  if (!multiLayerEnabled || !layerContext) {
-    return null; // Feature not enabled or context not available
+  // Early return if feature not enabled
+  if (!multiLayerEnabled) {
+    return null; // Feature not enabled
   }
   
-  const { transforms, layers, activeLayer, setActiveLayer, updateTransformByDelta, setGesture, currentGesture } = layerContext;
-  
-  // Debug log context availability
+  // Debug log initialization and state tracking
   useEffect(() => {
-    debugLog('PopupOverlay', 'context_check', {
-      hasUpdateTransformByDelta: !!updateTransformByDelta,
-      hasSetGesture: !!setGesture,
-      activeLayer,
-      popupCount: popups.size
+    debugLog('PopupOverlay', 'initialized', {
+      popupCount: popups.size,
+      transform,
+      multiLayerEnabled,
+      isActiveLayer,
+      layerCtx: layerCtx?.activeLayer || 'none'
     });
-  }, [updateTransformByDelta, setGesture, activeLayer, popups.size]);
+  }, [popups.size, transform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
-  // Get popup layer state from LayerProvider
-  const popupLayer = layers.get('popups');
-  const popupTransform = transforms.popups || { x: 0, y: 0, scale: 1 };
+  // Debug log transform changes
+  useEffect(() => {
+    debugLog('PopupOverlay', 'transform_changed', {
+      transform,
+      isPanning,
+      engaged
+    });
+  }, [transform]);
   
-  if (!popupLayer) {
-    return null; // Layer not initialized
-  }
+  // Debug log layer changes
+  useEffect(() => {
+    debugLog('PopupOverlay', 'layer_state', {
+      isActiveLayer,
+      activeLayer: layerCtx?.activeLayer || 'none',
+      popupCount: popups.size,
+      canInteract: isActiveLayer && popups.size > 0
+    });
+  }, [isActiveLayer, layerCtx?.activeLayer, popups.size]);
   
   // Check if the pointer event is on empty space (not on interactive elements)
   const isOverlayEmptySpace = useCallback((e: React.PointerEvent) => {
@@ -98,193 +122,187 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     return !isOnPopup && !isOnButton;
   }, []);
   
-  // Handle pan start
+  // Handle pan start (simplified like notes canvas)
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    const target = e.target as HTMLElement;
-    const targetInfo = {
-      id: target.id,
-      className: target.className,
-      tagName: target.tagName,
-      closestPopup: !!target.closest('.popup-card'),
-      closestButton: !!target.closest('button')
-    };
+    // Always log that pointer down was received
+    console.log('[PopupOverlay] pointerDown:', {
+      target: (e.target as HTMLElement).className,
+      isEmptySpace: isOverlayEmptySpace(e),
+      isActiveLayer,
+      popupCount: popups.size,
+      layerCtx: layerCtx?.activeLayer || 'none',
+      clientX: e.clientX,
+      clientY: e.clientY
+    });
     
-    // Only pan when popup layer is active and clicking on empty space
-    if (activeLayer !== 'popups') {
-      debugLog('PopupOverlay', 'pan_blocked_wrong_layer', { 
-        activeLayer,
-        targetInfo
-      });
-      return;
-    }
+    debugLog('PopupOverlay', 'pointer_down_received', {
+      target: (e.target as HTMLElement).className,
+      isEmptySpace: isOverlayEmptySpace(e),
+      isActiveLayer,
+      popupCount: popups.size,
+      layerCtx: layerCtx?.activeLayer || 'none'
+    });
     
+    // Only start panning if clicking on empty space
     if (!isOverlayEmptySpace(e)) {
-      debugLog('PopupOverlay', 'pan_blocked_not_empty', { 
-        targetInfo,
-        isBackground: target.classList.contains('popup-background'),
-        isOverlay: target.id === 'popup-overlay'
+      debugLog('PopupOverlay', 'pan_blocked_not_empty_space', {
+        target: (e.target as HTMLElement).className
       });
       return;
     }
     
-    // Check if another gesture is in progress
-    if (currentGesture && currentGesture.type !== 'none') {
-      debugLog('PopupOverlay', 'gesture_conflict', { 
-        currentGesture: currentGesture.type,
-        txId: currentGesture.txId 
+    // Gate by popups presence only (temporarily bypass layer check for testing)
+    const hasPopups = popups.size > 0;
+    if (!hasPopups) {
+      debugLog('PopupOverlay', 'pan_blocked', { 
+        isActiveLayer,
+        hasPopups,
+        layerCtx: layerCtx?.activeLayer || 'none',
+        reason: 'no_popups'
       });
       return;
     }
     
-    const overlay = overlayRef.current;
-    if (!overlay) {
-      debugLog('PopupOverlay', 'no_overlay_ref', {});
-      return;
-    }
+    // Log layer state but don't block
+    debugLog('PopupOverlay', 'layer_check_bypassed', {
+      isActiveLayer,
+      layerCtx: layerCtx?.activeLayer || 'none',
+      message: 'Temporarily bypassing layer check for testing'
+    });
+    
+    console.log('[PopupOverlay] PAN START!', {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      transform,
+      pointerId: e.pointerId
+    });
     
     debugLog('PopupOverlay', 'pan_start', { 
       clientX: e.clientX, 
       clientY: e.clientY,
-      pointerId: e.pointerId
+      currentTransform: transform,
+      pointerId: e.pointerId,
+      isActiveLayer,
+      popupCount: popups.size
     });
     
-    // Start overlay pan gesture
-    setGesture('overlay-pan');
+    setIsPanning(true);
+    setEngaged(false); // reset hysteresis
+    panStartRef.current = { x: e.clientX, y: e.clientY };
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+    pointerIdRef.current = e.pointerId;
     
-    // Capture the pointer for robust dragging
-    overlay.setPointerCapture(e.pointerId);
-    
-    // Initialize gesture state
-    panGestureRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      lastDx: 0,
-      lastDy: 0,
-      pointerId: e.pointerId,
-      engaged: false
-    };
-    
-    // Prevent text selection during pan
-    document.body.style.userSelect = 'none';
-    if (overlay) {
-      overlay.style.willChange = 'transform';
-      overlay.style.cursor = 'grabbing';
+    // Capture pointer for robust dragging across children
+    // Only capture if this is a real pointer event (not synthetic)
+    try {
+      if (e.pointerId !== undefined && overlayRef.current) {
+        overlayRef.current.setPointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      // Fallback: pointer capture not available or synthetic event
+      debugLog('PopupOverlay', 'pointer_capture_failed', { 
+        error: err.message,
+        pointerId: e.pointerId 
+      });
     }
     
-    setIsPanning(true);
-  }, [activeLayer, isOverlayEmptySpace, currentGesture, setGesture]);
+    // Optimize for dragging
+    document.body.style.userSelect = 'none';
+    if (containerRef.current) {
+      containerRef.current.style.willChange = 'transform';
+    }
+    
+    // Only prevent default for actual drag operations
+    e.preventDefault();
+  }, [isOverlayEmptySpace, transform, isActiveLayer, popups.size]);
   
-  // Handle pan move
+  // Handle pan move (simplified like notes canvas)
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    const overlay = overlayRef.current;
-    if (!overlay || !overlay.hasPointerCapture(e.pointerId)) {
-      // Debug why we're not handling the move
-      if (!overlay) {
-        debugLog('PopupOverlay', 'move_blocked_no_overlay', {});
-      } else if (!overlay.hasPointerCapture(e.pointerId)) {
-        debugLog('PopupOverlay', 'move_blocked_no_capture', { pointerId: e.pointerId });
-      }
+    if (!isPanning || pointerIdRef.current === null) {
+      debugLog('PopupOverlay', 'pan_move_blocked', {
+        isPanning,
+        pointerIdRef: pointerIdRef.current,
+        reason: !isPanning ? 'not_panning' : 'no_pointer_id'
+      });
       return;
     }
     
-    const gesture = panGestureRef.current;
-    const dx = e.clientX - gesture.startX;
-    const dy = e.clientY - gesture.startY;
+    // Don't block on capture - it may not be available for synthetic events
     
-    // Apply hysteresis - only engage after 4px movement
-    if (!gesture.engaged && Math.hypot(dx, dy) < 4) return;
+    const deltaX = e.clientX - lastMouseRef.current.x;
+    const deltaY = e.clientY - lastMouseRef.current.y;
     
-    if (!gesture.engaged) {
-      debugLog('PopupOverlay', 'pan_engaged', { 
-        distance: Math.hypot(dx, dy).toFixed(2) 
-      });
-      gesture.engaged = true;
+    // 3-5px hysteresis to distinguish click vs pan
+    if (!engaged) {
+      const dx0 = e.clientX - panStartRef.current.x;
+      const dy0 = e.clientY - panStartRef.current.y;
+      if (Math.hypot(dx0, dy0) < 4) return;
+      setEngaged(true);
+      debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
     }
     
-    // Calculate delta from last position
-    const deltaDx = dx - gesture.lastDx;
-    const deltaDy = dy - gesture.lastDy;
-    
-    // Update transform with delta using the new API
-    if (!updateTransformByDelta) {
-      debugLog('PopupOverlay', 'no_update_function', {});
-    } else if (!currentGesture) {
-      debugLog('PopupOverlay', 'no_current_gesture', {});
-    } else {
-      if (Math.abs(deltaDx) > 0 || Math.abs(deltaDy) > 0) {
-        debugLog('PopupOverlay', 'transform_update', { 
-          deltaDx, 
-          deltaDy, 
-          txId: currentGesture.txId,
-          beforeTransform: transforms.popups
-        });
-      }
-      updateTransformByDelta('popups', { dx: deltaDx, dy: deltaDy }, { 
-        txId: currentGesture.txId 
+    // Update transform directly
+    setTransform(prev => {
+      const newTransform = {
+        ...prev,
+        x: prev.x + deltaX,
+        y: prev.y + deltaY
+      };
+      
+      // Log to database
+      debugLog('PopupOverlay', 'pan_move', { 
+        deltaX, 
+        deltaY,
+        newTransform,
+        popupCount: popups.size
       });
-    }
-    
-    // Store last position
-    gesture.lastDx = dx;
-    gesture.lastDy = dy;
-  }, [updateTransformByDelta, currentGesture, transforms.popups]);
-  
-  // Handle pan end
-  const handlePointerEnd = useCallback((e?: React.PointerEvent) => {
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    
-    debugLog('PopupOverlay', 'pan_end', { 
-      engaged: panGestureRef.current.engaged,
-      totalDx: panGestureRef.current.lastDx,
-      totalDy: panGestureRef.current.lastDy
+      
+      return newTransform;
     });
     
-    // Release pointer capture if we have a pointer event
-    if (e && panGestureRef.current.pointerId >= 0) {
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+  }, [isPanning, engaged, popups.size]);
+  
+  // Handle pan end (simplified)
+  const handlePointerEnd = useCallback((e: React.PointerEvent) => {
+    if (!isPanning) return;
+    
+    debugLog('PopupOverlay', 'pan_end', { 
+      totalDelta: {
+        x: transform.x,
+        y: transform.y
+      },
+      pointerId: e.pointerId,
+      wasEngaged: engaged
+    });
+    
+    setIsPanning(false);
+    setEngaged(false);
+    
+    // Release pointer capture
+    if (pointerIdRef.current !== null && overlayRef.current) {
       try {
-        overlay.releasePointerCapture(panGestureRef.current.pointerId);
+        overlayRef.current.releasePointerCapture(pointerIdRef.current);
       } catch (err) {
-        // Pointer might already be released
+        // Pointer was never captured or already released
+        debugLog('PopupOverlay', 'pointer_release_failed', { 
+          error: err.message,
+          pointerId: pointerIdRef.current 
+        });
       }
+      pointerIdRef.current = null;
     }
     
     // Reset styles
     document.body.style.userSelect = '';
-    if (overlay) {
-      overlay.style.willChange = '';
-      overlay.style.cursor = '';
+    if (containerRef.current) {
+      containerRef.current.style.willChange = '';
     }
-    
-    // Reset gesture state
-    panGestureRef.current = {
-      startX: 0,
-      startY: 0,
-      lastDx: 0,
-      lastDy: 0,
-      pointerId: -1,
-      engaged: false
-    };
-    
-    setIsPanning(false);
-    
-    // End the gesture
-    setGesture('none');
-  }, [setGesture]);
+  }, [isPanning, transform, engaged]);
   
-  // Handle window blur - cancel any active pan
-  useEffect(() => {
-    const handleWindowBlur = () => {
-      if (isPanning) {
-        handlePointerEnd();
-      }
-    };
-    
-    window.addEventListener('blur', handleWindowBlur);
-    return () => {
-      window.removeEventListener('blur', handleWindowBlur);
-    };
-  }, [isPanning, handlePointerEnd]);
+  // Note: With pointer capture, we don't need document-level listeners
+  // The pointer events will continue to fire on the overlay even when
+  // the pointer moves outside or over child elements
   
   // Note: Auto-switch is already handled by the explorer component
   // Removing duplicate auto-switch logic to prevent conflicts
@@ -326,17 +344,21 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     draggingPopup !== null
   );
   
-  // Container transform style
-  const containerStyle = CoordinateBridge.containerTransformStyle(popupTransform);
+  // Container transform style with translate3d for GPU acceleration
+  const containerStyle = {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+    transformOrigin: '0 0',
+    willChange: isPanning ? 'transform' : 'auto'
+  };
   
-  // Debug log transform changes
+  // Debug log container style
   useEffect(() => {
-    debugLog('PopupOverlay', 'transform_changed', {
-      x: popupTransform.x,
-      y: popupTransform.y,
-      scale: popupTransform.scale
+    debugLog('PopupOverlay', 'container_style', {
+      containerStyle,
+      hasContainer: !!containerRef.current,
+      computedTransform: containerRef.current?.style?.transform || 'none'
     });
-  }, [popupTransform.x, popupTransform.y, popupTransform.scale]);
+  }, [containerStyle]);
   
   // Viewport culling - only render visible popups
   const visiblePopups = useMemo(() => {
@@ -352,8 +374,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       
       // Convert canvas position to screen position
       const screenPos = CoordinateBridge.canvasToScreen(
-        popup.canvasPosition,
-        popupTransform
+        popup.canvasPosition || popup.position,
+        transform
       )
       
       // Check if popup is within viewport (with some margin)
@@ -368,22 +390,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         screenPos.y <= viewport.height + margin
       )
     })
-  }, [popups, popupTransform])
+  }, [popups, transform])
   
   return (
     <div
       ref={overlayRef}
       id="popup-overlay"
-      className="fixed inset-0"
+      className="fixed"
       style={{
-        // Ensure popup overlay is always above canvas panels
-        zIndex: Math.max(Z_INDEX.POPUP_OVERLAY, 100),
-        // Enable pointer events for pan handling
-        pointerEvents: activeLayer === 'popups' ? 'auto' : 'none',
-        // Prevent browser touch gestures
-        touchAction: 'none',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: '320px', // Don't cover the sidebar
+        // Popup overlay should be below sidebar (z-50) but above canvas
+        zIndex: 40, // Below sidebar z-50, above canvas
+        // CRITICAL: Only capture events when actually panning or have popups
+        pointerEvents: (isPanning || popups.size > 0) ? 'auto' : 'none',
+        // Prevent browser touch gestures only when interactive
+        touchAction: isPanning ? 'none' : 'auto',
         // Show grab cursor when hovering empty space
-        cursor: isPanning ? 'grabbing' : (activeLayer === 'popups' ? 'grab' : 'default'),
+        cursor: isPanning ? 'grabbing' : (popups.size > 0 ? 'grab' : 'default'),
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -393,12 +419,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     >
       {/* Transform container - applies pan/zoom to all children */}
       <div
+        ref={containerRef}
         className="absolute inset-0"
-        style={{
-          ...containerStyle,
-          // Ensure transform origin is correct
-          transformOrigin: '0 0',
-        }}
+        style={containerStyle}
       >
         {/* Invisible background to catch clicks on empty space */}
         <div 
@@ -428,7 +451,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       
       {/* Popups (canvas coords) - only render visible ones */}
       {visiblePopups.map((popup) => {
-        if (!popup.canvasPosition) return null;
+        // Use canvas position if available, otherwise use screen position
+        const position = popup.canvasPosition || popup.position;
+        if (!position) return null;
         
         const zIndex = getPopupZIndex(
           popup.level,
@@ -436,23 +461,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           true
         );
         
-        const isActive = activeLayer === 'popups';
-        const opacity = isActive ? 1 : 0.6;
-        
         return (
           <div
             key={popup.id}
             id={`popup-${popup.id}`}
             className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
             style={{
-              left: `${popup.canvasPosition.x}px`,
-              top: `${popup.canvasPosition.y}px`,
+              left: `${position.x}px`,
+              top: `${position.y}px`,
               width: '300px',
               maxHeight: '400px',
               zIndex,
-              opacity,
               cursor: popup.isDragging ? 'grabbing' : 'default',
-              transition: popup.isDragging ? 'none' : 'opacity 0.3s ease',
             }}
           >
             {/* Popup Header */}

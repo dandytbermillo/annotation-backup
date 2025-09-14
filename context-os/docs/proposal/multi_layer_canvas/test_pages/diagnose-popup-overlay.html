@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Popup Overlay Diagnostic</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #0f0; }
+        .section { margin: 20px 0; padding: 10px; border: 1px solid #0f0; }
+        .test { margin: 10px 0; }
+        .pass { color: #0f0; }
+        .fail { color: #f00; }
+        .info { color: #ff0; }
+        button { background: #333; color: #0f0; border: 1px solid #0f0; padding: 5px 10px; cursor: pointer; }
+        button:hover { background: #444; }
+        #log { background: #000; padding: 10px; max-height: 300px; overflow-y: auto; }
+        .log-entry { margin: 2px 0; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Popup Overlay Diagnostic Tool</h1>
+    
+    <div class="section">
+        <h2>1. Component Detection</h2>
+        <div id="component-check" class="test">Checking...</div>
+    </div>
+    
+    <div class="section">
+        <h2>2. Feature Flag Status</h2>
+        <div id="feature-flag" class="test">Checking...</div>
+    </div>
+    
+    <div class="section">
+        <h2>3. DOM Structure</h2>
+        <div id="dom-structure" class="test">Checking...</div>
+    </div>
+    
+    <div class="section">
+        <h2>4. Transform Container</h2>
+        <div id="transform-check" class="test">Checking...</div>
+    </div>
+    
+    <div class="section">
+        <h2>5. Event Tests</h2>
+        <button onclick="testPointerEvents()">Test Pointer Events</button>
+        <button onclick="simulateDrag()">Simulate Drag</button>
+        <button onclick="checkTransform()">Check Transform</button>
+        <div id="event-results" class="test"></div>
+    </div>
+    
+    <div class="section">
+        <h2>6. Database Logs</h2>
+        <button onclick="fetchLogs()">Fetch Recent Logs</button>
+        <div id="log"></div>
+    </div>
+    
+    <script>
+        // Run diagnostics on page load
+        window.addEventListener('load', () => {
+            setTimeout(runDiagnostics, 1000);
+        });
+        
+        async function runDiagnostics() {
+            // 1. Check if PopupOverlay exists
+            const overlay = document.querySelector('#popup-overlay');
+            const componentCheck = document.getElementById('component-check');
+            
+            if (overlay) {
+                componentCheck.innerHTML = '<span class="pass">✅ PopupOverlay found</span>';
+                
+                // Check computed styles
+                const styles = window.getComputedStyle(overlay);
+                componentCheck.innerHTML += `<br>  z-index: ${styles.zIndex}`;
+                componentCheck.innerHTML += `<br>  pointer-events: ${styles.pointerEvents}`;
+                componentCheck.innerHTML += `<br>  left: ${styles.left}`;
+            } else {
+                componentCheck.innerHTML = '<span class="fail">❌ PopupOverlay NOT found</span>';
+            }
+            
+            // 2. Check feature flag
+            try {
+                const flagCheck = document.getElementById('feature-flag');
+                const flagValue = localStorage.getItem('feature:ui.multiLayerCanvas');
+                flagCheck.innerHTML = `<span class="info">localStorage flag: ${flagValue || 'not set'}</span>`;
+                
+                // Check if layer indicators exist
+                const layerButtons = document.querySelectorAll('[data-layer]');
+                if (layerButtons.length > 0) {
+                    flagCheck.innerHTML += '<br><span class="pass">✅ Layer indicators found</span>';
+                } else {
+                    flagCheck.innerHTML += '<br><span class="fail">❌ Layer indicators NOT found</span>';
+                }
+            } catch (e) {
+                console.error(e);
+            }
+            
+            // 3. Check DOM structure
+            const domCheck = document.getElementById('dom-structure');
+            if (overlay) {
+                const container = overlay.querySelector('.absolute.inset-0');
+                const popups = overlay.querySelectorAll('.popup-card');
+                
+                domCheck.innerHTML = `Transform container: ${container ? '✅' : '❌'}<br>`;
+                domCheck.innerHTML += `Popup count: ${popups.length}<br>`;
+                
+                if (container) {
+                    const transform = container.style.transform;
+                    domCheck.innerHTML += `Container transform: ${transform || 'none'}`;
+                }
+            } else {
+                domCheck.innerHTML = '<span class="fail">No overlay to check</span>';
+            }
+            
+            // 4. Check transform
+            checkTransform();
+        }
+        
+        function testPointerEvents() {
+            const overlay = document.querySelector('#popup-overlay');
+            const results = document.getElementById('event-results');
+            
+            if (!overlay) {
+                results.innerHTML = '<span class="fail">No overlay found</span>';
+                return;
+            }
+            
+            let eventsFired = [];
+            
+            // Add temporary listeners
+            const handlers = {
+                pointerdown: (e) => eventsFired.push('pointerdown'),
+                pointermove: (e) => eventsFired.push('pointermove'),
+                pointerup: (e) => eventsFired.push('pointerup')
+            };
+            
+            Object.entries(handlers).forEach(([event, handler]) => {
+                overlay.addEventListener(event, handler, { once: true });
+            });
+            
+            // Simulate events
+            const rect = overlay.getBoundingClientRect();
+            const events = [
+                new PointerEvent('pointerdown', { clientX: rect.left + 100, clientY: rect.top + 100, bubbles: true }),
+                new PointerEvent('pointermove', { clientX: rect.left + 200, clientY: rect.top + 200, bubbles: true }),
+                new PointerEvent('pointerup', { clientX: rect.left + 200, clientY: rect.top + 200, bubbles: true })
+            ];
+            
+            events.forEach(e => overlay.dispatchEvent(e));
+            
+            setTimeout(() => {
+                results.innerHTML = eventsFired.length > 0 
+                    ? `<span class="pass">✅ Events fired: ${eventsFired.join(', ')}</span>`
+                    : '<span class="fail">❌ No events fired</span>';
+            }, 100);
+        }
+        
+        function simulateDrag() {
+            const overlay = document.querySelector('#popup-overlay');
+            const results = document.getElementById('event-results');
+            
+            if (!overlay) {
+                results.innerHTML = '<span class="fail">No overlay found</span>';
+                return;
+            }
+            
+            const rect = overlay.getBoundingClientRect();
+            const container = overlay.querySelector('.absolute.inset-0');
+            
+            if (!container) {
+                results.innerHTML = '<span class="fail">No transform container found</span>';
+                return;
+            }
+            
+            const initialTransform = container.style.transform;
+            
+            // Simulate drag
+            const down = new PointerEvent('pointerdown', {
+                clientX: rect.left + 400,
+                clientY: rect.top + 300,
+                pointerId: 1,
+                bubbles: true
+            });
+            
+            overlay.dispatchEvent(down);
+            
+            // Multiple move events
+            for (let i = 1; i <= 5; i++) {
+                const move = new PointerEvent('pointermove', {
+                    clientX: rect.left + 400 + (i * 20),
+                    clientY: rect.top + 300 + (i * 15),
+                    pointerId: 1,
+                    bubbles: true
+                });
+                overlay.dispatchEvent(move);
+            }
+            
+            const up = new PointerEvent('pointerup', {
+                clientX: rect.left + 500,
+                clientY: rect.top + 375,
+                pointerId: 1,
+                bubbles: true
+            });
+            
+            overlay.dispatchEvent(up);
+            
+            setTimeout(() => {
+                const finalTransform = container.style.transform;
+                if (finalTransform !== initialTransform) {
+                    results.innerHTML = `<span class="pass">✅ Transform changed from "${initialTransform}" to "${finalTransform}"</span>`;
+                } else {
+                    results.innerHTML = `<span class="fail">❌ Transform unchanged: "${finalTransform}"</span>`;
+                }
+            }, 200);
+        }
+        
+        function checkTransform() {
+            const transformCheck = document.getElementById('transform-check');
+            const overlay = document.querySelector('#popup-overlay');
+            
+            if (!overlay) {
+                transformCheck.innerHTML = '<span class="fail">No overlay</span>';
+                return;
+            }
+            
+            const container = overlay.querySelector('.absolute.inset-0');
+            if (!container) {
+                transformCheck.innerHTML = '<span class="fail">No container</span>';
+                return;
+            }
+            
+            const transform = container.style.transform;
+            const computed = window.getComputedStyle(container).transform;
+            
+            transformCheck.innerHTML = `Style: ${transform || 'none'}<br>`;
+            transformCheck.innerHTML += `Computed: ${computed || 'none'}`;
+        }
+        
+        async function fetchLogs() {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML = 'Fetching...';
+            
+            try {
+                const response = await fetch('/api/debug-log');
+                const data = await response.json();
+                
+                const popupLogs = data.logs.filter(log => 
+                    log.component === 'PopupOverlay' || 
+                    log.metadata?.context === 'PopupOverlay'
+                );
+                
+                if (popupLogs.length === 0) {
+                    logDiv.innerHTML = '<span class="fail">No PopupOverlay logs found</span>';
+                } else {
+                    logDiv.innerHTML = popupLogs.slice(0, 10).map(log => 
+                        `<div class="log-entry">[${log.action || log.metadata?.event}] ${JSON.stringify(log.metadata)}</div>`
+                    ).join('');
+                }
+            } catch (e) {
+                logDiv.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
