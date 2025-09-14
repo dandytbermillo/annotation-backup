@@ -6,9 +6,9 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 17:40Z] da75661: dragging with many open popup with larger files work well
 - commit [2025-09-14 15:05Z] 691bf1f: blinking text when drag fixed
 - commit [2025-09-14 06:37Z] ca6a064: issue about blocking the sidebar is fixed
-- commit [2025-09-14 05:12Z] 495c7c6: popup can succesgfully go under the sidebar
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

@@ -9,6 +9,7 @@ import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
 import { X, Folder, FileText, Eye } from 'lucide-react';
+import { VirtualList } from '@/components/canvas/VirtualList';
 import { debugLog } from '@/lib/utils/debug-logger';
 import '@/styles/popup-overlay.css';
 
@@ -689,55 +690,56 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <X className="w-4 h-4 text-gray-400" />
                 </button>
               </div>
-              {/* Popup Content */}
+              {/* Popup Content with virtualization for large lists */}
               <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
                 {popup.isLoading ? (
                   <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                 ) : popup.folder?.children && popup.folder.children.length > 0 ? (
-                  <div className="py-1">
-                    {popup.folder.children.map((child: any) => (
-                      <div
-                        key={child.id}
-                        className="px-3 py-2 cursor-pointer flex items-center justify-between text-sm group"
-                        style={{ 
-                          backgroundColor: 'transparent',
-                          transition: isPanning ? 'none' : 'background-color 0.2s'
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isPanning) {
-                            (e.currentTarget as HTMLElement).style.backgroundColor = '#374151';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
-                        }}
-                      >
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          {child.type === 'folder' ? (
-                            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                          ) : (
-                            <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                          )}
-                          <span className="text-gray-200 truncate">{child.name}</span>
-                        </div>
-                        {child.type === 'folder' && (
-                          <div
-                            onMouseEnter={(e) => {
-                              e.stopPropagation();
-                              onHoverFolder?.(child, e, popup.id);
-                            }}
-                            onMouseLeave={(e) => {
-                              e.stopPropagation();
-                              onLeaveFolder?.();
-                            }}
-                            className="p-1 -m-1"
-                          >
-                            <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 flex-shrink-0" style={{ transition: isPanning ? 'none' : 'opacity 0.2s' }} />
+                  popup.folder.children.length > 200 ? (
+                    <VirtualList
+                      items={popup.folder.children}
+                      itemHeight={36}
+                      height={300}
+                      overscan={8}
+                      renderItem={(child: any) => (
+                        <div className="px-3 py-2 cursor-pointer flex items-center justify-between text-sm group" style={{ backgroundColor: 'transparent', transition: isPanning ? 'none' : 'background-color 0.2s' }}>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {child.type === 'folder' ? (
+                              <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                            ) : (
+                              <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            )}
+                            <span className="text-gray-200 truncate">{child.name}</span>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                          {child.type === 'folder' && (
+                            <div className="p-1 -m-1" onMouseEnter={(e) => { if (!isPanning) onHoverFolder?.(child, e as any, popup.id) }} onMouseLeave={() => onLeaveFolder?.()}>
+                              <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    />
+                  ) : (
+                    <div className="py-1">
+                      {popup.folder.children.map((child: any) => (
+                        <div key={child.id} className="px-3 py-2 cursor-pointer flex items-center justify-between text-sm group" style={{ backgroundColor: 'transparent', transition: isPanning ? 'none' : 'background-color 0.2s' }}>
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            {child.type === 'folder' ? (
+                              <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                            ) : (
+                              <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            )}
+                            <span className="text-gray-200 truncate">{child.name}</span>
+                          </div>
+                          {child.type === 'folder' && (
+                            <div onMouseEnter={(e) => { if (!isPanning) onHoverFolder?.(child, e, popup.id) }} onMouseLeave={() => onLeaveFolder?.()} className="p-1 -m-1">
+                              <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
