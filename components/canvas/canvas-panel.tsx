@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer } from "react"
+import { useRef, useState, useEffect, useReducer, useCallback } from "react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import dynamic from 'next/dynamic'
@@ -13,6 +13,7 @@ import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
+import { useAutoScroll } from "./use-auto-scroll"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -141,7 +142,41 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     startX: 0,
     startY: 0,
     offsetX: 0,
-    offsetY: 0
+    offsetY: 0,
+    rafId: null as number | null,
+    currentTransform: { x: 0, y: 0 },
+    targetTransform: { x: 0, y: 0 },
+    initialPosition: { x: 0, y: 0 }
+  })
+  
+  // Auto-scroll functionality for panel dragging
+  const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
+    if (!dragState.current.isDragging) return
+    
+    // Move ALL panels to simulate canvas panning
+    const allPanels = document.querySelectorAll('[data-panel-id]')
+    allPanels.forEach(panel => {
+      const panelEl = panel as HTMLElement
+      
+      if (panelEl.id === `panel-${panelId}` && dragState.current.isDragging) {
+        // For the dragging panel, update its initial position
+        dragState.current.initialPosition.x += deltaX
+        dragState.current.initialPosition.y += deltaY
+      } else {
+        // For other panels, update their actual position
+        const currentLeft = parseInt(panelEl.style.left || '0', 10)
+        const currentTop = parseInt(panelEl.style.top || '0', 10)
+        panelEl.style.left = (currentLeft + deltaX) + 'px'
+        panelEl.style.top = (currentTop + deltaY) + 'px'
+      }
+    })
+  }, [panelId])
+  
+  const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
+    enabled: true,
+    threshold: 80,
+    speed: 8,
+    onScroll: handleAutoScroll
   })
 
   // Get appropriate provider based on mode
@@ -543,11 +578,21 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const currentLeft = parseInt(panel.style.left || position.x.toString(), 10)
       const currentTop = parseInt(panel.style.top || position.y.toString(), 10)
       
+      // Store initial position and reset transform
+      dragState.current.initialPosition = { x: currentLeft, y: currentTop }
+      dragState.current.currentTransform = { x: 0, y: 0 }
+      dragState.current.targetTransform = { x: 0, y: 0 }
+      
       // Calculate offset from mouse to panel position
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
       dragState.current.offsetX = e.clientX - currentLeft
       dragState.current.offsetY = e.clientY - currentTop
+
+      // Enable GPU acceleration for smooth dragging
+      panel.style.willChange = 'transform'
+      panel.style.transform = 'translate3d(0, 0, 0)'
+      panel.style.transition = 'none'
 
       // Bring panel to front with controlled z-index
       setZIndex(() => {
@@ -569,13 +614,28 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     const handleMouseMove = (e: MouseEvent) => {
       if (!dragState.current.isDragging) return
       
-      // Calculate new position based on mouse movement
-      const x = e.clientX - dragState.current.offsetX
-      const y = e.clientY - dragState.current.offsetY
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
       
-      // Update panel position
-      panel.style.left = x + 'px'
-      panel.style.top = y + 'px'
+      // Calculate target transform based on mouse movement
+      const deltaX = e.clientX - dragState.current.startX
+      const deltaY = e.clientY - dragState.current.startY
+      
+      dragState.current.targetTransform = { x: deltaX, y: deltaY }
+      
+      // Use requestAnimationFrame for smooth updates
+      if (!dragState.current.rafId) {
+        dragState.current.rafId = requestAnimationFrame(() => {
+          if (!dragState.current.isDragging) return
+          
+          // Apply transform for immediate visual feedback
+          const { x, y } = dragState.current.targetTransform
+          panel.style.transform = `translate3d(${x}px, ${y}px, 0)`
+          
+          dragState.current.currentTransform = { x, y }
+          dragState.current.rafId = null
+        })
+      }
       
       e.preventDefault()
     }
@@ -583,7 +643,26 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     const handleMouseUp = (e: MouseEvent) => {
       if (!dragState.current.isDragging) return
       
+      // Stop auto-scroll when dragging ends
+      stopAutoScroll()
+      
+      // Cancel any pending animation frame
+      if (dragState.current.rafId) {
+        cancelAnimationFrame(dragState.current.rafId)
+        dragState.current.rafId = null
+      }
+      
       dragState.current.isDragging = false
+      
+      // Calculate final position from initial position + transform
+      const finalX = dragState.current.initialPosition.x + dragState.current.currentTransform.x
+      const finalY = dragState.current.initialPosition.y + dragState.current.currentTransform.y
+      
+      // Commit the final position
+      panel.style.left = finalX + 'px'
+      panel.style.top = finalY + 'px'
+      panel.style.transform = ''
+      panel.style.willChange = 'auto'
       
       // Reset z-index to base level after drag
       setTimeout(() => {
@@ -592,10 +671,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           activePanelId = null
         }
       }, 100)
-      
-      // Get final position
-      const finalX = parseInt(panel.style.left || '0', 10)
-      const finalY = parseInt(panel.style.top || '0', 10)
       
       // Update position in both stores
       dataStore.update(panelId, { position: { x: finalX, y: finalY } })
@@ -623,11 +698,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
       
+      // Cancel any pending animation frame
+      if (dragState.current.rafId) {
+        cancelAnimationFrame(dragState.current.rafId)
+        dragState.current.rafId = null
+      }
+      
+      // Stop auto-scroll on cleanup
+      stopAutoScroll()
+      
       // Reset any lingering styles
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
+      panel.style.transform = ''
+      panel.style.willChange = 'auto'
     }
-  }, []) // Remove dependencies to prevent recreating handlers
+  }, [checkAutoScroll, stopAutoScroll, panelId]) // Add auto-scroll functions and panelId as dependencies
 
   // Update cursor when layer state changes
   useEffect(() => {
@@ -782,8 +868,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         position: 'absolute',
         left: position.x + 'px',
         top: position.y + 'px',
-        width: '800px',
-        minHeight: '600px',
+        width: '500px',
+        minHeight: '400px',
         background: 'white',
         borderRadius: '16px',
         boxShadow: '0 8px 32px rgba(0,0,0,0.15)',

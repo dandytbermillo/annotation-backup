@@ -134,7 +134,7 @@ export function panToPanel(
   }
   
   // Default panel dimensions (can be made configurable)
-  const panelDimensions = { width: 800, height: 600 }
+  const panelDimensions = { width: 500, height: 400 }
   const viewportDimensions = {
     width: window.innerWidth,
     height: window.innerHeight

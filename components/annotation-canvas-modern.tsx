@@ -8,10 +8,12 @@ import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import { CanvasControls } from "./canvas/canvas-controls"
 import { EnhancedControlPanel } from "./canvas/enhanced-control-panel"
-import { Minimap } from "./canvas/minimap"
+import { EnhancedMinimap } from "./canvas/enhanced-minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
 import { panToPanel } from "@/lib/canvas/pan-animations"
-import { Settings } from "lucide-react"
+import { Settings, Plus } from "lucide-react"
+import { AddComponentMenu } from "./canvas/add-component-menu"
+import { ComponentPanel } from "./canvas/component-panel"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -44,6 +46,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 
   const [panels, setPanels] = useState<string[]>([])
   const [showControlPanel, setShowControlPanel] = useState(false)
+  const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
+  const [components, setComponents] = useState<Array<{
+    id: string
+    type: 'calculator' | 'timer' | 'editor' | 'dragtest'
+    position: { x: number; y: number }
+  }>>([])
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
     onSelectStart: (e: Event) => void;
@@ -134,7 +142,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     // Only start dragging if clicking on canvas background
-    if ((e.target as HTMLElement).closest('.panel')) return
+    // Don't drag if clicking on a panel or component
+    const target = e.target as HTMLElement
+    if (target.closest('.panel') || target.closest('[data-component-panel]')) return
     
     setCanvasState(prev => ({
       ...prev,
@@ -265,6 +275,43 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       
       return [...prev, panelId]
     })
+  }
+  
+  // Handle adding components
+  const handleAddComponent = (type: string, position?: { x: number; y: number }) => {
+    const id = `component-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    
+    // Calculate position - center of viewport in world coordinates
+    // The canvas translate is the offset, so we need to negate it to get world position
+    const viewportCenterX = window.innerWidth / 2
+    const viewportCenterY = window.innerHeight / 2
+    
+    // Convert from screen space to world space
+    // World position = (Screen position - Canvas translate) / zoom
+    const worldX = (-canvasState.translateX + viewportCenterX) / canvasState.zoom
+    const worldY = (-canvasState.translateY + viewportCenterY) / canvasState.zoom
+    
+    // Center the component (component is ~350px wide, ~300px tall)
+    const finalPosition = position || {
+      x: worldX - 175,
+      y: worldY - 150
+    }
+    
+    setComponents(prev => [...prev, {
+      id,
+      type: type as 'calculator' | 'timer' | 'editor' | 'dragtest',
+      position: finalPosition
+    }])
+  }
+  
+  const handleComponentClose = (id: string) => {
+    setComponents(prev => prev.filter(c => c.id !== id))
+  }
+  
+  const handleComponentPositionChange = (id: string, position: { x: number; y: number }) => {
+    setComponents(prev => prev.map(c => 
+      c.id === id ? { ...c, position } : c
+    ))
   }
 
   // Subscribe to panel creation events
@@ -429,6 +476,15 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         >
           <Settings size={20} />
         </button>
+        
+        {/* Add Components Button */}
+        <button
+          onClick={() => setShowAddComponentMenu(!showAddComponentMenu)}
+          className="fixed top-16 right-20 z-[900] p-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-lg shadow-lg transition-all duration-200 hover:scale-110"
+          title="Add Components"
+        >
+          <Plus size={20} />
+        </button>
 
         {/* Enhanced Control Panel */}
         <EnhancedControlPanel 
@@ -436,11 +492,18 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           onClose={() => setShowControlPanel(false)}
         />
 
-        {/* Minimap */}
-        <Minimap 
+        {/* Enhanced Minimap */}
+        <EnhancedMinimap 
           panels={panels}
           canvasState={canvasState}
           onNavigate={(x, y) => setCanvasState(prev => ({ ...prev, translateX: x, translateY: y }))}
+        />
+        
+        {/* Add Components Menu */}
+        <AddComponentMenu 
+          visible={showAddComponentMenu}
+          onClose={() => setShowAddComponentMenu(false)}
+          onAddComponent={handleAddComponent}
         />
 
         {/* Canvas Container */}
@@ -489,6 +552,18 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
               panels={panels}
               onClose={handlePanelClose}
             />
+            
+            {/* Component Panels */}
+            {components.map(component => (
+              <ComponentPanel
+                key={component.id}
+                id={component.id}
+                type={component.type}
+                position={component.position}
+                onClose={handleComponentClose}
+                onPositionChange={handleComponentPositionChange}
+              />
+            ))}
           </div>
         </div>
 

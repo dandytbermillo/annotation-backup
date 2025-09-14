@@ -13,6 +13,7 @@ import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortc
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
+import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
 interface Note {
   id: string
@@ -176,6 +177,41 @@ function NotesExplorerContent({
   const dragRafRef = useRef<number | null>(null)
   const rafDragEnabledRef = useRef<boolean>(false)
   
+  // Auto-scroll when dragging near edges
+  const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
+    // Apply auto-scroll to all popups
+    setHoverPopovers(prev => {
+      const newMap = new Map(prev)
+      newMap.forEach((popup, id) => {
+        newMap.set(id, {
+          ...popup,
+          position: {
+            x: popup.position.x + deltaX,
+            y: popup.position.y + deltaY
+          },
+          canvasPosition: popup.canvasPosition ? {
+            x: popup.canvasPosition.x + deltaX,
+            y: popup.canvasPosition.y + deltaY
+          } : undefined
+        })
+      })
+      return newMap
+    })
+    
+    // Also update the dragging element's transform if using RAF mode
+    if (rafDragEnabledRef.current && draggingElRef.current) {
+      dragDeltaRef.current.dx += deltaX
+      dragDeltaRef.current.dy += deltaY
+    }
+  }, [])
+  
+  const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
+    enabled: true,
+    threshold: 80,
+    speed: 8,
+    onScroll: handleAutoScroll
+  })
+  
   // Convert popup state for multi-layer canvas
   const adaptedPopups = useMemo(() => {
     if (!multiLayerEnabled || !layerContext) return null
@@ -299,6 +335,9 @@ function NotesExplorerContent({
     const handleGlobalMouseMove = (e: MouseEvent) => {
       e.preventDefault()
       
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
+      
       // Allow dragging with minimal constraints - just keep header visible
       const minVisible = 50 // Minimum pixels that must remain visible
       const newPosition = {
@@ -352,6 +391,9 @@ function NotesExplorerContent({
     const handleGlobalMouseUp = (e: MouseEvent) => {
       e.preventDefault()
       
+      // Stop auto-scroll when dragging ends
+      stopAutoScroll()
+      
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
         const popup = newMap.get(draggingPopup)
@@ -377,8 +419,9 @@ function NotesExplorerContent({
     return () => {
       document.removeEventListener('mousemove', handleGlobalMouseMove, true)
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
+      stopAutoScroll() // Stop auto-scroll on cleanup
     }
-  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, hoverPopovers])
+  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, hoverPopovers, checkAutoScroll, stopAutoScroll])
 
   // RAF-driven popup drag: applies transform directly to the dragged element
   useEffect(() => {
@@ -401,6 +444,10 @@ function NotesExplorerContent({
 
     const handleMove = (e: MouseEvent) => {
       e.preventDefault()
+      
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
+      
       const minVisible = 50
       const targetLeft = Math.max(
         -250,
@@ -418,6 +465,10 @@ function NotesExplorerContent({
 
     const handleUp = (e: MouseEvent) => {
       e.preventDefault()
+      
+      // Stop auto-scroll when dragging ends
+      stopAutoScroll()
+      
       const { left, top } = dragStartPosRef.current
       const { dx, dy } = dragDeltaRef.current
       const finalPos = { x: left + dx, y: top + dy }
@@ -474,8 +525,9 @@ function NotesExplorerContent({
         dragRafRef.current = null
       }
       rafDragEnabledRef.current = false
+      stopAutoScroll() // Stop auto-scroll on cleanup
     }
-  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, setHoverPopovers])
+  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, setHoverPopovers, checkAutoScroll, stopAutoScroll])
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {

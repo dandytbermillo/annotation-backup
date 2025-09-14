@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 20:16Z] 5d7582c: control panel is added
 - commit [2025-09-14 19:34Z] a4dc755: lod is adopted
 - commit [2025-09-14 19:02Z] 21f39fe: both individual and entire cancas dragging work so well
 - commit [2025-09-14 18:41Z] b784337: smooth popup panning

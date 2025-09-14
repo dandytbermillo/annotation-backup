@@ -75,8 +75,8 @@ export function Minimap({ panels, canvasState, onNavigate }: MinimapProps) {
               style={{
                   left: `${branch.position.x}px`,
                   top: `${branch.position.y}px`,
-                  width: '800px',
-                  height: '600px',
+                  width: '500px',
+                  height: '400px',
                   opacity: 0.8,
               }}
             />
