@@ -1,0 +1,62 @@
+/* Popup Overlay Optimization Styles */
+
+/* Disable all transitions and animations when panning */
+.popup-overlay-panning * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Force rasterization during panning to prevent text reflow */
+.popup-overlay-panning .popup-card {
+  /* Slightly reduce opacity to trigger simpler rendering */
+  opacity: 0.99 !important;
+  /* Force a single raster layer */
+  will-change: transform !important;
+  /* Disable subpixel antialiasing during pan */
+  -webkit-font-smoothing: antialiased !important;
+  /* Force GPU rasterization */
+  transform: translateZ(0) !important;
+  /* Prevent any filter effects during pan */
+  filter: none !important;
+}
+
+/* Force GPU acceleration for popup cards */
+.popup-card {
+  /* Create a new stacking context */
+  isolation: isolate;
+  /* Force GPU layer */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  perspective: 1000px;
+  -webkit-perspective: 1000px;
+  /* Prevent font rendering changes */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Optimize text rendering in popups */
+.popup-card * {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Prevent hover effects during drag */
+.popup-overlay-panning .hover\:bg-gray-700:hover {
+  background-color: transparent !important;
+}
+
+.popup-overlay-panning .group:hover .group-hover\:opacity-100 {
+  opacity: 0 !important;
+}
+
+/* Ensure smooth dragging */
+#popup-overlay[data-panning="true"] {
+  will-change: transform;
+}
+
+#popup-overlay[data-panning="false"] {
+  will-change: auto;
+}

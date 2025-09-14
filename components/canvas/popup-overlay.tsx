@@ -10,6 +10,7 @@ import { useLayer } from '@/components/canvas/layer-provider';
 import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { debugLog } from '@/lib/utils/debug-logger';
+import '@/styles/popup-overlay.css';
 
 interface PopupData extends PopupState {
   id: string;
@@ -81,6 +82,58 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const pointerIdRef = useRef<number | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Selection guard refs to prevent text highlighting during drag
+  const selectionGuardsRef = useRef<{
+    onSelectStart: (e: Event) => void;
+    onDragStart: (e: Event) => void;
+    prevUserSelect: string;
+  } | null>(null);
+
+  // Inject global CSS once to hard-disable selection when dragging
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const STYLE_ID = 'dragging-no-select-style';
+    if (!document.getElementById(STYLE_ID)) {
+      const style = document.createElement('style');
+      style.id = STYLE_ID;
+      style.textContent = `
+        html.dragging-no-select, html.dragging-no-select * {
+          -webkit-user-select: none !important;
+          user-select: none !important;
+          -ms-user-select: none !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+  }, []);
+
+  const enableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (selectionGuardsRef.current) return; // already enabled
+    const onSelectStart = (e: Event) => { e.preventDefault(); };
+    const onDragStart = (e: Event) => { e.preventDefault(); };
+    selectionGuardsRef.current = {
+      onSelectStart,
+      onDragStart,
+      prevUserSelect: document.body.style.userSelect,
+    };
+    document.documentElement.classList.add('dragging-no-select');
+    document.body.style.userSelect = 'none';
+    document.addEventListener('selectstart', onSelectStart, true);
+    document.addEventListener('dragstart', onDragStart, true);
+    try { window.getSelection()?.removeAllRanges?.(); } catch {}
+  }, []);
+
+  const disableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const g = selectionGuardsRef.current;
+    if (!g) return;
+    document.removeEventListener('selectstart', g.onSelectStart, true);
+    document.removeEventListener('dragstart', g.onDragStart, true);
+    document.documentElement.classList.remove('dragging-no-select');
+    document.body.style.userSelect = g.prevUserSelect || '';
+    selectionGuardsRef.current = null;
+  }, []);
   
   // Early return if feature not enabled
   if (!multiLayerEnabled) {
@@ -98,14 +151,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
   }, [popups.size, transform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
-  // Debug log transform changes
-  useEffect(() => {
-    debugLog('PopupOverlay', 'transform_changed', {
-      transform,
-      isPanning,
-      engaged
-    });
-  }, [transform]);
+  // Avoid per-frame logging during pan to prevent jank/flicker
+  // (transform updates every pointer move)
+  // Intentionally disabled: 'transform_changed' spam
+  // useEffect(() => {
+  //   debugLog('PopupOverlay', 'transform_changed', {
+  //     transform,
+  //     isPanning,
+  //     engaged
+  //   });
+  // }, [transform]);
   
   // Debug log layer changes
   useEffect(() => {
@@ -216,9 +271,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
     
     // Optimize for dragging
+    // Prevent text selection while dragging
+    enableSelectionGuards();
     document.body.style.userSelect = 'none';
     if (containerRef.current) {
+      // Apply GPU optimization hints directly during drag
       containerRef.current.style.willChange = 'transform';
+      containerRef.current.style.transform = containerRef.current.style.transform || 'translate3d(0, 0, 0)';
+      containerRef.current.style.backfaceVisibility = 'hidden';
+      containerRef.current.style.perspective = '1000px';
     }
     
     // Only prevent default for actual drag operations
@@ -250,22 +311,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
     }
     
-    // Update transform directly
+    // Update transform directly (no logging here to keep UI smooth)
     setTransform(prev => {
       const newTransform = {
         ...prev,
         x: prev.x + deltaX,
         y: prev.y + deltaY
       };
-      
-      // Log to database
-      debugLog('PopupOverlay', 'pan_move', { 
-        deltaX, 
-        deltaY,
-        newTransform,
-        popupCount: popups.size
-      });
-      
+
       return newTransform;
     });
     
@@ -305,8 +358,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Reset styles
     document.body.style.userSelect = '';
     if (containerRef.current) {
-      containerRef.current.style.willChange = '';
+      // Reset GPU optimization hints after drag
+      containerRef.current.style.willChange = 'auto';
+      containerRef.current.style.backfaceVisibility = '';
+      containerRef.current.style.perspective = '';
     }
+    // Re-enable selection
+    disableSelectionGuards();
   }, [isPanning, transform, engaged]);
   
   // Note: With pointer capture, we don't need document-level listeners
@@ -354,10 +412,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   );
   
   // Container transform style with translate3d for GPU acceleration
-  const containerStyle = {
-    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scale})`,
+  const containerStyle: React.CSSProperties = {
+    // Round to nearest 0.5px to reduce jitter while maintaining smoothness
+    transform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
     transformOrigin: '0 0',
-    willChange: isPanning ? 'transform' : 'auto'
+    // Only apply will-change during active panning to optimize GPU layers
+    willChange: isPanning ? 'transform' : 'auto',
+    // Force stable GPU layer to prevent text rasterization issues
+    backfaceVisibility: 'hidden',
+    transformStyle: 'preserve-3d',
+    // Critical: NO transition during drag (main cause of blinking)
+    transition: 'none',
+    // Ensure we're on a separate compositing layer
+    isolation: 'isolate',
+    // Force GPU acceleration
+    WebkitTransform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
+    // Prevent font antialiasing changes during transform
+    WebkitFontSmoothing: 'antialiased',
+    MozOsxFontSmoothing: 'grayscale',
+    // Apply subtle opacity during pan to force simpler rendering
+    opacity: isPanning ? 0.999 : 1,
   };
 
   // Recompute overlay bounds to match the canvas area (avoids hardcoded offsets)
@@ -483,15 +557,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     <div
       ref={overlayRef}
       id="popup-overlay"
-      className="absolute inset-0"
+      className={`absolute inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
+      data-panning={isPanning.toString()}
       style={{
         // Keep overlay above canvas content but below sidebar (sidebar lives outside container)
         zIndex: 40,
         overflow: 'hidden',
-        // Only accept events while hovered (or when actively panning)
-        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0 && isPointerInside)) ? 'auto' : 'none',
-        touchAction: (isPanning || (isActiveLayer && popups.size > 0)) ? 'none' : 'auto',
+        // Always capture events whenever popup layer is active to prevent native selection
+        pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
+        touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        // Contain layout/paint to this overlay to avoid expensive repaints
+        contain: 'layout paint' as const,
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -503,8 +580,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     >
       {/* Transform container - applies pan/zoom to all children */}
       <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
-        {/* Invisible background to catch clicks on empty space */}
-        <div className="absolute inset-0 popup-background" style={{ backgroundColor: 'transparent' }} aria-hidden="true" />
+        {/* Removed full-viewport background inside transform to prevent repaint flicker */}
         {/* Connection lines (canvas coords) */}
         <svg className="absolute inset-0 pointer-events-none" style={{ overflow: 'visible' }}>
           {connectionPaths.map((path, index) => (
@@ -532,6 +608,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 maxHeight: '400px',
                 zIndex,
                 cursor: popup.isDragging ? 'grabbing' : 'default',
+                // Slightly reduce opacity during pan to prevent text rendering issues
+                opacity: isPanning ? 0.99 : 1,
+                // Add GPU optimization to individual popups
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden' as const,
+                willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
               }}
             >
               {/* Popup Header */}
@@ -564,7 +646,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     {popup.folder.children.map((child: any) => (
                       <div
                         key={child.id}
-                        className="px-3 py-2 hover:bg-gray-700 cursor-pointer flex items-center justify-between text-sm group"
+                        className="px-3 py-2 cursor-pointer flex items-center justify-between text-sm group"
+                        style={{ 
+                          backgroundColor: 'transparent',
+                          transition: isPanning ? 'none' : 'background-color 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isPanning) {
+                            (e.currentTarget as HTMLElement).style.backgroundColor = '#374151';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                        }}
                       >
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           {child.type === 'folder' ? (
@@ -586,7 +680,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                             }}
                             className="p-1 -m-1"
                           >
-                            <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                            <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 flex-shrink-0" style={{ transition: isPanning ? 'none' : 'opacity 0.2s' }} />
                           </div>
                         )}
                       </div>
@@ -617,7 +711,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     <div
       ref={overlayRef}
       id="popup-overlay"
-      className="fixed"
+      className={`fixed ${isPanning ? 'popup-overlay-panning' : ''}`}
+      data-panning={isPanning.toString()}
       style={{
         top: overlayBounds ? `${overlayBounds.top}px` : 0,
         left: overlayBounds ? `${overlayBounds.left}px` : '320px',
@@ -627,12 +722,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         zIndex: 40, // Below sidebar z-50, above canvas
         // Ensure overlay content does not spill into sidebar area
         overflow: 'hidden',
-        // Only accept events while hovered (or when actively panning)
-        pointerEvents: (isPanning || (isActiveLayer && popups.size > 0 && isPointerInside)) ? 'auto' : 'none',
-        // Prevent browser touch gestures only when interactive
-        touchAction: (isPanning || (isActiveLayer && popups.size > 0)) ? 'none' : 'auto',
+        // Always capture events whenever popup layer is active to prevent native selection
+        pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
+        // Prevent browser touch gestures when active
+        touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         // Show grab cursor when hovering empty space
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        // Contain layout/paint to this overlay to avoid expensive repaints
+        contain: 'layout paint' as const,
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -648,12 +745,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         className="absolute inset-0"
         style={containerStyle}
       >
-        {/* Invisible background to catch clicks on empty space */}
-        <div 
-          className="absolute inset-0 popup-background" 
-          style={{ backgroundColor: 'transparent' }}
-          aria-hidden="true"
-        />
+        {/* Removed full-viewport background inside transform to prevent repaint flicker */}
         
         {/* Connection lines (canvas coords) */}
         <svg 
@@ -698,6 +790,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               maxHeight: '400px',
               zIndex,
               cursor: popup.isDragging ? 'grabbing' : 'default',
+              // Slightly reduce opacity during pan to prevent text rendering issues
+              opacity: isPanning ? 0.99 : 1,
+              // Add GPU optimization to individual popups
+              transform: 'translateZ(0)',
+              backfaceVisibility: 'hidden' as const,
+              willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
             }}
           >
             {/* Popup Header */}
@@ -735,7 +833,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   {popup.folder.children.map((child: any) => (
                     <div
                       key={child.id}
-                      className="px-3 py-2 hover:bg-gray-700 cursor-pointer flex items-center justify-between text-sm group"
+                      className="px-3 py-2 cursor-pointer flex items-center justify-between text-sm group"
+                      style={{ 
+                        backgroundColor: 'transparent',
+                        transition: isPanning ? 'none' : 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isPanning) {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = '#374151';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent';
+                      }}
                     >
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         {child.type === 'folder' ? (
@@ -757,7 +867,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                           }}
                           className="p-1 -m-1"
                         >
-                          <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+                          <Eye className="w-4 h-4 text-gray-500 opacity-0 group-hover:opacity-100 flex-shrink-0" style={{ transition: isPanning ? 'none' : 'opacity 0.2s' }} />
                         </div>
                       )}
                     </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, forwardRef, useImperativeHandle } from "react"
+import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
@@ -41,6 +41,36 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   })
 
   const [panels, setPanels] = useState<string[]>([])
+  // Selection guards to prevent text highlighting during canvas drag
+  const selectionGuardsRef = useRef<{
+    onSelectStart: (e: Event) => void;
+    onDragStart: (e: Event) => void;
+    prevUserSelect: string;
+  } | null>(null)
+
+  const enableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return
+    if (selectionGuardsRef.current) return
+    const onSelectStart = (e: Event) => { e.preventDefault() }
+    const onDragStart = (e: Event) => { e.preventDefault() }
+    selectionGuardsRef.current = { onSelectStart, onDragStart, prevUserSelect: document.body.style.userSelect }
+    document.documentElement.classList.add('dragging-no-select')
+    document.body.style.userSelect = 'none'
+    document.addEventListener('selectstart', onSelectStart, true)
+    document.addEventListener('dragstart', onDragStart, true)
+    try { window.getSelection()?.removeAllRanges?.() } catch {}
+  }, [])
+
+  const disableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return
+    const g = selectionGuardsRef.current
+    if (!g) return
+    document.removeEventListener('selectstart', g.onSelectStart, true)
+    document.removeEventListener('dragstart', g.onDragStart, true)
+    document.documentElement.classList.remove('dragging-no-select')
+    document.body.style.userSelect = g.prevUserSelect || ''
+    selectionGuardsRef.current = null
+  }, [])
 
   useEffect(() => {
     // Note: We no longer clear editor docs when switching notes
@@ -110,7 +140,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       lastMouseY: e.clientY
     }))
     
+    enableSelectionGuards()
     document.body.style.userSelect = 'none'
+    try { window.getSelection()?.removeAllRanges?.() } catch {}
     e.preventDefault()
   }
 
@@ -132,6 +164,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const handleCanvasMouseUp = () => {
     setCanvasState(prev => ({ ...prev, isDragging: false }))
     document.body.style.userSelect = ''
+    disableSelectionGuards()
   }
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -369,7 +402,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     <CanvasProvider noteId={noteId}>
       <div className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
         {/* Demo Header */}
-        <div className="fixed top-0 left-0 right-0 bg-black/90 backdrop-blur-xl text-white p-3 text-xs font-medium z-[1000] border-b border-white/10">
+        <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10">
           🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor
         </div>
 
@@ -396,6 +429,14 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         <div 
           id="canvas-container"
           className={`relative w-full h-full cursor-grab overflow-hidden ${canvasState.isDragging ? 'cursor-grabbing' : ''}`}
+          style={{
+            // Isolate canvas painting to avoid cross-layer re-rasterization while dragging
+            contain: 'layout paint',
+            isolation: 'isolate',
+            // Stabilize font rendering during transforms
+            WebkitFontSmoothing: 'antialiased',
+            textRendering: 'optimizeLegibility',
+          }}
           onMouseDown={handleCanvasMouseDown}
           onWheel={handleWheel}
           onContextMenu={(e) => e.preventDefault()}
@@ -405,9 +446,18 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             id="infinite-canvas"
             style={{
               position: 'absolute',
-              transform: `translate(${canvasState.translateX}px, ${canvasState.translateY}px) scale(${canvasState.zoom})`,
+              // Use translate3d without rounding for smooth motion (infinite-canvas approach)
+              transform: `translate3d(${canvasState.translateX}px, ${canvasState.translateY}px, 0) scale(${canvasState.zoom})`,
               transformOrigin: '0 0',
+              // Critical: NO transition during drag to prevent text blinking
               transition: canvasState.isDragging ? 'none' : 'transform 0.3s ease',
+              // Optimize GPU layers only during active drag
+              willChange: canvasState.isDragging ? 'transform' : 'auto',
+              // Force stable GPU layer composition
+              backfaceVisibility: 'hidden' as const,
+              transformStyle: 'preserve-3d' as const,
+              backfaceVisibility: 'hidden',
+              transformStyle: 'preserve-3d',
             }}
           >
             {/* Connection Lines */}
