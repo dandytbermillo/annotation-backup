@@ -6,11 +6,9 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 15:05Z] 691bf1f: blinking text when drag fixed
 - commit [2025-09-14 06:37Z] ca6a064: issue about blocking the sidebar is fixed
 - commit [2025-09-14 05:12Z] 495c7c6: popup can succesgfully go under the sidebar
-- commit [2025-09-14 05:00Z] 673af71: finally the overlay canvas works
-- commit [2025-09-14 04:49Z] a7aa7b9: space bar issue fixed
-- commit [2025-09-13 23:24Z] 6b2d43d: before implementing frm infinite canvas
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

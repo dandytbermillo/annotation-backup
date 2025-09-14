@@ -12,6 +12,25 @@ import { X, Folder, FileText, Eye } from 'lucide-react';
 import { debugLog } from '@/lib/utils/debug-logger';
 import '@/styles/popup-overlay.css';
 
+// Auto-scroll configuration - all values are configurable, not hardcoded
+const AUTO_SCROLL_CONFIG = {
+  ENABLED: process.env.NEXT_PUBLIC_DISABLE_AUTOSCROLL !== 'true', // Feature flag
+  THRESHOLD: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_THRESHOLD || '80'), // Distance from edge (px)
+  MIN_SPEED: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_MIN_SPEED || '5'), // Min scroll speed (px/frame)
+  MAX_SPEED: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_MAX_SPEED || '15'), // Max scroll speed (px/frame)
+  ACCELERATION: 'ease-out' as const, // Speed curve type
+  DEBUG: process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_DEBUG_AUTOSCROLL === 'true'
+} as const;
+
+// Auto-scroll state interface
+interface AutoScrollState {
+  isActive: boolean;
+  velocity: { x: number; y: number };
+  threshold: number;
+  minSpeed: number;
+  maxSpeed: number;
+}
+
 interface PopupData extends PopupState {
   id: string;
   folder: any; // TreeNode from existing implementation
@@ -61,9 +80,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, []);
   
-  // Self-contained transform state (infinite-canvas pattern)
+  // Self-contained transform state (committed when pan ends)
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
+  // RAF-driven pan refs: avoid React renders on every move
+  const transformRef = useRef({ x: 0, y: 0, scale: 1 });
+  const rafIdRef = useRef<number | null>(null);
+  const lastRafTsRef = useRef(0);
   const [engaged, setEngaged] = useState(false); // hysteresis engaged
   
   // Use LayerProvider to gate interactivity by active layer
@@ -88,6 +111,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     onDragStart: (e: Event) => void;
     prevUserSelect: string;
   } | null>(null);
+  
+  // Auto-scroll state and refs
+  const [autoScroll, setAutoScroll] = useState<AutoScrollState>(() => ({
+    isActive: false,
+    velocity: { x: 0, y: 0 },
+    threshold: AUTO_SCROLL_CONFIG.THRESHOLD,
+    minSpeed: AUTO_SCROLL_CONFIG.MIN_SPEED,
+    maxSpeed: AUTO_SCROLL_CONFIG.MAX_SPEED
+  }));
+  const autoScrollRef = useRef<AutoScrollState>(autoScroll);
+  const animationFrameRef = useRef<number | null>(null);
 
   // Inject global CSS once to hard-disable selection when dragging
   useEffect(() => {
@@ -277,9 +311,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (containerRef.current) {
       // Apply GPU optimization hints directly during drag
       containerRef.current.style.willChange = 'transform';
-      containerRef.current.style.transform = containerRef.current.style.transform || 'translate3d(0, 0, 0)';
       containerRef.current.style.backfaceVisibility = 'hidden';
       containerRef.current.style.perspective = '1000px';
+      // Sync current transform into ref and element style
+      transformRef.current = { ...transform };
+      const { x, y, scale } = transformRef.current;
+      containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
     }
     
     // Only prevent default for actual drag operations
@@ -311,16 +348,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
     }
     
-    // Update transform directly (no logging here to keep UI smooth)
-    setTransform(prev => {
-      const newTransform = {
-        ...prev,
-        x: prev.x + deltaX,
-        y: prev.y + deltaY
-      };
-
-      return newTransform;
-    });
+    // Update transform via ref and schedule RAF to apply element style only
+    transformRef.current = {
+      ...transformRef.current,
+      x: transformRef.current.x + deltaX,
+      y: transformRef.current.y + deltaY,
+    };
+    if (rafIdRef.current == null) {
+      rafIdRef.current = requestAnimationFrame((ts) => {
+        rafIdRef.current = null;
+        if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
+        lastRafTsRef.current = ts;
+        const { x, y, scale } = transformRef.current;
+        if (containerRef.current) {
+          containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+        }
+      });
+    }
     
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
   }, [isPanning, engaged, popups.size]);
@@ -362,6 +406,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       containerRef.current.style.willChange = 'auto';
       containerRef.current.style.backfaceVisibility = '';
       containerRef.current.style.perspective = '';
+      // Clear transform so React state can control again
+      containerRef.current.style.transform = '';
+    }
+    // Commit the final transform once to React state
+    setTransform(prev => ({ ...prev, ...transformRef.current }));
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
     }
     // Re-enable selection
     disableSelectionGuards();
@@ -638,7 +690,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </button>
               </div>
               {/* Popup Content */}
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)' }}>
+              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
                 {popup.isLoading ? (
                   <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                 ) : popup.folder?.children && popup.folder.children.length > 0 ? (
@@ -823,7 +875,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             </div>
             
             {/* Popup Content */}
-            <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)' }}>
+            <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
               {popup.isLoading ? (
                 <div className="p-4 text-center text-gray-500 text-sm">
                   Loading...

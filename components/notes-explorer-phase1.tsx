@@ -169,6 +169,12 @@ function NotesExplorerContent({
   // Dragging state for popups
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  // RAF-driven drag refs (avoid per-move React updates)
+  const draggingElRef = useRef<HTMLElement | null>(null)
+  const dragStartPosRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 })
+  const dragDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 })
+  const dragRafRef = useRef<number | null>(null)
+  const rafDragEnabledRef = useRef<boolean>(false)
   
   // Convert popup state for multi-layer canvas
   const adaptedPopups = useMemo(() => {
@@ -282,7 +288,7 @@ function NotesExplorerContent({
   
   // Handle global mouse events for dragging
   useEffect(() => {
-    if (!draggingPopup) return
+    if (!draggingPopup || rafDragEnabledRef.current) return
     
     let lastPosition = { x: 0, y: 0 }
     const popup = hoverPopovers.get(draggingPopup)
@@ -373,6 +379,102 @@ function NotesExplorerContent({
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
     }
   }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, hoverPopovers])
+
+  // RAF-driven popup drag: applies transform directly to the dragged element
+  useEffect(() => {
+    if (!draggingPopup || !rafDragEnabledRef.current) return
+
+    const el = draggingElRef.current
+    if (!el) return
+
+    const applyTransform = () => {
+      dragRafRef.current = null
+      const { dx, dy } = dragDeltaRef.current
+      el.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`
+    }
+
+    const schedule = () => {
+      if (dragRafRef.current == null) {
+        dragRafRef.current = requestAnimationFrame(applyTransform)
+      }
+    }
+
+    const handleMove = (e: MouseEvent) => {
+      e.preventDefault()
+      const minVisible = 50
+      const targetLeft = Math.max(
+        -250,
+        Math.min(window.innerWidth - minVisible, e.clientX - dragOffset.x)
+      )
+      const targetTop = Math.max(
+        0,
+        Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y)
+      )
+
+      const { left, top } = dragStartPosRef.current
+      dragDeltaRef.current = { dx: targetLeft - left, dy: targetTop - top }
+      schedule()
+    }
+
+    const handleUp = (e: MouseEvent) => {
+      e.preventDefault()
+      const { left, top } = dragStartPosRef.current
+      const { dx, dy } = dragDeltaRef.current
+      const finalPos = { x: left + dx, y: top + dy }
+
+      // Commit once to React state
+      setHoverPopovers(prev => {
+        const newMap = new Map(prev)
+        const popup = newMap.get(draggingPopup)
+        if (popup) {
+          let updatedCanvasPosition = popup.canvasPosition
+          if (multiLayerEnabled && layerContext && popup.canvasPosition) {
+            updatedCanvasPosition = { x: popup.canvasPosition.x + dx, y: popup.canvasPosition.y + dy }
+          }
+          newMap.set(draggingPopup, {
+            ...popup,
+            position: finalPos,
+            canvasPosition: updatedCanvasPosition,
+            isDragging: false,
+          })
+        }
+        return newMap
+      })
+
+      // Reset styles
+      if (el) {
+        el.style.transition = ''
+        el.style.willChange = 'auto'
+        el.style.zIndex = ''
+        el.style.transform = ''
+      }
+
+      // Cleanup
+      if (dragRafRef.current) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
+      draggingElRef.current = null
+      dragDeltaRef.current = { dx: 0, dy: 0 }
+      rafDragEnabledRef.current = false
+      setDraggingPopup(null)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.addEventListener('mousemove', handleMove, true)
+    document.addEventListener('mouseup', handleUp, true)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMove, true)
+      document.removeEventListener('mouseup', handleUp, true)
+      if (dragRafRef.current) {
+        cancelAnimationFrame(dragRafRef.current)
+        dragRafRef.current = null
+      }
+      rafDragEnabledRef.current = false
+    }
+  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, setHoverPopovers])
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
@@ -1159,6 +1261,21 @@ function NotesExplorerContent({
     // Add cursor style to body during drag
     document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
+
+    // Enable RAF-driven drag and prepare element styles
+    rafDragEnabledRef.current = true
+    const el = document.getElementById(`popup-${popupId}`) as HTMLElement | null
+    if (el) {
+      draggingElRef.current = el
+      const startLeft = parseFloat(el.style.left || '0')
+      const startTop = parseFloat(el.style.top || '0')
+      dragStartPosRef.current = { left: startLeft, top: startTop }
+      dragDeltaRef.current = { dx: 0, dy: 0 }
+      el.style.willChange = 'transform'
+      el.style.transition = 'none'
+      el.style.zIndex = '10000'
+      el.style.transform = 'translateZ(0)'
+    }
   }
   
   // Handle popup drag (now handled by global mouse events)
