@@ -447,6 +447,7 @@ function NotesExplorerContent({
         el.style.willChange = 'auto'
         el.style.zIndex = ''
         el.style.transform = ''
+        el.removeAttribute('data-dragging')
       }
 
       // Cleanup
@@ -1244,19 +1245,9 @@ function NotesExplorerContent({
     setDragOffset(offset)
     setDraggingPopup(popupId)
     
-    // Mark popup as being dragged
-    setHoverPopovers(prev => {
-      const newMap = new Map(prev)
-      const existingPopup = newMap.get(popupId)
-      if (existingPopup) {
-        newMap.set(popupId, { 
-          ...existingPopup, 
-          isDragging: true,
-          canvasPosition: existingPopup.canvasPosition // Preserve canvas position
-        })
-      }
-      return newMap
-    })
+    // Avoid setState at t=0 for smoother start; flag element instead
+    const elFlag = document.getElementById(`popup-${popupId}`) as HTMLElement | null
+    if (elFlag) elFlag.setAttribute('data-dragging', 'true')
     
     // Add cursor style to body during drag
     document.body.style.cursor = 'grabbing'

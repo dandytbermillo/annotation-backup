@@ -84,6 +84,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Self-contained transform state (committed when pan ends)
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
+  const isPanningRef = useRef(false);
   // RAF-driven pan refs: avoid React renders on every move
   const transformRef = useRef({ x: 0, y: 0, scale: 1 });
   const rafIdRef = useRef<number | null>(null);
@@ -285,7 +286,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       popupCount: popups.size
     });
     
-    setIsPanning(true);
+    // Use ref-driven panning to avoid render at t=0
+    isPanningRef.current = true;
     setEngaged(false); // reset hysteresis
     panStartRef.current = { x: e.clientX, y: e.clientY };
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
@@ -319,6 +321,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const { x, y, scale } = transformRef.current;
       containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
     }
+    // Immediate cursor feedback without render
+    if (overlayRef.current) overlayRef.current.style.cursor = 'grabbing';
     
     // Only prevent default for actual drag operations
     e.preventDefault();
@@ -326,11 +330,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Handle pan move (simplified like notes canvas)
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!isPanning || pointerIdRef.current === null) {
+    if (!isPanningRef.current || pointerIdRef.current === null) {
       debugLog('PopupOverlay', 'pan_move_blocked', {
-        isPanning,
+        isPanning: isPanningRef.current,
         pointerIdRef: pointerIdRef.current,
-        reason: !isPanning ? 'not_panning' : 'no_pointer_id'
+        reason: !isPanningRef.current ? 'not_panning' : 'no_pointer_id'
       });
       return;
     }
@@ -344,7 +348,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (!engaged) {
       const dx0 = e.clientX - panStartRef.current.x;
       const dy0 = e.clientY - panStartRef.current.y;
-      if (Math.hypot(dx0, dy0) < 4) return;
+      if (Math.hypot(dx0, dy0) < 2) return; // lower hysteresis for snappier start
       setEngaged(true);
       debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
     }
@@ -355,6 +359,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       x: transformRef.current.x + deltaX,
       y: transformRef.current.y + deltaY,
     };
+    // Apply immediate transform for first responsive frame
+    if (containerRef.current) {
+      const { x, y, scale } = transformRef.current;
+      containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+    }
     if (rafIdRef.current == null) {
       rafIdRef.current = requestAnimationFrame((ts) => {
         rafIdRef.current = null;
@@ -372,7 +381,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Handle pan end (simplified)
   const handlePointerEnd = useCallback((e: React.PointerEvent) => {
-    if (!isPanning) return;
+    if (!isPanningRef.current) return;
     
     debugLog('PopupOverlay', 'pan_end', { 
       totalDelta: {
@@ -383,7 +392,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       wasEngaged: engaged
     });
     
-    setIsPanning(false);
+    // End ref-driven panning
+    isPanningRef.current = false;
+    // Keep state false (we did not set it to true at start) but ensure UI resets
     setEngaged(false);
     
     // Release pointer capture
@@ -410,6 +421,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       // Clear transform so React state can control again
       containerRef.current.style.transform = '';
     }
+    if (overlayRef.current) overlayRef.current.style.cursor = '';
     // Commit the final transform once to React state
     setTransform(prev => ({ ...prev, ...transformRef.current }));
     if (rafIdRef.current) {
