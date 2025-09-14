@@ -37,15 +37,19 @@ export class ConnectionLineAdapter {
    */
   static adaptConnectionLines(
     popups: Map<string, PopupState>,
-    isDragging: boolean
+    isDragging: boolean, // motion active (pan or drag) -> use lighter stroke
+    visibleIds?: Set<string>
   ): PathData[] {
     const paths: PathData[] = [];
     
     popups.forEach((popup) => {
+      // LOD: if a visibility set is provided, only draw lines for visible nodes
+      if (visibleIds && !visibleIds.has(popup.id)) return;
       if (!popup.parentId) return;
       
       const parent = popups.get(popup.parentId);
       if (!parent) return;
+      if (visibleIds && !visibleIds.has(parent.id)) return;
       
       // Use canvas positions if available, fallback to screen positions
       const startPos = this.getPopupPosition(parent);
@@ -60,15 +64,32 @@ export class ConnectionLineAdapter {
         popup.isDragging || parent.isDragging
       );
       
-      // Determine styling based on drag state
-      const isActive = popup.isDragging || parent.isDragging || isDragging;
-      
-      paths.push({
-        d: pathString,
-        stroke: isActive ? 'rgba(59, 130, 246, 1)' : 'rgba(59, 130, 246, 0.6)',
-        strokeWidth: isActive ? 3 : 2,
-        opacity: isActive ? 1 : 0.7,
-      });
+      // Determine styling based on motion state
+      // While global motion (isDragging) is true, prefer lighter, cheaper strokes.
+      // If a specific popup is being dragged, slightly emphasize that link.
+      const popupActive = popup.isDragging || parent.isDragging;
+      if (isDragging) {
+        paths.push({
+          d: pathString,
+          stroke: 'rgba(59, 130, 246, 0.65)',
+          strokeWidth: 1.25,
+          opacity: 0.85,
+        });
+      } else if (popupActive) {
+        paths.push({
+          d: pathString,
+          stroke: 'rgba(59, 130, 246, 1)',
+          strokeWidth: 3,
+          opacity: 1,
+        });
+      } else {
+        paths.push({
+          d: pathString,
+          stroke: 'rgba(59, 130, 246, 0.75)',
+          strokeWidth: 2,
+          opacity: 0.9,
+        });
+      }
     });
     
     return paths;

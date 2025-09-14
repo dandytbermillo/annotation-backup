@@ -11,6 +11,7 @@ import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { debugLog } from '@/lib/utils/debug-logger';
+import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
 
 // Auto-scroll configuration - all values are configurable, not hardcoded
@@ -68,15 +69,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Debug log on mount
   useEffect(() => {
-    debugLog('PopupOverlay', 'component_mounted', {
-      multiLayerEnabled,
-      popupCount: popups.size,
-      timestamp: new Date().toISOString()
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'component_mounted', {
+        multiLayerEnabled,
+        popupCount: popups.size,
+        timestamp: new Date().toISOString()
+      });
     });
     
     return () => {
-      debugLog('PopupOverlay', 'component_unmounted', {
-        timestamp: new Date().toISOString()
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'component_unmounted', {
+          timestamp: new Date().toISOString()
+        });
       });
     };
   }, []);
@@ -103,6 +108,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
   const [isPointerInside, setIsPointerInside] = useState<boolean>(false);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
+  // LOD: Track which popups are visible in the viewport to limit connection lines
+  const visibleIdSetRef = useRef<Set<string>>(new Set());
+  const visibilityObserversRef = useRef<Map<string, IntersectionObserver>>(new Map());
   const panStartRef = useRef({ x: 0, y: 0 });
   const lastMouseRef = useRef({ x: 0, y: 0 });
   const pointerIdRef = useRef<number | null>(null);
@@ -178,12 +186,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Debug log initialization and state tracking
   useEffect(() => {
-    debugLog('PopupOverlay', 'initialized', {
-      popupCount: popups.size,
-      transform,
-      multiLayerEnabled,
-      isActiveLayer,
-      layerCtx: layerCtx?.activeLayer || 'none'
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'initialized', {
+        popupCount: popups.size,
+        transform,
+        multiLayerEnabled,
+        isActiveLayer,
+        layerCtx: layerCtx?.activeLayer || 'none'
+      });
     });
   }, [popups.size, transform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
@@ -200,11 +210,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Debug log layer changes
   useEffect(() => {
-    debugLog('PopupOverlay', 'layer_state', {
-      isActiveLayer,
-      activeLayer: layerCtx?.activeLayer || 'none',
-      popupCount: popups.size,
-      canInteract: isActiveLayer && popups.size > 0
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'layer_state', {
+        isActiveLayer,
+        activeLayer: layerCtx?.activeLayer || 'none',
+        popupCount: popups.size,
+        canInteract: isActiveLayer && popups.size > 0
+      });
     });
   }, [isActiveLayer, layerCtx?.activeLayer, popups.size]);
   
@@ -233,18 +245,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       clientY: e.clientY
     });
     
-    debugLog('PopupOverlay', 'pointer_down_received', {
-      target: (e.target as HTMLElement).className,
-      isEmptySpace: isOverlayEmptySpace(e),
-      isActiveLayer,
-      popupCount: popups.size,
-      layerCtx: layerCtx?.activeLayer || 'none'
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'pointer_down_received', {
+        target: (e.target as HTMLElement).className,
+        isEmptySpace: isOverlayEmptySpace(e),
+        isActiveLayer,
+        popupCount: popups.size,
+        layerCtx: layerCtx?.activeLayer || 'none'
+      });
     });
     
     // Only start panning if clicking on empty space
     if (!isOverlayEmptySpace(e)) {
-      debugLog('PopupOverlay', 'pan_blocked_not_empty_space', {
-        target: (e.target as HTMLElement).className
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'pan_blocked_not_empty_space', {
+          target: (e.target as HTMLElement).className
+        });
       });
       return;
     }
@@ -252,20 +268,24 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Require at least one popup present
     const hasPopups = popups.size > 0;
     if (!hasPopups) {
-      debugLog('PopupOverlay', 'pan_blocked', { 
-        isActiveLayer,
-        hasPopups,
-        layerCtx: layerCtx?.activeLayer || 'none',
-        reason: 'no_popups'
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'pan_blocked', { 
+          isActiveLayer,
+          hasPopups,
+          layerCtx: layerCtx?.activeLayer || 'none',
+          reason: 'no_popups'
+        });
       });
       return;
     }
     // Also require correct active layer to avoid accidental interception
     if (!isActiveLayer) {
-      debugLog('PopupOverlay', 'pan_blocked_inactive_layer', {
-        isActiveLayer,
-        layerCtx: layerCtx?.activeLayer || 'none',
-        reason: 'inactive_layer'
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'pan_blocked_inactive_layer', {
+          isActiveLayer,
+          layerCtx: layerCtx?.activeLayer || 'none',
+          reason: 'inactive_layer'
+        });
       });
       return;
     }
@@ -277,13 +297,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       pointerId: e.pointerId
     });
     
-    debugLog('PopupOverlay', 'pan_start', { 
-      clientX: e.clientX, 
-      clientY: e.clientY,
-      currentTransform: transform,
-      pointerId: e.pointerId,
-      isActiveLayer,
-      popupCount: popups.size
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'pan_start', { 
+        clientX: e.clientX, 
+        clientY: e.clientY,
+        currentTransform: transform,
+        pointerId: e.pointerId,
+        isActiveLayer,
+        popupCount: popups.size
+      });
     });
     
     // Use ref-driven panning to avoid render at t=0
@@ -350,7 +372,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const dy0 = e.clientY - panStartRef.current.y;
       if (Math.hypot(dx0, dy0) < 2) return; // lower hysteresis for snappier start
       setEngaged(true);
-      debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
+      });
     }
     
     // Update transform via ref and schedule RAF to apply element style only
@@ -383,13 +407,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const handlePointerEnd = useCallback((e: React.PointerEvent) => {
     if (!isPanningRef.current) return;
     
-    debugLog('PopupOverlay', 'pan_end', { 
-      totalDelta: {
-        x: transform.x,
-        y: transform.y
-      },
-      pointerId: e.pointerId,
-      wasEngaged: engaged
+    getUIResourceManager().enqueueLowPriority(() => {
+      debugLog('PopupOverlay', 'pan_end', { 
+        totalDelta: {
+          x: transform.x,
+          y: transform.y
+        },
+        pointerId: e.pointerId,
+        wasEngaged: engaged
+      });
     });
     
     // End ref-driven panning
@@ -470,10 +496,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }, 2000);
   };
   
-  // Generate connection lines
+  // Generate connection lines (LOD: use visible popup ids if available)
   const connectionPaths = ConnectionLineAdapter.adaptConnectionLines(
     popups,
-    draggingPopup !== null
+    draggingPopup !== null,
+    visibleIdSetRef.current.size ? visibleIdSetRef.current : undefined
   );
   
   // Container transform style with translate3d for GPU acceleration
@@ -550,6 +577,68 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       clearTimeout(t);
     };
   }, [recomputeOverlayBounds]);
+
+  // Setup IntersectionObserver to track which popups are visible (for LOD)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const rootEl = overlayContainer || overlayRef.current || undefined;
+    if (!rootEl) return;
+
+    // Clear any previous observers
+    visibilityObserversRef.current.forEach((obs) => obs.disconnect());
+    visibilityObserversRef.current.clear();
+    visibleIdSetRef.current.clear();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const el = entry.target as HTMLElement;
+          const id = el.getAttribute('data-popup-id');
+          if (!id) return;
+          if (entry.isIntersecting) {
+            visibleIdSetRef.current.add(id);
+          } else {
+            visibleIdSetRef.current.delete(id);
+          }
+        });
+      },
+      { root: rootEl === overlayRef.current ? overlayRef.current : null, threshold: 0 }
+    );
+
+    // Observe current rendered popups on next frame
+    requestAnimationFrame(() => {
+      const nodes = (rootEl as HTMLElement).querySelectorAll('[data-popup-id]');
+      nodes.forEach((n) => observer.observe(n));
+      visibilityObserversRef.current.set('main', observer);
+    });
+
+    // Near-viewport prewarm observer (wider rootMargin)
+    const nearObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          const el = entry.target as HTMLElement;
+          // Cheap prewarm: read offsetHeight to materialize layout for this node
+          // (content-visibility: auto may lazy-layout; this nudges it ahead of time)
+          void el.offsetHeight;
+        });
+      },
+      { root: rootEl === overlayRef.current ? overlayRef.current : null, rootMargin: '400px', threshold: 0 }
+    );
+
+    requestAnimationFrame(() => {
+      const nodes = (rootEl as HTMLElement).querySelectorAll('[data-popup-id]');
+      nodes.forEach((n) => nearObserver.observe(n));
+      visibilityObserversRef.current.set('near', nearObserver);
+    });
+
+    return () => {
+      observer.disconnect();
+      nearObserver.disconnect();
+      visibilityObserversRef.current.delete('main');
+      visibilityObserversRef.current.delete('near');
+    };
+  }, [overlayContainer, popups.size]);
 
   // Gate overlay interactivity based on pointer location relative to canvas container
   useEffect(() => {
@@ -680,6 +769,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 backfaceVisibility: 'hidden' as const,
                 willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
               }}
+              data-popup-id={popup.id}
             >
               {/* Popup Header */}
               <div

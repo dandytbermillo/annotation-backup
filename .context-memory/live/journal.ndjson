@@ -92,3 +92,5 @@
 {"ts":"2025-09-14T17:40:07.369Z","type":"commit","sha":"da756611d4105fc498dbdec2001488af6504fb0e","files_changed":9,"message":"dragging with many open popup with larger files work well"}
 {"ts":"2025-09-14T18:41:42.988Z","type":"commit","sha":"b7843374b07e0b4773d30a79a82c1410c9814396","files_changed":4,"message":"smooth popup panning"}
 {"ts":"2025-09-14T18:52:54.913Z","kind":"note","actor":"assistant","scope":"drag-start-hitch","message":"Reduced drag-start hitch: avoid setState at t=0 for canvas and popup drags; lowered hysteresis to 2px; immediate first-frame transform write; element-level cursor update; element data-dragging flag for popups; commit state only on end."}
+{"ts":"2025-09-14T19:02:02.335Z","type":"commit","sha":"21f39fe7440910fc9a1f3c24ae706897a626efe6","files_changed":4,"message":"both individual and entire cancas dragging work so well"}
+{"ts":"2025-09-14T19:16:32.052Z","kind":"note","actor":"assistant","scope":"lod-visible-lines","message":"Added LOD: IntersectionObserver to track visible popups and limit connection line generation to visible set. Kept virtualization for large popup lists and RAF-driven panning/dragging."}

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-14 19:02Z] 21f39fe: both individual and entire cancas dragging work so well
 - commit [2025-09-14 18:41Z] b784337: smooth popup panning
 - commit [2025-09-14 17:40Z] da75661: dragging with many open popup with larger files work well
 - commit [2025-09-14 15:05Z] 691bf1f: blinking text when drag fixed
