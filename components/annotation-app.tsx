@@ -34,6 +34,7 @@ function AnnotationAppContent() {
   
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
+  const sidebarHideTimer = useRef<NodeJS.Timeout | null>(null)
   
   // Ref to track last centered note to avoid repeated centering during normal flow
   const lastCenteredRef = useRef<string | null>(null)
@@ -72,70 +73,53 @@ function AnnotationAppContent() {
   }, [selectedNoteId, centerTrigger]) // Also watch centerTrigger
 
   const openNotesExplorer = () => {
+    // Clear any pending hide timer when opening
+    if (sidebarHideTimer.current) {
+      clearTimeout(sidebarHideTimer.current)
+      sidebarHideTimer.current = null
+    }
     setIsNotesExplorerOpen(true)
     setIsMouseNearEdge(false) // Mark as manually opened
   }
 
   const closeNotesExplorer = () => {
+    // Clear timer when manually closing
+    if (sidebarHideTimer.current) {
+      clearTimeout(sidebarHideTimer.current)
+      sidebarHideTimer.current = null
+    }
     setIsNotesExplorerOpen(false)
   }
+  
+  const handleSidebarMouseEnter = () => {
+    // Cancel any pending hide timer when mouse enters sidebar
+    if (sidebarHideTimer.current) {
+      clearTimeout(sidebarHideTimer.current)
+      sidebarHideTimer.current = null
+    }
+    // Ensure sidebar stays open
+    setIsNotesExplorerOpen(true)
+  }
+  
+  const handleSidebarMouseLeave = () => {
+    // Start hide timer when mouse leaves sidebar
+    if (sidebarHideTimer.current) {
+      clearTimeout(sidebarHideTimer.current)
+    }
+    sidebarHideTimer.current = setTimeout(() => {
+      setIsNotesExplorerOpen(false)
+      setIsMouseNearEdge(false)
+      sidebarHideTimer.current = null
+    }, 800) // Wait 800ms before hiding
+  }
 
-  // Auto-show/hide sidebar based on mouse position
+  // Disabled auto-show/hide sidebar based on mouse position
+  // Now controlled only by button hover
+  /*
   useEffect(() => {
-    let hoverTimer: NodeJS.Timeout | null = null
-    let leaveTimer: NodeJS.Timeout | null = null
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const nearLeftEdge = e.clientX <= 20 // Within 20px of left edge
-      const overSidebar = e.clientX <= 320 // Within sidebar width (320px for lg:w-80)
-      
-      if (nearLeftEdge && !isNotesExplorerOpen) {
-        // Clear any pending hide timer
-        if (leaveTimer) {
-          clearTimeout(leaveTimer)
-          leaveTimer = null
-        }
-        
-        // Set a small delay before showing to avoid accidental triggers
-        if (!hoverTimer) {
-          hoverTimer = setTimeout(() => {
-            setIsNotesExplorerOpen(true)
-            setIsMouseNearEdge(true)
-            hoverTimer = null
-          }, 100) // 100ms delay before showing
-        }
-      } else if (!overSidebar && isNotesExplorerOpen && isMouseNearEdge) {
-        // Clear any pending show timer
-        if (hoverTimer) {
-          clearTimeout(hoverTimer)
-          hoverTimer = null
-        }
-        
-        // Set a delay before hiding to prevent flickering
-        if (!leaveTimer) {
-          leaveTimer = setTimeout(() => {
-            setIsNotesExplorerOpen(false)
-            setIsMouseNearEdge(false)
-            leaveTimer = null
-          }, 300) // 300ms delay before hiding
-        }
-      } else if (overSidebar) {
-        // Clear hide timer if mouse is over sidebar
-        if (leaveTimer) {
-          clearTimeout(leaveTimer)
-          leaveTimer = null
-        }
-      }
-    }
-
-    document.addEventListener('mousemove', handleMouseMove)
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      if (hoverTimer) clearTimeout(hoverTimer)
-      if (leaveTimer) clearTimeout(leaveTimer)
-    }
+    // Removed edge detection logic
   }, [isNotesExplorerOpen, isMouseNearEdge])
+  */
 
   // Navigation control functions
   const handleZoomIn = () => {
@@ -187,12 +171,14 @@ function AnnotationAppContent() {
         />
       )}
       
-      {/* Notes Explorer - Sliding Panel with animation */}
+      {/* Notes Explorer - Sliding Panel with hover control */}
       <div
         className={`fixed left-0 top-0 h-full z-50 transition-transform duration-300 ease-in-out ${
           isNotesExplorerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{ width: '320px' }} // lg:w-80 = 320px
+        onMouseEnter={handleSidebarMouseEnter}
+        onMouseLeave={handleSidebarMouseLeave}
       >
         <NotesExplorer 
           onNoteSelect={handleNoteSelect} 
@@ -209,13 +195,15 @@ function AnnotationAppContent() {
         />
       </div>
       
-      {/* Toggle Button - Shows when explorer is closed */}
+      {/* Toggle Button - Centered on left edge */}
       {!isNotesExplorerOpen && (
         <button
+          onMouseEnter={openNotesExplorer}
           onClick={openNotesExplorer}
-          className="fixed top-4 left-4 z-30 p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-lg transition-colors"
+          className="fixed left-0 top-1/2 -translate-y-1/2 z-30 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
+          title="Notes Explorer"
         >
-          <Menu size={20} />
+          <span className="font-bold text-lg group-hover:text-xl transition-all">N</span>
         </button>
       )}
       

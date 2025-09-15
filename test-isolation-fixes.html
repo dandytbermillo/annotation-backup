@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Test Isolation Fixes</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #fff; }
+        .test { margin: 20px 0; padding: 15px; border: 1px solid #444; }
+        .pass { border-color: #4ade80; background: #14532d; }
+        .fail { border-color: #f87171; background: #7f1d1d; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        pre { background: #000; padding: 10px; overflow-x: auto; }
+        .status { margin-top: 10px; padding: 10px; background: #333; }
+    </style>
+</head>
+<body>
+    <h1>Isolation System Test - Fixes Verification</h1>
+    
+    <div class="test">
+        <h2>Test 1: Performance Test Component Load</h2>
+        <p>1. Add a Performance Test component</p>
+        <p>2. Set intensity to Level 5</p>
+        <p>3. Verify particles are animating and DOM updates happening</p>
+        <div class="status" id="test1-status">Status: Not tested</div>
+    </div>
+    
+    <div class="test">
+        <h2>Test 2: Manual Isolation Tracking</h2>
+        <p>1. Click the lock button on any component</p>
+        <p>2. Check console table shows the isolation</p>
+        <p>3. Verify window.__isolationDebug.list() shows the component ID</p>
+        <button onclick="checkIsolationList()">Check Isolation List</button>
+        <div class="status" id="test2-status">Status: Not tested</div>
+    </div>
+    
+    <div class="test">
+        <h2>Test 3: Visual and State Sync</h2>
+        <p>1. Manually isolate a component via lock button</p>
+        <p>2. Verify red border and "ISOLATED" badge appear</p>
+        <p>3. Check Enhanced Control Panel shows it in isolated list</p>
+        <p>4. Restore via unlock button</p>
+        <p>5. Verify it's removed from all lists</p>
+        <div class="status" id="test3-status">Status: Not tested</div>
+    </div>
+
+    <div class="test">
+        <h2>Debug Commands</h2>
+        <button onclick="enableIsolation()">Enable Isolation</button>
+        <button onclick="disableIsolation()">Disable Isolation</button>
+        <button onclick="listIsolated()">List Isolated</button>
+        <button onclick="getFPS()">Get FPS</button>
+        <button onclick="forceIsolate()">Force Isolate Test</button>
+        <pre id="debug-output"></pre>
+    </div>
+
+    <script>
+        const output = document.getElementById('debug-output');
+        
+        function enableIsolation() {
+            if (window.__isolationDebug) {
+                window.__isolationDebug.enable(true);
+                output.textContent = 'Isolation enabled';
+            } else {
+                output.textContent = 'Isolation debug API not found';
+            }
+        }
+        
+        function disableIsolation() {
+            if (window.__isolationDebug) {
+                window.__isolationDebug.enable(false);
+                output.textContent = 'Isolation disabled';
+            } else {
+                output.textContent = 'Isolation debug API not found';
+            }
+        }
+        
+        function listIsolated() {
+            if (window.__isolationDebug) {
+                const list = window.__isolationDebug.list();
+                output.textContent = 'Isolated components:\n' + (list.length ? list.join('\n') : 'None');
+                document.getElementById('test2-status').textContent = 
+                    'Status: ' + (list.length > 0 ? '✓ PASS - Found ' + list.length + ' isolated' : 'No components isolated');
+                document.getElementById('test2-status').className = 
+                    list.length > 0 ? 'status pass' : 'status';
+            } else {
+                output.textContent = 'Isolation debug API not found';
+            }
+        }
+        
+        function getFPS() {
+            if (window.__isolationDebug) {
+                const fps = window.__isolationDebug.getFps();
+                output.textContent = 'Current FPS: ' + fps.toFixed(1);
+            } else {
+                output.textContent = 'Isolation debug API not found';
+            }
+        }
+        
+        function forceIsolate() {
+            if (window.__isolationDebug) {
+                const result = window.__isolationDebug.attempt();
+                output.textContent = 'Force isolation attempt: ' + (result ? 'Success' : 'Failed (no candidates or at max)');
+            } else {
+                output.textContent = 'Isolation debug API not found';
+            }
+        }
+        
+        function checkIsolationList() {
+            listIsolated();
+        }
+        
+        // Auto-check on load
+        setTimeout(() => {
+            if (window.__isolationDebug) {
+                output.textContent = '✓ Isolation Debug API is available\n';
+                output.textContent += 'Functions: ' + Object.keys(window.__isolationDebug).join(', ');
+            } else {
+                output.textContent = '✗ Isolation Debug API not found - open the app first';
+            }
+        }, 1000);
+    </script>
+</body>
+</html>

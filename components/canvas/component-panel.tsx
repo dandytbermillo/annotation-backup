@@ -6,12 +6,13 @@ import { Calculator } from './components/calculator'
 import { Timer } from './components/timer'
 import { TextEditor } from './components/text-editor'
 import { DragTest } from './components/drag-test'
+import { PerformanceTest } from './components/performance-test'
 import { useAutoScroll } from './use-auto-scroll'
 import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
 
 interface ComponentPanelProps {
   id: string
-  type: 'calculator' | 'timer' | 'editor' | 'dragtest'
+  type: 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest'
   position: { x: number; y: number }
   onClose?: (id: string) => void
   onPositionChange?: (id: string, position: { x: number; y: number }) => void
@@ -228,6 +229,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         return <TextEditor componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'dragtest':
         return <DragTest componentId={id} state={componentState} onStateUpdate={setComponentState} />
+      case 'perftest':
+        return <PerformanceTest componentId={id} />
       default:
         return <div className="p-4 text-white">Unknown component type</div>
     }
@@ -239,6 +242,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       case 'timer': return 'from-green-600 to-green-700'
       case 'editor': return 'from-purple-600 to-purple-700'
       case 'dragtest': return 'from-orange-600 to-orange-700'
+      case 'perftest': return 'from-red-600 to-red-700'
       default: return 'from-gray-600 to-gray-700'
     }
   }
@@ -249,6 +253,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       case 'timer': return 'Timer'
       case 'editor': return 'Text Editor'
       case 'dragtest': return 'Drag Test'
+      case 'perftest': return 'Performance Test'
       default: return 'Component'
     }
   }
@@ -297,8 +302,28 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
               if (debug) {
                 if (isIsolated) {
                   debug.restore(id)
+                  // Show debug table with before/after state
+                  setTimeout(() => {
+                    console.table([{ 
+                      Action: 'Restore', 
+                      ComponentID: id, 
+                      Time: new Date().toLocaleTimeString(),
+                      IsolatedList: debug.list().join(', ') || 'None',
+                      FPS: debug.getFps().toFixed(1)
+                    }])
+                  }, 10)
                 } else {
                   debug.isolate(id)
+                  // Show debug table with before/after state
+                  setTimeout(() => {
+                    console.table([{ 
+                      Action: 'Isolate', 
+                      ComponentID: id, 
+                      Time: new Date().toLocaleTimeString(),
+                      IsolatedList: debug.list().join(', ') || 'None',
+                      FPS: debug.getFps().toFixed(1)
+                    }])
+                  }, 10)
                 }
               }
             }}

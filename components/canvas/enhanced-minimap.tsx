@@ -4,6 +4,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import { useCanvas } from './canvas-context'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { CanvasItem, isPanel, isComponent } from '@/types/canvas-items'
+import { useIsolatedIds } from '@/lib/isolation/context'
 
 interface MinimapProps {
   canvasItems: CanvasItem[]
@@ -26,7 +27,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   const [minimapDragStart, setMinimapDragStart] = useState({ x: 0, y: 0 })
   const [initialViewportOffset, setInitialViewportOffset] = useState({ x: 0, y: 0 })
   const [isExpanded, setIsExpanded] = useState(true)
-  const [isolatedComponents, setIsolatedComponents] = useState<string[]>([])
+  const isolatedComponents = useIsolatedIds()
   
   // Use ref to track dragging state for immediate access in event handlers
   const isDraggingRef = useRef(false)
@@ -60,21 +61,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     }
   }, [])
   
-  // Monitor isolated components
-  useEffect(() => {
-    const checkIsolation = () => {
-      const debug = (window as any).__isolationDebug
-      if (debug) {
-        const isolated = debug.list() || []
-        setIsolatedComponents(isolated)
-      }
-    }
-    
-    const interval = setInterval(checkIsolation, 500)
-    checkIsolation()
-    
-    return () => clearInterval(interval)
-  }, [])
+  // No polling; useIsolatedIds() updates via provider subscription
   
   // Extract panels and components from canvasItems
   const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])

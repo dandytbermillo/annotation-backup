@@ -10,6 +10,8 @@ export interface IsolationConfig {
   autoRestore: boolean
   restoreDelayMs: number
   maxIsolated: number
+  // Development/ops toggles
+  exposeDebug?: boolean
 }
 
 export interface RegisteredComponent {
@@ -23,5 +25,7 @@ export interface RegisteredComponent {
 export interface IsolationStateEntry {
   level: IsolationLevel
   isolatedAt: number
+  // Reason metadata for UI/analytics: 'auto' when FPS-triggered, 'manual' when user/debug forced
+  reason?: 'auto' | 'manual'
+  fpsAtIsolation?: number
 }
-

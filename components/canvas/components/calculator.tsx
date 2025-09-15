@@ -14,6 +14,17 @@ export function Calculator({ componentId, state, onStateUpdate }: CalculatorProp
   const [previousValue, setPreviousValue] = useState(state?.previousValue || null)
   const [operation, setOperation] = useState(state?.operation || null)
   const [waitingForNewValue, setWaitingForNewValue] = useState(false)
+  
+  // TEST FUNCTION: Makes calculator unresponsive for testing isolation
+  const makeUnresponsive = () => {
+    console.log('🔴 Making calculator unresponsive for 5 seconds...')
+    const start = Date.now()
+    while (Date.now() - start < 5000) {
+      // Intentionally block the thread for testing
+      Math.sqrt(Math.random())
+    }
+    console.log('✅ Calculator responsive again')
+  }
 
   const inputNumber = (num: string) => {
     if (waitingForNewValue) {
@@ -122,6 +133,15 @@ export function Calculator({ componentId, state, onStateUpdate }: CalculatorProp
           </div>
         ))}
       </div>
+      
+      {/* TEST BUTTON: For testing isolation */}
+      <button
+        onClick={makeUnresponsive}
+        className="w-full mt-2 py-2 px-3 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+        title="Test: Make calculator unresponsive for 5 seconds"
+      >
+        🧪 Test Hang (5s)
+      </button>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { X, Plus, Hand, ZoomIn, ZoomOut, RotateCcw, Layers, Lock, Unlock,
          Trash2, Save, Download, Upload, Settings, Activity, MousePointer,
          Move, Box, FileText, Timer, Calculator, TestTube, Shield, ShieldOff } from 'lucide-react'
 import { CanvasItem, isComponent } from '@/types/canvas-items'
+import { useIsolationSystem, useIsolatedIds, useIsolatedDetails } from '@/lib/isolation/context'
 
 interface ControlPanelProps {
   visible?: boolean
@@ -16,14 +17,19 @@ interface ControlPanelProps {
 
 export function EnhancedControlPanel({ visible = true, onClose, canvasItems = [], onAddComponent }: ControlPanelProps) {
   const { state, dispatch, dataStore } = useCanvas()
+  const { enabled: isolationEnabledCtx, setEnabled: setIsolationEnabledCtx, config: isolationConfig } = useIsolationSystem()
   const [activeTab, setActiveTab] = useState<'canvas' | 'isolation' | 'state'>('canvas')
   const [selectionMode, setSelectionMode] = useState<'single' | 'multi'>('single')
-  const [isolatedComponents, setIsolatedComponents] = useState<string[]>([])
-  const [isolationEnabled, setIsolationEnabled] = useState(false)
-  const [performanceMetrics, setPerformanceMetrics] = useState({
-    fps: 60,
-    memory: 45,
-    headlessActive: 0
+  const isolatedDetails = useIsolatedDetails()
+  const isolatedComponents = useIsolatedIds() // Get ALL isolated components, not just auto
+  const [performanceMetrics, setPerformanceMetrics] = useState<{
+    fps: number | null
+    memory: number | null
+    headlessActive: number | null
+  }>({
+    fps: null,
+    memory: null,
+    headlessActive: null
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -32,7 +38,7 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
   const selectedPanels = Array.from(state.panels.values()).filter(p => p.selected).length
   const isolatedCount = isolatedComponents.length
 
-  // Monitor FPS and isolation state
+  // Monitor FPS (local), isolated list comes from provider subscription
   useEffect(() => {
     if (!visible) return
     
@@ -56,21 +62,8 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     
     animationId = requestAnimationFrame(measureFPS)
     
-    // Check isolation API
-    const checkIsolation = () => {
-      const debug = (window as any).__isolationDebug
-      if (debug) {
-        const isolated = debug.list() || []
-        setIsolatedComponents(isolated)
-      }
-    }
-    
-    const interval = setInterval(checkIsolation, 500)
-    checkIsolation()
-    
     return () => {
       if (animationId) cancelAnimationFrame(animationId)
-      clearInterval(interval)
     }
   }, [visible])
 
@@ -124,7 +117,7 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     })
   }
 
-  const handleAddComponent = (type: 'calculator' | 'timer' | 'editor' | 'dragtest') => {
+  const handleAddComponent = (type: 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest') => {
     // Use the onAddComponent prop if provided, otherwise fall back to old behavior
     if (onAddComponent) {
       onAddComponent(type)
@@ -189,93 +182,36 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     })
   }
 
+  const isolationEnabled = isolationEnabledCtx
+
   const handleToggleIsolation = () => {
     const debug = (window as any).__isolationDebug
-    if (debug) {
-      const newEnabled = !isolationEnabled
-      debug.enable(newEnabled)
-      setIsolationEnabled(newEnabled)
-    }
+    const newEnabled = !isolationEnabled
+    setIsolationEnabledCtx(newEnabled)
+    if (debug) debug.enable(newEnabled)
   }
 
   const handleIsolateUnresponsive = () => {
-    // Find components and panels with poor performance metrics
     const debug = (window as any).__isolationDebug
-    console.log('[Isolate] Debug API available:', !!debug)
-    console.log('[Isolate] Isolation enabled:', isolationEnabled)
-    console.log('[Isolate] Canvas items:', canvasItems)
-    console.log('[Isolate] Panels:', state.panels)
-    
-    if (debug && isolationEnabled) {
-      // Get all isolatable items: components from canvasItems and panels from state
-      const components = canvasItems.filter(isComponent)
-      const panels = Array.from(state.panels.entries())
-        .filter(([id]) => id !== 'main') // Don't isolate main panel
-        .map(([id, panel]) => ({ id, type: 'panel', ...panel }))
-      
-      // Combine both lists
-      const allItems = [
-        ...components,
-        ...panels
-      ]
-      
-      console.log('[Isolate] Components found:', components)
-      console.log('[Isolate] Panels found:', panels)
-      console.log('[Isolate] All isolatable items:', allItems)
-      console.log('[Isolate] Already isolated:', isolatedComponents)
-      
-      // In a real implementation, this would use performance heuristics
-      // For demo: alternate between panels and components, or isolate based on a pattern
-      let isolated = false
-      
-      // First, try to isolate a panel if there are fewer isolated panels than components
-      const isolatedPanels = panels.filter(p => isolatedComponents.includes(p.id))
-      const isolatedComps = components.filter(c => isolatedComponents.includes(c.id))
-      
-      // Prefer panels if we have fewer isolated panels
-      let itemsToCheck = allItems
-      if (isolatedPanels.length < isolatedComps.length && panels.length > isolatedPanels.length) {
-        // Prioritize panels
-        itemsToCheck = [...panels, ...components]
-        console.log('[Isolate] Prioritizing panels for isolation')
-      } else if (components.length > isolatedComps.length) {
-        // Prioritize components
-        itemsToCheck = [...components, ...panels]
-        console.log('[Isolate] Prioritizing components for isolation')
-      }
-      
-      for (const item of itemsToCheck) {
-        if (!isolatedComponents.includes(item.id)) {
-          console.log('[Isolate] Isolating item:', item.id, 'type:', item.type || 'component')
-          debug.isolate(item.id)
-          isolated = true
-          break // Isolate one at a time for demo
-        }
-      }
-      
-      if (!isolated && allItems.length === 0) {
-        console.log('[Isolate] No items to isolate. Add some components or panels first.')
-        alert('No items to isolate. Please add some components or create additional note panels first.')
-      } else if (!isolated) {
-        console.log('[Isolate] All items are already isolated')
-        alert('All panels and components are already isolated.')
-      }
-    } else {
-      if (!debug) {
-        console.error('[Isolate] Debug API not available')
-      }
-      if (!isolationEnabled) {
-        console.log('[Isolate] Isolation is disabled')
-      }
+    if (!debug) {
+      console.error('[Isolate] Debug API not available')
+      return
+    }
+    if (!isolationEnabled) {
+      console.log('[Isolate] Isolation is disabled')
+      return
+    }
+    const didIsolate = typeof debug.attemptIfSlow === 'function' ? debug.attemptIfSlow() : false
+    if (!didIsolate) {
+      console.log('[Isolate] No unresponsive candidates (FPS above threshold or none eligible).')
+      alert('System is responsive right now (FPS above threshold). Nothing to isolate.')
     }
   }
 
   const handleRestoreAll = () => {
     const debug = (window as any).__isolationDebug
     if (debug) {
-      const isolated = debug.list() || []
-      isolated.forEach((id: string) => debug.restore(id))
-      setIsolatedComponents([])
+      autoIsolated.forEach((id: string) => debug.restore(id))
     }
   }
 
@@ -283,7 +219,6 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     const debug = (window as any).__isolationDebug
     if (debug) {
       debug.restore(id)
-      setIsolatedComponents(prev => prev.filter(i => i !== id))
     }
   }
 
@@ -442,6 +377,13 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
                   <TestTube size={16} />
                   Add Drag Test
                 </button>
+                <button
+                  onClick={() => handleAddComponent('perftest')}
+                  className="flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition-colors"
+                >
+                  <Activity size={16} />
+                  Add Perf Test
+                </button>
               </div>
             </div>
 
@@ -540,11 +482,12 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
                   <span className="text-sm text-gray-400">Current FPS</span>
                 </div>
                 <span className={`text-lg font-mono font-bold ${
+                  performanceMetrics.fps === null ? 'text-gray-500' :
                   performanceMetrics.fps >= 50 ? 'text-green-400' :
                   performanceMetrics.fps >= 30 ? 'text-yellow-400' :
                   'text-red-400'
                 }`}>
-                  {performanceMetrics.fps}
+                  {performanceMetrics.fps !== null ? performanceMetrics.fps : 'N/A'}
                 </span>
               </div>
               
@@ -552,22 +495,24 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
               <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
                 <div 
                   className={`h-full transition-all duration-300 ${
+                    performanceMetrics.fps === null ? 'bg-gray-600' :
                     performanceMetrics.fps >= 50 ? 'bg-green-500' :
                     performanceMetrics.fps >= 30 ? 'bg-yellow-500' :
                     'bg-red-500'
                   }`}
-                  style={{ width: `${Math.min(100, (performanceMetrics.fps / 60) * 100)}%` }}
+                  style={{ width: performanceMetrics.fps !== null ? `${Math.min(100, (performanceMetrics.fps / 60) * 100)}%` : '0%' }}
                 />
               </div>
               
               {/* Status */}
               <div className="flex items-center justify-between text-xs">
                 <span className="text-gray-500">
-                  {performanceMetrics.fps < 30 ? 'Performance degraded' : 
+                  {performanceMetrics.fps === null ? 'FPS not available' :
+                   performanceMetrics.fps < 30 ? 'Performance degraded' : 
                    performanceMetrics.fps < 50 ? 'Moderate performance' : 
                    'Optimal performance'}
                 </span>
-                {performanceMetrics.fps < 30 && isolationEnabled && (
+                {performanceMetrics.fps !== null && performanceMetrics.fps < 30 && isolationEnabled && (
                   <span className="text-yellow-400 flex items-center gap-1">
                     <Shield className="w-3 h-3" />
                     Auto-isolation active
@@ -580,7 +525,7 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
             <div className="space-y-2">
               <button
                 onClick={handleIsolateUnresponsive}
-                disabled={!isolationEnabled}
+                disabled={!isolationEnabled || performanceMetrics.fps === null || performanceMetrics.fps >= isolationConfig.minFPS}
                 className="w-full px-4 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 
                            disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed
                            text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all"
@@ -635,15 +580,15 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
             <div className="text-xs text-gray-500 space-y-1">
               <div className="flex justify-between">
                 <span>Threshold:</span>
-                <span className="text-gray-400">30 FPS</span>
+                <span className="text-gray-400">{isolationConfig.minFPS} FPS</span>
               </div>
               <div className="flex justify-between">
                 <span>Auto-restore:</span>
-                <span className="text-gray-400">After 10s</span>
+                <span className="text-gray-400">After {Math.round(isolationConfig.restoreDelayMs / 1000)}s</span>
               </div>
               <div className="flex justify-between">
                 <span>Max isolated:</span>
-                <span className="text-gray-400">2 components</span>
+                <span className="text-gray-400">{isolationConfig.maxIsolated} components</span>
               </div>
             </div>
 
@@ -734,26 +679,26 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
               <div className="space-y-1 text-xs text-gray-400">
                 <div className="flex justify-between">
                   <span>Visible:</span>
-                  <span className="text-green-400">{totalPanels}</span>
+                  <span className="text-gray-500">N/A</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Rendered:</span>
-                  <span className="text-green-400">{totalPanels}</span>
+                  <span className="text-gray-500">N/A</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Headless Active:</span>
-                  <span className="text-yellow-400">{performanceMetrics.headlessActive}</span>
+                  <span className="text-gray-500">N/A</span>
                 </div>
                 <div className="flex justify-between">
                   <span>FPS:</span>
-                  <span className={performanceMetrics.fps >= 30 ? "text-green-400" : "text-yellow-400"}>
-                    {performanceMetrics.fps}
+                  <span className={performanceMetrics.fps !== null && performanceMetrics.fps >= 30 ? "text-green-400" : performanceMetrics.fps !== null ? "text-yellow-400" : "text-gray-500"}>
+                    {performanceMetrics.fps !== null ? performanceMetrics.fps : 'N/A'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span>Memory:</span>
-                  <span className={performanceMetrics.memory < 100 ? "text-green-400" : "text-yellow-400"}>
-                    {performanceMetrics.memory}MB
+                  <span className={performanceMetrics.memory !== null ? (performanceMetrics.memory < 100 ? "text-green-400" : "text-yellow-400") : "text-gray-500"}>
+                    {performanceMetrics.memory !== null ? `${performanceMetrics.memory}MB` : 'N/A'}
                   </span>
                 </div>
               </div>

@@ -48,8 +48,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Isolation system integration
   const { isIsolated, level, placeholder } = useIsolation(panelId)
-  // Register panel with isolation manager - 'high' priority for main panel, 'normal' for others
-  useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'high' : 'normal', 'panel')
+  // Register panel with isolation manager - mark 'main' as 'critical' so it is never auto-isolated
+  useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'critical' : 'normal', 'panel')
   
   // Multi-layer canvas context
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)

@@ -163,6 +163,7 @@ function NotesExplorerContent({
     level: number // Depth level for positioning
     isDragging?: boolean // Track if popup is being dragged
     height?: number // Actual height of the popup
+    isPersistent?: boolean // True when clicked (stays open), false when just hovering
   }>>(new Map())
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
@@ -584,6 +585,21 @@ function NotesExplorerContent({
       
       const tree = buildInitialTree(data.items)
       setApiTreeData(tree)
+      
+      // Auto-expand Knowledge Base folder by default and load its children
+      const knowledgeBaseNode = tree.find(node => node.name === 'Knowledge Base')
+      if (knowledgeBaseNode) {
+        // Check if not already expanded
+        if (expandedNodes[knowledgeBaseNode.id] === undefined) {
+          setExpandedNodes(prev => ({
+            ...prev,
+            [knowledgeBaseNode.id]: true
+          }))
+          
+          // Load children for Knowledge Base to show them immediately
+          loadNodeChildren(knowledgeBaseNode.id)
+        }
+      }
     } catch (error) {
       console.error('Error fetching tree from API:', error)
       setApiError('Failed to load tree structure')
@@ -1009,7 +1025,7 @@ function NotesExplorerContent({
   }
 
   // Handle hover popover with support for cascading
-  const handleFolderHover = async (folder: TreeNode, event: React.MouseEvent, parentPopoverId?: string) => {
+  const handleFolderHover = async (folder: TreeNode, event: React.MouseEvent, parentPopoverId?: string, isPersistent: boolean = false) => {
     // Get position for popover FIRST (before any async calls)
     const rect = event.currentTarget.getBoundingClientRect()
     
@@ -1106,7 +1122,8 @@ function NotesExplorerContent({
           canvasPosition, // Store canvas position once, don't recalculate on render
           isLoading: true,
           parentId: parentPopoverId,
-          level
+          level,
+          isPersistent: isPersistent
         })
         return newMap
       })
@@ -1235,8 +1252,32 @@ function NotesExplorerContent({
       hoverTimeoutRef.current.delete(timeoutKey)
     }
     
-    // Don't automatically hide popovers - they stay visible until explicitly closed
-    // This allows cascading effect where multiple popovers remain visible
+    // Hide non-persistent popovers after a short delay
+    setTimeout(() => {
+      setHoverPopovers(prev => {
+        const newMap = new Map(prev)
+        // Find and remove non-persistent popovers related to this folder
+        prev.forEach((popover, id) => {
+          if (!popover.isPersistent && popover.folder?.id === folderId) {
+            // Also remove children of this popover
+            const childrenToRemove = new Set<string>()
+            const findChildren = (parentId: string) => {
+              prev.forEach((p, childId) => {
+                if (p.parentId === parentId && !p.isPersistent) {
+                  childrenToRemove.add(childId)
+                  findChildren(childId)
+                }
+              })
+            }
+            findChildren(id)
+            
+            newMap.delete(id)
+            childrenToRemove.forEach(childId => newMap.delete(childId))
+          }
+        })
+        return newMap
+      })
+    }, 300) // Small delay to allow mouse to move to popover
   }
   
   // Close all popovers
@@ -1957,11 +1998,23 @@ function NotesExplorerContent({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                handleBrowseFolder(node, e)
+                // On click, create persistent popover or toggle existing one
+                const existingPopover = Array.from(hoverPopovers.values()).find(p => p.folder?.id === node.id)
+                if (existingPopover && existingPopover.isPersistent) {
+                  // If persistent popover exists, close it
+                  closePopover(existingPopover.id)
+                } else {
+                  // Create persistent popover
+                  handleFolderHover(node, e, undefined, true)
+                }
               }}
               onMouseEnter={(e) => {
                 e.stopPropagation()
-                handleFolderHover(node, e)
+                // On hover, only show if no persistent popover exists
+                const hasPersistent = Array.from(hoverPopovers.values()).some(p => p.folder?.id === node.id && p.isPersistent)
+                if (!hasPersistent) {
+                  handleFolderHover(node, e, undefined, false)
+                }
               }}
               onMouseLeave={(e) => {
                 e.stopPropagation()
@@ -2097,10 +2150,6 @@ function NotesExplorerContent({
             ) : (
               <div className="mt-1" role="tree" aria-label="Note organization">
                 {(usePhase1API ? apiTreeData : treeData).map(node => {
-                  // Auto-expand Knowledge Base since it's now the only root
-                  if (usePhase1API && node.name === 'Knowledge Base' && expandedNodes[node.id] === undefined) {
-                    expandedNodes[node.id] = true
-                  }
                   return renderTreeNode(node)
                 })}
               </div>

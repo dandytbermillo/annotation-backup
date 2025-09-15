@@ -1,6 +1,6 @@
 "use client"
 
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { IsolationConfig, IsolationLevel, IsolationStateEntry, Priority, RegisteredComponent } from './types'
 
 const DEFAULT_CONFIG: IsolationConfig = {
@@ -11,17 +11,25 @@ const DEFAULT_CONFIG: IsolationConfig = {
   autoRestore: true,
   restoreDelayMs: 10000, // Increased to 10 seconds for easier testing
   maxIsolated: 2,
+  exposeDebug: false,
 }
 
 type IsolationMap = Map<string, IsolationStateEntry>
 
 interface IsolationContextValue {
   config: IsolationConfig
+  enabled: boolean
   setEnabled: (enabled: boolean) => void
   register: (id: string, el: HTMLElement, priority?: Priority, type?: string) => void
   unregister: (id: string) => void
   getLevel: (id: string) => IsolationLevel
   requestRestore: (id: string) => void
+  subscribe: (cb: () => void) => () => void
+  getIsolatedSnapshot: () => string[]
+  // Snapshot for a monotonically increasing version to force reactivity in external subscribers
+  getVersionSnapshot: () => number
+  // Optional richer snapshot for UI filtering by reason
+  getIsolatedDetailsSnapshot: () => Array<{ id: string; entry: IsolationStateEntry }>
 }
 
 const IsolationContext = createContext<IsolationContextValue | null>(null)
@@ -31,15 +39,38 @@ export function IsolationProvider({ children, config }: { children: React.ReactN
 
   const [enabled, setEnabled] = useState<boolean>(cfg.enabled)
   const [isolationState, setIsolationState] = useState<IsolationMap>(new Map())
+  // Version counter to force reactivity for any external consumers
+  const [version, setVersion] = useState<number>(0)
   const componentsRef = useRef<Map<string, RegisteredComponent>>(new Map())
   const isolationRef = useRef<IsolationMap>(new Map())
+  const subscribersRef = useRef<Set<() => void>>(new Set())
+  const isolatedIdsRef = useRef<string[]>([])
+  const isolatedDetailsRef = useRef<Array<{ id: string; entry: IsolationStateEntry }>>([])
   const lowFPSWindowsRef = useRef<number>(0)
   const fpsRef = useRef<number>(60)
   const rafIdRef = useRef<number | null>(null)
   const lastRAFRef = useRef<number>(performance.now())
+  const versionRef = useRef<number>(0)
 
-  // Simple FPS tracker with EWMA smoothing
+  // Centralized state emission to ensure consistent updates + version bump
+  const emit = useCallback(() => {
+    setIsolationState(new Map(isolationRef.current))
+    isolatedIdsRef.current = Array.from(isolationRef.current.keys())
+    isolatedDetailsRef.current = Array.from(isolationRef.current.entries()).map(([id, entry]) => ({ id, entry }))
+    versionRef.current += 1
+    setVersion(v => v + 1)
+    subscribersRef.current.forEach(fn => { try { fn() } catch {} })
+  }, [])
+
+  // Simple FPS tracker with EWMA smoothing (gated by `enabled`)
   useEffect(() => {
+    if (!enabled) {
+      if (rafIdRef.current) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+      return
+    }
     const alpha = 0.2
     const tick = (now: number) => {
       const delta = now - lastRAFRef.current
@@ -52,7 +83,7 @@ export function IsolationProvider({ children, config }: { children: React.ReactN
     }
     rafIdRef.current = requestAnimationFrame(tick)
     return () => { if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current) }
-  }, [])
+  }, [enabled])
 
   // Evaluate periodically when enabled
   useEffect(() => {
@@ -78,9 +109,7 @@ export function IsolationProvider({ children, config }: { children: React.ReactN
             hasChanges = true
           }
         }
-        if (hasChanges) {
-          setIsolationState(new Map(isolationRef.current))
-        }
+        if (hasChanges) emit()
       }
     }, cfg.evaluationIntervalMs)
     return () => clearInterval(iv)
@@ -100,34 +129,48 @@ export function IsolationProvider({ children, config }: { children: React.ReactN
       if (!best || score > best.score) best = { id, score }
     }
     if (best) {
-      const entry = { level: 'soft' as IsolationLevel, isolatedAt: performance.now() }
+      const entry: IsolationStateEntry = { level: 'soft', isolatedAt: performance.now(), reason: 'auto', fpsAtIsolation: fpsRef.current }
       isolationRef.current.set(best.id, entry)
-      setIsolationState(new Map(isolationRef.current))
+      emit()
+      return true
     }
+    return false
   }
 
-  // Expose simple debug API for verification
+  // Expose debug API only in development or when explicitly enabled
   useEffect(() => {
-    ;(window as any).__isolationDebug = {
-      enable: (v: boolean) => setEnabled(v),
-      isolate: (id: string) => {
-        const entry = { level: 'soft' as IsolationLevel, isolatedAt: performance.now() }
-        isolationRef.current.set(id, entry)
-        setIsolationState(new Map(isolationRef.current))
-        console.log('[Isolation] Component isolated:', id)
-      },
-      restore: (id: string) => {
-        isolationRef.current.delete(id)
-        setIsolationState(new Map(isolationRef.current))
-        console.log('[Isolation] Component restored:', id)
-      },
-      list: () => Array.from(isolationRef.current.keys()),
+    if (process.env.NODE_ENV !== 'production' || cfg.exposeDebug) {
+      (window as any).__isolationDebug = {
+        enable: (v: boolean) => setEnabled(v),
+        // Attempt isolation only if the system is currently slow
+        attemptIfSlow: () => {
+          if (fpsRef.current < cfg.minFPS) {
+            return attemptIsolation()
+          }
+          return false
+        },
+        // For testing: forcibly attempt isolation without FPS gating
+        attempt: () => attemptIsolation(),
+        // Expose current FPS snapshot for diagnostics
+        getFps: () => fpsRef.current,
+        isolate: (id: string) => {
+          const entry: IsolationStateEntry = { level: 'soft', isolatedAt: performance.now(), reason: 'manual', fpsAtIsolation: fpsRef.current }
+          isolationRef.current.set(id, entry)
+          emit()
+        },
+        restore: (id: string) => {
+          isolationRef.current.delete(id)
+          emit()
+        },
+        list: () => Array.from(isolationRef.current.keys()),
+      }
+      return () => { delete (window as any).__isolationDebug }
     }
-    return () => { delete (window as any).__isolationDebug }
-  }, [])
+  }, [cfg.exposeDebug, emit])
 
   const api = useMemo<IsolationContextValue>(() => ({
     config: cfg,
+    enabled,
     setEnabled: (v: boolean) => setEnabled(v),
     register: (id, el, priority: Priority = 'normal', type?: string) => {
       componentsRef.current.set(id, { id, el, priority, type: type || 'component' })
@@ -136,10 +179,13 @@ export function IsolationProvider({ children, config }: { children: React.ReactN
     getLevel: (id) => isolationState.get(id)?.level || 'none',
     requestRestore: (id) => { 
       isolationRef.current.delete(id)
-      setIsolationState(new Map(isolationRef.current))
-      console.log('[Isolation] Component restore requested:', id)
+      emit()
     },
-  }), [cfg, isolationState])
+    subscribe: (cb: () => void) => { subscribersRef.current.add(cb); return () => subscribersRef.current.delete(cb) },
+    getIsolatedSnapshot: () => isolatedIdsRef.current,
+    getVersionSnapshot: () => versionRef.current,
+    getIsolatedDetailsSnapshot: () => isolatedDetailsRef.current,
+  }), [cfg, isolationState, enabled, emit])
 
   return (
     <IsolationContext.Provider value={api}>
@@ -176,4 +222,36 @@ export function useRegisterWithIsolation(id: string, ref: React.RefObject<HTMLEl
       return () => ctx.unregister(id)
     }
   }, [id, ref, ctx, priority, type])
+}
+
+export function useIsolationSystem() {
+  const ctx = useContext(IsolationContext)
+  return {
+    enabled: ctx?.enabled ?? false,
+    setEnabled: ctx?.setEnabled ?? (() => {}),
+    config: ctx?.config ?? DEFAULT_CONFIG,
+  }
+}
+
+// Replace polling with subscription for isolated ID list
+export function useIsolatedIds(): string[] {
+  const ctx = useContext(IsolationContext)
+  if (!ctx) return []
+  const getServerSnapshot = () => []
+  return useSyncExternalStore(ctx.subscribe, ctx.getIsolatedSnapshot, getServerSnapshot)
+}
+
+// Optional: subscribe to the provider's monotonically increasing version for coarse-grained reactivity
+export function useIsolationVersion(): number {
+  const ctx = useContext(IsolationContext)
+  if (!ctx) return 0
+  const getServerSnapshot = () => 0
+  return useSyncExternalStore(ctx.subscribe, ctx.getVersionSnapshot, getServerSnapshot)
+}
+
+export function useIsolatedDetails(): Array<{ id: string; entry: IsolationStateEntry }> {
+  const ctx = useContext(IsolationContext)
+  if (!ctx) return []
+  const getServerSnapshot = () => [] as Array<{ id: string; entry: IsolationStateEntry }>
+  return useSyncExternalStore(ctx.subscribe, ctx.getIsolatedDetailsSnapshot, getServerSnapshot)
 }

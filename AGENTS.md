@@ -48,6 +48,7 @@
   - Read-only advisory by default; write only with explicit “Approved” and only inside `codex/`.
   - Safe reads only; no installs or destructive commands.
   - Startup routine: read `codex/previous-sessions/RESUME.md` and recap Next Steps.
+  - Mandatory pre-read (for ANY fixes/changes): always read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` before proposing or implementing any fix or suggestion, regardless of scope. Summarize applicability (applicable or not) and confirm compliance in your plan.
   - Supported chat commands include “Resume from resume.md”, “Refresh readme.md”, “Refresh resume.md”, and “End session”.
  - Live Context (`.context-memory/`):
    - Assistant may write within `.context-memory/` without additional approval (user-authorized).

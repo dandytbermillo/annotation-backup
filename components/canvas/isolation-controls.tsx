@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from 'react'
-import { useIsolation } from '@/lib/isolation/context'
+import { useIsolatedDetails, useIsolationSystem } from '@/lib/isolation/context'
 import { Lock, Unlock, AlertTriangle, Activity, Zap } from 'lucide-react'
 
 interface IsolationControlsProps {
@@ -9,27 +9,11 @@ interface IsolationControlsProps {
 }
 
 export function IsolationControls() {
-  const [isolatedComponents, setIsolatedComponents] = useState<string[]>([])
+  const isolatedDetails = useIsolatedDetails()
+  const isolatedComponents = isolatedDetails.filter(d => (d.entry.reason ?? 'auto') === 'auto').map(d => d.id)
+  const { enabled, setEnabled, config } = useIsolationSystem()
   const [fps, setFps] = useState(60)
-  const [enabled, setEnabled] = useState(false)
-  
-  // Get debug API
-  useEffect(() => {
-    const checkIsolation = () => {
-      const debug = (window as any).__isolationDebug
-      if (debug) {
-        const isolated = debug.list() || []
-        setIsolatedComponents(isolated)
-      }
-    }
-    
-    // Check periodically
-    const interval = setInterval(checkIsolation, 500)
-    checkIsolation()
-    
-    return () => clearInterval(interval)
-  }, [])
-  
+
   // Track FPS
   useEffect(() => {
     let frameCount = 0
@@ -56,11 +40,9 @@ export function IsolationControls() {
   
   const handleToggleIsolation = () => {
     const debug = (window as any).__isolationDebug
-    if (debug) {
-      const newEnabled = !enabled
-      debug.enable(newEnabled)
-      setEnabled(newEnabled)
-    }
+    const newEnabled = !enabled
+    if (debug) debug.enable(newEnabled)
+    setEnabled(newEnabled)
   }
   
   const handleIsolateUnresponsive = () => {
@@ -72,9 +54,7 @@ export function IsolationControls() {
   const handleRestoreAll = () => {
     const debug = (window as any).__isolationDebug
     if (debug) {
-      const isolated = debug.list() || []
-      isolated.forEach((id: string) => debug.restore(id))
-      setIsolatedComponents([])
+      isolatedComponents.forEach((id: string) => debug.restore(id))
     }
   }
   
@@ -146,7 +126,7 @@ export function IsolationControls() {
       <div className="space-y-2">
         <button
           onClick={handleIsolateUnresponsive}
-          disabled={!enabled}
+          disabled={!enabled || fps >= (config?.minFPS ?? 30)}
           className="w-full px-4 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 
                      disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed
                      text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all"
@@ -184,10 +164,7 @@ export function IsolationControls() {
                 <button
                   onClick={() => {
                     const debug = (window as any).__isolationDebug
-                    if (debug) {
-                      debug.restore(id)
-                      setIsolatedComponents(prev => prev.filter(i => i !== id))
-                    }
+                    if (debug) debug.restore(id)
                   }}
                   className="text-blue-400 hover:text-blue-300 ml-2"
                 >
@@ -207,15 +184,15 @@ export function IsolationControls() {
       <div className="text-xs text-gray-500 space-y-1">
         <div className="flex justify-between">
           <span>Threshold:</span>
-          <span className="text-gray-400">30 FPS</span>
+          <span className="text-gray-400">{config.minFPS} FPS</span>
         </div>
         <div className="flex justify-between">
           <span>Auto-restore:</span>
-          <span className="text-gray-400">After 2s</span>
+          <span className="text-gray-400">After {Math.round(config.restoreDelayMs / 1000)}s</span>
         </div>
         <div className="flex justify-between">
           <span>Max isolated:</span>
-          <span className="text-gray-400">2 components</span>
+          <span className="text-gray-400">{config.maxIsolated} components</span>
         </div>
       </div>
       

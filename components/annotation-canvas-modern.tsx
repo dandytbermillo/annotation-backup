@@ -8,7 +8,7 @@ import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import { CanvasControls } from "./canvas/canvas-controls"
-import { EnhancedControlPanel } from "./canvas/enhanced-control-panel"
+import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
 import { ConnectionLines } from "./canvas/connection-lines"
 import { panToPanel } from "@/lib/canvas/pan-animations"
@@ -16,6 +16,7 @@ import { Settings, Plus } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent } from "@/types/canvas-items"
+import { IsolationDebugPanel } from "./canvas/isolation-debug-panel"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -179,6 +180,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   }
 
   const handleWheel = (e: React.WheelEvent) => {
+    // Only zoom if Shift key is held down
+    if (!e.shiftKey) {
+      // Allow normal scrolling when Shift is not pressed
+      return
+    }
+    
     e.preventDefault()
     
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
@@ -299,7 +306,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     }
     
     const newComponent = createComponentItem(
-      type as 'calculator' | 'timer' | 'editor' | 'dragtest',
+      type as 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest',
       finalPosition
     )
     
@@ -455,8 +462,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     <CanvasProvider noteId={noteId}>
       <div className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
         {/* Demo Header */}
-        <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10">
-          🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor
+        <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10 flex items-center justify-between">
+          <span>🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor</span>
+          <span className="text-gray-300 flex items-center gap-2">
+            <span className="text-yellow-400">💡</span>
+            Hold <kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs font-bold">Shift</kbd> + Scroll to zoom
+          </span>
         </div>
 
         {/* Canvas Controls - Only show when notes explorer is closed */}
@@ -489,13 +500,16 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           <Plus size={20} />
         </button>
 
-        {/* Enhanced Control Panel */}
-        <EnhancedControlPanel 
+        {/* Enhanced Control Panel V2 - Wider with always-visible metrics */}
+        <EnhancedControlPanelV2 
           visible={showControlPanel}
           onClose={() => setShowControlPanel(false)}
           canvasItems={canvasItems}
           onAddComponent={handleAddComponent}
         />
+        
+        {/* Isolation Debug Panel - Only in development */}
+        {process.env.NODE_ENV === 'development' && <IsolationDebugPanel />}
 
         {/* Enhanced Minimap */}
         <EnhancedMinimap 

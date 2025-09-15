@@ -17,7 +17,13 @@ Effective Immediately
 Startup Defaults
 - Auto-read `codex/previous-sessions/RESUME.md` to rehydrate context.
 - Auto-read this policy (`codex/POLICY.md`) to confirm guardrails.
+- Mandatory pre-read for ANY fix or change: always read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` before proposing or implementing any fix, change, or suggestion, regardless of scope. Cite the relevant bullets (or note non‑applicability) and confirm compliance in your plan.
 - Stay within `codex/` unless explicitly allowed to read outside.
+
+Pre‑work Checklist (Must Affirm Before Starting)
+1) Read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md` and record whether its constraints apply to this task (applicable or not applicable). Always acknowledge it in your plan.
+2) If applicable (e.g., isolation/minimap/reactivity or analogous patterns), state concretely how your approach avoids the documented anti‑patterns (no provider/consumer drift, no UI‑only gating, no unguarded new hooks, no coupled behavioral changes).
+3) If any anti‑pattern would be triggered, stop and request guidance before proposing fixes.
 
 Live Context (carve-out)
 - Scope: Assistant may write within `.context-memory/` without additional approval (per user authorization). Keep `codex/` writes approval-required.

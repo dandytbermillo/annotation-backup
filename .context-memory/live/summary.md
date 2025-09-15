@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-15 05:41Z] 4b66aef: added isolation control(being refined)
 - commit [2025-09-14 22:04Z] f2d7f67: added minimap,component(testing)
 - commit [2025-09-14 20:16Z] 5d7582c: control panel is added
 - commit [2025-09-14 19:34Z] a4dc755: lod is adopted
