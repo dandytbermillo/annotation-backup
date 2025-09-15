@@ -5,17 +5,21 @@ import { useCanvas } from './canvas-context'
 import { X, Plus, Hand, ZoomIn, ZoomOut, RotateCcw, Layers, Lock, Unlock, 
          Trash2, Save, Download, Upload, Settings, Activity, MousePointer,
          Move, Box, FileText, Timer, Calculator, TestTube, Shield, ShieldOff } from 'lucide-react'
+import { CanvasItem, isComponent } from '@/types/canvas-items'
 
 interface ControlPanelProps {
   visible?: boolean
   onClose?: () => void
+  canvasItems?: CanvasItem[]
+  onAddComponent?: (type: string, position?: { x: number; y: number }) => void
 }
 
-export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelProps) {
+export function EnhancedControlPanel({ visible = true, onClose, canvasItems = [], onAddComponent }: ControlPanelProps) {
   const { state, dispatch, dataStore } = useCanvas()
   const [activeTab, setActiveTab] = useState<'canvas' | 'isolation' | 'state'>('canvas')
   const [selectionMode, setSelectionMode] = useState<'single' | 'multi'>('single')
-  const [isolatedComponents, setIsolatedComponents] = useState<Set<string>>(new Set())
+  const [isolatedComponents, setIsolatedComponents] = useState<string[]>([])
+  const [isolationEnabled, setIsolationEnabled] = useState(false)
   const [performanceMetrics, setPerformanceMetrics] = useState({
     fps: 60,
     memory: 45,
@@ -26,9 +30,9 @@ export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelPr
   // Get panel statistics
   const totalPanels = state.panels.size
   const selectedPanels = Array.from(state.panels.values()).filter(p => p.selected).length
-  const isolatedCount = isolatedComponents.size
+  const isolatedCount = isolatedComponents.length
 
-  // Monitor FPS
+  // Monitor FPS and isolation state
   useEffect(() => {
     if (!visible) return
     
@@ -52,8 +56,21 @@ export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelPr
     
     animationId = requestAnimationFrame(measureFPS)
     
+    // Check isolation API
+    const checkIsolation = () => {
+      const debug = (window as any).__isolationDebug
+      if (debug) {
+        const isolated = debug.list() || []
+        setIsolatedComponents(isolated)
+      }
+    }
+    
+    const interval = setInterval(checkIsolation, 500)
+    checkIsolation()
+    
     return () => {
       if (animationId) cancelAnimationFrame(animationId)
+      clearInterval(interval)
     }
   }, [visible])
 
@@ -108,34 +125,40 @@ export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelPr
   }
 
   const handleAddComponent = (type: 'calculator' | 'timer' | 'editor' | 'dragtest') => {
-    const panelId = `${type}-${Date.now()}`
-    const randomOffset = {
-      x: Math.random() * 200 - 100,
-      y: Math.random() * 200 - 100
+    // Use the onAddComponent prop if provided, otherwise fall back to old behavior
+    if (onAddComponent) {
+      onAddComponent(type)
+    } else {
+      // Fallback to old behavior for backward compatibility
+      const panelId = `${type}-${Date.now()}`
+      const randomOffset = {
+        x: Math.random() * 200 - 100,
+        y: Math.random() * 200 - 100
+      }
+      
+      const newPanel = {
+        id: panelId,
+        type: type as any,
+        title: type.charAt(0).toUpperCase() + type.slice(1),
+        position: { 
+          x: 2200 + randomOffset.x, 
+          y: 1600 + randomOffset.y 
+        },
+        dimensions: { width: 350, height: 300 },
+        isEditable: type === 'editor',
+        selected: false,
+        isolated: false,
+        branches: []
+      }
+      
+      dispatch({ 
+        type: 'ADD_PANEL', 
+        payload: { 
+          id: panelId, 
+          panel: newPanel 
+        } 
+      })
     }
-    
-    const newPanel = {
-      id: panelId,
-      type: type as any,
-      title: type.charAt(0).toUpperCase() + type.slice(1),
-      position: { 
-        x: 2200 + randomOffset.x, 
-        y: 1600 + randomOffset.y 
-      },
-      dimensions: { width: 350, height: 300 },
-      isEditable: type === 'editor',
-      selected: false,
-      isolated: false,
-      branches: []
-    }
-    
-    dispatch({ 
-      type: 'ADD_PANEL', 
-      payload: { 
-        id: panelId, 
-        panel: newPanel 
-      } 
-    })
   }
 
   const handleSelectAll = () => {
@@ -166,23 +189,102 @@ export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelPr
     })
   }
 
-  const handleIsolateUnresponsive = () => {
-    // Simulate isolating unresponsive components
-    const newIsolated = new Set(isolatedComponents)
-    state.panels.forEach((panel, id) => {
-      if (panel.selected) {
-        newIsolated.add(id)
-        panel.isolated = true
-      }
-    })
-    setIsolatedComponents(newIsolated)
+  const handleToggleIsolation = () => {
+    const debug = (window as any).__isolationDebug
+    if (debug) {
+      const newEnabled = !isolationEnabled
+      debug.enable(newEnabled)
+      setIsolationEnabled(newEnabled)
+    }
   }
 
-  const handleUnisolateAll = () => {
-    state.panels.forEach((panel) => {
-      panel.isolated = false
-    })
-    setIsolatedComponents(new Set())
+  const handleIsolateUnresponsive = () => {
+    // Find components and panels with poor performance metrics
+    const debug = (window as any).__isolationDebug
+    console.log('[Isolate] Debug API available:', !!debug)
+    console.log('[Isolate] Isolation enabled:', isolationEnabled)
+    console.log('[Isolate] Canvas items:', canvasItems)
+    console.log('[Isolate] Panels:', state.panels)
+    
+    if (debug && isolationEnabled) {
+      // Get all isolatable items: components from canvasItems and panels from state
+      const components = canvasItems.filter(isComponent)
+      const panels = Array.from(state.panels.entries())
+        .filter(([id]) => id !== 'main') // Don't isolate main panel
+        .map(([id, panel]) => ({ id, type: 'panel', ...panel }))
+      
+      // Combine both lists
+      const allItems = [
+        ...components,
+        ...panels
+      ]
+      
+      console.log('[Isolate] Components found:', components)
+      console.log('[Isolate] Panels found:', panels)
+      console.log('[Isolate] All isolatable items:', allItems)
+      console.log('[Isolate] Already isolated:', isolatedComponents)
+      
+      // In a real implementation, this would use performance heuristics
+      // For demo: alternate between panels and components, or isolate based on a pattern
+      let isolated = false
+      
+      // First, try to isolate a panel if there are fewer isolated panels than components
+      const isolatedPanels = panels.filter(p => isolatedComponents.includes(p.id))
+      const isolatedComps = components.filter(c => isolatedComponents.includes(c.id))
+      
+      // Prefer panels if we have fewer isolated panels
+      let itemsToCheck = allItems
+      if (isolatedPanels.length < isolatedComps.length && panels.length > isolatedPanels.length) {
+        // Prioritize panels
+        itemsToCheck = [...panels, ...components]
+        console.log('[Isolate] Prioritizing panels for isolation')
+      } else if (components.length > isolatedComps.length) {
+        // Prioritize components
+        itemsToCheck = [...components, ...panels]
+        console.log('[Isolate] Prioritizing components for isolation')
+      }
+      
+      for (const item of itemsToCheck) {
+        if (!isolatedComponents.includes(item.id)) {
+          console.log('[Isolate] Isolating item:', item.id, 'type:', item.type || 'component')
+          debug.isolate(item.id)
+          isolated = true
+          break // Isolate one at a time for demo
+        }
+      }
+      
+      if (!isolated && allItems.length === 0) {
+        console.log('[Isolate] No items to isolate. Add some components or panels first.')
+        alert('No items to isolate. Please add some components or create additional note panels first.')
+      } else if (!isolated) {
+        console.log('[Isolate] All items are already isolated')
+        alert('All panels and components are already isolated.')
+      }
+    } else {
+      if (!debug) {
+        console.error('[Isolate] Debug API not available')
+      }
+      if (!isolationEnabled) {
+        console.log('[Isolate] Isolation is disabled')
+      }
+    }
+  }
+
+  const handleRestoreAll = () => {
+    const debug = (window as any).__isolationDebug
+    if (debug) {
+      const isolated = debug.list() || []
+      isolated.forEach((id: string) => debug.restore(id))
+      setIsolatedComponents([])
+    }
+  }
+
+  const handleRestoreComponent = (id: string) => {
+    const debug = (window as any).__isolationDebug
+    if (debug) {
+      debug.restore(id)
+      setIsolatedComponents(prev => prev.filter(i => i !== id))
+    }
   }
 
   const handleSaveState = () => {
@@ -412,45 +514,144 @@ export function EnhancedControlPanel({ visible = true, onClose }: ControlPanelPr
 
         {activeTab === 'isolation' && (
           <>
-            <div>
-              <h3 className="text-sm font-semibold mb-2 text-gray-300 flex items-center gap-2">
+            {/* Isolation Header with Enable Toggle */}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
                 <Lock size={16} />
-                Isolation Controls
+                Isolation Control
               </h3>
-              <div className="space-y-2">
-                <button
-                  onClick={handleIsolateUnresponsive}
-                  disabled={selectedPanels === 0}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 rounded text-sm transition-colors"
-                >
-                  <Shield size={16} />
-                  Isolate Unresponsive
-                </button>
-                <button
-                  onClick={handleUnisolateAll}
-                  disabled={isolatedCount === 0}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-500 rounded text-sm transition-colors"
-                >
-                  <ShieldOff size={16} />
-                  Unisolate All
-                </button>
-                <div className="text-sm text-gray-400 mt-2">
-                  Isolated components: {isolatedCount} / {totalPanels}
+              <button
+                onClick={handleToggleIsolation}
+                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                  isolationEnabled
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                }`}
+              >
+                {isolationEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+
+            {/* Performance Metrics */}
+            <div className="bg-gray-800 rounded-lg p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm text-gray-400">Current FPS</span>
                 </div>
+                <span className={`text-lg font-mono font-bold ${
+                  performanceMetrics.fps >= 50 ? 'text-green-400' :
+                  performanceMetrics.fps >= 30 ? 'text-yellow-400' :
+                  'text-red-400'
+                }`}>
+                  {performanceMetrics.fps}
+                </span>
+              </div>
+              
+              {/* FPS Bar */}
+              <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-300 ${
+                    performanceMetrics.fps >= 50 ? 'bg-green-500' :
+                    performanceMetrics.fps >= 30 ? 'bg-yellow-500' :
+                    'bg-red-500'
+                  }`}
+                  style={{ width: `${Math.min(100, (performanceMetrics.fps / 60) * 100)}%` }}
+                />
+              </div>
+              
+              {/* Status */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500">
+                  {performanceMetrics.fps < 30 ? 'Performance degraded' : 
+                   performanceMetrics.fps < 50 ? 'Moderate performance' : 
+                   'Optimal performance'}
+                </span>
+                {performanceMetrics.fps < 30 && isolationEnabled && (
+                  <span className="text-yellow-400 flex items-center gap-1">
+                    <Shield className="w-3 h-3" />
+                    Auto-isolation active
+                  </span>
+                )}
               </div>
             </div>
 
-            {/* Auto-Protection Status */}
-            <div className="mt-4 p-3 bg-gray-800 rounded">
-              <h3 className="text-sm font-semibold mb-2 text-gray-300 flex items-center gap-2">
-                <Shield size={16} />
-                Auto-Protection
-              </h3>
-              <div className="space-y-1 text-xs text-gray-400">
-                <p>• Monitoring component health</p>
-                <p>• Auto-isolate on crash detection</p>
-                <p>• Background process throttling</p>
+            {/* Action Buttons */}
+            <div className="space-y-2">
+              <button
+                onClick={handleIsolateUnresponsive}
+                disabled={!isolationEnabled}
+                className="w-full px-4 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 
+                           disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed
+                           text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all"
+              >
+                <Lock className="w-4 h-4" />
+                Isolate Unresponsive
+              </button>
+              
+              <button
+                onClick={handleRestoreAll}
+                disabled={isolatedCount === 0}
+                className="w-full px-4 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800
+                           disabled:from-gray-700 disabled:to-gray-700 disabled:cursor-not-allowed
+                           text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all"
+              >
+                <Unlock className="w-4 h-4" />
+                Restore All
+              </button>
+            </div>
+
+            {/* Isolated Components List */}
+            <div className="bg-gray-800 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-gray-300">Isolated Components</span>
+                <span className="text-xs text-gray-500">
+                  {isolatedCount} / {totalPanels}
+                </span>
               </div>
+              
+              {isolatedCount > 0 ? (
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {isolatedComponents.map(id => (
+                    <div key={id} className="flex items-center justify-between py-1 px-2 bg-gray-700 rounded text-xs">
+                      <span className="text-yellow-400 truncate flex-1">{id}</span>
+                      <button
+                        onClick={() => handleRestoreComponent(id)}
+                        className="text-blue-400 hover:text-blue-300 ml-2"
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 text-center py-2">
+                  No components isolated
+                </div>
+              )}
+            </div>
+
+            {/* Settings Preview */}
+            <div className="text-xs text-gray-500 space-y-1">
+              <div className="flex justify-between">
+                <span>Threshold:</span>
+                <span className="text-gray-400">30 FPS</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Auto-restore:</span>
+                <span className="text-gray-400">After 10s</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Max isolated:</span>
+                <span className="text-gray-400">2 components</span>
+              </div>
+            </div>
+
+            {/* Info */}
+            <div className="text-xs text-gray-500 italic p-2 bg-gray-800 rounded">
+              <Shield className="w-3 h-3 inline mr-1 text-yellow-500" />
+              Components are automatically isolated when they impact performance. 
+              Isolated components preserve data while suspended.
             </div>
           </>
         )}

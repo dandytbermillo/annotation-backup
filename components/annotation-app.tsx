@@ -22,7 +22,8 @@ const ModernAnnotationCanvas = dynamic(
 
 function AnnotationAppContent() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
-  const [isNotesExplorerOpen, setIsNotesExplorerOpen] = useState(true)
+  const [isNotesExplorerOpen, setIsNotesExplorerOpen] = useState(false) // Hidden by default
+  const [isMouseNearEdge, setIsMouseNearEdge] = useState(false)
   const [canvasState, setCanvasState] = useState({
     zoom: 1,
     showConnections: true
@@ -72,11 +73,69 @@ function AnnotationAppContent() {
 
   const openNotesExplorer = () => {
     setIsNotesExplorerOpen(true)
+    setIsMouseNearEdge(false) // Mark as manually opened
   }
 
   const closeNotesExplorer = () => {
     setIsNotesExplorerOpen(false)
   }
+
+  // Auto-show/hide sidebar based on mouse position
+  useEffect(() => {
+    let hoverTimer: NodeJS.Timeout | null = null
+    let leaveTimer: NodeJS.Timeout | null = null
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const nearLeftEdge = e.clientX <= 20 // Within 20px of left edge
+      const overSidebar = e.clientX <= 320 // Within sidebar width (320px for lg:w-80)
+      
+      if (nearLeftEdge && !isNotesExplorerOpen) {
+        // Clear any pending hide timer
+        if (leaveTimer) {
+          clearTimeout(leaveTimer)
+          leaveTimer = null
+        }
+        
+        // Set a small delay before showing to avoid accidental triggers
+        if (!hoverTimer) {
+          hoverTimer = setTimeout(() => {
+            setIsNotesExplorerOpen(true)
+            setIsMouseNearEdge(true)
+            hoverTimer = null
+          }, 100) // 100ms delay before showing
+        }
+      } else if (!overSidebar && isNotesExplorerOpen && isMouseNearEdge) {
+        // Clear any pending show timer
+        if (hoverTimer) {
+          clearTimeout(hoverTimer)
+          hoverTimer = null
+        }
+        
+        // Set a delay before hiding to prevent flickering
+        if (!leaveTimer) {
+          leaveTimer = setTimeout(() => {
+            setIsNotesExplorerOpen(false)
+            setIsMouseNearEdge(false)
+            leaveTimer = null
+          }, 300) // 300ms delay before hiding
+        }
+      } else if (overSidebar) {
+        // Clear hide timer if mouse is over sidebar
+        if (leaveTimer) {
+          clearTimeout(leaveTimer)
+          leaveTimer = null
+        }
+      }
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      if (hoverTimer) clearTimeout(hoverTimer)
+      if (leaveTimer) clearTimeout(leaveTimer)
+    }
+  }, [isNotesExplorerOpen, isMouseNearEdge])
 
   // Navigation control functions
   const handleZoomIn = () => {
@@ -128,20 +187,27 @@ function AnnotationAppContent() {
         />
       )}
       
-      {/* Notes Explorer - Sliding Panel */}
-      <NotesExplorer 
-        onNoteSelect={handleNoteSelect} 
-        isOpen={isNotesExplorerOpen}
-        onClose={closeNotesExplorer}
-        zoom={canvasState.zoom * 100}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onResetView={handleResetView}
-        onToggleConnections={handleToggleConnections}
-        showConnections={canvasState.showConnections}
-        enableTreeView={true}
-        usePhase1API={usePhase1API}
-      />
+      {/* Notes Explorer - Sliding Panel with animation */}
+      <div
+        className={`fixed left-0 top-0 h-full z-50 transition-transform duration-300 ease-in-out ${
+          isNotesExplorerOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        style={{ width: '320px' }} // lg:w-80 = 320px
+      >
+        <NotesExplorer 
+          onNoteSelect={handleNoteSelect} 
+          isOpen={true} // Always render, control visibility with transform
+          onClose={closeNotesExplorer}
+          zoom={canvasState.zoom * 100}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onResetView={handleResetView}
+          onToggleConnections={handleToggleConnections}
+          showConnections={canvasState.showConnections}
+          enableTreeView={true}
+          usePhase1API={usePhase1API}
+        />
+      </div>
       
       {/* Toggle Button - Shows when explorer is closed */}
       {!isNotesExplorerOpen && (

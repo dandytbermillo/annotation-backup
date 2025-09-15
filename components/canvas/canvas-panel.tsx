@@ -14,6 +14,7 @@ import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provide
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { useAutoScroll } from "./use-auto-scroll"
+import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -44,6 +45,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  
+  // Isolation system integration
+  const { isIsolated, level, placeholder } = useIsolation(panelId)
+  // Register panel with isolation manager - 'high' priority for main panel, 'normal' for others
+  useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'high' : 'normal', 'panel')
   
   // Multi-layer canvas context
   const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
@@ -870,13 +876,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         top: position.y + 'px',
         width: '500px',
         minHeight: '400px',
-        background: 'white',
+        background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+        boxShadow: isIsolated 
+          ? '0 8px 32px rgba(239, 68, 68, 0.25)' 
+          : '0 8px 32px rgba(0,0,0,0.15)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
         zIndex: zIndex,
+        border: isIsolated ? '2px solid #ef4444' : 'none',
       }}
     >
       {/* Panel Header */}
@@ -900,15 +909,41 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           justifyContent: 'space-between',
           alignItems: 'center',
           pointerEvents: 'auto',
+          borderBottom: isIsolated ? '3px solid #ef4444' : 'none',
         }}
       >
-        <span>{currentBranch.title}</span>
-        {!isMainPanel && (
-          <button 
-            className="panel-close"
-            onClick={onClose}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span>{currentBranch.title}</span>
+          {isIsolated && (
+            <span style={{
+              background: '#ef4444',
+              color: 'white',
+              fontSize: '10px',
+              padding: '2px 8px',
+              borderRadius: '12px',
+              fontWeight: 'bold',
+              textTransform: 'uppercase',
+            }}>
+              ISOLATED
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Lock/Unlock button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const debug = (window as any).__isolationDebug
+              if (debug) {
+                if (isIsolated) {
+                  debug.restore(panelId)
+                } else {
+                  debug.isolate(panelId)
+                }
+              }
+            }}
             style={{
-              background: 'rgba(255,255,255,0.2)',
+              background: isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)',
               border: 'none',
               borderRadius: '50%',
               width: '28px',
@@ -918,34 +953,70 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               justifyContent: 'center',
               cursor: 'pointer',
               transition: 'all 0.2s ease',
-              fontSize: '16px',
               color: 'white',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.3)'
               e.currentTarget.style.transform = 'scale(1.1)'
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)'
               e.currentTarget.style.transform = 'scale(1)'
             }}
+            title={isIsolated ? 'Restore panel' : 'Isolate panel'}
           >
-            ×
+            {isIsolated ? '🔓' : '🔒'}
           </button>
-        )}
+          {!isMainPanel && (
+            <button 
+              className="panel-close"
+              onClick={onClose}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '50%',
+                width: '28px',
+                height: '28px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                fontSize: '16px',
+                color: 'white',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                e.currentTarget.style.transform = 'scale(1.1)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                e.currentTarget.style.transform = 'scale(1)'
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Editor Section */}
-        <div style={{
-          flex: 2,
-          padding: '20px 25px 25px 25px',
-          borderRight: '1px solid #e9ecef',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          position: 'relative',
-        }}>
+      {/* Check if isolated and show placeholder */}
+      {isIsolated ? (
+        <div style={{ padding: '20px' }}>
+          {placeholder}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* Editor Section */}
+          <div style={{
+            flex: 2,
+            padding: '20px 25px 25px 25px',
+            borderRight: '1px solid #e9ecef',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            position: 'relative',
+          }}>
           {/* Auto Save Indicator */}
           <div
             id={`auto-save-${panelId}`}
@@ -1219,6 +1290,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </div>
         </div>
       </div>
+      )}
 
       {/* Connection points */}
       {!isMainPanel && (

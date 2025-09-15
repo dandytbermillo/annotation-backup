@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Isolation System Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #e0e0e0;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 8px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.success { background: #1a4d2e; color: #4ade80; }
+        .status.error { background: #4d1a1a; color: #f87171; }
+        .status.info { background: #1a3d4d; color: #60a5fa; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { 
+            background: #4b5563; 
+            cursor: not-allowed;
+        }
+        #results {
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Isolation System Test Suite</h1>
+    
+    <div class="test-section">
+        <h2>System Status</h2>
+        <div id="system-status" class="status info">Checking isolation system...</div>
+    </div>
+
+    <div class="test-section">
+        <h2>Manual Controls</h2>
+        <button onclick="enableIsolation()">Enable Isolation</button>
+        <button onclick="disableIsolation()">Disable Isolation</button>
+        <button onclick="isolateComponent('test-component-1')">Isolate Test Component</button>
+        <button onclick="restoreComponent('test-component-1')">Restore Test Component</button>
+        <button onclick="listIsolated()">List Isolated Components</button>
+    </div>
+
+    <div class="test-section">
+        <h2>Automated Tests</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <div id="results"></div>
+    </div>
+
+    <script>
+        // Test utilities
+        function log(message, type = 'info') {
+            const results = document.getElementById('results');
+            const entry = document.createElement('div');
+            entry.className = `status ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            results.appendChild(entry);
+        }
+
+        function checkIsolationAPI() {
+            const status = document.getElementById('system-status');
+            if (window.parent && window.parent.__isolationDebug) {
+                status.className = 'status success';
+                status.textContent = '✓ Isolation API available';
+                return true;
+            } else {
+                status.className = 'status error';
+                status.textContent = '✗ Isolation API not found';
+                return false;
+            }
+        }
+
+        // Manual control functions
+        function enableIsolation() {
+            if (window.parent.__isolationDebug) {
+                window.parent.__isolationDebug.enable(true);
+                log('Isolation enabled', 'success');
+            }
+        }
+
+        function disableIsolation() {
+            if (window.parent.__isolationDebug) {
+                window.parent.__isolationDebug.enable(false);
+                log('Isolation disabled', 'info');
+            }
+        }
+
+        function isolateComponent(id) {
+            if (window.parent.__isolationDebug) {
+                window.parent.__isolationDebug.isolate(id);
+                log(`Component ${id} isolated`, 'success');
+            }
+        }
+
+        function restoreComponent(id) {
+            if (window.parent.__isolationDebug) {
+                window.parent.__isolationDebug.restore(id);
+                log(`Component ${id} restored`, 'success');
+            }
+        }
+
+        function listIsolated() {
+            if (window.parent.__isolationDebug) {
+                const list = window.parent.__isolationDebug.list();
+                log(`Isolated components: ${list.length > 0 ? list.join(', ') : 'none'}`, 'info');
+            }
+        }
+
+        // Automated test suite
+        async function runAllTests() {
+            log('Starting test suite...', 'info');
+            
+            // Test 1: API availability
+            if (!checkIsolationAPI()) {
+                log('Test aborted: API not available', 'error');
+                return;
+            }
+            
+            // Test 2: Enable/disable isolation
+            log('Test: Enable/disable isolation', 'info');
+            window.parent.__isolationDebug.enable(true);
+            await delay(100);
+            window.parent.__isolationDebug.enable(false);
+            log('✓ Enable/disable test passed', 'success');
+            
+            // Test 3: Isolate and restore
+            log('Test: Isolate and restore component', 'info');
+            window.parent.__isolationDebug.enable(true);
+            window.parent.__isolationDebug.isolate('test-1');
+            await delay(100);
+            
+            let isolated = window.parent.__isolationDebug.list();
+            if (isolated.includes('test-1')) {
+                log('✓ Component isolated successfully', 'success');
+            } else {
+                log('✗ Component isolation failed', 'error');
+            }
+            
+            window.parent.__isolationDebug.restore('test-1');
+            await delay(100);
+            
+            isolated = window.parent.__isolationDebug.list();
+            if (!isolated.includes('test-1')) {
+                log('✓ Component restored successfully', 'success');
+            } else {
+                log('✗ Component restoration failed', 'error');
+            }
+            
+            // Test 4: Multiple isolations
+            log('Test: Multiple component isolation', 'info');
+            window.parent.__isolationDebug.isolate('test-a');
+            window.parent.__isolationDebug.isolate('test-b');
+            window.parent.__isolationDebug.isolate('test-c');
+            await delay(100);
+            
+            isolated = window.parent.__isolationDebug.list();
+            if (isolated.length === 3) {
+                log('✓ Multiple isolation test passed', 'success');
+            } else {
+                log(`✗ Expected 3 isolated, got ${isolated.length}`, 'error');
+            }
+            
+            // Cleanup
+            isolated.forEach(id => window.parent.__isolationDebug.restore(id));
+            window.parent.__isolationDebug.enable(false);
+            
+            log('Test suite completed!', 'info');
+        }
+
+        function delay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            checkIsolationAPI();
+        });
+    </script>
+</body>
+</html>

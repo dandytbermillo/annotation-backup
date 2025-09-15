@@ -2,6 +2,7 @@
 
 import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
+import { IsolationProvider } from "@/lib/isolation/context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
@@ -450,6 +451,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   }), [onCanvasStateChange, canvasState])
 
   return (
+    <IsolationProvider config={{ enabled: false }}>
     <CanvasProvider noteId={noteId}>
       <div className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
         {/* Demo Header */}
@@ -491,6 +493,8 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         <EnhancedControlPanel 
           visible={showControlPanel}
           onClose={() => setShowControlPanel(false)}
+          canvasItems={canvasItems}
+          onAddComponent={handleAddComponent}
         />
 
         {/* Enhanced Minimap */}
@@ -538,8 +542,6 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
               // Force stable GPU layer composition
               backfaceVisibility: 'hidden' as const,
               transformStyle: 'preserve-3d' as const,
-              backfaceVisibility: 'hidden',
-              transformStyle: 'preserve-3d',
             }}
           >
             {/* Connection Lines */}
@@ -572,6 +574,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         <AnnotationToolbar />
       </div>
     </CanvasProvider>
+    </IsolationProvider>
   )
 })
 

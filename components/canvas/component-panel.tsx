@@ -1,11 +1,13 @@
 "use client"
 
 import React, { useRef, useState, useEffect, useCallback } from 'react'
-import { X, Minimize2, Maximize2 } from 'lucide-react'
+import { X, Minimize2, Maximize2, Lock, Unlock } from 'lucide-react'
 import { Calculator } from './components/calculator'
 import { Timer } from './components/timer'
 import { TextEditor } from './components/text-editor'
 import { DragTest } from './components/drag-test'
+import { useAutoScroll } from './use-auto-scroll'
+import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
 
 interface ComponentPanelProps {
   id: string
@@ -22,6 +24,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const [componentState, setComponentState] = useState({})
+  const { isIsolated, level, placeholder } = useIsolation(id)
+  // Register with isolation manager for heuristic metrics
+  useRegisterWithIsolation(id, panelRef as any, type === 'editor' ? 'high' : 'normal', type)
   
   
   // Dragging state
@@ -35,6 +40,48 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     currentTransform: { x: 0, y: 0 },
     targetTransform: { x: 0, y: 0 },
     initialPosition: { x: position.x, y: position.y }
+  })
+  
+  // Auto-scroll functionality for component dragging
+  const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
+    if (!dragState.current.isDragging) return
+    
+    // Move ALL panels and components to simulate canvas panning
+    const allPanels = document.querySelectorAll('[data-panel-id]')
+    const allComponents = document.querySelectorAll('[data-component-panel]')
+    
+    // Update panels
+    allPanels.forEach(panel => {
+      const panelEl = panel as HTMLElement
+      const currentLeft = parseInt(panelEl.style.left || '0', 10)
+      const currentTop = parseInt(panelEl.style.top || '0', 10)
+      panelEl.style.left = (currentLeft + deltaX) + 'px'
+      panelEl.style.top = (currentTop + deltaY) + 'px'
+    })
+    
+    // Update components
+    allComponents.forEach(component => {
+      const componentEl = component as HTMLElement
+      
+      if (componentEl.id === `component-${id}` && dragState.current.isDragging) {
+        // For the dragging component, update its initial position
+        dragState.current.initialPosition.x += deltaX
+        dragState.current.initialPosition.y += deltaY
+      } else {
+        // For other components, update their actual position
+        const currentLeft = parseInt(componentEl.style.left || '0', 10)
+        const currentTop = parseInt(componentEl.style.top || '0', 10)
+        componentEl.style.left = (currentLeft + deltaX) + 'px'
+        componentEl.style.top = (currentTop + deltaY) + 'px'
+      }
+    })
+  }, [id])
+  
+  const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
+    enabled: true,
+    threshold: 80,
+    speed: 8,
+    onScroll: handleAutoScroll
   })
   
   
@@ -86,6 +133,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       e.stopPropagation()
       e.preventDefault()
       
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
+      
       const deltaX = e.clientX - dragState.current.startX
       const deltaY = e.clientY - dragState.current.startY
       
@@ -116,6 +166,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       e.preventDefault()
       
       globalDraggingComponentId = null
+      
+      // Stop auto-scroll
+      stopAutoScroll()
       
       if (dragState.current.rafId) {
         cancelAnimationFrame(dragState.current.rafId)
@@ -163,7 +216,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [position, onPositionChange, id])
+  }, [position, onPositionChange, id, checkAutoScroll, stopAutoScroll])
   
   const renderComponent = () => {
     switch (type) {
@@ -205,25 +258,57 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       ref={panelRef}
       id={`component-${id}`}
       data-component-panel
-      className="absolute bg-gray-800 rounded-lg shadow-2xl overflow-hidden"
+      className={`absolute bg-gray-800 rounded-lg shadow-2xl overflow-hidden ${
+        isIsolated ? 'ring-2 ring-red-500' : ''
+      }`}
       style={{
         left: `${position.x}px`,
         top: `${position.y}px`,
         width: '350px',
         minHeight: isMinimized ? '40px' : '300px',
         zIndex: 100,
-        backgroundColor: '#1f2937'
+        backgroundColor: isIsolated ? '#2a1a1a' : '#1f2937',
+        borderColor: isIsolated ? '#ef4444' : 'transparent',
+        borderWidth: isIsolated ? '2px' : '0',
+        borderStyle: 'solid'
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div 
-        className={`component-header bg-gradient-to-r ${getComponentColor()} p-3 cursor-move flex items-center justify-between`}
+        className={`component-header bg-gradient-to-r ${getComponentColor()} p-3 cursor-move flex items-center justify-between ${
+          isIsolated ? 'ring-2 ring-red-500 ring-offset-2 ring-offset-gray-900' : ''
+        }`}
       >
-        <span className="text-white font-semibold text-sm select-none">
-          {getComponentTitle()}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-white font-semibold text-sm select-none">
+            {getComponentTitle()}
+          </span>
+          {isIsolated && (
+            <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full uppercase font-bold">
+              ISOLATED
+            </span>
+          )}
+        </div>
         <div className="component-controls flex items-center gap-2">
+          <button
+            onClick={() => {
+              const debug = (window as any).__isolationDebug
+              if (debug) {
+                if (isIsolated) {
+                  debug.restore(id)
+                } else {
+                  debug.isolate(id)
+                }
+              }
+            }}
+            className={`${
+              isIsolated ? 'text-red-300 hover:text-red-100' : 'text-white/80 hover:text-white'
+            } transition-colors`}
+            title={isIsolated ? 'Restore component' : 'Isolate component'}
+          >
+            {isIsolated ? <Unlock size={16} /> : <Lock size={16} />}
+          </button>
           <button
             onClick={() => setIsMinimized(!isMinimized)}
             className="text-white/80 hover:text-white transition-colors"
@@ -242,7 +327,13 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       {/* Content */}
       {!isMinimized && (
         <div className="component-content">
-          {renderComponent()}
+          {isIsolated ? (
+            <div className="p-4">
+              {placeholder}
+            </div>
+          ) : (
+            renderComponent()
+          )}
         </div>
       )}
     </div>

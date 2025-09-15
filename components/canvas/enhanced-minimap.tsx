@@ -26,6 +26,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   const [minimapDragStart, setMinimapDragStart] = useState({ x: 0, y: 0 })
   const [initialViewportOffset, setInitialViewportOffset] = useState({ x: 0, y: 0 })
   const [isExpanded, setIsExpanded] = useState(true)
+  const [isolatedComponents, setIsolatedComponents] = useState<string[]>([])
   
   // Use ref to track dragging state for immediate access in event handlers
   const isDraggingRef = useRef(false)
@@ -57,6 +58,22 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
+  }, [])
+  
+  // Monitor isolated components
+  useEffect(() => {
+    const checkIsolation = () => {
+      const debug = (window as any).__isolationDebug
+      if (debug) {
+        const isolated = debug.list() || []
+        setIsolatedComponents(isolated)
+      }
+    }
+    
+    const interval = setInterval(checkIsolation, 500)
+    checkIsolation()
+    
+    return () => clearInterval(interval)
   }, [])
   
   // Extract panels and components from canvasItems
@@ -176,38 +193,73 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       const width = (branch.dimensions?.width || 500) * scale
       const height = (branch.dimensions?.height || 400) * scale
       
+      // Check if panel is isolated
+      const isIsolated = isolatedComponents.includes(panel.panelId!)
+      
       // Color based on type
       let fillColor = 'rgba(100, 100, 100, 0.8)'
-      switch (branch.type) {
-        case 'main':
-          fillColor = 'rgba(168, 85, 247, 0.8)' // Purple
-          break
-        case 'note':
-          fillColor = 'rgba(59, 130, 246, 0.8)' // Blue
-          break
-        case 'explore':
-          fillColor = 'rgba(245, 158, 11, 0.8)' // Orange
-          break
-        case 'promote':
-          fillColor = 'rgba(34, 197, 94, 0.8)' // Green
-          break
+      if (isIsolated) {
+        // Yellow with transparency for isolated panels
+        fillColor = 'rgba(250, 204, 21, 0.4)'
+      } else {
+        switch (branch.type) {
+          case 'main':
+            fillColor = 'rgba(168, 85, 247, 0.8)' // Purple
+            break
+          case 'note':
+            fillColor = 'rgba(59, 130, 246, 0.8)' // Blue
+            break
+          case 'explore':
+            fillColor = 'rgba(245, 158, 11, 0.8)' // Orange
+            break
+          case 'promote':
+            fillColor = 'rgba(34, 197, 94, 0.8)' // Green
+            break
+        }
       }
       
-      // Special colors for states
-      if (panel.panelId === hoveredComponent) {
-        fillColor = 'rgba(251, 191, 36, 0.9)' // Yellow for hover
-      }
-      if (branch.selected) {
-        fillColor = 'rgba(239, 68, 68, 0.9)' // Red for selected
+      // Special colors for states (only if not isolated)
+      if (!isIsolated) {
+        if (panel.panelId === hoveredComponent) {
+          fillColor = 'rgba(251, 191, 36, 0.9)' // Yellow for hover
+        }
+        if (branch.selected) {
+          fillColor = 'rgba(239, 68, 68, 0.9)' // Red for selected
+        }
       }
       
       ctx.fillStyle = fillColor
       ctx.fillRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
       
+      // Draw isolation pattern if isolated
+      if (isIsolated) {
+        ctx.save()
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.8)' // Yellow
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        
+        // Draw diagonal stripes
+        const stripeSpacing = 4
+        for (let i = 0; i < width + height; i += stripeSpacing) {
+          ctx.beginPath()
+          ctx.moveTo(pos.x + Math.min(i, width), pos.y + Math.max(0, i - width))
+          ctx.lineTo(pos.x + Math.max(0, i - height), pos.y + Math.min(i, height))
+          ctx.stroke()
+        }
+        
+        ctx.restore()
+      }
+      
       // Draw border
-      ctx.strokeStyle = branch.selected ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.2)'
-      ctx.lineWidth = branch.selected ? 2 : 1
+      ctx.strokeStyle = isIsolated ? 'rgba(250, 204, 21, 1)' :
+                       branch.selected ? 'rgba(255, 255, 255, 0.8)' : 
+                       'rgba(255, 255, 255, 0.2)'
+      ctx.lineWidth = isIsolated ? 2 : branch.selected ? 2 : 1
+      if (isIsolated) {
+        ctx.setLineDash([4, 2])
+      }
       ctx.strokeRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
+      ctx.setLineDash([])
     })
     
     // Draw components
@@ -216,35 +268,68 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       const width = (component.dimensions?.width || 350) * scale
       const height = (component.dimensions?.height || 300) * scale
       
+      // Check if component is isolated
+      const isIsolated = isolatedComponents.includes(component.id)
+      
       // Different colors for different component types
       let fillColor = 'rgba(100, 100, 100, 0.8)'
-      switch (component.componentType) {
-        case 'calculator':
-          fillColor = 'rgba(59, 130, 246, 0.8)' // Blue
-          break
-        case 'timer':
-          fillColor = 'rgba(34, 197, 94, 0.8)' // Green
-          break
-        case 'editor':
-          fillColor = 'rgba(168, 85, 247, 0.8)' // Purple
-          break
-        case 'dragtest':
-          fillColor = 'rgba(251, 146, 60, 0.8)' // Orange
-          break
+      if (isIsolated) {
+        // Yellow with stripes for isolated components
+        fillColor = 'rgba(250, 204, 21, 0.4)' // Yellow with transparency
+      } else {
+        switch (component.componentType) {
+          case 'calculator':
+            fillColor = 'rgba(59, 130, 246, 0.8)' // Blue
+            break
+          case 'timer':
+            fillColor = 'rgba(34, 197, 94, 0.8)' // Green
+            break
+          case 'editor':
+            fillColor = 'rgba(168, 85, 247, 0.8)' // Purple
+            break
+          case 'dragtest':
+            fillColor = 'rgba(251, 146, 60, 0.8)' // Orange
+            break
+        }
       }
       
       // Highlight on hover
-      if (component.id === hoveredComponent) {
+      if (component.id === hoveredComponent && !isIsolated) {
         fillColor = 'rgba(251, 191, 36, 0.9)' // Yellow for hover
       }
       
       ctx.fillStyle = fillColor
       ctx.fillRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
       
+      // Draw isolation pattern if isolated
+      if (isIsolated) {
+        ctx.save()
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.8)' // Yellow
+        ctx.lineWidth = 1
+        ctx.setLineDash([2, 2])
+        
+        // Draw diagonal stripes
+        const stripeSpacing = 4
+        for (let i = 0; i < width + height; i += stripeSpacing) {
+          ctx.beginPath()
+          ctx.moveTo(pos.x + Math.min(i, width), pos.y + Math.max(0, i - width))
+          ctx.lineTo(pos.x + Math.max(0, i - height), pos.y + Math.min(i, height))
+          ctx.stroke()
+        }
+        
+        ctx.restore()
+      }
+      
       // Draw border
-      ctx.strokeStyle = component.id === hoveredComponent ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.2)'
-      ctx.lineWidth = component.id === hoveredComponent ? 2 : 1
+      ctx.strokeStyle = isIsolated ? 'rgba(250, 204, 21, 1)' : 
+                       component.id === hoveredComponent ? 'rgba(255, 255, 255, 0.8)' : 
+                       'rgba(255, 255, 255, 0.2)'
+      ctx.lineWidth = isIsolated ? 2 : component.id === hoveredComponent ? 2 : 1
+      if (isIsolated) {
+        ctx.setLineDash([4, 2])
+      }
       ctx.strokeRect(pos.x, pos.y, Math.max(width, 3), Math.max(height, 3))
+      ctx.setLineDash([])
     })
     
     // Draw viewport rectangle
@@ -263,7 +348,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     // Fill viewport with semi-transparent overlay
     ctx.fillStyle = 'rgba(239, 68, 68, 0.1)'
     ctx.fillRect(viewportMinimap.x, viewportMinimap.y, viewportSize.width, viewportSize.height)
-  }, [canvasItems, panels, components, dataStore, worldToMinimap, scale, viewport, hoveredComponent])
+  }, [canvasItems, panels, components, dataStore, worldToMinimap, scale, viewport, hoveredComponent, isolatedComponents])
   
   // Redraw when dependencies change
   useEffect(() => {
