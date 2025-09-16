@@ -11,6 +11,7 @@ import { useAutoScroll } from './use-auto-scroll'
 import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
 import { Z_INDEX } from '@/lib/constants/z-index'
 import { useCanvasCamera } from '@/lib/hooks/use-canvas-camera'
+import { useLayerManager, useCanvasNode } from '@/lib/hooks/use-layer-manager'
 
 interface ComponentPanelProps {
   id: string
@@ -31,6 +32,10 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   // Register with isolation manager for heuristic metrics
   useRegisterWithIsolation(id, panelRef as any, type === 'editor' ? 'high' : 'normal', type)
   
+  // Layer management integration
+  const layerManager = useLayerManager()
+  const { node: canvasNode } = useCanvasNode(id, 'component', position)
+  
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
   
@@ -38,9 +43,11 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
   useEffect(() => {
     if (!dragStateRef.current?.isDragging) {
-      setRenderPosition(position)
+      // Use LayerManager position if available, otherwise fall back to prop
+      const nodePosition = layerManager.isEnabled && canvasNode?.position ? canvasNode.position : position
+      setRenderPosition(nodePosition)
     }
-  }, [position])
+  }, [position, canvasNode?.position, layerManager.isEnabled])
   
   // Camera-based panning
   const { 
@@ -146,7 +153,11 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       
       // Prepare for dragging
       panel.style.transition = 'none'
-      panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_ACTIVE)
+      if (layerManager.isEnabled) {
+        layerManager.focusNode(id) // This brings to front and updates focus time
+      } else {
+        panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_ACTIVE)
+      }
       
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'move'
@@ -197,7 +208,14 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       // Get final position from current style
       const finalX = parseInt(panel.style.left, 10)
       const finalY = parseInt(panel.style.top, 10)
-      panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_BASE)
+      
+      // Update position in LayerManager if enabled
+      if (layerManager.isEnabled) {
+        layerManager.updateNode(id, { position: { x: finalX, y: finalY } })
+        // LayerManager handles z-index, no need to reset
+      } else {
+        panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_BASE)
+      }
       
       // Update render position to final position
       setRenderPosition({ x: finalX, y: finalY })
@@ -288,7 +306,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         top: `${renderPosition.y}px`,
         width: '350px',
         minHeight: isMinimized ? '40px' : '300px',
-        zIndex: Z_INDEX.CANVAS_NODE_BASE,
+        zIndex: layerManager.isEnabled && canvasNode?.zIndex ? canvasNode.zIndex : Z_INDEX.CANVAS_NODE_BASE,
         backgroundColor: isIsolated ? '#2a1a1a' : '#1f2937',
         borderColor: isIsolated ? '#ef4444' : 'transparent',
         borderWidth: isIsolated ? '2px' : '0',

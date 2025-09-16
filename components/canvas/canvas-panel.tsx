@@ -17,6 +17,8 @@ import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
+import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
+import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -37,6 +39,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   
+  // Layer management integration
+  const layerManager = useLayerManager()
+  const { node: canvasNode } = useCanvasNode(panelId, 'panel', position)
+  
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
   
@@ -44,9 +50,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
   useEffect(() => {
     if (!dragStateRef.current?.isDragging) {
-      setRenderPosition(position)
+      // Use LayerManager position if available, otherwise fall back to prop
+      const nodePosition = layerManager.isEnabled && canvasNode?.position ? canvasNode.position : position
+      setRenderPosition(nodePosition)
     }
-  }, [position])
+  }, [position, canvasNode?.position, layerManager.isEnabled])
   
   // Camera-based panning
   const { 
@@ -117,7 +125,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Edit mode state - now respects layer state
   const [isEditing, setIsEditing] = useState(true)
-  const [zIndex, setZIndex] = useState(Z_INDEX.CANVAS_NODE_BASE)
+  // Use LayerManager z-index if enabled, otherwise fall back to local state
+  const [localZIndex, setLocalZIndex] = useState(Z_INDEX.CANVAS_NODE_BASE)
+  const zIndex = layerManager.isEnabled && canvasNode?.zIndex ? canvasNode.zIndex : localZIndex
+  const setZIndex = layerManager.isEnabled ? 
+    (z: number) => layerManager.updateNode(panelId, { zIndex: z }) : 
+    setLocalZIndex
   
   // Compute whether the editor should be editable based on layer state
   const isLayerInteractive = !multiLayerEnabled || !layerContext || layerContext.activeLayer === 'notes'
@@ -618,7 +631,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       panel.style.transition = 'none'
 
       // Bring panel to front while dragging
-      setZIndex(Z_INDEX.CANVAS_NODE_ACTIVE)
+      if (layerManager.isEnabled) {
+        layerManager.focusNode(panelId) // This brings to front and updates focus time
+      } else {
+        setZIndex(Z_INDEX.CANVAS_NODE_ACTIVE)
+      }
       globalDraggingPanelId = panelId
       
       // Prevent text selection while dragging
@@ -670,13 +687,19 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const finalX = parseInt(panel.style.left, 10)
       const finalY = parseInt(panel.style.top, 10)
       
-      // Reset z-index to base level after drag
-      setTimeout(() => {
-        if (globalDraggingPanelId === panelId) {
-          setZIndex(Z_INDEX.CANVAS_NODE_BASE)
-          globalDraggingPanelId = null
-        }
-      }, 100)
+      // Update position in LayerManager if enabled
+      if (layerManager.isEnabled) {
+        layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+        // LayerManager handles z-index, no need to reset
+      } else {
+        // Reset z-index to base level after drag (legacy path)
+        setTimeout(() => {
+          if (globalDraggingPanelId === panelId) {
+            setZIndex(Z_INDEX.CANVAS_NODE_BASE)
+            globalDraggingPanelId = null
+          }
+        }, 100)
+      }
       
       // Update render position to final position
       setRenderPosition({ x: finalX, y: finalY })

@@ -8,6 +8,8 @@
  */
 
 import type { CanvasItem } from "@/types/canvas-items"
+import { CanvasNode } from "@/lib/canvas/canvas-node"
+import { getLayerManager } from "@/lib/canvas/layer-manager"
 
 const STORAGE_PREFIX = "annotation-canvas-state"
 const STATE_VERSION = "1.1.0"
@@ -39,6 +41,12 @@ export interface PersistedCanvasState {
   items: PersistedCanvasItem[]
   savedAt: number
   version: string
+  /** Layer management data (optional for backwards compatibility) */
+  layerNodes?: {
+    schemaVersion: number
+    nodes: CanvasNode[]
+    maxZ: number
+  }
 }
 
 /**
@@ -123,6 +131,17 @@ export function loadStateFromStorage(noteId: string): PersistedCanvasState | nul
         // In future, add migration logic here
       }
 
+      // Load layer nodes if available
+      if (parsed.layerNodes && process.env.NEXT_PUBLIC_LAYER_MODEL === '1') {
+        try {
+          const layerManager = getLayerManager()
+          layerManager.deserializeNodes(parsed.layerNodes)
+          console.log('[canvas-storage] Loaded layer nodes:', parsed.layerNodes.nodes.length)
+        } catch (error) {
+          console.warn('[canvas-storage] Failed to load layer nodes:', error)
+        }
+      }
+
       return {
         noteId,
         viewport: {
@@ -134,6 +153,7 @@ export function loadStateFromStorage(noteId: string): PersistedCanvasState | nul
         items: parsed.items,
         savedAt: parsed.savedAt || Date.now(),
         version: parsed.version || STATE_VERSION,
+        layerNodes: parsed.layerNodes
       }
     } catch (error) {
       console.warn("[canvas-storage] Failed to parse snapshot", { key, error })
@@ -157,6 +177,18 @@ export function saveStateToStorage(
   if (!isBrowser()) return false
 
   try {
+    // Include layer nodes if LayerManager is enabled
+    let layerNodes = undefined
+    if (process.env.NEXT_PUBLIC_LAYER_MODEL === '1') {
+      try {
+        const layerManager = getLayerManager()
+        layerNodes = layerManager.serializeNodes()
+        console.log('[canvas-storage] Saving layer nodes:', layerNodes.nodes.length)
+      } catch (error) {
+        console.warn('[canvas-storage] Failed to serialize layer nodes:', error)
+      }
+    }
+
     const payload: PersistedCanvasState = {
       noteId,
       savedAt: Date.now(),
@@ -173,6 +205,7 @@ export function saveStateToStorage(
         minimized: item.minimized,
         title: item.title,
       })),
+      layerNodes
     }
 
     const serialized = JSON.stringify(payload)
