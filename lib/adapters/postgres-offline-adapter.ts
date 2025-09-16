@@ -8,6 +8,7 @@
  */
 
 import { Pool } from 'pg'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 import { PostgresAdapter } from './postgres-adapter'
 import type { 
   PlainCrudAdapter, 
@@ -26,6 +27,24 @@ import type {
  * storing content as JSON/HTML instead of Yjs binary format.
  */
 export abstract class PostgresOfflineAdapter extends PostgresAdapter implements PlainCrudAdapter {
+  // UUID namespace for deterministic ID mapping (must match API)
+  private readonly ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+  
+  /**
+   * Coerce entity ID to UUID format for consistency with API
+   */
+  private coerceEntityId(id: string): string {
+    return validateUuid(id) ? id : uuidv5(id, this.ID_NAMESPACE)
+  }
+  
+  /**
+   * Normalize panel ID to UUID format
+   */
+  private normalizePanelId(noteId: string, panelId: string): string {
+    if (validateUuid(panelId)) return panelId
+    return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+  }
+  
   /**
    * Note operations
    */
@@ -211,6 +230,10 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
   ): Promise<void> {
     const pool = this.getPool()
     
+    // Coerce IDs to UUID format for consistency with API
+    const noteKey = this.coerceEntityId(noteId)
+    const normalizedPanelId = this.normalizePanelId(noteKey, panelId)
+    
     // Store content as JSONB
     const contentJson = typeof content === 'string' 
       ? { html: content } 
@@ -222,7 +245,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
        VALUES ($1, $2, $3::jsonb, $4, NOW())
        ON CONFLICT (note_id, panel_id, version)
        DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
-      [noteId, panelId, JSON.stringify(contentJson), version]
+      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
     )
     
     console.log(`[PostgresOfflineAdapter] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
@@ -234,6 +257,10 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
   ): Promise<{ content: ProseMirrorJSON | HtmlString; version: number } | null> {
     const pool = this.getPool()
     
+    // Coerce IDs to UUID format for consistency with API
+    const noteKey = this.coerceEntityId(noteId)
+    const normalizedPanelId = this.normalizePanelId(noteKey, panelId)
+    
     // Get the latest version for this note-panel combination
     const result = await pool.query(
       `SELECT content, version 
@@ -241,7 +268,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
        WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
        LIMIT 1`,
-      [noteId, panelId]
+      [noteKey, normalizedPanelId]
     )
     
     if (result.rows.length === 0) {

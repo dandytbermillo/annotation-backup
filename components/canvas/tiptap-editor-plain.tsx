@@ -192,6 +192,45 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       })
     }, [provider, noteId, panelId])
     
+    // Check for pending saves in localStorage and restore them
+    useEffect(() => {
+      if (!provider || !noteId || !panelId) return
+      
+      const pendingKey = `pending_save_${noteId}_${panelId}`
+      const pendingData = localStorage.getItem(pendingKey)
+      
+      if (pendingData) {
+        try {
+          const { content: pendingContent, timestamp } = JSON.parse(pendingData)
+          const age = Date.now() - timestamp
+          
+          // Only restore if less than 5 minutes old
+          if (age < 5 * 60 * 1000) {
+            console.log(`[TiptapEditorPlain] Restoring pending save for ${noteId}:${panelId} (age: ${Math.round(age/1000)}s)`)
+            
+            // Save the pending content to provider
+            provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
+              .then(() => {
+                console.log('[TiptapEditorPlain] Pending save restored successfully')
+                localStorage.removeItem(pendingKey)
+                // Update loaded content to show the restored data
+                setLoadedContent(pendingContent)
+              })
+              .catch(err => {
+                console.error('[TiptapEditorPlain] Failed to restore pending save:', err)
+              })
+          } else {
+            // Too old, discard it
+            console.log(`[TiptapEditorPlain] Discarding old pending save (age: ${Math.round(age/1000)}s)`)
+            localStorage.removeItem(pendingKey)
+          }
+        } catch (e) {
+          console.error('[TiptapEditorPlain] Failed to parse pending save:', e)
+          localStorage.removeItem(pendingKey)
+        }
+      }
+    }, [provider, noteId, panelId])
+    
     // CRITICAL: Always use undefined as initial content when we have a provider
     // This prevents the editor from being recreated when loading state changes
     // Content will ALWAYS be set via useEffect after loading
@@ -386,12 +425,13 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         if (existing) clearTimeout(existing)
         const timer = setTimeout(() => {
           if (provider && noteId) {
-            provider.saveDocument(noteId, panelId, json).catch(err => {
+            // Skip batching for document saves to ensure timely persistence
+            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).catch(err => {
               console.error('[TiptapEditorPlain] Failed to save content:', err)
             })
           }
           onUpdate?.(json)
-        }, 800) // 800ms idle before saving
+        }, 300) // Reduced to 300ms for faster saves
         ;(window as any).__debouncedSave.set(key, timer)
       },
       onSelectionUpdate: ({ editor }) => {
@@ -455,24 +495,77 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
     })
     
-    // Save content before browser unload
+    // Save content before browser unload or visibility change
     useEffect(() => {
-      const handleBeforeUnload = () => {
+      const saveCurrentContent = async (isSync = false) => {
         if (editor && provider && noteId) {
           const key = `${noteId}:${panelId}`
           const pendingSave = (window as any).__debouncedSave?.get(key)
           if (pendingSave) {
             clearTimeout(pendingSave)
-            const json = editor.getJSON()
-            // Use synchronous save if available, or at least try
-            provider.saveDocument(noteId, panelId, json)
-            // Emergency save on page unload
+            ;(window as any).__debouncedSave.delete(key)
+          }
+          
+          const json = editor.getJSON()
+          
+          // Always save to localStorage synchronously as backup
+          const pendingKey = `pending_save_${noteId}_${panelId}`
+          try {
+            localStorage.setItem(pendingKey, JSON.stringify({
+              content: json,
+              timestamp: Date.now(),
+              noteId,
+              panelId
+            }))
+          } catch (e) {
+            console.warn('[TiptapEditorPlain] Failed to save to localStorage:', e)
+          }
+          
+          if (!isSync) {
+            // For visibilitychange, we can await the async save
+            try {
+              await provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
+              // Clear localStorage backup after successful save
+              localStorage.removeItem(pendingKey)
+            } catch (err) {
+              console.error('[TiptapEditorPlain] Failed to save content:', err)
+            }
+          } else {
+            // For beforeunload, fire and forget (browser won't wait)
+            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).then(() => {
+              // Clear backup if save succeeds (might not happen if page closes)
+              localStorage.removeItem(pendingKey)
+            }).catch(() => {
+              // Keep localStorage backup if save fails
+            })
+          }
+          
+          // Flush any pending batch operations
+          if ('batchManager' in provider && provider.batchManager) {
+            (provider.batchManager as any).flushAll?.()
           }
         }
       }
       
+      // visibilitychange fires earlier and allows async operations
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          saveCurrentContent(false) // async save
+        }
+      }
+      
+      // beforeunload as last resort (sync localStorage only)
+      const handleBeforeUnload = () => {
+        saveCurrentContent(true) // sync localStorage save
+      }
+      
+      document.addEventListener('visibilitychange', handleVisibilityChange)
       window.addEventListener('beforeunload', handleBeforeUnload)
-      return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+      
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange)
+        window.removeEventListener('beforeunload', handleBeforeUnload)
+      }
     }, [editor, provider, noteId, panelId])
     
     // REMOVED: Complex note switching cleanup - not needed with simplified approach
