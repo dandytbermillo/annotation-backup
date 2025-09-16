@@ -1,0 +1,420 @@
+diff --git a/lib/storage/canvas-storage.ts b/lib/storage/canvas-storage.ts
+index 1111111..2222222 100644
+--- a/lib/storage/canvas-storage.ts
++++ b/lib/storage/canvas-storage.ts
+@@
+ export const STORAGE_KEY = 'annotation-canvas-state'
+ export const STATE_VERSION = '1.0.0'
+ 
++function getStorageKey(noteId?: string) {
++  if (!noteId) return STORAGE_KEY
++  return `${STORAGE_KEY}:${noteId}`
++}
++
+ /**
+  * Canvas State Storage Utility
+  * Adapted from infinite-canvas-main for annotation project
+  * Handles persistence of canvas state, panels, and isolation data
+  */
+@@
+ export function saveStateToStorage(
+   canvasState: any,
+   panels: Map<string, any>,
+   canvasItems: any[],
+   isolationState?: any,
+   noteId?: string
+ ): boolean {
+   try {
+     const persistedState: PersistedCanvasState = {
+       version: STATE_VERSION,
+@@
+       metadata: {
+         totalPanels: panels.size,
+         totalComponents: canvasItems.filter(item => item.itemType === 'component').length,
+         noteId
+       }
+     }
+ 
+     const serialized = JSON.stringify(persistedState)
+-    localStorage.setItem(STORAGE_KEY, serialized)
++    const storageKey = getStorageKey(noteId)
++    localStorage.setItem(storageKey, serialized)
++
++    // Drop legacy single-key snapshot after first per-note save
++    if (noteId && storageKey !== STORAGE_KEY) {
++      try {
++        const legacy = localStorage.getItem(STORAGE_KEY)
++        if (legacy) {
++          const legacyState = JSON.parse(legacy)
++          if (legacyState?.metadata?.noteId === noteId) {
++            localStorage.removeItem(STORAGE_KEY)
++          }
++        }
++      } catch {
++        // Ignore migration issues; legacy entry can remain until manual clear
++      }
++    }
+ 
+     console.table([{
+       Action: 'State Saved',
++      NoteId: noteId || 'unknown',
+       Panels: panels.size,
+       Components: canvasItems.length,
+       Isolated: isolationState?.isolatedIds?.length || 0,
+       Size: `${(serialized.length / 1024).toFixed(2)} KB`,
+       Time: new Date().toLocaleTimeString()
+     }])
+ 
+     return true
+   } catch (error) {
+@@
+-export function loadStateFromStorage(): PersistedCanvasState | null {
++export function loadStateFromStorage(noteId?: string): PersistedCanvasState | null {
+   try {
+-    const serialized = localStorage.getItem(STORAGE_KEY)
+-    if (!serialized) {
+-      console.table([{
+-        Action: 'Load State',
+-        Result: 'No saved state found',
+-        Time: new Date().toLocaleTimeString()
+-      }])
+-      return null
+-    }
+-
+-    const state = JSON.parse(serialized)
+-    if (!validateState(state)) {
+-      console.error('Invalid state structure, ignoring saved state')
+-      return null
+-    }
+-
+-    console.table([{
+-      Action: 'State Loaded',
+-      Panels: state.panels.length,
+-      Components: state.canvasItems.length,
+-      Isolated: state.isolationState?.isolatedIds?.length || 0,
+-      SavedAt: new Date(state.timestamp).toLocaleTimeString(),
+-      Time: new Date().toLocaleTimeString()
+-    }])
+-
+-    return state
++    const primaryKey = getStorageKey(noteId)
++    const keysToCheck = primaryKey === STORAGE_KEY
++      ? [primaryKey]
++      : [primaryKey, STORAGE_KEY]
++
++    for (const key of keysToCheck) {
++      const serialized = localStorage.getItem(key)
++      if (!serialized) {
++        continue
++      }
++
++      try {
++        const state = JSON.parse(serialized)
++        if (!validateState(state)) {
++          continue
++        }
++
++        if (noteId && state.metadata?.noteId && state.metadata.noteId !== noteId) {
++          continue
++        }
++
++        console.table([{
++          Action: 'State Loaded',
++          NoteId: noteId || state.metadata?.noteId || 'unknown',
++          Panels: state.panels.length,
++          Components: state.canvasItems.length,
++          Isolated: state.isolationState?.isolatedIds?.length || 0,
++          SavedAt: new Date(state.timestamp).toLocaleTimeString(),
++          StorageKey: key,
++          Time: new Date().toLocaleTimeString()
++        }])
++
++        if (noteId && key !== primaryKey) {
++          try {
++            localStorage.setItem(primaryKey, serialized)
++            localStorage.removeItem(key)
++          } catch {
++            // Ignore migration failure; we already have the state in memory
++          }
++        }
++
++        return state
++      } catch (error) {
++        console.error('Failed to parse saved state:', error)
++      }
++    }
++
++    console.table([{
++      Action: 'Load State',
++      NoteId: noteId || 'unknown',
++      Result: 'No saved state found',
++      Time: new Date().toLocaleTimeString()
++    }])
++    return null
+   } catch (error) {
+     console.error('Failed to load state:', error)
+     return null
+   }
+ }
+@@
+-export function clearStoredState(): boolean {
++export function clearStoredState(noteId?: string): boolean {
+   try {
+-    localStorage.removeItem(STORAGE_KEY)
++    const storageKey = getStorageKey(noteId)
++    localStorage.removeItem(storageKey)
++    if (!noteId) {
++      localStorage.removeItem(STORAGE_KEY)
++    }
+     console.table([{
+       Action: 'State Cleared',
+-      Result: 'Success',
++      NoteId: noteId || 'all',
++      Result: 'Success',
+       Time: new Date().toLocaleTimeString()
+     }])
+     return true
+   } catch (error) {
+     console.error('Failed to clear state:', error)
+@@
+diff --git a/components/annotation-canvas-modern.tsx b/components/annotation-canvas-modern.tsx
+index 3333333..4444444 100644
+--- a/components/annotation-canvas-modern.tsx
++++ b/components/annotation-canvas-modern.tsx
+@@
+-import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback } from "react"
++import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
+@@
+-import { IsolationDebugPanel } from "./canvas/isolation-debug-panel"
+-import { loadStateFromStorage, saveStateToStorage } from "@/lib/storage/canvas-storage"
++import { IsolationDebugPanel } from "./canvas/isolation-debug-panel"
++import { loadStateFromStorage, saveStateToStorage } from "@/lib/storage/canvas-storage"
+ 
+ interface ModernAnnotationCanvasProps {
+   noteId: string
+   isNotesExplorerOpen?: boolean
+   onCanvasStateChange?: (state: { zoom: number; showConnections: boolean }) => void
+@@
+-const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
+-  noteId, 
+-  isNotesExplorerOpen = false,
+-  onCanvasStateChange 
+-}, ref) => {
+-  // State to track if we've loaded from storage
+-  const [isStateLoaded, setIsStateLoaded] = useState(false)
+-  const [isClientSide, setIsClientSide] = useState(false)
+-  
+-  // Store reference to momentum context stop function
+-  const stopAllMomentumRef = useRef<(() => void) | null>(null)
+-  
+-  // Get dataStore from context (will be available after CanvasProvider)
+-  const dataStoreRef = useRef<any>(null)
+-  
+-  const [canvasState, setCanvasState] = useState({
+-    zoom: 1,
+-    translateX: -1000,
+-    translateY: -1200,
+-    isDragging: false,
+-    lastMouseX: 0,
+-    lastMouseY: 0,
+-    showConnections: true
+-  })
++const createDefaultCanvasState = () => ({
++  zoom: 1,
++  translateX: -1000,
++  translateY: -1200,
++  isDragging: false,
++  lastMouseX: 0,
++  lastMouseY: 0,
++  showConnections: true
++})
++
++const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
++  noteId, 
++  isNotesExplorerOpen = false,
++  onCanvasStateChange 
++}, ref) => {
++  const stopAllMomentumRef = useRef<(() => void) | null>(null)
++
++  return (
++    <IsolationProvider config={{ enabled: false }}>
++    <MomentumProvider onReady={(stopFn) => { stopAllMomentumRef.current = stopFn }}>
++    <CanvasProvider noteId={noteId}>
++      <InnerCanvas
++        ref={ref}
++        noteId={noteId}
++        isNotesExplorerOpen={isNotesExplorerOpen}
++        onCanvasStateChange={onCanvasStateChange}
++        stopAllMomentumRef={stopAllMomentumRef}
++      />
++    </CanvasProvider>
++    </MomentumProvider>
++    </IsolationProvider>
++  )
++})
++
++interface InnerCanvasProps extends ModernAnnotationCanvasProps {
++  stopAllMomentumRef: React.MutableRefObject<(() => void) | null>
++}
++
++const InnerCanvas = forwardRef<CanvasImperativeHandle, InnerCanvasProps>(({ 
++  noteId,
++  isNotesExplorerOpen = false,
++  onCanvasStateChange,
++  stopAllMomentumRef
++}, ref) => {
++  const { state: canvasContextState, dispatch } = useCanvas()
++
++  const [isStateLoaded, setIsStateLoaded] = useState(false)
++  const [isClientSide, setIsClientSide] = useState(false)
++
++  const [canvasState, setCanvasState] = useState(createDefaultCanvasState)
+@@
+-  // Load saved state on mount (once) - EXACTLY like infinite-canvas
+-  useEffect(() => {
+-    console.table([{
+-      Action: 'Canvas Initialization',
+-      Phase: 'Starting',
+-      Time: new Date().toLocaleTimeString()
+-    }])
+-
+-    setIsClientSide(true)
+-
+-    // Try to load saved state from localStorage
+-    if (typeof window !== 'undefined' && 'localStorage' in window) {
+-      try {
+-        const savedState = loadStateFromStorage()
++  // Load saved state whenever the note changes
++  useEffect(() => {
++    console.table([{
++      Action: 'Canvas Initialization',
++      Phase: 'Starting',
++      NoteId: noteId || 'unknown',
++      Time: new Date().toLocaleTimeString()
++    }])
++
++    setIsClientSide(true)
++    setIsStateLoaded(false)
++    stopAllMomentumRef.current?.()
++    disableSelectionGuards()
++
++    if (typeof window !== 'undefined' && 'localStorage' in window) {
++      try {
++        const savedState = loadStateFromStorage(noteId)
+@@
+-          setCanvasState(prev => ({
+-            ...prev,
+-            zoom: savedState.canvasState.zoom || 1,
+-            translateX: savedState.canvasState.translateX || -1000,
+-            translateY: savedState.canvasState.translateY || -1200,
+-            showConnections: savedState.canvasState.showConnections ?? true
+-          }))
++          setCanvasState({
++            ...createDefaultCanvasState(),
++            zoom: savedState.canvasState.zoom || 1,
++            translateX: savedState.canvasState.translateX || -1000,
++            translateY: savedState.canvasState.translateY || -1200,
++            showConnections: savedState.canvasState.showConnections ?? true
++          })
+@@
+-          }
++          }
++
++          if (savedState.panels && savedState.panels.length > 0) {
++            const restoredPanels = new Map(savedState.panels)
++            dispatch({ type: 'SET_PANELS', payload: restoredPanels })
++          }
+ 
+           setIsStateLoaded(true)
+         } else {
+           console.table([{
+             Action: 'No Saved State',
+-            Reason: savedState ? 'Different note' : 'No state found',
++            NoteId: noteId || 'unknown',
++            Reason: savedState ? 'Different note' : 'No state found',
+             Time: new Date().toLocaleTimeString()
+           }])
+ 
+           // Use default setup
++          setCanvasState(createDefaultCanvasState())
+           const container = document.getElementById('canvas-container')
+@@
+         setIsStateLoaded(true)
+       }
+     } else {
+       // No localStorage available, use defaults
++      setCanvasState(createDefaultCanvasState())
+       const container = document.getElementById('canvas-container')
+@@
+-  }, []) // Empty deps - RUN ONCE like infinite-canvas!
++  }, [noteId, dispatch, disableSelectionGuards, stopAllMomentumRef])
+ 
+   // Note: Option A - offline mode without Yjs
+   // We're not using any collaboration features in this mode
+   useEffect(() => {
+@@
+-  useEffect(() => {
++  const panelsSnapshot = useMemo(() => {
++    return Array.from(canvasContextState.panels.entries()).map(([id, panel]) => {
++      if (!panel) return [id, panel]
++      const { element, ...rest } = panel
++      return [id, rest]
++    })
++  }, [canvasContextState.panels, canvasContextState.panelOrder, (canvasContextState as any).lastUpdate])
++
++  useEffect(() => {
+     // Don't auto-save until state has been loaded
+     if (!isStateLoaded || !isClientSide) return
+ 
+     // Clear any existing timer
+     if (autoSaveTimerRef.current) {
+@@
+-        const success = saveStateToStorage(
+-          canvasState,
+-          new Map(), // This would need to come from canvas context
+-          canvasItems,
+-          undefined, // Isolation state would come from isolation context
+-          noteId
+-        )
++        const panelsForSave = new Map<string, any>(panelsSnapshot)
++
++        const success = saveStateToStorage(
++          canvasState,
++          panelsForSave,
++          canvasItems,
++          undefined,
++          noteId
++        )
+@@
+-  }, [canvasState, canvasItems, isStateLoaded, isClientSide, noteId])
++  }, [canvasState, canvasItems, isStateLoaded, isClientSide, noteId, panelsSnapshot])
+@@
+-    <IsolationProvider config={{ enabled: false }}>
+-    <MomentumProvider onReady={(stopFn) => { stopAllMomentumRef.current = stopFn }}>
+-    <CanvasProvider noteId={noteId}>
+-      <style jsx global>{`
++  return (
++    <>
++      <style jsx global>{`
+         @keyframes highlight-pulse {
+           0% {
+             box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.8);
+             transform: scale(1);
+@@
+       `}</style>
+       <div className="w-full h-full overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
+@@
+         <AnnotationToolbar />
+       </div>
+-    </CanvasProvider>
+-    </MomentumProvider>
+-    </IsolationProvider>
++    </>
+   )
+-})
++})
+ 
+ ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
++InnerCanvas.displayName = 'InnerCanvas'
+@@
+ export default ModernAnnotationCanvas 

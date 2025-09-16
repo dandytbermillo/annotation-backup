@@ -15,6 +15,13 @@ import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
+// Configuration constants to avoid hard-coding
+const ROOT_FOLDER_CONFIG = {
+  defaultPath: '/knowledge-base',  // Can be changed or made configurable
+  defaultName: 'Knowledge Base',   // Fallback for display
+  autoExpand: true,                // Whether to auto-expand root folder
+}
+
 interface Note {
   id: string
   title: string
@@ -586,18 +593,24 @@ function NotesExplorerContent({
       const tree = buildInitialTree(data.items)
       setApiTreeData(tree)
       
-      // Auto-expand Knowledge Base folder by default and load its children
-      const knowledgeBaseNode = tree.find(node => node.name === 'Knowledge Base')
-      if (knowledgeBaseNode) {
-        // Check if not already expanded
-        if (expandedNodes[knowledgeBaseNode.id] === undefined) {
-          setExpandedNodes(prev => ({
-            ...prev,
-            [knowledgeBaseNode.id]: true
-          }))
-          
-          // Load children for Knowledge Base to show them immediately
-          loadNodeChildren(knowledgeBaseNode.id)
+      // Auto-expand first root folder and load its children if configured
+      if (ROOT_FOLDER_CONFIG.autoExpand) {
+        // Using path-based detection with fallback to first root folder
+        const rootFolder = tree.find(node => 
+          node.type === 'folder' && 
+          (node.path === ROOT_FOLDER_CONFIG.defaultPath || node.parentId === null)
+        )
+        if (rootFolder) {
+          // Check if not already expanded
+          if (expandedNodes[rootFolder.id] === undefined) {
+            setExpandedNodes(prev => ({
+              ...prev,
+              [rootFolder.id]: true
+            }))
+            
+            // Load children for root folder to show them immediately
+            loadNodeChildren(rootFolder.id)
+          }
         }
       }
     } catch (error) {
@@ -758,7 +771,11 @@ function NotesExplorerContent({
   // Phase 3: Create new folder
   const createNewFolder = async (folderName: string, parentId?: string) => {
     try {
-      const parentFolderId = parentId || availableFolders.find(f => f.name === 'Knowledge Base')?.id || null
+      // Use the configured root folder as default parent
+      const rootFolder = availableFolders.find(f => 
+        f.parentId === null || f.path === ROOT_FOLDER_CONFIG.defaultPath
+      )
+      const parentFolderId = parentId || rootFolder?.id || null
       
       const response = await fetch('/api/items', {
         method: 'POST',
@@ -806,7 +823,11 @@ function NotesExplorerContent({
         // If user typed a custom path, create the folder(s) first
         if (showCustomFolder && customFolderInput.trim()) {
           const pathParts = customFolderInput.trim().split('/').filter(p => p)
-          let parentId = availableFolders.find(f => f.name === 'Knowledge Base')?.id || null
+          // Find configured root folder as starting point for custom path
+          const rootFolder = availableFolders.find(f => 
+            f.parentId === null || f.path === ROOT_FOLDER_CONFIG.defaultPath
+          )
+          let parentId = rootFolder?.id || null
           
           // Create each folder in the path if it doesn't exist
           for (const folderName of pathParts) {
