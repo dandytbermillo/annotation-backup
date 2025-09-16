@@ -16,6 +16,11 @@ export const Z_INDEX = {
   POPUP_LEVEL_INCREMENT: 10,    // Each nested popup level adds this
   POPUP_DRAGGING_BOOST: 1000,   // Added when dragging a popup
   
+  // Canvas nodes (panels and components) - unified tokens
+  CANVAS_NODE_BASE: 110,        // Base z-index for all canvas nodes
+  CANVAS_NODE_ACTIVE: 160,      // Z-index for active/dragged nodes
+  CANVAS_UI: 300,               // Canvas UI controls (minimap, controls)
+  
   // UI elements
   DROPDOWN: 1500,               // Dropdowns above sidebar
   TOAST: 2000,                  // Toast notifications

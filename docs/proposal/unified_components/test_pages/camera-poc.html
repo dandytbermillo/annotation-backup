@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera POC Test Page</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f2f5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+    .description {
+      color: #666;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .test-section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #444;
+    }
+    .test-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 15px;
+    }
+    .test-case {
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      border-left: 3px solid #667eea;
+    }
+    .test-case h3 {
+      margin: 0 0 10px 0;
+      color: #555;
+      font-size: 16px;
+    }
+    .test-case ul {
+      margin: 0;
+      padding-left: 20px;
+      color: #666;
+      line-height: 1.6;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status.pass {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status.fail {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .status.pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+    .navigation-link {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 20px;
+      background: #667eea;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+    .navigation-link:hover {
+      background: #5a67d8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Camera POC Test Page</h1>
+    <p class="description">
+      This page validates the camera-based positioning system for the unified canvas nodes implementation.
+      The POC demonstrates camera-based panning, node dragging with proper coordinate transformation,
+      zoom functionality, and edge auto-scroll behavior.
+    </p>
+
+    <div class="test-section">
+      <h2>Test Scenarios <span class="status pending">In Progress</span></h2>
+      
+      <div class="test-grid">
+        <div class="test-case">
+          <h3>1. Camera Pan</h3>
+          <ul>
+            <li>Drag empty canvas area to pan</li>
+            <li>Camera X/Y updates in real-time</li>
+            <li>All nodes move together</li>
+            <li>Pan is smooth at all zoom levels</li>
+          </ul>
+        </div>
+
+        <div class="test-case">
+          <h3>2. Node Dragging</h3>
+          <ul>
+            <li>Drag individual nodes to reposition</li>
+            <li>Node lands under cursor on release</li>
+            <li>Works correctly at zoom ≠ 1</li>
+            <li>No position jumps</li>
+          </ul>
+        </div>
+
+        <div class="test-case">
+          <h3>3. Zoom Behavior</h3>
+          <ul>
+            <li>Scroll wheel zooms in/out</li>
+            <li>Zoom range: 50% - 200%</li>
+            <li>Positions scale correctly</li>
+            <li>Pan/drag still accurate after zoom</li>
+          </ul>
+        </div>
+
+        <div class="test-case">
+          <h3>4. Edge Auto-scroll</h3>
+          <ul>
+            <li>Drag node to viewport edge</li>
+            <li>Camera auto-scrolls smoothly</li>
+            <li>Works at all zoom levels</li>
+            <li>Node position updates correctly</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="test-section">
+      <h2>Math Validation</h2>
+      <p>Key formulas being tested:</p>
+      <ul>
+        <li><strong>Screen to World:</strong> worldDelta = screenDelta / zoom</li>
+        <li><strong>Camera Pan:</strong> camera.x += dxScreen / zoom, camera.y += dyScreen / zoom</li>
+        <li><strong>Node Position:</strong> screenPos = worldPos * zoom + camera</li>
+        <li><strong>Transform:</strong> translate(camera.x, camera.y) scale(zoom)</li>
+      </ul>
+    </div>
+
+    <div class="test-section">
+      <h2>Expected Results</h2>
+      <ul>
+        <li>✓ Camera pan moves all content together without individual DOM manipulation</li>
+        <li>✓ Node dragging is accurate at all zoom levels</li>
+        <li>✓ Edge auto-scroll integrates smoothly with camera system</li>
+        <li>✓ Performance is acceptable with multiple nodes</li>
+        <li>✓ No desync between visual position and stored coordinates</li>
+      </ul>
+    </div>
+
+    <a href="/canvas-test" class="navigation-link">Open Camera Test Component</a>
+  </div>
+</body>
+</html>

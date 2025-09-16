@@ -136,6 +136,7 @@ export interface TiptapEditorPlainHandle {
   setEditable: (editable: boolean) => void
   executeCommand: (command: string, value?: any) => void
   insertAnnotation: (type: string, annotationId: string, branchId: string) => void
+  setPerformanceMode?: (enabled: boolean) => void
 }
 
 const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainProps>(
@@ -1162,6 +1163,22 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
         
         onUpdate?.(json)
+      },
+      setPerformanceMode: (enabled: boolean) => {
+        // In performance mode, defer heavy operations
+        if (editor) {
+          // Disable/enable certain extensions or features
+          // For now, just disable spell check and some rendering
+          const editorElement = editor.view.dom as HTMLElement
+          if (enabled) {
+            editorElement.style.pointerEvents = 'none'
+            editorElement.spellcheck = false
+            // Could also disable certain plugins here
+          } else {
+            editorElement.style.pointerEvents = 'auto'
+            editorElement.spellcheck = true
+          }
+        }
       }
     }), [editor, onUpdate, provider, noteId, panelId])
 

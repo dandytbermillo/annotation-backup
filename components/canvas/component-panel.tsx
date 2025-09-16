@@ -9,6 +9,8 @@ import { DragTest } from './components/drag-test'
 import { PerformanceTest } from './components/performance-test'
 import { useAutoScroll } from './use-auto-scroll'
 import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
+import { Z_INDEX } from '@/lib/constants/z-index'
+import { useCanvasCamera } from '@/lib/hooks/use-canvas-camera'
 
 interface ComponentPanelProps {
   id: string
@@ -29,17 +31,20 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   // Register with isolation manager for heuristic metrics
   useRegisterWithIsolation(id, panelRef as any, type === 'editor' ? 'high' : 'normal', type)
   
+  // Camera-based panning
+  const { 
+    panCameraBy, 
+    resetPanAccumulation, 
+    getPanAccumulation, 
+    isCameraEnabled 
+  } = useCanvasCamera()
   
-  // Dragging state
+  
+  // Simplified drag state - no RAF accumulation
   const dragState = useRef({
     isDragging: false,
     startX: 0,
     startY: 0,
-    offsetX: 0,
-    offsetY: 0,
-    rafId: null as number | null,
-    currentTransform: { x: 0, y: 0 },
-    targetTransform: { x: 0, y: 0 },
     initialPosition: { x: position.x, y: position.y }
   })
   
@@ -47,36 +52,46 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
     if (!dragState.current.isDragging) return
     
-    // Move ALL panels and components to simulate canvas panning
-    const allPanels = document.querySelectorAll('[data-panel-id]')
-    const allComponents = document.querySelectorAll('[data-component-panel]')
-    
-    // Update panels
-    allPanels.forEach(panel => {
-      const panelEl = panel as HTMLElement
-      const currentLeft = parseInt(panelEl.style.left || '0', 10)
-      const currentTop = parseInt(panelEl.style.top || '0', 10)
-      panelEl.style.left = (currentLeft + deltaX) + 'px'
-      panelEl.style.top = (currentTop + deltaY) + 'px'
-    })
-    
-    // Update components
-    allComponents.forEach(component => {
-      const componentEl = component as HTMLElement
+    if (isCameraEnabled) {
+      // Use camera-based panning
+      panCameraBy({ dxScreen: deltaX, dyScreen: deltaY })
       
-      if (componentEl.id === `component-${id}` && dragState.current.isDragging) {
-        // For the dragging component, update its initial position
-        dragState.current.initialPosition.x += deltaX
-        dragState.current.initialPosition.y += deltaY
-      } else {
-        // For other components, update their actual position
-        const currentLeft = parseInt(componentEl.style.left || '0', 10)
-        const currentTop = parseInt(componentEl.style.top || '0', 10)
-        componentEl.style.left = (currentLeft + deltaX) + 'px'
-        componentEl.style.top = (currentTop + deltaY) + 'px'
-      }
-    })
-  }, [id])
+      // Track accumulated pan for drop coordinate adjustment
+      // (camera pan affects where the node will land)
+      dragState.current.initialPosition.x += deltaX
+      dragState.current.initialPosition.y += deltaY
+    } else {
+      // Legacy: Move ALL panels and components to simulate canvas panning
+      const allPanels = document.querySelectorAll('[data-panel-id]')
+      const allComponents = document.querySelectorAll('[data-component-panel]')
+      
+      // Update panels
+      allPanels.forEach(panel => {
+        const panelEl = panel as HTMLElement
+        const currentLeft = parseInt(panelEl.style.left || '0', 10)
+        const currentTop = parseInt(panelEl.style.top || '0', 10)
+        panelEl.style.left = (currentLeft + deltaX) + 'px'
+        panelEl.style.top = (currentTop + deltaY) + 'px'
+      })
+      
+      // Update components
+      allComponents.forEach(component => {
+        const componentEl = component as HTMLElement
+        
+        if (componentEl.id === `component-${id}` && dragState.current.isDragging) {
+          // For the dragging component, update its initial position
+          dragState.current.initialPosition.x += deltaX
+          dragState.current.initialPosition.y += deltaY
+        } else {
+          // For other components, update their actual position
+          const currentLeft = parseInt(componentEl.style.left || '0', 10)
+          const currentTop = parseInt(componentEl.style.top || '0', 10)
+          componentEl.style.left = (currentLeft + deltaX) + 'px'
+          componentEl.style.top = (currentTop + deltaY) + 'px'
+        }
+      })
+    }
+  }, [id, isCameraEnabled, panCameraBy])
   
   const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
     enabled: true,
@@ -109,18 +124,12 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       const currentTop = parseInt(panel.style.top || position.y.toString(), 10)
       
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
-      dragState.current.currentTransform = { x: 0, y: 0 }
-      dragState.current.targetTransform = { x: 0, y: 0 }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
-      dragState.current.offsetX = e.clientX - currentLeft
-      dragState.current.offsetY = e.clientY - currentTop
       
-      // Enable GPU acceleration
-      panel.style.willChange = 'transform'
-      panel.style.transform = 'translate3d(0, 0, 0)'
+      // Prepare for dragging
       panel.style.transition = 'none'
-      panel.style.zIndex = '1000'
+      panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_ACTIVE)
       
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'move'
@@ -137,23 +146,15 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       // Check for auto-scroll when near edges
       checkAutoScroll(e.clientX, e.clientY)
       
+      // Direct position update - no RAF accumulation
       const deltaX = e.clientX - dragState.current.startX
       const deltaY = e.clientY - dragState.current.startY
       
-      dragState.current.targetTransform = { x: deltaX, y: deltaY }
+      const newLeft = dragState.current.initialPosition.x + deltaX
+      const newTop = dragState.current.initialPosition.y + deltaY
       
-      // Use RAF for smooth updates
-      if (!dragState.current.rafId) {
-        dragState.current.rafId = requestAnimationFrame(() => {
-          if (!dragState.current.isDragging) return
-          
-          const { x, y } = dragState.current.targetTransform
-          panel.style.transform = `translate3d(${x}px, ${y}px, 0)`
-          
-          dragState.current.currentTransform = { x, y }
-          dragState.current.rafId = null
-        })
-      }
+      panel.style.left = newLeft + 'px'
+      panel.style.top = newTop + 'px'
       
       e.preventDefault()
     }
@@ -171,23 +172,19 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       // Stop auto-scroll
       stopAutoScroll()
       
-      if (dragState.current.rafId) {
-        cancelAnimationFrame(dragState.current.rafId)
-        dragState.current.rafId = null
-      }
-      
       dragState.current.isDragging = false
       
-      const finalX = dragState.current.initialPosition.x + dragState.current.currentTransform.x
-      const finalY = dragState.current.initialPosition.y + dragState.current.currentTransform.y
-      
-      panel.style.left = finalX + 'px'
-      panel.style.top = finalY + 'px'
-      panel.style.transform = ''
-      panel.style.willChange = 'auto'
-      panel.style.zIndex = ''
+      // Get final position from current style
+      const finalX = parseInt(panel.style.left, 10)
+      const finalY = parseInt(panel.style.top, 10)
+      panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_BASE)
       
       onPositionChange?.(id, { x: finalX, y: finalY })
+      
+      // Reset camera pan accumulation if using camera mode
+      if (isCameraEnabled) {
+        resetPanAccumulation()
+      }
       
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
@@ -205,9 +202,6 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       document.removeEventListener('mousemove', handleMouseMove, true)
       document.removeEventListener('mouseup', handleMouseUp, true)
       
-      if (dragState.current.rafId) {
-        cancelAnimationFrame(dragState.current.rafId)
-      }
       
       // Clear global dragging ID if this component was being dragged
       if (globalDraggingComponentId === id) {
@@ -217,7 +211,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [position, onPositionChange, id, checkAutoScroll, stopAutoScroll])
+  }, [position, onPositionChange, id, checkAutoScroll, stopAutoScroll, isCameraEnabled, resetPanAccumulation])
   
   const renderComponent = () => {
     switch (type) {
@@ -271,7 +265,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         top: `${position.y}px`,
         width: '350px',
         minHeight: isMinimized ? '40px' : '300px',
-        zIndex: 100,
+        zIndex: Z_INDEX.CANVAS_NODE_BASE,
         backgroundColor: isIsolated ? '#2a1a1a' : '#1f2937',
         borderColor: isIsolated ? '#ef4444' : 'transparent',
         borderWidth: isIsolated ? '2px' : '0',

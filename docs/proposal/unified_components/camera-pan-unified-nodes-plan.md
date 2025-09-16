@@ -11,105 +11,114 @@
 - `components/canvas/canvas-panel.tsx` and `component-panel.tsx` call `useAutoScroll` and, on every edge scroll tick, manually offset **all** DOM nodes (panels/components). This simulates camera movement but desynchronizes positions and makes future zoom logic brittle.
 - `lib/constants/z-index.ts` exposes `NOTES_CANVAS`, `POPUP_OVERLAY`, `POPUP_BASE`, etc. Component panels hardcode `zIndex = 1000` while canvas panels use the `PANEL_Z_INDEX` helper.
 - Overlay focus/hover logic is still mouse-based; the LayerProvider toggles between `notes` and `popups` immediately when popup count changes, leading to flicker.
+- Panels remain heavier than component widgets (TipTap editors, isolation, batching). Positioning fixes won’t erase that complexity gap.
 
 ---
 
-## 1) Z-Index Tokens That Coexist With Today’s Values
+## Phase 1 — Quick Wins (Optional, 1–2 days)
+
+Give panels parity with component widgets before the full camera refactor.
+
+1. **Simplify panel drag state** so it matches the lighter logic in `component-panel.tsx` (drop the extra RAF/transform accumulation; update position directly).
+2. **Unify drag z-index** without touching existing tokens: extend `Z_INDEX` with `CANVAS_NODE_BASE`, `CANVAS_NODE_ACTIVE` and have both panels/components use them while dragging.
+3. **Defer TipTap-heavy features while dragging/hidden** (parameterize `tiptap-editor-plain.tsx` so annotation plugins load only when the panel is idle and visible).
+
+None of these steps change persistence or camera math—they just reduce jank while we build the proper system.
+
+---
+
+## Phase 2 — Camera Proof of Concept (2–3 days)
+
+Before touching production code, vet the camera approach in isolation.
+
+1. Build a small test component (`components/canvas/camera-test.tsx`) that renders a couple of fake nodes and lets you drag/pan/zoom them using a shared `camera = { x, y, zoom }` transform. Validate math at zoom 0.5/1/2, edge auto-scroll, drop accuracy.
+2. Prototype a `useCanvasCamera`/`panCameraBy` helper (see Phase 3) and confirm it integrates with `CanvasProvider` without disrupting Option A saves.
+
+Only after this POC passes do we toggle feature flags in production modules.
+
+---
+
+## Phase 3 — Incremental Migration (3–4 days)
+
+### 1) Z-Index Tokens That Coexist With Today’s Values
 
 **Objective:** introduce reusable node/UI tokens without disrupting existing consumers.
 
-1. Extend `lib/constants/z-index.ts` instead of mutating existing keys. Example:
-   ```ts
-   export const Z_INDEX = {
-     ...,
-     CANVAS_NODE_BASE: 110,
-     CANVAS_NODE_ACTIVE: 160,
-     CANVAS_UI: 300,
-   } as const
-   ```
-   - Keep `NOTES_CANVAS`, `POPUP_OVERLAY`, etc. untouched for backward compatibility.
-2. Update `components/canvas/canvas-panel.tsx` and `component-panel.tsx` to derive `style.zIndex` from the new constants (fallback to old logic via feature flag, see §5).
-3. Adjust `EnhancedMinimap`/`CanvasControls` only if necessary (they already sit above 100, verify with a quick audit).
+- Extend `lib/constants/z-index.ts` instead of mutating existing keys:
+  ```ts
+  export const Z_INDEX = {
+    ...Z_EXISTING,
+    CANVAS_NODE_BASE: 110,
+    CANVAS_NODE_ACTIVE: 160,
+    CANVAS_UI: 300,
+  } as const
+  ```
+- Update `components/canvas/canvas-panel.tsx` and `component-panel.tsx` to derive `style.zIndex` from the new constants (fallback to `PANEL_Z_INDEX`/hardcoded values when the feature flag is off).
+- Verify ancillary UI (`EnhancedMinimap`, `CanvasControls`) still sits above the canvas nodes.
 
-**Safety:** extending the enum avoids breaking imports; feature flag ensures we can disable new z-order without reverting files.
-
----
-
-## 2) Camera-Based Edge Pan (Incremental Refactor)
+### 2) Camera-Based Edge Pan
 
 **Objective:** stop moving every DOM node during auto-scroll and update the shared camera instead.
 
-1. Introduce a helper in `components/canvas/canvas-context.tsx` (or a new `useCameraPan` hook) that exposes `panCameraBy({ dx, dy })`, internally dispatching `SET_CANVAS_STATE` with translated values using the current zoom:
-   ```ts
-   const worldDX = screenDX / state.canvasState.zoom
-   dispatch({ type: 'SET_CANVAS_STATE', payload: {
-     translateX: state.canvasState.translateX + worldDX,
-     translateY: state.canvasState.translateY + worldDX,
-   }})
-   ```
-2. In `canvas-panel.tsx` edge-scroll handler, replace the “move every panel” loop with `panCameraBy`. Track the accumulated camera movement in a `useRef` so drop coordinates account for the pan offset (`final = initial + delta - cameraAccum`).
-3. Mirror the same change in `component-panel.tsx` so components reuse the camera (no separate DOM shifting).
-4. Keep the legacy behavior behind a runtime flag: when `NEXT_PUBLIC_CANVAS_CAMERA !== '1'`, fall back to the existing DOM adjustments.
+1. Add a camera helper (either `useCanvasCamera` hook or methods on `CanvasProvider`) that exposes `panCameraBy({ dxScreen, dyScreen })`. Important: divide screen deltas by the current zoom to get world-space movement before dispatching `SET_CANVAS_STATE`.
+2. In `component-panel.tsx`, behind `NEXT_PUBLIC_CANVAS_CAMERA`, swap the `handleAutoScroll` implementation to call `panCameraBy`. Track accumulated camera movement in a ref so final drop coordinates account for the pan offset. Keep legacy DOM adjustments when the flag is off.
+3. After components operate correctly, migrate `canvas-panel.tsx` to use the shared helper. Gate with the same flag until testing confirms parity.
 
-**Dependencies:** ensure `useAutoScroll` continues to fire. Verify we don’t break the plain-mode provider, which still expects panels positioned via inline styles.
+### 3) Pointer-Friendly Overlay Triggers
 
----
+- Update `handleFolderHover` / `handleFolderHoverLeave` in `components/notes-explorer-phase1.tsx` to accept `React.PointerEvent`.
+- Replace `onMouseEnter`/`onMouseLeave` with pointer-equivalent handlers for tree nodes and popup overlay children (cast events as needed to satisfy TypeScript).
+- Test on Safari/Firefox; if pointer events misbehave, fall back to mouse events when `window.PointerEvent` is absent.
 
-## 3) Pointer-Friendly Overlay Triggers
+### 4) Intent-Based Layer Switching
 
-**Objective:** switch hover triggers to pointer events while preserving existing mouse behavior.
-
-1. Update `handleFolderHover` / `handleFolderHoverLeave` (`components/notes-explorer-phase1.tsx`) to accept `React.PointerEvent`.
-2. Swap `onMouseEnter/onMouseLeave` to `onPointerEnter/onPointerLeave` for tree items and popup overlay children. Cast only where necessary (`as React.PointerEvent<HTMLDivElement>`) to keep TypeScript happy.
-3. Ensure legacy browsers (Safari) still receive the events by testing on macOS; pointer events are standard but we should guard with e.g. `if (!('PointerEvent' in window))` fallback if we detect regressions.
+- Keep refs for `pointerInOverlay` and `focusInOverlay`; debounce layer recalculations (≈150 ms).
+- Update `PopupOverlay` to emit `onOverlayPointerChange` / `onOverlayFocusChange` so the parent can set intent and schedule layer decisions. Only switch to the popup layer when popovers exist **and** pointer/focus is inside (or a persistent popup is open).
 
 ---
 
-## 4) Intent-Based Layer Switching
+## Phase 4 — Optimizations (Optional)
 
-**Objective:** delay layer toggles until the overlay is genuinely in use, eliminating the first-popup flicker.
+After the camera path is stable:
 
-1. In `notes-explorer-phase1.tsx`, keep a `pointerInOverlay` / `focusInOverlay` ref. Debounce layer recalculations (150 ms) using `setTimeout` to avoid rapid toggles.
-2. Update `PopupOverlay` to emit `onOverlayPointerChange(boolean)` and `onOverlayFocusChange(boolean)` props so the parent can set intent refs.
-3. Layer decision logic:
-   ```ts
-   const anyPopups = hoverPopovers.size > 0
-   const intent = hasPersistent || pointerInOverlay || focusInOverlay
-   const target = anyPopups && intent ? 'popups' : 'notes'
-   ```
-4. Continue supporting the old behavior when the feature flag (see §5) is off.
+- Consider panel virtualization (render panels within viewport + buffer) to reduce DOM load.
+- Lazy-load TipTap editors when panels gain focus, show placeholders otherwise.
 
 ---
 
-## 5) Feature Flag & Rollback Strategy
+## Feature Flag & Rollback Strategy
 
-- Introduce `NEXT_PUBLIC_CANVAS_CAMERA=0|1` (default `0`). When disabled, keep today’s DOM-pan path and legacy z-index behavior. Encapsulate new code in conditional branches so rollbacks mean flipping the env variable.
-- Optional UI toggle: add a temporary switch in `components/annotation-app.tsx` (dev only) to flip the flag without reload.
-
----
-
-## 6) Test Checklist
-
-- **Camera Pan:** drag a panel/component to the viewport edge with zoom ≠ 1; camera should move smoothly and node should land exactly under the cursor on drop.
-- **Z-Index:** active panel/component sits above other nodes but below popup overlay; minimap remains on top.
-- **Overlay Intent:** opening the first popup keeps the layer on `notes` until the pointer/focus enters the overlay; leaving the overlay flips back after the debounce.
-- **Plain Mode:** ensure Option A still persists panel positions via localStorage and no console errors appear.
+- Introduce `NEXT_PUBLIC_CANVAS_CAMERA=0|1` (default `0`). All new behaviors (camera pan, node z-index tokens, pointer intent) must respect this flag so flipping it back restores today’s DOM-pan logic without reverting commits.
+- During development, optionally add a dev-only toggle in `components/annotation-app.tsx` to switch modes live.
 
 ---
 
-## 7) Out of Scope / Follow-ups
+## Test Checklist
 
-- Component snapping, keyboard camera controls, menu-aim for hover popovers.
-- Unit tests for `panCameraBy` once the core behavior stabilizes.
+- **Camera Pan:** drag a panel/component to the viewport edge at zoom ≠ 1; camera should move smoothly and the node should land under the cursor when released.
+- **Z-Index:** active node sits above others but below overlays; minimap/control overlays remain visible.
+- **Overlay Intent:** opening the first popup keeps the layer on `notes` until pointer/focus enters the overlay; leaving it flips back after the debounce.
+- **Plain Mode:** Option A persists positions without console errors.
+
+Critical metrics before rolling the flag to production:
+- Panels drag smoothly (no position jumps)
+- Drop coordinates are accurate
+- Frame rate remains acceptable
+- No regressions in existing panel features (TipTap, isolation, etc.)
 
 ---
 
-## 8) Summary
+## Alternative (“Panel Lite”)
 
-This revision keeps the proposal compatible with the reverted codebase:
+If the full camera system proves too heavy, an alternative is to introduce a simplified panel type that mirrors component behavior (plain text/markdown, no TipTap). This would narrow the complexity gap by reducing panel weight instead of refactoring the shared positioning system.
 
-- We extend (not replace) z-index tokens.
-- Camera refactor is gated and mirrors the present `useAutoScroll` integrations.
-- Overlay changes respect the latest explorer implementation.
+---
 
-Apply step-by-step with the feature flag to protect production. EOF
+## Summary
+
+- Phase 1 offers short-term relief (simpler drag logic, shared drag z-index, deferred TipTap work).
+- Phase 2 validates the camera approach without risking production code.
+- Phase 3 migrates components first, then panels, under a feature flag so we can roll back instantly.
+- Phase 4 and the “Panel Lite” alternative remain optional follow-ups.
+
+This keeps the plan grounded in today’s code, adds guardrails for rollout, and acknowledges that positioning fixes won’t erase panel complexity—but they will remove the biggest source of desync between panels and components. EOF
