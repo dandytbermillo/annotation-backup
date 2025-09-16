@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback } from "react"
+import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { IsolationProvider } from "@/lib/isolation/context"
 import { CanvasPanel } from "./canvas/canvas-panel"
@@ -17,6 +17,11 @@ import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent } from "@/types/canvas-items"
 import { IsolationDebugPanel } from "./canvas/isolation-debug-panel"
+import { 
+  loadStateFromStorage, 
+  saveStateToStorage, 
+  CANVAS_STORAGE_DEBOUNCE 
+} from "@/lib/canvas/canvas-storage"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -32,23 +37,44 @@ interface CanvasImperativeHandle {
   centerOnPanel: (panelId: string) => void
 }
 
+// Default viewport settings
+const defaultViewport = {
+  zoom: 1,
+  translateX: -1000,
+  translateY: -1200,
+  showConnections: true,
+}
+
+// Create default canvas state
+const createDefaultCanvasState = () => ({
+  ...defaultViewport,
+  isDragging: false,
+  lastMouseX: 0,
+  lastMouseY: 0,
+})
+
+// Create default canvas items with main panel
+const createDefaultCanvasItems = (): CanvasItem[] => [
+  createPanelItem("main", { x: 2000, y: 1500 }, "main"),
+]
+
+// Ensure main panel always exists in items array
+const ensureMainPanel = (items: CanvasItem[]): CanvasItem[] => {
+  const hasMain = items.some((item) => item.itemType === "panel" && item.panelId === "main")
+  return hasMain ? items : [...items, createPanelItem("main", { x: 2000, y: 1500 }, "main")]
+}
+
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
   noteId, 
   isNotesExplorerOpen = false,
   onCanvasStateChange 
 }, ref) => {
-  const [canvasState, setCanvasState] = useState({
-    zoom: 1,
-    translateX: -1000,
-    translateY: -1200,
-    isDragging: false,
-    lastMouseX: 0,
-    lastMouseY: 0,
-    showConnections: true
-  })
+  const [canvasState, setCanvasState] = useState(createDefaultCanvasState)
 
   // Unified canvas items state
-  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([])
+  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>(createDefaultCanvasItems)
+  const [isStateLoaded, setIsStateLoaded] = useState(false)
+  const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
   // Selection guards to prevent text highlighting during canvas drag
@@ -128,9 +154,6 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       // For existing notes, this preserves their content
       provider.initializeDefaultData(noteId, defaultData)
     }
-    
-    // Set main panel as the initial panel
-    setCanvasItems([createPanelItem('main', { x: 2000, y: 1500 }, 'main')])
 
     return () => {
       // Don't destroy note when switching - only cleanup when truly unmounting
@@ -138,6 +161,72 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       // This allows content to persist when switching between notes
     }
   }, [noteId])
+
+  // Load canvas state when note changes
+  useEffect(() => {
+    setIsStateLoaded(false)
+    setCanvasState(createDefaultCanvasState())
+    setCanvasItems(createDefaultCanvasItems())
+
+    // Clear any pending auto-save timer
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+
+    // Attempt to load saved state
+    const snapshot = loadStateFromStorage(noteId)
+    if (!snapshot) {
+      console.table([
+        {
+          Action: 'No Saved State',
+          NoteId: noteId,
+          Time: new Date().toLocaleTimeString(),
+        },
+      ])
+      setIsStateLoaded(true)
+      return
+    }
+
+    console.table([
+      {
+        Action: 'State Loaded',
+        NoteId: noteId,
+        Items: snapshot.items.length,
+        SavedAt: new Date(snapshot.savedAt).toLocaleTimeString(),
+      },
+    ])
+
+    // Apply viewport settings
+    const viewport = snapshot.viewport
+    setCanvasState((prev) => ({
+      ...prev,
+      zoom: viewport.zoom ?? prev.zoom,
+      translateX: viewport.translateX ?? prev.translateX,
+      translateY: viewport.translateY ?? prev.translateY,
+      showConnections: viewport.showConnections ?? prev.showConnections,
+    }))
+
+    // Restore canvas items (ensuring main panel exists)
+    const restored = ensureMainPanel(
+      snapshot.items.map((item) => ({
+        ...item,
+        itemType: item.itemType,
+      })) as CanvasItem[]
+    )
+    setCanvasItems(restored)
+    setIsStateLoaded(true)
+  }, [noteId])
+
+  // Cleanup auto-save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
+  }, [])
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     // Only start dragging if clicking on canvas background
@@ -336,6 +425,49 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       window.removeEventListener('create-panel' as any, handlePanelEvent)
     }
   }, [noteId]) // Add noteId dependency to ensure we're using the correct note
+
+  // Create viewport snapshot for auto-save
+  const viewportSnapshot = useMemo(
+    () => ({
+      zoom: canvasState.zoom,
+      translateX: canvasState.translateX,
+      translateY: canvasState.translateY,
+      showConnections: canvasState.showConnections,
+    }),
+    [canvasState.zoom, canvasState.translateX, canvasState.translateY, canvasState.showConnections]
+  )
+
+  // Auto-save canvas state with debouncing
+  useEffect(() => {
+    if (!isStateLoaded) return
+
+    // Clear existing timer
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current)
+    }
+
+    // Set new timer with proper debounce
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      const success = saveStateToStorage(noteId, { 
+        viewport: viewportSnapshot, 
+        items: canvasItems 
+      })
+      
+      if (!success) {
+        console.warn('[AnnotationCanvas] Failed to save canvas state')
+      }
+      
+      autoSaveTimerRef.current = null
+    }, CANVAS_STORAGE_DEBOUNCE)
+
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
+  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded])
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
