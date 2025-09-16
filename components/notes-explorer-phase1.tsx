@@ -892,6 +892,12 @@ function NotesExplorerContent({
         setShowCustomFolder(false)
         setCustomFolderInput("")
         
+        // Track the new note as recently accessed
+        await trackNoteAccess(data.item.id)
+        
+        // Refresh recent notes to show the new note
+        await fetchRecentFromAPI()
+        
         // Open the new note
         onNoteSelect(data.item.id)
       } else {
@@ -917,6 +923,12 @@ function NotesExplorerContent({
         
         setNotes([...notes, newNote])
         localStorage.setItem('annotation-notes', JSON.stringify([...notes, newNote]))
+        
+        // Track the new note as recently accessed
+        await trackNoteAccess(createdNote.id)
+        
+        // Open the new note
+        onNoteSelect(createdNote.id)
       }
     } catch (error) {
       console.error('Failed to create note:', error)
