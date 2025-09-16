@@ -37,6 +37,17 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   
+  // State to track render position and prevent snap-back during drag
+  const [renderPosition, setRenderPosition] = useState(position)
+  
+  // Update render position when position prop changes (but not during drag)
+  const dragStateRef = useRef<any>(null) // Will be set to dragState later
+  useEffect(() => {
+    if (!dragStateRef.current?.isDragging) {
+      setRenderPosition(position)
+    }
+  }, [position])
+  
   // Camera-based panning
   const { 
     panCameraBy, 
@@ -148,6 +159,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     startY: 0,
     initialPosition: { x: 0, y: 0 }
   })
+  
+  // Link dragStateRef to dragState for the useEffect above
+  dragStateRef.current = dragState.current
   
   // Auto-scroll functionality for panel dragging
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
@@ -596,6 +610,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
+      
+      // Update render position to current position when starting drag
+      setRenderPosition({ x: currentLeft, y: currentTop })
 
       // Prepare panel for dragging
       panel.style.transition = 'none'
@@ -625,6 +642,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       
       const newLeft = dragState.current.initialPosition.x + deltaX
       const newTop = dragState.current.initialPosition.y + deltaY
+      
+      // Update render position to prevent snap-back during drag
+      setRenderPosition({ x: newLeft, y: newTop })
       
       panel.style.left = newLeft + 'px'
       panel.style.top = newTop + 'px'
@@ -657,6 +677,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           globalDraggingPanelId = null
         }
       }, 100)
+      
+      // Update render position to final position
+      setRenderPosition({ x: finalX, y: finalY })
       
       // Update position in both stores
       dataStore.update(panelId, { position: { x: finalX, y: finalY } })
@@ -849,8 +872,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       data-panel-id={panelId}
       style={{
         position: 'absolute',
-        left: position.x + 'px',
-        top: position.y + 'px',
+        left: renderPosition.x + 'px',
+        top: renderPosition.y + 'px',
         width: '500px',
         minHeight: '400px',
         background: isIsolated ? '#fff5f5' : 'white',
@@ -944,7 +967,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           >
             {isIsolated ? '🔓' : '🔒'}
           </button>
-          {!isMainPanel && (
+          {onClose && (
             <button 
               className="panel-close"
               onClick={onClose}
@@ -970,6 +993,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
                 e.currentTarget.style.transform = 'scale(1)'
               }}
+              title="Close panel"
             >
               ×
             </button>

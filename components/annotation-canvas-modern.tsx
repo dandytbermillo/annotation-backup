@@ -773,7 +773,7 @@ function PanelsRenderer({
             branch={branch}
             position={position}
             noteId={noteId}
-            onClose={panelId !== 'main' ? () => onClose(panelId) : undefined}
+            onClose={() => onClose(panelId)}
           />
         )
       })}

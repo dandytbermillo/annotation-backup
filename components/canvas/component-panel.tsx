@@ -31,6 +31,17 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   // Register with isolation manager for heuristic metrics
   useRegisterWithIsolation(id, panelRef as any, type === 'editor' ? 'high' : 'normal', type)
   
+  // State to track render position and prevent snap-back during drag
+  const [renderPosition, setRenderPosition] = useState(position)
+  
+  // Update render position when position prop changes (but not during drag)
+  const dragStateRef = useRef<any>(null) // Will be set to dragState later
+  useEffect(() => {
+    if (!dragStateRef.current?.isDragging) {
+      setRenderPosition(position)
+    }
+  }, [position])
+  
   // Camera-based panning
   const { 
     panCameraBy, 
@@ -47,6 +58,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     startY: 0,
     initialPosition: { x: position.x, y: position.y }
   })
+  
+  // Link dragStateRef to dragState for the useEffect above
+  dragStateRef.current = dragState.current
   
   // Auto-scroll functionality for component dragging
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
@@ -127,6 +141,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
       
+      // Update render position to current position when starting drag
+      setRenderPosition({ x: currentLeft, y: currentTop })
+      
       // Prepare for dragging
       panel.style.transition = 'none'
       panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_ACTIVE)
@@ -153,6 +170,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       const newLeft = dragState.current.initialPosition.x + deltaX
       const newTop = dragState.current.initialPosition.y + deltaY
       
+      // Update render position to prevent snap-back during drag
+      setRenderPosition({ x: newLeft, y: newTop })
+      
       panel.style.left = newLeft + 'px'
       panel.style.top = newTop + 'px'
       
@@ -178,6 +198,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       const finalX = parseInt(panel.style.left, 10)
       const finalY = parseInt(panel.style.top, 10)
       panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_BASE)
+      
+      // Update render position to final position
+      setRenderPosition({ x: finalX, y: finalY })
       
       onPositionChange?.(id, { x: finalX, y: finalY })
       
@@ -261,8 +284,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         isIsolated ? 'ring-2 ring-red-500' : ''
       }`}
       style={{
-        left: `${position.x}px`,
-        top: `${position.y}px`,
+        left: `${renderPosition.x}px`,
+        top: `${renderPosition.y}px`,
         width: '350px',
         minHeight: isMinimized ? '40px' : '300px',
         zIndex: Z_INDEX.CANVAS_NODE_BASE,

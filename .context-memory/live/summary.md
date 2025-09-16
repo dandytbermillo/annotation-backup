@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-16 21:36Z] db58891: unified component_panel_just_completed_implementation
 - commit [2025-09-16 20:16Z] 325b889: implementing unified component_panel
 - commit [2025-09-16 16:57Z] 9f0328f: two reaload before changes take effect is fixed but the new note not appearing in the recents section
 - commit [2025-09-16 14:03Z] 1819928: fixing the enhanced canvas
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-15 05:41Z] 4b66aef: added isolation control(being refined)
 - commit [2025-09-14 22:04Z] f2d7f67: added minimap,component(testing)
 - commit [2025-09-14 20:16Z] 5d7582c: control panel is added
-- commit [2025-09-14 19:34Z] a4dc755: lod is adopted
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
