@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-16 13:18Z] 0b6552d: Organization_section_with_Knowledge_not_showing_up is fixed
 - commit [2025-09-15 05:41Z] 4b66aef: added isolation control(being refined)
 - commit [2025-09-14 22:04Z] f2d7f67: added minimap,component(testing)
 - commit [2025-09-14 20:16Z] 5d7582c: control panel is added
