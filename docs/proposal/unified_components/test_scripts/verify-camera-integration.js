@@ -85,9 +85,9 @@ console.log(`${passed}/${total} checks passed`);
 if (passed === total) {
   console.log('\n✅ Camera integration is FULLY IMPLEMENTED!');
   console.log('\nTo test:');
-  console.log('1. Run: NEXT_PUBLIC_CANVAS_CAMERA=1 npm run dev');
+  console.log('1. Run: npm run dev (camera mode is on by default)');
   console.log('2. Drag a panel to the edge - camera should pan');
-  console.log('3. Without flag, DOM manipulation should still work');
+  console.log('3. To compare with legacy behavior, run with NEXT_PUBLIC_CANVAS_CAMERA=0');
 } else {
   console.log('\n⚠️  Camera integration is PARTIALLY implemented');
   console.log('\nMissing components:');

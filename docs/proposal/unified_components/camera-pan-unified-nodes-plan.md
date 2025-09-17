@@ -61,8 +61,8 @@ Only after this POC passes do we toggle feature flags in production modules.
 **Objective:** stop moving every DOM node during auto-scroll and update the shared camera instead.
 
 1. Add a camera helper (either `useCanvasCamera` hook or methods on `CanvasProvider`) that exposes `panCameraBy({ dxScreen, dyScreen })`. Important: divide screen deltas by the current zoom to get world-space movement before dispatching `SET_CANVAS_STATE`.
-2. In `component-panel.tsx`, behind `NEXT_PUBLIC_CANVAS_CAMERA`, swap the `handleAutoScroll` implementation to call `panCameraBy`. Track accumulated camera movement in a ref so final drop coordinates account for the pan offset. Keep legacy DOM adjustments when the flag is off.
-3. After components operate correctly, migrate `canvas-panel.tsx` to use the shared helper. Gate with the same flag until testing confirms parity.
+2. In `component-panel.tsx`, swap the `handleAutoScroll` implementation to call `panCameraBy`. Track accumulated camera movement in a ref so final drop coordinates account for the pan offset. Keep the legacy DOM adjustments for emergency rollback only.
+3. After components operate correctly, migrate `canvas-panel.tsx` to use the shared helper. The feature now ships enabled by default; use `NEXT_PUBLIC_CANVAS_CAMERA=0` if you need to temporarily opt out during verification.
 
 ### 3) Pointer-Friendly Overlay Triggers
 
@@ -86,10 +86,10 @@ After the camera path is stable:
 
 ---
 
-## Feature Flag & Rollback Strategy
+## Rollback Strategy
 
-- Introduce `NEXT_PUBLIC_CANVAS_CAMERA=0|1` (default `0`). All new behaviors (camera pan, node z-index tokens, pointer intent) must respect this flag so flipping it back restores today’s DOM-pan logic without reverting commits.
-- During development, optionally add a dev-only toggle in `components/annotation-app.tsx` to switch modes live.
+- The camera path is enabled by default. Set `NEXT_PUBLIC_CANVAS_CAMERA=0` only if you need to temporarily fall back to the legacy DOM-pan logic during verification.
+- During development you can still add a dev-only toggle in `components/annotation-app.tsx` to switch modes live, but plan to remove it once the rollout is stable.
 
 ---
 

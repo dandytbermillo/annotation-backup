@@ -141,9 +141,13 @@ This ensures that if panel A was above panel B before the operation, it remains 
 ## Testing Instructions
 
 ### Enable and Test
+LayerManager is active by default.
 ```bash
-# Start with LayerManager enabled
-NEXT_PUBLIC_LAYER_MODEL=1 npm run dev
+# Run the app normally
+npm run dev
+
+# To compare with the legacy path, start with NEXT_PUBLIC_LAYER_MODEL=0
+NEXT_PUBLIC_LAYER_MODEL=0 npm run dev
 ```
 
 ### Browser Console Tests
@@ -183,7 +187,7 @@ for (let i = 0; i < 1000; i++) {
 2. **Empty State** - Graceful handling when no nodes exist
 3. **Duplicate IDs** - Prevented in multi-select
 4. **Memory Leaks** - Cleanup on unmount
-5. **Feature Flag Off** - Falls back to legacy behavior
+5. **Feature Flag Opt-Out** - `NEXT_PUBLIC_LAYER_MODEL=0` temporarily restores legacy behavior
 
 ## Known Limitations
 
@@ -194,18 +198,7 @@ for (let i = 0; i < 1000; i++) {
 
 ## Rollback Plan
 
-To disable LayerManager and revert to legacy behavior:
-
-1. Remove environment variable:
-   ```bash
-   # Remove or set to 0
-   unset NEXT_PUBLIC_LAYER_MODEL
-   # or
-   NEXT_PUBLIC_LAYER_MODEL=0 npm run dev
-   ```
-
-2. System immediately uses legacy z-index handling
-3. No code changes required
+To temporarily disable LayerManager and revert to legacy behavior, start the dev server with `NEXT_PUBLIC_LAYER_MODEL=0`. Resetting or unsetting the variable will re-enable the shared model.
 
 ## Conclusion
 

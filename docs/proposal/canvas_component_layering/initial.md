@@ -45,5 +45,4 @@ Introduce a shared layering model for the canvas so panels (TipTap editors) and 
 3. Update panels/components to read/write through LayerManager (register on mount, remove on unmount, use shared z-index/position).
 4. Persist `{ schemaVersion, nodes, maxZ }`, clamp invalid values on load, keep pinned nodes in reserved band, prepare for Yjs integration.
 5. Test multi-select ordering, pinned band protection, undo/redo of bring-to-front, persistence, and debug helper output across camera modes.
-6. Keep feature flag (`NEXT_PUBLIC_LAYER_MODEL`) and legacy fallbacks until the shared layer model proves stable.
-
+6. The shared layer model now ships enabled. Use `NEXT_PUBLIC_LAYER_MODEL=0` only for short-term rollback while verifying stability.

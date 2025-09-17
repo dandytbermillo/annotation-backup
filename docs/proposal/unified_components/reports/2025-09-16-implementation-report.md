@@ -92,17 +92,14 @@ if (editorRef.current?.setPerformanceMode) {
 
 ### Test Commands
 ```bash
-# Enable camera mode
-NEXT_PUBLIC_CANVAS_CAMERA=1 npm run dev
-
-# Legacy mode (default)
+# Camera mode is enabled by default
 npm run dev
 
 # Type checking (some unrelated errors exist in codebase)
 npm run type-check
 
-# Dev server starts successfully
-npm run dev
+# Legacy mode (opt out)
+NEXT_PUBLIC_CANVAS_CAMERA=0 npm run dev
 ```
 
 ### Validation Checklist
@@ -110,8 +107,7 @@ npm run dev
 - [x] Dev server starts successfully  
 - [x] Z-index tokens properly defined
 - [x] Camera hook implements correct math
-- [x] Feature flag enables/disables camera mode
-- [x] Legacy behavior preserved when flag is off
+- [x] Legacy behavior preserved when NEXT_PUBLIC_CANVAS_CAMERA=0
 - [x] Both panels and components use same system
 
 ### Test Scenarios (Manual Testing Required)
@@ -130,14 +126,8 @@ npm run dev
 
 ## Migration Path
 
-### To Enable Camera Mode:
-1. Set environment variable: `NEXT_PUBLIC_CANVAS_CAMERA=1`
-2. Restart dev server
-3. Test drag/pan behavior
-4. Monitor console for any errors
-
-### To Rollback:
-1. Remove environment variable or set to `0`
+### Rollback
+1. Set environment variable `NEXT_PUBLIC_CANVAS_CAMERA=0`
 2. Restart dev server
 3. Legacy DOM manipulation resumes
 

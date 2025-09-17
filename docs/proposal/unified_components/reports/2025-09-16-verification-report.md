@@ -127,7 +127,7 @@ if (isCameraEnabled) {
 | Plan Requirement | Implementation | Status |
 |-----------------|----------------|---------|
 | Extend Z_INDEX, not mutate | Added new keys, kept old ones | ✅ |
-| Feature flag NEXT_PUBLIC_CANVAS_CAMERA | Implemented, defaults to 0 | ✅ |
+| Feature flag NEXT_PUBLIC_CANVAS_CAMERA | Implemented, default is on (set to 0 to opt out) | ✅ |
 | panCameraBy divides by zoom | Lines 40-41 in hook | ✅ |
 | Keep legacy DOM adjustments | Preserved in else blocks | ✅ |
 | Track accumulated camera movement | panAccumRef in hook | ✅ |
@@ -157,7 +157,7 @@ npm run dev
 # Verify: DOM manipulation still works
 
 # Test camera mode
-NEXT_PUBLIC_CANVAS_CAMERA=1 npm run dev  
+npm run dev  # camera enabled by default  
 # Verify: Camera panning works
 
 # Test POC

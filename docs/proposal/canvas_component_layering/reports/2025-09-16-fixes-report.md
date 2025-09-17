@@ -157,9 +157,7 @@ Result: 4(P:1600) → 2(P:1500) → 3(N:200) → 1(N:100)
 ## Testing Instructions
 
 ### Enable LayerManager
-```bash
-NEXT_PUBLIC_LAYER_MODEL=1 npm run dev
-```
+LayerManager is active by default. To test legacy behavior, run with `NEXT_PUBLIC_LAYER_MODEL=0`.
 
 ### Test Memory Cleanup
 1. Open browser console

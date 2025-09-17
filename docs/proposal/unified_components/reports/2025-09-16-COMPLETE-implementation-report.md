@@ -137,7 +137,7 @@ npm run dev
 
 ### Camera Mode
 ```bash
-NEXT_PUBLIC_CANVAS_CAMERA=1 npm run dev
+npm run dev  # camera path active by default
 # Drag panels/components - camera transform moves canvas
 ```
 
@@ -195,7 +195,7 @@ The unified canvas nodes implementation is **COMPLETE** and **VERIFIED**. All th
 ✅ **Phase 2**: Camera POC built and tested  
 ✅ **Phase 3**: Camera integrated with feature flag protection
 
-The implementation is safe to deploy with the feature flag OFF by default. When ready, enable camera mode with `NEXT_PUBLIC_CANVAS_CAMERA=1` for the modern Figma-like experience.
+The implementation now ships enabled by default. Set `NEXT_PUBLIC_CANVAS_CAMERA=0` only if you need to temporarily fall back to the legacy DOM-pan behavior.
 
 ---
 

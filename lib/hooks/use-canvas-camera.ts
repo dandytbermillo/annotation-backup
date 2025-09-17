@@ -23,8 +23,8 @@ export function useCanvasCamera() {
   const { state, dispatch } = useCanvas()
   const panAccumRef = useRef({ dx: 0, dy: 0 })
   
-  // Check if camera mode is enabled via feature flag
-  const isCameraEnabled = process.env.NEXT_PUBLIC_CANVAS_CAMERA === '1'
+  // Camera mode on by default; allow opt-out by setting NEXT_PUBLIC_CANVAS_CAMERA=0
+  const isCameraEnabled = process.env.NEXT_PUBLIC_CANVAS_CAMERA !== '0'
   
   /**
    * Pan the camera by a screen-space delta.

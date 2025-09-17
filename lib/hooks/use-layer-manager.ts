@@ -51,8 +51,9 @@ export interface UseLayerManagerReturn {
  */
 export function useLayerManager(): UseLayerManagerReturn {
   // Feature flag to enable/disable layer management
-  const isEnabled = useFeatureFlag('ui.layerModel' as any) || 
-                    process.env.NEXT_PUBLIC_LAYER_MODEL === '1'
+  // LayerManager enabled by default; set NEXT_PUBLIC_LAYER_MODEL=0 to disable
+  const isEnabled = useFeatureFlag('ui.layerModel' as any) ||
+                    process.env.NEXT_PUBLIC_LAYER_MODEL !== '0'
   
   const [updateTrigger, setUpdateTrigger] = useState(0)
   const forceUpdate = useCallback(() => setUpdateTrigger(prev => prev + 1), [])

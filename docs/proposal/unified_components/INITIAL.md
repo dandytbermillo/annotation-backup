@@ -38,7 +38,7 @@ Based on `camera-pan-unified-nodes-plan.md`:
 - Completed Phase 1: Simplified drag state, unified z-index tokens, added TipTap defer mechanism
 - Completed Phase 2: Built camera POC test component
 - Completed Phase 3: Added camera-based edge pan with feature flag support
-- Implementation complete, ready for testing with NEXT_PUBLIC_CANVAS_CAMERA=1
+- Implementation complete, enabled by default (set NEXT_PUBLIC_CANVAS_CAMERA=0 to opt out during verification)
 
 ## ERRORS
 
@@ -53,7 +53,7 @@ npm run type-check
 npm run test
 
 # Feature flag testing
-NEXT_PUBLIC_CANVAS_CAMERA=1 npm run dev
+npm run dev  # camera path active by default
 
 # Integration
 docker compose up -d postgres
