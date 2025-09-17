@@ -132,7 +132,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     
     const handleMouseDown = (e: MouseEvent) => {
       // Don't start dragging if clicking on any button or controls
-      if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('.component-controls')) return
+      const target = e.target instanceof Element ? e.target : null
+      if (target && (target.closest('button') || target.closest('.component-controls'))) return
       
       // Stop propagation to prevent canvas from dragging
       e.stopPropagation()

@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+Subject: [PATCH] Fix caret exiting annotations without forcing new line
+
+---
+ components/canvas/annotation-start-boundary-fix.ts | 24 +++++++++++++++---
+ components/canvas/clear-stored-marks-plugin.ts     | 27 ++++++++++++++++++
+ components/canvas/tiptap-editor-plain.tsx          |  3 ++
+ 3 files changed, 50 insertions(+), 4 deletions(-)
+
+--- a/components/canvas/annotation-start-boundary-fix.ts
++++ b/components/canvas/annotation-start-boundary-fix.ts
+@@
+-        const pos = $from.pos
+-        const nodeAfter = $from.nodeAfter
+-        const nodeBefore = $from.nodeBefore
++        const nodeAfter = $from.nodeAfter
++        const nodeBefore = $from.nodeBefore
++        const storedHas = !!state.storedMarks?.some(m => m.type === annType)
++        const inside = !!annType.isInSet($from.marks())
++
++        if (!(storedHas || inside)) {
++          return false
++        }
++
++        const pos = $from.pos
+@@
+-        const pos = $from.pos
+-        const nodeAfter = $from.nodeAfter
+-        const nodeBefore = $from.nodeBefore
++        const nodeAfter = $from.nodeAfter
++        const nodeBefore = $from.nodeBefore
++        const storedHas = !!state.storedMarks?.some(m => m.type === annType)
++        const inside = !!annType.isInSet($from.marks())
++
++        if (!(storedHas || inside)) {
++          return false
++        }
++
++        const pos = $from.pos
+--- a/components/canvas/clear-stored-marks-plugin.ts
++++ b/components/canvas/clear-stored-marks-plugin.ts
+@@
+ export const ClearStoredMarksAtBoundary = () =>
+   new Plugin({
+     props: {
+       handleTextInput(view) {
+         const { state } = view
+@@
+         view.dispatch(state.tr.setStoredMarks(null))
+         return false
+       },
++
++      handleKeyDown(view, event) {
++        if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
++        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return false
++
++        const { state } = view
++        if (!state.selection.empty) return false
++
++        const annType = state.schema.marks.annotation
++        if (!annType) return false
++
++        const storedHas = !!state.storedMarks?.some(m => m.type === annType)
++        if (!storedHas) return false
++
++        const { $from } = state.selection
++        const inside = !!annType.isInSet($from.marks())
++        if (inside) return false
++
++        const beforeHas = !!$from.nodeBefore?.marks?.some(m => m.type === annType)
++        const afterHas = !!$from.nodeAfter?.marks?.some(m => m.type === annType)
++
++        const exitingRight = event.key === 'ArrowRight' && beforeHas && !afterHas
++        const exitingLeft = event.key === 'ArrowLeft' && afterHas && !beforeHas
++
++        if (exitingRight || exitingLeft) {
++          view.dispatch(state.tr.setStoredMarks(null))
++        }
++
++        return false
++      },
+     },
+   })
+--- a/components/canvas/tiptap-editor-plain.tsx
++++ b/components/canvas/tiptap-editor-plain.tsx
+@@
+-        editor.registerPlugin(AnnotationStartBoundaryFix())
+-        editor.registerPlugin(ReadOnlyGuard(isEditableRef))
+-        // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
++        editor.registerPlugin(AnnotationStartBoundaryFix())
++        editor.registerPlugin(ClearStoredMarksAtBoundary())
++        editor.registerPlugin(ReadOnlyGuard(isEditableRef))

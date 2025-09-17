@@ -231,8 +231,8 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     // Only start dragging if clicking on canvas background
     // Don't drag if clicking on a panel or component
-    const target = e.target as HTMLElement
-    if (target.closest('.panel') || target.closest('[data-component-panel]')) return
+    const target = e.target instanceof Element ? e.target : null
+    if (target && (target.closest('.panel') || target.closest('[data-component-panel]'))) return
     
     setCanvasState(prev => ({
       ...prev,

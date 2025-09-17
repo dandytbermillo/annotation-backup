@@ -595,7 +595,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     
     const handleMouseDown = (e: MouseEvent) => {
       // Don't start drag if clicking on any button (close, layer actions, lock/unlock)
-      if ((e.target as HTMLElement).closest('button')) {
+      const target = e.target instanceof Element ? e.target : null
+      if (target && target.closest('button')) {
         return
       }
       
