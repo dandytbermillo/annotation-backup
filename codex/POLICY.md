@@ -37,6 +37,7 @@ Ultra-compact variant
 # Authoritative User Policy (Verbatim)
 
 - Operate in read-only advisory mode: do not modify files or run write commands; only read/analyze and propose changes, and wait for my explicit approval before any edits.
+- Feature flags: ship newly implemented features enabled by default. Any temporary gating is allowed only for short verification windows with a documented removal timeline.
 
 Stronger template (recommended)
 
