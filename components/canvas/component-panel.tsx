@@ -4,7 +4,7 @@ import React, { useRef, useState, useEffect, useCallback } from 'react'
 import { X, Minimize2, Maximize2, Lock, Unlock } from 'lucide-react'
 import { Calculator } from './components/calculator'
 import { Timer } from './components/timer'
-import { TextEditor } from './components/text-editor'
+import { StickyNote } from './components/sticky-note'
 import { DragTest } from './components/drag-test'
 import { PerformanceTest } from './components/performance-test'
 import { useAutoScroll } from './use-auto-scroll'
@@ -255,7 +255,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       case 'timer':
         return <Timer componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'sticky-note':
-        return <TextEditor componentId={id} state={componentState} onStateUpdate={setComponentState} />
+        return <StickyNote componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'dragtest':
         return <DragTest componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'perftest':

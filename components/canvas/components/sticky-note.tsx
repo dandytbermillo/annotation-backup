@@ -46,65 +46,47 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
 
   return (
     <div 
-      className="sticky-note-component relative flex flex-col"
+      className="sticky-note-component relative flex flex-col p-4"
       style={{
         backgroundColor: currentColor.bg,
-        borderRadius: '2px',
-        boxShadow: `0 4px 6px -1px ${currentColor.shadow}, 0 2px 4px -1px rgba(0, 0, 0, 0.06)`,
         minHeight: '250px',
         width: '100%',
-        transform: 'rotate(-1deg)',
+        boxShadow: '2px 2px 8px rgba(0, 0, 0, 0.15)',
       }}
     >
-      {/* Drag handle header */}
-      <div 
-        className="flex items-center justify-between px-4 py-2 cursor-grab select-none"
-        data-sticky-note-drag-handle
+      {/* Color switcher button in corner */}
+      <button
+        onClick={cycleColor}
+        className="absolute top-2 right-2 w-4 h-4 rounded-full opacity-50 hover:opacity-100 transition-opacity"
         style={{
-          color: currentColor.text,
-          borderBottom: `1px solid ${currentColor.border}`,
-          backgroundColor: 'rgba(255, 255, 255, 0.15)',
-          fontWeight: 600,
-          fontSize: '13px',
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
+          backgroundColor: STICKY_COLORS[(colorIndex + 1) % STICKY_COLORS.length].bg,
+          border: `1px solid ${STICKY_COLORS[(colorIndex + 1) % STICKY_COLORS.length].border}`,
         }}
-      >
-        <span>Sticky Note</span>
-        <button
-          onClick={cycleColor}
-          className="relative w-6 h-6 rounded-full opacity-70 hover:opacity-100 transition-opacity"
-          style={{
-            backgroundColor: STICKY_COLORS[(colorIndex + 1) % STICKY_COLORS.length].bg,
-            border: `2px solid ${STICKY_COLORS[(colorIndex + 1) % STICKY_COLORS.length].border}`,
-          }}
-          title="Change color"
-        />
-      </div>
+        title="Change color"
+      />
       
-      {/* Main textarea */}
+      {/* Main textarea - looks like handwritten note */}
       <textarea
         ref={textareaRef}
         value={content}
         onChange={handleContentChange}
-        className="w-full flex-1 bg-transparent resize-none focus:outline-none px-4 py-4"
+        className="w-full flex-1 bg-transparent resize-none focus:outline-none"
         style={{
           color: currentColor.text,
-          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-          fontSize: '14px',
+          fontFamily: '"Marker Felt", "Comic Sans MS", cursive',
+          fontSize: '16px',
           lineHeight: '1.8',
           minHeight: '200px',
-          fontWeight: '500',
         }}
         placeholder="Write a note..."
       />
       
       {/* Character count - subtle, bottom corner */}
       <div 
-        className="absolute bottom-2 left-4 text-xs opacity-40"
+        className="absolute bottom-2 left-2 text-xs opacity-30"
         style={{ color: currentColor.text }}
       >
-        {content.length > 0 && `${content.length} chars`}
+        {content.length > 0 && `${content.length}`}
       </div>
     </div>
   )
