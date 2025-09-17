@@ -22,6 +22,7 @@ import {
   saveStateToStorage, 
   CANVAS_STORAGE_DEBOUNCE 
 } from "@/lib/canvas/canvas-storage"
+import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 
 interface ModernAnnotationCanvasProps {
   noteId: string
@@ -276,9 +277,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     }
     
     e.preventDefault()
-    
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
-    const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * zoomFactor))
+
+    const multiplier = getWheelZoomMultiplier(e.nativeEvent)
+    const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * multiplier))
     
     const rect = e.currentTarget.getBoundingClientRect()
     const mouseX = e.clientX - rect.left
