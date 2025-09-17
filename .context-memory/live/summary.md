@@ -6,6 +6,8 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- note [2025-09-17 14:49Z]: 
+- commit [2025-09-17 13:32Z] 5d81da1: made the sticky note working
 - commit [2025-09-17 12:25Z] 4a0cb00: zoom in or out is smooth now
 - commit [2025-09-17 12:16Z] d0eb1df: fixed error
 - commit [2025-09-17 04:15Z] 3db66d2: canvas components layering start testing
@@ -14,8 +16,6 @@ Recent Activity
 - commit [2025-09-17 00:59Z] 3fb5c2a: canvas_component_layering
 - commit [2025-09-16 23:21Z] 522d713: adding fixes to the canvas_component_layering
 - commit [2025-09-16 22:56Z] 5e9ee4d: implementing canvas_component_layering
-- commit [2025-09-16 21:36Z] db58891: unified component_panel_just_completed_implementation
-- commit [2025-09-16 20:16Z] 325b889: implementing unified component_panel
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

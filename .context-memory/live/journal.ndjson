@@ -113,3 +113,5 @@
 {"ts":"2025-09-17T04:15:14.328Z","type":"commit","sha":"3db66d257bbe0bc524f75555bfd9b1036e19c009","files_changed":10,"message":"canvas components layering start testing"}
 {"ts":"2025-09-17T12:16:34.158Z","type":"commit","sha":"d0eb1df336bc926e18b0272a9c4a0cc7a4d97a6b","files_changed":5,"message":"fixed error"}
 {"ts":"2025-09-17T12:25:00.957Z","type":"commit","sha":"4a0cb000030fd68fcd6aa5f3712b62e017f3e954","files_changed":5,"message":"zoom in or out is smooth now"}
+{"ts":"2025-09-17T13:32:15.922Z","type":"commit","sha":"5d81da165d55ee9f6e01d49b2f79d983dfa80acc","files_changed":3,"message":"made the sticky note working"}
+{"type": "note", "ts": "2025-09-17T14:49:12Z", "summary": "Documented sticky-note portal fix under docs/proposal/sticky_notes/always_on_top."}

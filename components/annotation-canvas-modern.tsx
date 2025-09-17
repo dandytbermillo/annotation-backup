@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
+import { createPortal } from "react-dom"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import { IsolationProvider } from "@/lib/isolation/context"
 import { CanvasPanel } from "./canvas/canvas-panel"
@@ -79,6 +80,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
+  const [stickyOverlayEl, setStickyOverlayEl] = useState<HTMLElement | null>(null)
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
     onSelectStart: (e: Event) => void;
@@ -305,6 +307,26 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       document.removeEventListener('mouseup', handleCanvasMouseUp)
     }
   }, [canvasState.isDragging, canvasState.lastMouseX, canvasState.lastMouseY])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+
+    const overlay = document.createElement('div')
+    overlay.id = 'sticky-note-overlay-root'
+    overlay.style.position = 'fixed'
+    overlay.style.inset = '0'
+    overlay.style.pointerEvents = 'none'
+    overlay.style.zIndex = '12000'
+    overlay.style.display = 'block'
+
+    document.body.appendChild(overlay)
+    setStickyOverlayEl(overlay)
+
+    return () => {
+      document.body.removeChild(overlay)
+      setStickyOverlayEl(null)
+    }
+  }, [])
 
   const handlePanelClose = (panelId: string) => {
     setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
@@ -733,21 +755,17 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           </div>
         </div>
 
-        {stickyNoteItems.length > 0 && (
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{ zIndex: 4000 }}
-          >
-            {stickyNoteItems.map(component => (
-              <StickyNoteOverlayPanel
-                key={component.id}
-                id={component.id}
-                position={component.position}
-                onClose={handleComponentClose}
-                onPositionChange={handleComponentPositionChange}
-              />
-            ))}
-          </div>
+        {stickyOverlayEl && stickyNoteItems.length > 0 && createPortal(
+          stickyNoteItems.map(component => (
+            <StickyNoteOverlayPanel
+              key={component.id}
+              id={component.id}
+              position={component.position}
+              onClose={handleComponentClose}
+              onPositionChange={handleComponentPositionChange}
+            />
+          )),
+          stickyOverlayEl
         )}
 
         {/* Annotation Toolbar */}
