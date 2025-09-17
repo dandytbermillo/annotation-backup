@@ -15,6 +15,7 @@ import { panToPanel } from "@/lib/canvas/pan-animations"
 import { Settings, Plus } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
+import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent } from "@/types/canvas-items"
 import { IsolationDebugPanel } from "./canvas/isolation-debug-panel"
 import { 
@@ -394,10 +395,15 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       x: worldX - 175,
       y: worldY - 150
     }
-    
+
+    const stickyScreenPosition = position || {
+      x: viewportCenterX - 175,
+      y: viewportCenterY - 150
+    }
+
     const newComponent = createComponentItem(
       type as 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest',
-      finalPosition
+      type === 'sticky-note' ? stickyScreenPosition : finalPosition
     )
     
     setCanvasItems(prev => [...prev, newComponent])
@@ -412,6 +418,16 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       item.id === id ? { ...item, position } : item
     ))
   }
+
+  const componentItems = useMemo(() => canvasItems.filter(isComponent), [canvasItems])
+  const stickyNoteItems = useMemo(
+    () => componentItems.filter(item => item.componentType === 'sticky-note'),
+    [componentItems]
+  )
+  const floatingComponents = useMemo(
+    () => componentItems.filter(item => item.componentType !== 'sticky-note'),
+    [componentItems]
+  )
 
   // Subscribe to panel creation events
   useEffect(() => {
@@ -704,7 +720,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             />
             
             {/* Component Panels */}
-            {canvasItems.filter(isComponent).map(component => (
+            {floatingComponents.map(component => (
               <ComponentPanel
                 key={component.id}
                 id={component.id}
@@ -716,6 +732,23 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             ))}
           </div>
         </div>
+
+        {stickyNoteItems.length > 0 && (
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{ zIndex: 4000 }}
+          >
+            {stickyNoteItems.map(component => (
+              <StickyNoteOverlayPanel
+                key={component.id}
+                id={component.id}
+                position={component.position}
+                onClose={handleComponentClose}
+                onPositionChange={handleComponentPositionChange}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Annotation Toolbar */}
         <AnnotationToolbar />

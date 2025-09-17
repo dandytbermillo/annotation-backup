@@ -229,6 +229,37 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ---
 
+## DEBUGGING AND FIXING POLICY
+
+**CRITICAL: Take time to properly understand and fix issues. Rushing leads to broken code.**
+
+### Analysis Before Action:
+- **STOP and understand first** - Read all relevant code files completely before making any changes
+- **Trace the execution flow** - Understand how components interact and where data flows
+- **Identify the root cause** - Don't fix symptoms, fix the actual problem
+- **Consider side effects** - Think about what else your change might affect
+
+### Implementation Approach:
+- **Plan before coding** - Write out your approach before implementing
+- **Make incremental changes** - Small, focused changes that can be easily reverted
+- **One fix at a time** - Don't combine multiple fixes in a single change
+- **Test mentally first** - Think through the execution path with your changes
+
+### Failure Recovery:
+- **If a fix fails once** - Re-read the relevant code and reconsider your approach
+- **If a fix fails twice** - STOP. Start analysis from scratch. You likely misunderstood something fundamental
+- **After repeated failures** - Document what you've tried and ask for clarification rather than trying again
+
+### Time Management:
+- **Never rush** - Better to take 10 minutes to get it right than 2 minutes to break it
+- **Read error messages carefully** - They often tell you exactly what's wrong
+- **Verify assumptions** - If you think something works a certain way, verify it in the code
+- **Double-check before submitting** - Review your changes one more time before applying them
+
+**Violation of this policy after being warned is considered a critical failure.**
+
+---
+
 ## ERROR LOGGING & `INITIAL.md` USAGE
 - `INITIAL.md` is the single living request + error log for a feature. Agents must:
   - Append concise `ERRORS` entries after each failed attempt (root cause, reproduction, hint, artifacts).
