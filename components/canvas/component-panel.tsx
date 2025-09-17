@@ -15,7 +15,7 @@ import { useLayerManager, useCanvasNode } from '@/lib/hooks/use-layer-manager'
 
 interface ComponentPanelProps {
   id: string
-  type: 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest'
+  type: 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest'
   position: { x: number; y: number }
   onClose?: (id: string) => void
   onPositionChange?: (id: string, position: { x: number; y: number }) => void
@@ -30,7 +30,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const [componentState, setComponentState] = useState({})
   const { isIsolated, level, placeholder } = useIsolation(id)
   // Register with isolation manager for heuristic metrics
-  useRegisterWithIsolation(id, panelRef as any, type === 'editor' ? 'high' : 'normal', type)
+  useRegisterWithIsolation(id, panelRef as any, type === 'sticky-note' ? 'high' : 'normal', type)
   
   // Layer management integration
   const layerManager = useLayerManager()
@@ -254,7 +254,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         return <Calculator componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'timer':
         return <Timer componentId={id} state={componentState} onStateUpdate={setComponentState} />
-      case 'editor':
+      case 'sticky-note':
         return <TextEditor componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'dragtest':
         return <DragTest componentId={id} state={componentState} onStateUpdate={setComponentState} />
@@ -269,7 +269,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     switch (type) {
       case 'calculator': return 'from-blue-600 to-blue-700'
       case 'timer': return 'from-green-600 to-green-700'
-      case 'editor': return 'from-purple-600 to-purple-700'
+      case 'sticky-note': return 'from-yellow-500 to-yellow-600'
       case 'dragtest': return 'from-orange-600 to-orange-700'
       case 'perftest': return 'from-red-600 to-red-700'
       default: return 'from-gray-600 to-gray-700'
@@ -280,7 +280,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     switch (type) {
       case 'calculator': return 'Calculator'
       case 'timer': return 'Timer'
-      case 'editor': return 'Text Editor'
+      case 'sticky-note': return 'Sticky Note'
       case 'dragtest': return 'Drag Test'
       case 'perftest': return 'Performance Test'
       default: return 'Component'

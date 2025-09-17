@@ -1,7 +1,7 @@
 "use client"
 
 import React from 'react'
-import { Calculator, Timer, FileText, MousePointer2 } from 'lucide-react'
+import { Calculator, Timer, StickyNote, MousePointer2 } from 'lucide-react'
 
 interface AddComponentMenuProps {
   visible: boolean
@@ -26,10 +26,10 @@ export function AddComponentMenu({ visible, onClose, onAddComponent }: AddCompon
       color: 'from-green-500 to-green-600'
     },
     {
-      type: 'editor',
-      label: 'Add Editor',
-      icon: FileText,
-      color: 'from-purple-500 to-purple-600'
+      type: 'sticky-note',
+      label: 'Add Sticky Note',
+      icon: StickyNote,
+      color: 'from-yellow-500 to-yellow-600'
     },
     {
       type: 'dragtest',

@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useCanvas } from './canvas-context'
 import { X, Plus, Hand, ZoomIn, ZoomOut, RotateCcw, Layers, Lock, Unlock, 
          Trash2, Save, Download, Upload, Settings, Activity, MousePointer,
-         Move, Box, FileText, Timer, Calculator, TestTube, Shield, ShieldOff } from 'lucide-react'
+         Move, Box, StickyNote, Timer, Calculator, TestTube, Shield, ShieldOff } from 'lucide-react'
 import { CanvasItem, isComponent } from '@/types/canvas-items'
 import { useIsolationSystem, useIsolatedIds, useIsolatedDetails } from '@/lib/isolation/context'
 
@@ -117,7 +117,7 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     })
   }
 
-  const handleAddComponent = (type: 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest') => {
+  const handleAddComponent = (type: 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest') => {
     // Use the onAddComponent prop if provided, otherwise fall back to old behavior
     if (onAddComponent) {
       onAddComponent(type)
@@ -138,7 +138,7 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
           y: 1600 + randomOffset.y 
         },
         dimensions: { width: 350, height: 300 },
-        isEditable: type === 'editor',
+        isEditable: type === 'sticky-note',
         selected: false,
         isolated: false,
         branches: []
@@ -364,11 +364,11 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
                   Add Timer
                 </button>
                 <button
-                  onClick={() => handleAddComponent('editor')}
-                  className="flex items-center justify-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded text-sm transition-colors"
+                  onClick={() => handleAddComponent('sticky-note')}
+                  className="flex items-center justify-center gap-2 px-3 py-2 bg-yellow-600 hover:bg-yellow-700 rounded text-sm transition-colors"
                 >
-                  <FileText size={16} />
-                  Add Editor
+                  <StickyNote size={16} />
+                  Sticky Note
                 </button>
                 <button
                   onClick={() => handleAddComponent('dragtest')}

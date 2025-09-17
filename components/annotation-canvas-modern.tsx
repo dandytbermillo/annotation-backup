@@ -396,7 +396,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     }
     
     const newComponent = createComponentItem(
-      type as 'calculator' | 'timer' | 'editor' | 'dragtest' | 'perftest',
+      type as 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest',
       finalPosition
     )
     
