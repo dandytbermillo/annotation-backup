@@ -44,10 +44,10 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   useEffect(() => {
     if (!dragStateRef.current?.isDragging) {
       // Use LayerManager position if available, otherwise fall back to prop
-      const nodePosition = layerManager.isEnabled && canvasNode?.position ? canvasNode.position : position
+      const nodePosition = canvasNode?.position ?? position
       setRenderPosition(nodePosition)
     }
-  }, [position, canvasNode?.position, layerManager.isEnabled])
+  }, [position, canvasNode?.position])
   
   // Camera-based panning
   const { 
@@ -153,11 +153,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       
       // Prepare for dragging
       panel.style.transition = 'none'
-      if (layerManager.isEnabled) {
-        layerManager.focusNode(id) // This brings to front and updates focus time
-      } else {
-        panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_ACTIVE)
-      }
+      // Always use LayerManager for focus/z-index management
+      layerManager.focusNode(id) // This brings to front and updates focus time
       
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'move'
@@ -210,12 +207,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       const finalY = parseInt(panel.style.top, 10)
       
       // Update position in LayerManager if enabled
-      if (layerManager.isEnabled) {
-        layerManager.updateNode(id, { position: { x: finalX, y: finalY } })
-        // LayerManager handles z-index, no need to reset
-      } else {
-        panel.style.zIndex = String(Z_INDEX.CANVAS_NODE_BASE)
-      }
+      // Update position through LayerManager
+      layerManager.updateNode(id, { position: { x: finalX, y: finalY } })
       
       // Update render position to final position
       setRenderPosition({ x: finalX, y: finalY })
@@ -306,7 +299,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
         top: `${renderPosition.y}px`,
         width: '350px',
         minHeight: isMinimized ? '40px' : '300px',
-        zIndex: layerManager.isEnabled && canvasNode?.zIndex ? canvasNode.zIndex : Z_INDEX.CANVAS_NODE_BASE,
+        zIndex: canvasNode?.zIndex ?? Z_INDEX.CANVAS_NODE_BASE,
         backgroundColor: isIsolated ? '#2a1a1a' : '#1f2937',
         borderColor: isIsolated ? '#ef4444' : 'transparent',
         borderWidth: isIsolated ? '2px' : '0',
@@ -331,6 +324,45 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
           )}
         </div>
         <div className="component-controls flex items-center gap-2">
+          {/* Layer action buttons - only show when LayerManager is enabled */}
+          {layerManager.isEnabled && (
+            <>
+              {/* Bring to Front button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.bringToFront(id)
+                }}
+                disabled={layerManager.getLayerBandInfo(id)?.isAtTop}
+                className={`${
+                  layerManager.getLayerBandInfo(id)?.isAtTop 
+                    ? 'text-white/30 cursor-not-allowed' 
+                    : 'text-white/80 hover:text-white'
+                } transition-colors`}
+                title="Bring to front"
+              >
+                ↑
+              </button>
+              
+              {/* Send to Back button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.sendToBack(id)
+                }}
+                disabled={layerManager.getLayerBandInfo(id)?.isAtBottom}
+                className={`${
+                  layerManager.getLayerBandInfo(id)?.isAtBottom 
+                    ? 'text-white/30 cursor-not-allowed' 
+                    : 'text-white/80 hover:text-white'
+                } transition-colors`}
+                title="Send to back"
+              >
+                ↓
+              </button>
+            </>
+          )}
+          
           <button
             onClick={() => {
               const debug = (window as any).__isolationDebug

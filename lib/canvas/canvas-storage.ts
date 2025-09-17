@@ -131,8 +131,8 @@ export function loadStateFromStorage(noteId: string): PersistedCanvasState | nul
         // In future, add migration logic here
       }
 
-      // Load layer nodes if available
-      if (parsed.layerNodes && process.env.NEXT_PUBLIC_LAYER_MODEL === '1') {
+      // Load layer nodes if available (LayerManager is enabled by default)
+      if (parsed.layerNodes && process.env.NEXT_PUBLIC_LAYER_MODEL !== '0') {
         try {
           const layerManager = getLayerManager()
           layerManager.deserializeNodes(parsed.layerNodes)
@@ -177,9 +177,9 @@ export function saveStateToStorage(
   if (!isBrowser()) return false
 
   try {
-    // Include layer nodes if LayerManager is enabled
+    // Include layer nodes if LayerManager is enabled (default enabled)
     let layerNodes = undefined
-    if (process.env.NEXT_PUBLIC_LAYER_MODEL === '1') {
+    if (process.env.NEXT_PUBLIC_LAYER_MODEL !== '0') {
       try {
         const layerManager = getLayerManager()
         layerNodes = layerManager.serializeNodes()

@@ -361,6 +361,44 @@ export class LayerManager {
   }
 
   /**
+   * Get information about layer bands and extremes for UI controls
+   */
+  getLayerBandInfo(nodeId: string): {
+    isAtTop: boolean
+    isAtBottom: boolean
+    canMoveUp: boolean
+    canMoveDown: boolean
+    currentZ: number
+    maxZ: number
+    minZ: number
+  } | null {
+    const node = this.nodes.get(nodeId)
+    if (!node) return null
+    
+    // Get all nodes in the same band (pinned or content)
+    const sameTypeNodes = Array.from(this.nodes.values())
+      .filter(n => n.pinned === node.pinned)
+    
+    if (sameTypeNodes.length === 0) {
+      return null
+    }
+    
+    const zIndices = sameTypeNodes.map(n => n.zIndex)
+    const maxInBand = Math.max(...zIndices)
+    const minInBand = Math.min(...zIndices)
+    
+    return {
+      isAtTop: node.zIndex === maxInBand,
+      isAtBottom: node.zIndex === minInBand,
+      canMoveUp: node.zIndex < maxInBand,
+      canMoveDown: node.zIndex > minInBand,
+      currentZ: node.zIndex,
+      maxZ: maxInBand,
+      minZ: minInBand
+    }
+  }
+
+  /**
    * Debug helper - expose to window in development
    */
   debugLayers(): {

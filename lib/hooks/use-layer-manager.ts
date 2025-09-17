@@ -42,6 +42,9 @@ export interface UseLayerManagerReturn {
   /** Get ordered nodes for rendering */
   getOrderedNodes: () => CanvasNode[]
   
+  /** Get layer band info for UI controls */
+  getLayerBandInfo: (nodeId: string) => ReturnType<LayerManager['getLayerBandInfo']>
+  
   /** Force a re-render */
   forceUpdate: () => void
 }
@@ -120,6 +123,11 @@ export function useLayerManager(): UseLayerManagerReturn {
     return manager.getOrderedNodes()
   }, [manager, isEnabled, updateTrigger]) // Include trigger to get fresh data
   
+  const getLayerBandInfo = useCallback((nodeId: string) => {
+    if (!manager || !isEnabled) return null
+    return manager.getLayerBandInfo(nodeId)
+  }, [manager, isEnabled, updateTrigger]) // Include trigger for fresh data
+  
   return {
     isEnabled,
     registerNode,
@@ -132,6 +140,7 @@ export function useLayerManager(): UseLayerManagerReturn {
     sendToBack,
     removeNode,
     getOrderedNodes,
+    getLayerBandInfo,
     forceUpdate
   }
 }
@@ -157,12 +166,13 @@ export function useCanvasNode(id: string, type: 'panel' | 'component', initialPo
     
     // CRITICAL: Remove node on unmount to prevent memory leak
     return () => {
-      if (layerManager.isEnabled) {
-        layerManager.removeNode(id)
-        console.log(`[LayerManager] Removed node ${id} on unmount`)
-      }
+      // Using layerManager from closure, not from deps
+      layerManager.removeNode(id)
+      console.log(`[LayerManager] Removed node ${id} on unmount`)
     }
-  }, [id, type, layerManager.isEnabled, layerManager.removeNode])
+    // Only re-run if id, type, or enabled status changes, not on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, type, layerManager.isEnabled])
   
   // Update local state when layer manager changes
   useEffect(() => {

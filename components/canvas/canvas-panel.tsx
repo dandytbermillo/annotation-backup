@@ -51,10 +51,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useEffect(() => {
     if (!dragStateRef.current?.isDragging) {
       // Use LayerManager position if available, otherwise fall back to prop
-      const nodePosition = layerManager.isEnabled && canvasNode?.position ? canvasNode.position : position
+      const nodePosition = canvasNode?.position ?? position
       setRenderPosition(nodePosition)
     }
-  }, [position, canvasNode?.position, layerManager.isEnabled])
+  }, [position, canvasNode?.position])
   
   // Camera-based panning
   const { 
@@ -125,12 +125,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Edit mode state - now respects layer state
   const [isEditing, setIsEditing] = useState(true)
-  // Use LayerManager z-index if enabled, otherwise fall back to local state
-  const [localZIndex, setLocalZIndex] = useState(Z_INDEX.CANVAS_NODE_BASE)
-  const zIndex = layerManager.isEnabled && canvasNode?.zIndex ? canvasNode.zIndex : localZIndex
-  const setZIndex = layerManager.isEnabled ? 
-    (z: number) => layerManager.updateNode(panelId, { zIndex: z }) : 
-    setLocalZIndex
+  
+  // Use LayerManager z-index as single source of truth
+  // Default to base z-index if node not yet registered
+  const zIndex = canvasNode?.zIndex ?? Z_INDEX.CANVAS_NODE_BASE
   
   // Compute whether the editor should be editable based on layer state
   const isLayerInteractive = !multiLayerEnabled || !layerContext || layerContext.activeLayer === 'notes'
@@ -631,11 +629,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       panel.style.transition = 'none'
 
       // Bring panel to front while dragging
-      if (layerManager.isEnabled) {
-        layerManager.focusNode(panelId) // This brings to front and updates focus time
-      } else {
-        setZIndex(Z_INDEX.CANVAS_NODE_ACTIVE)
-      }
+      // Always use LayerManager for focus/z-index management
+      layerManager.focusNode(panelId) // This brings to front and updates focus time
       globalDraggingPanelId = panelId
       
       // Prevent text selection while dragging
@@ -688,17 +683,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const finalY = parseInt(panel.style.top, 10)
       
       // Update position in LayerManager if enabled
-      if (layerManager.isEnabled) {
-        layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
-        // LayerManager handles z-index, no need to reset
-      } else {
-        // Reset z-index to base level after drag (legacy path)
-        setTimeout(() => {
-          if (globalDraggingPanelId === panelId) {
-            setZIndex(Z_INDEX.CANVAS_NODE_BASE)
-            globalDraggingPanelId = null
-          }
-        }, 100)
+      // Update position through LayerManager
+      layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+      
+      // Clean up global dragging state
+      if (globalDraggingPanelId === panelId) {
+        globalDraggingPanelId = null
       }
       
       // Update render position to final position
@@ -952,6 +942,79 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* Layer action buttons - only show when LayerManager is enabled */}
+          {layerManager.isEnabled && (
+            <>
+              {/* Bring to Front button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.bringToFront(panelId)
+                }}
+                disabled={layerManager.getLayerBandInfo(panelId)?.isAtTop}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!layerManager.getLayerBandInfo(panelId)?.isAtTop) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Bring to front"
+              >
+                ↑
+              </button>
+              
+              {/* Send to Back button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.sendToBack(panelId)
+                }}
+                disabled={layerManager.getLayerBandInfo(panelId)?.isAtBottom}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!layerManager.getLayerBandInfo(panelId)?.isAtBottom) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Send to back"
+              >
+                ↓
+              </button>
+            </>
+          )}
+          
           {/* Lock/Unlock button */}
           <button
             onClick={(e) => {
