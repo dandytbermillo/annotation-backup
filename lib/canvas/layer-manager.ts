@@ -143,16 +143,31 @@ export class LayerManager {
     const node = this.nodes.get(id)
     if (!node || node.pinned) return
     
-    // Find minimum z-index in content band
-    const contentNodes = Array.from(this.nodes.values())
-      .filter(n => !n.pinned && n.id !== id)
+    const contentNodes = Array.from(this.nodes.values()).filter(n => !n.pinned)
     
-    const minZ = contentNodes.length > 0
-      ? Math.min(...contentNodes.map(n => n.zIndex))
-      : Z_INDEX_BANDS.CONTENT_MIN
+    // If this is the only content node, just pin it to the band minimum
+    if (contentNodes.length <= 1) {
+      node.zIndex = Z_INDEX_BANDS.CONTENT_MIN
+      node.lastFocusedAt = Date.now()
+      this.updateMaxZ()
+      return
+    }
     
-    node.zIndex = Math.max(Z_INDEX_BANDS.CONTENT_MIN, minZ - 1)
+    const otherNodes = contentNodes.filter(n => n.id !== id)
+    const minOtherZ = Math.min(...otherNodes.map(n => n.zIndex))
+    
+    if (node.zIndex <= minOtherZ || minOtherZ <= Z_INDEX_BANDS.CONTENT_MIN) {
+      // Not enough room at the bottom; renumber and place this node there
+      node.zIndex = Z_INDEX_BANDS.CONTENT_MIN - 1 // temporary marker to make it the lowest
+      this.renumberContentNodes()
+      this.updateMaxZ()
+      node.lastFocusedAt = Date.now()
+      return
+    }
+    
+    node.zIndex = Math.max(Z_INDEX_BANDS.CONTENT_MIN, minOtherZ - 1)
     node.lastFocusedAt = Date.now()
+    this.updateMaxZ()
   }
 
   /**
@@ -383,18 +398,36 @@ export class LayerManager {
       return null
     }
     
-    const zIndices = sameTypeNodes.map(n => n.zIndex)
-    const maxInBand = Math.max(...zIndices)
-    const minInBand = Math.min(...zIndices)
+    const bandNodes = sameTypeNodes
+      .slice()
+      .sort((a, b) => {
+        if (a.zIndex !== b.zIndex) return a.zIndex - b.zIndex
+        if ((a.lastFocusedAt ?? 0) !== (b.lastFocusedAt ?? 0)) {
+          return (a.lastFocusedAt ?? 0) - (b.lastFocusedAt ?? 0)
+        }
+        if ((a.createdAt ?? 0) !== (b.createdAt ?? 0)) {
+          return (a.createdAt ?? 0) - (b.createdAt ?? 0)
+        }
+        return a.id.localeCompare(b.id)
+      })
+    
+    const indexInBand = bandNodes.findIndex(n => n.id === nodeId)
+    if (indexInBand === -1) {
+      console.warn(`[LayerManager] getLayerBandInfo: node ${nodeId} missing from band ordering`)
+      return null
+    }
+    
+    const minNode = bandNodes[0] ?? node
+    const maxNode = bandNodes[bandNodes.length - 1] ?? node
     
     return {
-      isAtTop: node.zIndex === maxInBand,
-      isAtBottom: node.zIndex === minInBand,
-      canMoveUp: node.zIndex < maxInBand,
-      canMoveDown: node.zIndex > minInBand,
+      isAtTop: indexInBand === bandNodes.length - 1,
+      isAtBottom: indexInBand === 0,
+      canMoveUp: indexInBand < bandNodes.length - 1,
+      canMoveDown: indexInBand > 0,
       currentZ: node.zIndex,
-      maxZ: maxInBand,
-      minZ: minInBand
+      maxZ: maxNode.zIndex,
+      minZ: minNode.zIndex
     }
   }
 

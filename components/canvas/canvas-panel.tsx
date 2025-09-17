@@ -594,8 +594,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     updateHeaderCursor()
     
     const handleMouseDown = (e: MouseEvent) => {
-      // Don't start drag if clicking on close button
-      if ((e.target as HTMLElement).closest('.panel-close')) {
+      // Don't start drag if clicking on any button (close, layer actions, lock/unlock)
+      if ((e.target as HTMLElement).closest('button')) {
         return
       }
       
