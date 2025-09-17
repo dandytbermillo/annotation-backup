@@ -40,32 +40,10 @@ Introduce a shared layering model for the canvas so panels (TipTap editors) and 
 
 ## IMPLEMENTATION TASKS
 
-1. **Normalize node state:** extend `CanvasProvider` (or a dedicated store) with a normalized `CanvasNode` map; populate it during hydration using existing panel/component data.
-2. **LayerManager utilities:** add helpers to register nodes, bring to front, update focus timestamps, and serialize/deserialize the layer order. Decide on absolute vs. timestamp-based z-index strategy.
-3. **Update drag/focus code:** replace local z-index state in panels/components with LayerManager calls; render styles read from the shared node metadata.
-4. **Persistence:** include node metadata in plain-mode save/load (and plan for Yjs), reconciling new vs. existing nodes deterministically.
-5. **Testing:** verify new component creation, drag/focus order changes, pinned node behavior, and persistence across reloads.
-
----
-
-## RISKS & MITIGATIONS
-
-- **State drift:** use React state for active drag position so the DOM and data model stay in sync.
-- **Persistence conflicts:** timestamp nodes (createdAt/lastFocusedAt) to merge saved order with new nodes.
-- **Pinned ordering:** define clear ranges or priorities so overlays/minimap coexist with node ordering.
-
----
-
-## DEPENDENCIES
-
-- Unified camera/drag refactor (already gated by `NEXT_PUBLIC_CANVAS_CAMERA`).
-- TipTap performance mode (already available) to avoid editor jank when bring-to-front triggers.
-
----
-
-## FOLLOW-UPS
-
-- Debug overlay showing current layer order.
-- Keyboard shortcuts to cycle through nodes.
-- “Panel Lite” experiments using the same metadata but simplified rendering.
+1. Normalize node state in `CanvasProvider` so panels and components share a `CanvasNode` map.
+2. Build LayerManager utilities to register/remove nodes, bring selections to front, apply ordering rules, and expose debug helpers.
+3. Update panels/components to read/write through LayerManager (register on mount, remove on unmount, use shared z-index/position).
+4. Persist `{ schemaVersion, nodes, maxZ }`, clamp invalid values on load, keep pinned nodes in reserved band, prepare for Yjs integration.
+5. Test multi-select ordering, pinned band protection, undo/redo of bring-to-front, persistence, and debug helper output across camera modes.
+6. Keep feature flag (`NEXT_PUBLIC_LAYER_MODEL`) and legacy fallbacks until the shared layer model proves stable.
 

@@ -153,7 +153,15 @@ export function useCanvasNode(id: string, type: 'panel' | 'component', initialPo
     })
     
     setNode(registered)
-  }, [id, type, layerManager.isEnabled])
+    
+    // CRITICAL: Remove node on unmount to prevent memory leak
+    return () => {
+      if (layerManager.isEnabled) {
+        layerManager.removeNode(id)
+        console.log(`[LayerManager] Removed node ${id} on unmount`)
+      }
+    }
+  }, [id, type, layerManager.isEnabled, layerManager.removeNode])
   
   // Update local state when layer manager changes
   useEffect(() => {

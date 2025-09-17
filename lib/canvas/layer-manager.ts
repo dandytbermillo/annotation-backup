@@ -80,11 +80,11 @@ export class LayerManager {
     const node = this.nodes.get(id)
     if (!node || node.pinned) return // Pinned nodes don't move
     
-    // Get next z-index and update
+    // Get next z-index (may trigger renumbering)
     const newZ = this.getNextZIndex(false)
     node.zIndex = newZ
     node.lastFocusedAt = Date.now()
-    this.maxZ = newZ
+    // maxZ is updated by getNextZIndex or renumbering
   }
 
   /**
@@ -101,8 +101,19 @@ export class LayerManager {
     // Sort by current z-index to preserve relative order
     nodes.sort((a, b) => a.zIndex - b.zIndex)
     
+    // Check if we have room for all nodes
+    const roomNeeded = nodes.length
+    const roomAvailable = Z_INDEX_BANDS.CONTENT_MAX - this.maxZ
+    
+    if (roomNeeded > roomAvailable) {
+      // Not enough room, renumber first
+      console.log('[LayerManager] Renumbering before multi-select bring to front')
+      this.renumberContentNodes()
+      this.updateMaxZ()
+    }
+    
     // Assign new z-indices maintaining order
-    let nextZ = this.getNextZIndex(false)
+    let nextZ = this.maxZ + 1
     nodes.forEach(node => {
       node.zIndex = nextZ++
       node.lastFocusedAt = Date.now()
@@ -146,28 +157,29 @@ export class LayerManager {
 
   /**
    * Get ordered list of nodes (for rendering/debugging)
+   * Order: Pinned first (by priority desc), then non-pinned (by z-index desc)
    */
   getOrderedNodes(): CanvasNode[] {
     return Array.from(this.nodes.values()).sort((a, b) => {
-      // Pinned nodes first
-      if (a.pinned && !b.pinned) return 1
-      if (!a.pinned && b.pinned) return -1
+      // FIXED: Pinned nodes FIRST (negative return value sorts first)
+      if (a.pinned && !b.pinned) return -1  // a is pinned, b is not -> a first
+      if (!a.pinned && b.pinned) return 1   // b is pinned, a is not -> b first
       
-      // Within pinned, sort by priority then creation
+      // Within pinned, sort by priority (descending) then creation
       if (a.pinned && b.pinned) {
         if (a.pinnedPriority !== b.pinnedPriority) {
-          return (b.pinnedPriority || 0) - (a.pinnedPriority || 0)
+          return (b.pinnedPriority || 0) - (a.pinnedPriority || 0)  // Higher priority first
         }
-        return a.createdAt - b.createdAt
+        return a.createdAt - b.createdAt  // Older first
       }
       
-      // Non-pinned: sort by z-index
+      // FIXED: Non-pinned: sort by z-index DESCENDING (highest on top)
       if (a.zIndex !== b.zIndex) {
-        return a.zIndex - b.zIndex
+        return b.zIndex - a.zIndex  // Higher z-index first
       }
       
-      // Tiebreaker: last focused
-      return a.lastFocusedAt - b.lastFocusedAt
+      // Tiebreaker: most recently focused first
+      return b.lastFocusedAt - a.lastFocusedAt  // More recent first
     })
   }
 
@@ -234,7 +246,7 @@ export class LayerManager {
   }
 
   /**
-   * Get next available z-index
+   * Get next available z-index (with automatic renumbering on saturation)
    */
   private getNextZIndex(pinned?: boolean): number {
     if (pinned) {
@@ -243,11 +255,97 @@ export class LayerManager {
       if (pinnedNodes.length === 0) return Z_INDEX_BANDS.PINNED_MIN
       
       const maxPinnedZ = Math.max(...pinnedNodes.map(n => n.zIndex))
-      return Math.min(maxPinnedZ + 1, Z_INDEX_BANDS.PINNED_MAX)
+      const nextZ = maxPinnedZ + 1
+      
+      // Check for saturation and renumber if needed
+      if (nextZ > Z_INDEX_BANDS.PINNED_MAX) {
+        this.renumberPinnedNodes()
+        return this.getMaxPinnedZ() + 1
+      }
+      
+      return nextZ
     } else {
-      // Use running maxZ for content band
-      return Math.min(this.maxZ + 1, Z_INDEX_BANDS.CONTENT_MAX)
+      // Check if we need to renumber due to saturation
+      const nextZ = this.maxZ + 1
+      
+      if (nextZ > Z_INDEX_BANDS.CONTENT_MAX) {
+        console.log('[LayerManager] Z-index saturated, renumbering content nodes...')
+        this.renumberContentNodes()
+        // After renumbering, get the new max
+        this.updateMaxZ()
+        const newZ = Math.min(this.maxZ + 1, Z_INDEX_BANDS.CONTENT_MAX)
+        this.maxZ = newZ
+        return newZ
+      }
+      
+      this.maxZ = nextZ
+      return nextZ
     }
+  }
+  
+  /**
+   * Renumber content nodes to free up z-index space
+   */
+  private renumberContentNodes(): void {
+    const contentNodes = Array.from(this.nodes.values())
+      .filter(n => !n.pinned)
+      .sort((a, b) => {
+        // Intentional ascending sort: keep existing stack order before reassigning z
+        if (a.zIndex !== b.zIndex) return a.zIndex - b.zIndex
+        return a.lastFocusedAt - b.lastFocusedAt
+      })
+    
+    if (contentNodes.length === 0) return
+    
+    // Distribute evenly across half the range to leave room for growth
+    const rangeSize = Z_INDEX_BANDS.CONTENT_MAX - Z_INDEX_BANDS.CONTENT_MIN
+    const step = Math.floor(rangeSize / (contentNodes.length * 2)) || 1
+    
+    let currentZ = Z_INDEX_BANDS.CONTENT_MIN
+    contentNodes.forEach(node => {
+      node.zIndex = currentZ
+      currentZ += step
+    })
+    
+    console.log(`[LayerManager] Renumbered ${contentNodes.length} content nodes`)
+  }
+  
+  /**
+   * Renumber pinned nodes to free up z-index space
+   */
+  private renumberPinnedNodes(): void {
+    const pinnedNodes = Array.from(this.nodes.values())
+      .filter(n => n.pinned)
+      .sort((a, b) => {
+        // Intentional ascending sort: keep pinned order stable during renumber
+        if (a.pinnedPriority !== b.pinnedPriority) {
+          return (a.pinnedPriority || 0) - (b.pinnedPriority || 0)
+        }
+        return a.zIndex - b.zIndex
+      })
+    
+    if (pinnedNodes.length === 0) return
+    
+    // Distribute across the pinned range
+    const rangeSize = Z_INDEX_BANDS.PINNED_MAX - Z_INDEX_BANDS.PINNED_MIN
+    const step = Math.floor(rangeSize / (pinnedNodes.length * 2)) || 1
+    
+    let currentZ = Z_INDEX_BANDS.PINNED_MIN
+    pinnedNodes.forEach(node => {
+      node.zIndex = currentZ
+      currentZ += step
+    })
+    
+    console.log(`[LayerManager] Renumbered ${pinnedNodes.length} pinned nodes`)
+  }
+  
+  /**
+   * Get max z-index in pinned band
+   */
+  private getMaxPinnedZ(): number {
+    const pinnedNodes = Array.from(this.nodes.values()).filter(n => n.pinned)
+    if (pinnedNodes.length === 0) return Z_INDEX_BANDS.PINNED_MIN - 1
+    return Math.max(...pinnedNodes.map(n => n.zIndex))
   }
 
   /**
