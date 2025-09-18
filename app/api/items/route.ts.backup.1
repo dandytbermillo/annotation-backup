@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
-import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+import { WorkspaceStore, FEATURE_WORKSPACE_SCOPING } from '@/lib/workspace/workspace-store'
 
 // GET /api/items - Get tree or search items
 export async function GET(request: NextRequest) {
@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
       values = []
     }
     
-    const result = await serverPool.query(query, values)
+    const result = await pool.query(query, values)
     
     const items = result.rows.map(row => ({
       id: row.id,
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
     // Get parent path if parentId provided
     let parentPath = ''
     if (parentId) {
-      const parentResult = await serverPool.query(
+      const parentResult = await pool.query(
         'SELECT path FROM items WHERE id = $1 AND deleted_at IS NULL',
         [parentId]
       )
@@ -150,32 +150,14 @@ export async function POST(request: NextRequest) {
     // Construct path
     const path = parentPath ? `${parentPath}/${name}` : `/${name}`
     
-    // Always get workspace_id since database requires it (NOT NULL constraint)
-    let workspaceId = null;
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-    } catch (e) {
-      console.error('Failed to get workspace ID:', e);
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      );
-    }
-    
-    // Always include workspace_id in INSERT since it's required
-    // Use ON CONFLICT to return existing item if it already exists
+    // Insert new item
     const query = `
       INSERT INTO items (
         type, parent_id, path, name, content, 
-        metadata, icon, color, position, workspace_id
+        metadata, icon, color, position
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-      ) 
-      ON CONFLICT (workspace_id, path) WHERE deleted_at IS NULL
-      DO UPDATE SET 
-        updated_at = NOW(),
-        last_accessed_at = NOW()
-      RETURNING *
+        $1, $2, $3, $4, $5, $6, $7, $8, $9
+      ) RETURNING *
     `
     
     const values = [
@@ -187,11 +169,10 @@ export async function POST(request: NextRequest) {
       metadata,
       icon || null,
       color || null,
-      position,
-      workspaceId
+      position
     ]
     
-    const result = await serverPool.query(query, values)
+    const result = await pool.query(query, values)
     
     const row = result.rows[0]
     const item = {
@@ -213,14 +194,14 @@ export async function POST(request: NextRequest) {
     
     // Dual-write: Also create in notes table if it's a note
     if (type === 'note') {
-      await serverPool.query(`
-        INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+      await pool.query(`
+        INSERT INTO notes (id, title, metadata, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (id) DO UPDATE SET
           title = EXCLUDED.title,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at
-      `, [row.id, name, metadata, workspaceId, row.created_at, row.updated_at])
+      `, [row.id, name, metadata, row.created_at, row.updated_at])
     }
     
     return NextResponse.json({ item }, { status: 201 })
@@ -255,7 +236,7 @@ export async function GET_RECENT(request: NextRequest) {
       LIMIT $1
     `
     
-    const result = await serverPool.query(query, [limit])
+    const result = await pool.query(query, [limit])
     
     const items = result.rows.map(row => ({
       id: row.id,

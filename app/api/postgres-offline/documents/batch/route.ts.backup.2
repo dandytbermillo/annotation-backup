@@ -123,9 +123,7 @@ export async function POST(request: NextRequest) {
       await client.query(
         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
-           updated_at = NOW()`,
+         ON CONFLICT (id) DO NOTHING`,
         [noteKey, workspaceId]
       )
       
@@ -154,10 +152,10 @@ export async function POST(request: NextRequest) {
         try {
           const ins = await client.query(
             `INSERT INTO document_saves 
-             (note_id, panel_id, content, version, workspace_id, created_at)
-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+             (note_id, panel_id, content, version, created_at)
+             VALUES ($1, $2, $3::jsonb, $4, NOW())
              RETURNING id`,
-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
+            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion]
           )
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)
@@ -283,9 +281,7 @@ export async function PUT(request: NextRequest) {
       await client.query(
         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
-           updated_at = NOW()`,
+         ON CONFLICT (id) DO NOTHING`,
         [noteKey, workspaceId]
       )
       
@@ -311,10 +307,10 @@ export async function PUT(request: NextRequest) {
         try {
           const ins = await client.query(
             `INSERT INTO document_saves 
-             (note_id, panel_id, content, version, workspace_id, created_at)
-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+             (note_id, panel_id, content, version, created_at)
+             VALUES ($1, $2, $3::jsonb, $4, NOW())
              RETURNING id`,
-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
+            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion]
           )
           const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
           results.push(operationResult)

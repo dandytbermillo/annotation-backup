@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-18 12:34Z] 2828c62: fix error in the debug lod, modified the claude.md
 - note [2025-09-17 14:49Z]: 
 - commit [2025-09-17 13:32Z] 5d81da1: made the sticky note working
 - commit [2025-09-17 12:25Z] 4a0cb00: zoom in or out is smooth now
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-17 02:12Z] b655726: set feature flag by default
 - commit [2025-09-17 00:59Z] 3fb5c2a: canvas_component_layering
 - commit [2025-09-16 23:21Z] 522d713: adding fixes to the canvas_component_layering
-- commit [2025-09-16 22:56Z] 5e9ee4d: implementing canvas_component_layering
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

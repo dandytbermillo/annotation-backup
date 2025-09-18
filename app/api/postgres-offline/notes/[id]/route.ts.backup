@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverPool } from '@/lib/db/pool'
-import { WorkspaceStore, FEATURE_WORKSPACE_SCOPING } from '@/lib/workspace/workspace-store'
+import { Pool } from 'pg'
+
+// Create connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+})
 
 // GET /api/postgres-offline/notes/[id] - Get a note by ID
 export async function GET(
@@ -9,29 +13,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-
-    // Use workspace scoping if feature is enabled
-    if (FEATURE_WORKSPACE_SCOPING) {
-      const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-        return client.query(
-          `SELECT id, title, metadata, created_at, updated_at
-           FROM notes WHERE id = $1 AND workspace_id = $2`,
-          [id, workspaceId]
-        )
-      })
-
-      if (result.rows.length === 0) {
-        return NextResponse.json(
-          { error: 'Note not found' },
-          { status: 404 }
-        )
-      }
-
-      return NextResponse.json(result.rows[0])
-    }
-
-    // Legacy path without workspace scoping
-    const result = await serverPool.query(
+    const result = await pool.query(
       `SELECT id, title, metadata, created_at, updated_at
        FROM notes WHERE id = $1`,
       [id]
@@ -89,33 +71,8 @@ export async function PATCH(
     }
     
     updates.push('updated_at = NOW()')
-
-    // Use workspace scoping if feature is enabled
-    if (FEATURE_WORKSPACE_SCOPING) {
-      const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-        // Add workspace_id to the WHERE clause
-        values.push(workspaceId)
-        return client.query(
-          `UPDATE notes 
-           SET ${updates.join(', ')}
-           WHERE id = $1 AND workspace_id = $${paramIndex}
-           RETURNING id, title, metadata, created_at, updated_at`,
-          values
-        )
-      })
-
-      if (result.rows.length === 0) {
-        return NextResponse.json(
-          { error: 'Note not found in this workspace' },
-          { status: 404 }
-        )
-      }
-
-      return NextResponse.json(result.rows[0])
-    }
-
-    // Legacy path without workspace scoping
-    const result = await serverPool.query(
+    
+    const result = await pool.query(
       `UPDATE notes 
        SET ${updates.join(', ')}
        WHERE id = $1

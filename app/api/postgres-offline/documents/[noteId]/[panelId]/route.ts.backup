@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverPool } from '@/lib/db/pool'
-import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+import { Pool } from 'pg'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+
+// Create connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+})
 
 // Deterministic mapping for non-UUID IDs (slugs) → UUID
 const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
@@ -34,25 +38,13 @@ export async function GET(
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
     console.log('[GET Document] Coerced noteId:', noteKey, 'Normalized panelId:', normalizedPanelId)
     
-    // Get workspace_id to ensure consistent data across browsers
-    let workspaceId: string | null = null;
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-    } catch (e) {
-      console.error('[GET Document] Failed to get workspace ID:', e);
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      );
-    }
-    
-    const result = await serverPool.query(
+    const result = await pool.query(
       `SELECT content, version 
        FROM document_saves 
-       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+       WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
        LIMIT 1`,
-      [noteKey, normalizedPanelId, workspaceId]
+      [noteKey, normalizedPanelId]
     )
     
     if (result.rows.length === 0) {
@@ -99,26 +91,14 @@ export async function POST(
       ? { html: content }
       : content
     
-    // Get workspace_id to ensure consistent data across browsers
-    let workspaceId: string | null = null;
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-    } catch (e) {
-      console.error('[POST Document] Failed to get workspace ID:', e);
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      );
-    }
-    
     // Save the document
-    const result = await serverPool.query(
-      `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
-       VALUES ($1, $2, $3, $4, $5)
+    const result = await pool.query(
+      `INSERT INTO document_saves (note_id, panel_id, content, version)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT (note_id, panel_id, version) 
-       DO UPDATE SET content = $3, workspace_id = $5, created_at = NOW()
+       DO UPDATE SET content = $3, created_at = NOW()
        RETURNING *`,
-      [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
+      [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1]
     )
     
     return NextResponse.json(result.rows[0])

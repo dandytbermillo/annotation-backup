@@ -1,6 +1,6 @@
 # Fix: Workspace Mismatch Error for debug_logs Table
 
-**Date:** 2025-01-18  
+**Date:** 2025-09-18  
 **Error:** `POST /api/debug/log 500 - error: workspace mismatch for note <NULL>`  
 **Affected Endpoints:** `/api/debug/log` and `/api/debug-log`
 
