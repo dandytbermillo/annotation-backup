@@ -79,7 +79,7 @@ export interface PlainCrudAdapter {
   listBranches(noteId: string): Promise<Branch[]>
 
   // Document operations (fixed to include noteId)
-  saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number): Promise<void>
+  saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number, baseVersion: number): Promise<void>
   loadDocument(noteId: string, panelId: string): Promise<{ content: ProseMirrorJSON | HtmlString; version: number } | null>
 
   // Offline queue operations
@@ -135,7 +135,7 @@ export class PlainOfflineProvider extends EventEmitter {
     this.adapter = adapter
     
     // Initialize batching if enabled
-    this.batchingEnabled = options?.enableBatching ?? true
+    this.batchingEnabled = options?.enableBatching ?? false
     
     if (this.batchingEnabled) {
       const config = mergeConfig(options?.batchConfig)
@@ -300,12 +300,17 @@ export class PlainOfflineProvider extends EventEmitter {
     console.log(`[PlainOfflineProvider] Saving document for noteId: ${noteId}, panelId: ${panelId}, cacheKey: ${cacheKey}, content:`, content)
     
     // Update local cache; bump version only if content changed
+    const previousVersion = this.documentVersions.get(cacheKey) || 0
     const prev = this.documents.get(cacheKey)
     const changed = JSON.stringify(prev) !== JSON.stringify(content)
     this.documents.set(cacheKey, content)
-    const currentVersion = (this.documentVersions.get(cacheKey) || 0) + (changed ? 1 : 0)
+    const currentVersion = changed ? previousVersion + 1 : previousVersion
     this.documentVersions.set(cacheKey, currentVersion)
+    const baseVersion = previousVersion
     this.updateLastAccess(cacheKey)
+    if (!changed) {
+      return
+    }
     
     // Fix #7-9: Update object state
     this.persistenceState.updateCount++
@@ -319,13 +324,13 @@ export class PlainOfflineProvider extends EventEmitter {
           entityType: 'document',
           entityId: `${noteId}:${panelId}`,
           operation: 'update',
-          data: { noteId, panelId, content, version: currentVersion }
+          data: { noteId, panelId, content, version: currentVersion, baseVersion }
         })
         console.log(`[PlainOfflineProvider] Document queued for batching: ${cacheKey}`)
       } else {
         // Direct save without batching
         try {
-          await this.adapter.saveDocument(noteId, panelId, content, currentVersion)
+          await this.adapter.saveDocument(noteId, panelId, content, currentVersion, baseVersion)
           console.log(`[PlainOfflineProvider] Persisted document for ${cacheKey}, version: ${currentVersion}`)
           
           // Auto-cleanup if update count is high
@@ -336,6 +341,10 @@ export class PlainOfflineProvider extends EventEmitter {
           }
         } catch (error) {
           console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
+          const message = error instanceof Error ? error.message : ''
+          if (message.includes('stale document save') || message.includes('non-incrementing version') || message.includes('baseVersion required')) {
+            throw error
+          }
           // Queue for offline sync
           if (this.offlineQueue) {
             await this.offlineQueue.enqueue({
@@ -343,7 +352,7 @@ export class PlainOfflineProvider extends EventEmitter {
               entityType: 'document',
               entityId: cacheKey,
               operation: 'update',
-              data: { noteId, panelId, content, version: currentVersion },
+              data: { noteId, panelId, content, version: currentVersion, baseVersion },
               timestamp: Date.now()
             })
           } else {
@@ -351,7 +360,7 @@ export class PlainOfflineProvider extends EventEmitter {
               operation: 'update',
               entityType: 'document',
               entityId: cacheKey,
-              payload: { noteId, panelId, content, version: currentVersion }
+              payload: { noteId, panelId, content, version: currentVersion, baseVersion }
             })
           }
         }

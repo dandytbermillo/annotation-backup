@@ -117,3 +117,4 @@
 {"type": "note", "ts": "2025-09-17T14:49:12Z", "summary": "Documented sticky-note portal fix under docs/proposal/sticky_notes/always_on_top."}
 {"ts":"2025-09-18T12:34:59.822Z","type":"commit","sha":"2828c62cfc9e09eb2354ce53b746d7494a3eaa80","files_changed":16,"message":"fix error in the debug lod, modified the claude.md"}
 {"ts":"2025-09-18T18:14:09.098Z","type":"commit","sha":"adff35f8395c2103e881fb36433aca6970423df0","files_changed":32,"message":"fixing browsers have thier own version of the same file"}
+{"ts":"2025-09-18T20:29:55.345Z","type":"commit","sha":"0c23f6f05fb0a0cbe4bcb471599a4deabd8150c2","files_changed":35,"message":"still fixing the issue"}

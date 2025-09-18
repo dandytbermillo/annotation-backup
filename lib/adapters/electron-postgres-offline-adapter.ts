@@ -72,8 +72,8 @@ export class ElectronPostgresOfflineAdapter extends PostgresOfflineAdapter {
     return this.invokeIPC('postgres-offline:listBranches', noteId)
   }
   
-  async saveDocument(noteId: string, panelId: string, content: any, version: number): Promise<void> {
-    await this.invokeIPC('postgres-offline:saveDocument', noteId, panelId, content, version)
+  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number): Promise<void> {
+    await this.invokeIPC('postgres-offline:saveDocument', noteId, panelId, content, version, baseVersion)
   }
   
   async loadDocument(noteId: string, panelId: string): Promise<any> {

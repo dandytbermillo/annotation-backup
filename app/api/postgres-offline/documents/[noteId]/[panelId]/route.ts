@@ -100,23 +100,71 @@ export async function POST(
       : content
     
     // Save the document
+    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+
+    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+    if (baseVersion === undefined) {
+      throw new Error('baseVersion required')
+    }
+
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-      return client.query(
-        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (note_id, panel_id, workspace_id, version) 
-         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+      const latest = await client.query(
+        `SELECT id, content, version
+           FROM document_saves
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+        [noteKey, normalizedPanelId, workspaceId]
+      )
+
+      const latestRow = latest.rows[0]
+      const latestVersion: number = latestRow?.version ?? 0
+
+      if (latestRow && JSON.stringify(latestRow.content) === JSON.stringify(contentToSave) && version === latestVersion) {
+        return { skipped: true, row: latestRow }
+      }
+
+      const resolvedBase = baseVersion
+
+      if (latestVersion > resolvedBase) {
+        throw new Error(`stale document save: baseVersion ${resolvedBase} behind latest ${latestVersion}`)
+      }
+
+      if (version <= latestVersion) {
+        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+      }
+
+      if (version !== resolvedBase + 1) {
+        console.warn(`[POST /api/postgres-offline/documents/[noteId]/[panelId]] Non-sequential version: base=${resolvedBase}, version=${version}`)
+      }
+
+      const inserted = await client.query(
+        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
          RETURNING *`,
         [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
       )
+
+      return { skipped: false, row: inserted.rows[0] }
     })
-    
-    return NextResponse.json(result.rows[0])
+
+    if (result.skipped) {
+      return NextResponse.json(result.row)
+    }
+
+    return NextResponse.json(result.row)
+
   } catch (error) {
     console.error('[POST /api/postgres-offline/documents/[noteId]/[panelId]] Error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to save document'
+    const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
+      ? 409
+      : message.includes('required')
+      ? 400
+      : 500
     return NextResponse.json(
-      { error: 'Failed to save document' },
-      { status: 500 }
+      { error: message },
+      { status }
     )
   }
 }

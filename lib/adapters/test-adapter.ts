@@ -82,7 +82,7 @@ export class TestAdapter implements PlainCrudAdapter {
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
   }
   
-  async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number): Promise<void> {
+  async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number, baseVersion: number): Promise<void> {
     const key = `${noteId}-${panelId}`
     this.documents.set(key, { content, version })
   }

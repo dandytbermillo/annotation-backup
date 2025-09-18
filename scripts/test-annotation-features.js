@@ -92,6 +92,7 @@ async function runTests() {
           <p>Here's another paragraph with <span class="annotation" data-id="ann2" data-branch-content="This is a very long annotation content that should trigger scrollbar in the tooltip when displayed. ${Array(50).fill('Lorem ipsum dolor sit amet. ').join('')}">long annotation</span> content.</p>
         `,
         version: 1,
+        baseVersion: 0,
         metadata: {
           annotations: [
             {

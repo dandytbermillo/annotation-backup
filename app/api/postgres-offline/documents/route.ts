@@ -46,26 +46,69 @@ export async function POST(request: NextRequest) {
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
     // Normalized panelId
     
+    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+    if (baseVersion === undefined) {
+      throw new Error('baseVersion required')
+    }
+
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-      return client.query(
+      const latest = await client.query(
+        `SELECT id, content, version
+           FROM document_saves
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+        [noteKey, normalizedPanelId, workspaceId]
+      )
+
+      const latestRow = latest.rows[0]
+      const latestVersion: number = latestRow?.version ?? 0
+
+      if (latestRow && JSON.stringify(latestRow.content) === JSON.stringify(contentJson) && version === latestVersion) {
+        return { skipped: true, id: latestRow.id }
+      }
+
+      const resolvedBase = baseVersion
+
+      if (latestVersion > resolvedBase) {
+        throw new Error(`stale document save: baseVersion ${resolvedBase} behind latest ${latestVersion}`)
+      }
+
+      if (version <= latestVersion) {
+        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+      }
+
+      if (version !== resolvedBase + 1) {
+        console.warn(`[POST /api/postgres-offline/documents] Non-sequential version: base=${resolvedBase}, version=${version}`)
+      }
+
+      const inserted = await client.query(
         `INSERT INTO document_saves 
          (note_id, panel_id, content, version, workspace_id, created_at)
          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-         ON CONFLICT (note_id, panel_id, workspace_id, version)
-         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
          RETURNING id`,
         [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
       )
+
+      return { skipped: false, id: inserted.rows[0]?.id }
     })
     
-    // Save successful
-    
-    return NextResponse.json({ success: true, id: result.rows[0]?.id })
+    if (result.skipped) {
+      return NextResponse.json({ success: true, skipped: true, id: result.id })
+    }
+
+    return NextResponse.json({ success: true, id: result.id })
   } catch (error) {
     console.error('[POST /api/postgres-offline/documents] Error:', error)
+    const message = error instanceof Error ? error.message : 'Failed to save document'
+    const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
+      ? 409
+      : message.includes('required')
+      ? 400
+      : 500
     return NextResponse.json(
-      { error: 'Failed to save document' },
-      { status: 500 }
+      { error: message },
+      { status }
     )
   }
 }

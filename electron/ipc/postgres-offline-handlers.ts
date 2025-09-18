@@ -238,10 +238,9 @@ const handlers = {
     }
   },
   
-  'postgres-offline:saveDocument': async (event: any, noteId: string, panelId: string, content: any, version: number) => {
+  'postgres-offline:saveDocument': async (event: any, noteId: string, panelId: string, content: any, version: number, baseVersion: number) => {
     const pool = getPool()
     try {
-      // Store content as JSONB
       const contentJson = typeof content === 'string' 
         ? { html: content } 
         : content
@@ -256,12 +255,37 @@ const handlers = {
         return { success: false, error: 'Failed to resolve workspace' }
       }
 
+      const latest = await pool.query(
+        `SELECT content, version
+           FROM document_saves
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+        [noteId, normalizedPanelId, workspaceId]
+      )
+
+      const latestVersion: number = latest.rows[0]?.version ?? 0
+
+      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+        return { success: true, skipped: true }
+      }
+
+      if (latestVersion > baseVersion) {
+        return { success: false, error: `stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}` }
+      }
+
+      if (version <= latestVersion) {
+        return { success: false, error: `non-incrementing version ${version} (latest ${latestVersion})` }
+      }
+
+      if (version !== baseVersion + 1) {
+        console.warn(`[postgres-offline:saveDocument] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
+      }
+
       await pool.query(
         `INSERT INTO document_saves 
          (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-         ON CONFLICT (note_id, panel_id, workspace_id, version)
-         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
         [noteId, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
       )
       

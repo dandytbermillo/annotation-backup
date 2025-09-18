@@ -39,7 +39,8 @@ curl -X POST http://localhost:3000/api/postgres-offline/documents \
         }]
       }]
     },
-    "version": 1
+    "version": 1,
+    "baseVersion": 0
   }' \
   -o /dev/null -s
 

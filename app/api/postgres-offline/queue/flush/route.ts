@@ -36,7 +36,10 @@ export async function POST(request: NextRequest) {
             case 'update': {
               const contentJson = data?.content ?? {}
               const content = JSON.stringify(contentJson)
-              const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
+              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+              if (baseVersion === null) {
+                throw new Error('baseVersion required for queue operation')
+              }
 
               const latest = await pool.query(
                 `SELECT content, version
@@ -87,7 +90,10 @@ export async function POST(request: NextRequest) {
             case 'create': {
               const contentJson = data?.content ?? {}
               const content = JSON.stringify(contentJson)
-              const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
+              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+              if (baseVersion === null) {
+                throw new Error('baseVersion required for queue operation')
+              }
 
               const latest = await pool.query(
                 `SELECT content, version
@@ -275,7 +281,10 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
 
       const contentJson = data?.content ?? {}
       const content = JSON.stringify(contentJson)
-      const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
+      const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+      if (baseVersion === null) {
+        throw new Error('baseVersion required for queue operation')
+      }
 
       const latest = await client.query(
         `SELECT content, version

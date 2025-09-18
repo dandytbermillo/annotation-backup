@@ -231,33 +231,57 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
     noteId: string, 
     panelId: string, 
     content: ProseMirrorJSON | HtmlString, 
-    version: number
+    version: number,
+    baseVersion: number
   ): Promise<void> {
     const pool = this.getPool()
-    
-    // Coerce IDs to UUID format for consistency with API
+
     const noteKey = this.coerceEntityId(noteId)
     const normalizedPanelId = this.normalizePanelId(noteKey, panelId)
-    
-    // Store content as JSONB
-    const contentJson = typeof content === 'string' 
-      ? { html: content } 
+
+    const contentJson = typeof content === 'string'
+      ? { html: content }
       : content
-    
+
     await this.withWorkspace(async ({ client, workspaceId }) => {
+      const latest = await client.query(
+        `SELECT content, version
+           FROM document_saves
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+        [noteKey, normalizedPanelId, workspaceId]
+      )
+
+      const latestVersion: number = latest.rows[0]?.version ?? 0
+
+      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+        console.log(`[PostgresOfflineAdapter] Skipping save (no change) for note=${noteId}, panel=${panelId}`)
+        return
+      }
+
+      if (latestVersion > baseVersion) {
+        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
+      }
+
+      if (version <= latestVersion) {
+        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+      }
+
+      if (version !== baseVersion + 1) {
+        console.warn(`[PostgresOfflineAdapter] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
+      }
+
       await client.query(
         `INSERT INTO document_saves 
          (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-         ON CONFLICT (note_id, panel_id, workspace_id, version)
-         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
         [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
       )
     })
-    
+
     console.log(`[PostgresOfflineAdapter] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
   }
-
   async loadDocument(
     noteId: string, 
     panelId: string

@@ -66,7 +66,7 @@ class MockAdapter implements PlainCrudAdapter {
     return Array.from(this.branches.values()).filter(b => b.noteId === noteId)
   }
   
-  async saveDocument(noteId: string, panelId: string, content: any, version: number) {
+  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
     const key = `${noteId}-${panelId}`
     this.documents.set(key, { content, version })
   }

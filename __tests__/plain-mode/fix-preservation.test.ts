@@ -51,7 +51,7 @@ class MockAdapter implements PlainCrudAdapter {
     return branches
   }
   
-  async saveDocument(noteId: string, panelId: string, content: any, version: number) {
+  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
     const key = `doc:${noteId}:${panelId}`
     this.storage.set(key, { content, version })
   }

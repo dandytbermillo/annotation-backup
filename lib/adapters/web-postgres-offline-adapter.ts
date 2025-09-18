@@ -109,7 +109,7 @@ export class WebPostgresOfflineAdapter implements PlainCrudAdapter {
   /**
    * Document operations
    */
-  async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number): Promise<void> {
+  async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number, baseVersion: number): Promise<void> {
     const response = await fetch(`${this.apiBase}/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -117,7 +117,8 @@ export class WebPostgresOfflineAdapter implements PlainCrudAdapter {
         noteId,
         panelId,
         content,
-        version
+        version,
+        baseVersion
       })
     })
     
