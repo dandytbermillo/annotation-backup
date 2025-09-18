@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Pool } from 'pg'
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev'
-})
+import { serverPool } from '@/lib/db/pool'
+import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 
 // GET /api/items - Get tree or search items
 export async function GET(request: NextRequest) {
@@ -13,7 +10,19 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type')
     const parentId = searchParams.get('parentId')
     const limit = parseInt(searchParams.get('limit') || '100')
-    
+
+    // Get workspace_id to filter results properly
+    let workspaceId: string
+    try {
+      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
+    } catch (e) {
+      console.error('Failed to get workspace ID:', e)
+      return NextResponse.json(
+        { error: 'Failed to get workspace' },
+        { status: 500 }
+      )
+    }
+
     let query: string
     let values: any[] = []
     
@@ -25,15 +34,16 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE deleted_at IS NULL
-          AND (name ILIKE $1 OR path ILIKE $1)
-          ${type ? 'AND type = $2' : ''}
+        WHERE workspace_id = $1
+          AND deleted_at IS NULL
+          AND (name ILIKE $2 OR path ILIKE $2)
+          ${type ? 'AND type = $3' : ''}
         ORDER BY 
-          CASE WHEN name ILIKE $1 THEN 0 ELSE 1 END,
+          CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END,
           length(path)
-        LIMIT $${type ? 3 : 2}
+        LIMIT $${type ? 4 : 3}
       `
-      values = [`%${search}%`]
+      values = [workspaceId, `%${search}%`]
       if (type) values.push(type)
       values.push(limit)
     } else if (type && !parentId) {
@@ -44,12 +54,13 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE deleted_at IS NULL
-          AND type = $1
+        WHERE workspace_id = $1
+          AND deleted_at IS NULL
+          AND type = $2
         ORDER BY path
-        LIMIT $2
+        LIMIT $3
       `
-      values = [type, limit]
+      values = [workspaceId, type, limit]
     } else if (parentId !== undefined) {
       // Get children of specific parent
       query = `
@@ -58,11 +69,12 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE parent_id ${parentId === 'null' ? 'IS NULL' : '= $1'} 
+        WHERE workspace_id = $1
+          AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'} 
           AND deleted_at IS NULL
         ORDER BY type DESC, position, name
       `
-      values = parentId === 'null' ? [] : [parentId]
+      values = parentId === 'null' ? [workspaceId] : [workspaceId, parentId]
     } else {
       // Get full tree structure (limited depth for performance)
       query = `
@@ -73,7 +85,8 @@ export async function GET(request: NextRequest) {
             created_at, updated_at,
             0 as depth
           FROM items 
-          WHERE parent_id IS NULL AND deleted_at IS NULL
+          WHERE workspace_id = $1
+            AND parent_id IS NULL AND deleted_at IS NULL
           
           UNION ALL
           
@@ -84,14 +97,14 @@ export async function GET(request: NextRequest) {
             t.depth + 1
           FROM items i
           JOIN tree t ON i.parent_id = t.id
-          WHERE i.deleted_at IS NULL AND t.depth < 3
+          WHERE i.workspace_id = $1 AND i.deleted_at IS NULL AND t.depth < 3
         )
         SELECT * FROM tree ORDER BY path
       `
-      values = []
+      values = [workspaceId]
     }
     
-    const result = await pool.query(query, values)
+    const result = await serverPool.query(query, values)
     
     const items = result.rows.map(row => ({
       id: row.id,
@@ -137,7 +150,7 @@ export async function POST(request: NextRequest) {
     // Get parent path if parentId provided
     let parentPath = ''
     if (parentId) {
-      const parentResult = await pool.query(
+      const parentResult = await serverPool.query(
         'SELECT path FROM items WHERE id = $1 AND deleted_at IS NULL',
         [parentId]
       )
@@ -153,14 +166,32 @@ export async function POST(request: NextRequest) {
     // Construct path
     const path = parentPath ? `${parentPath}/${name}` : `/${name}`
     
-    // Insert new item
+    // Always get workspace_id since database requires it (NOT NULL constraint)
+    let workspaceId = null;
+    try {
+      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+    } catch (e) {
+      console.error('Failed to get workspace ID:', e);
+      return NextResponse.json(
+        { error: 'Failed to get workspace' },
+        { status: 500 }
+      );
+    }
+    
+    // Always include workspace_id in INSERT since it's required
+    // Use ON CONFLICT to return existing item if it already exists
     const query = `
       INSERT INTO items (
         type, parent_id, path, name, content, 
-        metadata, icon, color, position
+        metadata, icon, color, position, workspace_id
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9
-      ) RETURNING *
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+      ) 
+      ON CONFLICT (workspace_id, path) WHERE deleted_at IS NULL
+      DO UPDATE SET 
+        updated_at = NOW(),
+        last_accessed_at = NOW()
+      RETURNING *
     `
     
     const values = [
@@ -172,10 +203,11 @@ export async function POST(request: NextRequest) {
       metadata,
       icon || null,
       color || null,
-      position
+      position,
+      workspaceId
     ]
     
-    const result = await pool.query(query, values)
+    const result = await serverPool.query(query, values)
     
     const row = result.rows[0]
     const item = {
@@ -197,14 +229,14 @@ export async function POST(request: NextRequest) {
     
     // Dual-write: Also create in notes table if it's a note
     if (type === 'note') {
-      await pool.query(`
-        INSERT INTO notes (id, title, metadata, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
+      await serverPool.query(`
+        INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (id) DO UPDATE SET
           title = EXCLUDED.title,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at
-      `, [row.id, name, metadata, row.created_at, row.updated_at])
+      `, [row.id, name, metadata, workspaceId, row.created_at, row.updated_at])
     }
     
     return NextResponse.json({ item }, { status: 201 })
@@ -239,7 +271,7 @@ export async function GET_RECENT(request: NextRequest) {
       LIMIT $1
     `
     
-    const result = await pool.query(query, [limit])
+    const result = await serverPool.query(query, [limit])
     
     const items = result.rows.map(row => ({
       id: row.id,

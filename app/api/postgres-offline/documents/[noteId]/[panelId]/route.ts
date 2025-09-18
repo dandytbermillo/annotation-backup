@@ -99,27 +99,17 @@ export async function POST(
       ? { html: content }
       : content
     
-    // Get workspace_id to ensure consistent data across browsers
-    let workspaceId: string | null = null;
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-    } catch (e) {
-      console.error('[POST Document] Failed to get workspace ID:', e);
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      );
-    }
-    
     // Save the document
-    const result = await serverPool.query(
-      `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (note_id, panel_id, version) 
-       DO UPDATE SET content = $3, workspace_id = $5, created_at = NOW()
-       RETURNING *`,
-      [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
-    )
+    const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+      return client.query(
+        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (note_id, panel_id, workspace_id, version) 
+         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+         RETURNING *`,
+        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
+      )
+    })
     
     return NextResponse.json(result.rows[0])
   } catch (error) {

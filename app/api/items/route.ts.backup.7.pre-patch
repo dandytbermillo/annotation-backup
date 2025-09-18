@@ -10,19 +10,7 @@ export async function GET(request: NextRequest) {
     const type = searchParams.get('type')
     const parentId = searchParams.get('parentId')
     const limit = parseInt(searchParams.get('limit') || '100')
-
-    // Get workspace_id to filter results properly
-    let workspaceId: string
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
-    } catch (e) {
-      console.error('Failed to get workspace ID:', e)
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      )
-    }
-
+    
     let query: string
     let values: any[] = []
     
@@ -34,16 +22,15 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE workspace_id = $1
-          AND deleted_at IS NULL
-          AND (name ILIKE $2 OR path ILIKE $2)
-          ${type ? 'AND type = $3' : ''}
+        WHERE deleted_at IS NULL
+          AND (name ILIKE $1 OR path ILIKE $1)
+          ${type ? 'AND type = $2' : ''}
         ORDER BY 
-          CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END,
+          CASE WHEN name ILIKE $1 THEN 0 ELSE 1 END,
           length(path)
-        LIMIT $${type ? 4 : 3}
+        LIMIT $${type ? 3 : 2}
       `
-      values = [workspaceId, `%${search}%`]
+      values = [`%${search}%`]
       if (type) values.push(type)
       values.push(limit)
     } else if (type && !parentId) {
@@ -54,13 +41,12 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE workspace_id = $1
-          AND deleted_at IS NULL
-          AND type = $2
+        WHERE deleted_at IS NULL
+          AND type = $1
         ORDER BY path
-        LIMIT $3
+        LIMIT $2
       `
-      values = [workspaceId, type, limit]
+      values = [type, limit]
     } else if (parentId !== undefined) {
       // Get children of specific parent
       query = `
@@ -69,12 +55,11 @@ export async function GET(request: NextRequest) {
           metadata, icon, color, last_accessed_at,
           created_at, updated_at
         FROM items 
-        WHERE workspace_id = $1
-          AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'} 
+        WHERE parent_id ${parentId === 'null' ? 'IS NULL' : '= $1'} 
           AND deleted_at IS NULL
         ORDER BY type DESC, position, name
       `
-      values = parentId === 'null' ? [workspaceId] : [workspaceId, parentId]
+      values = parentId === 'null' ? [] : [parentId]
     } else {
       // Get full tree structure (limited depth for performance)
       query = `
@@ -85,8 +70,7 @@ export async function GET(request: NextRequest) {
             created_at, updated_at,
             0 as depth
           FROM items 
-          WHERE workspace_id = $1
-            AND parent_id IS NULL AND deleted_at IS NULL
+          WHERE parent_id IS NULL AND deleted_at IS NULL
           
           UNION ALL
           
@@ -97,11 +81,11 @@ export async function GET(request: NextRequest) {
             t.depth + 1
           FROM items i
           JOIN tree t ON i.parent_id = t.id
-          WHERE i.workspace_id = $1 AND i.deleted_at IS NULL AND t.depth < 3
+          WHERE i.deleted_at IS NULL AND t.depth < 3
         )
         SELECT * FROM tree ORDER BY path
       `
-      values = [workspaceId]
+      values = []
     }
     
     const result = await serverPool.query(query, values)

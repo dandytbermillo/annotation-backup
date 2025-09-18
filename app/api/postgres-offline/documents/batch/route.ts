@@ -111,15 +111,6 @@ export async function POST(request: NextRequest) {
       const panelKey = panelId  // Already normalized panel ID
       
       // Ensure the note exists (auto-create if missing)
-      // Always get workspace_id since database requires it (NOT NULL constraint)
-      let workspaceId: string | null = null;
-      try {
-        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-      } catch (e) {
-        console.error('[Batch API] Failed to get workspace ID:', e);
-        throw new Error('Failed to get workspace');
-      }
-      
       await client.query(
         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
@@ -132,9 +123,9 @@ export async function POST(request: NextRequest) {
       // Skip if content equals latest (content-based coalescing)
       const latest = await client.query(
         `SELECT content, version FROM document_saves
-         WHERE note_id = $1 AND panel_id = $2
+         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
          ORDER BY version DESC LIMIT 1`,
-        [noteKey, panelKey]
+        [noteKey, panelKey, workspaceId]
       )
       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
@@ -147,8 +138,8 @@ export async function POST(request: NextRequest) {
         const nextVersionRow = await client.query(
           `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
            FROM document_saves
-           WHERE note_id = $1 AND panel_id = $2`,
-          [noteKey, panelKey]
+           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+          [noteKey, panelKey, workspaceId]
         )
         const nextVersion = nextVersionRow.rows[0].next_version
         try {
@@ -271,15 +262,6 @@ export async function PUT(request: NextRequest) {
       const panelKey = panelId  // Already normalized panel ID
       
       // Ensure the note exists (auto-create if missing)
-      // Always get workspace_id since database requires it (NOT NULL constraint)
-      let workspaceId: string | null = null;
-      try {
-        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-      } catch (e) {
-        console.error('[Batch API] Failed to get workspace ID:', e);
-        throw new Error('Failed to get workspace');
-      }
-      
       await client.query(
         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
@@ -291,9 +273,9 @@ export async function PUT(request: NextRequest) {
       
       const latest = await client.query(
         `SELECT content, version FROM document_saves
-         WHERE note_id = $1 AND panel_id = $2
+         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
          ORDER BY version DESC LIMIT 1`,
-        [noteKey, panelKey]
+        [noteKey, panelKey, workspaceId]
       )
       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })

@@ -1,0 +1,1324 @@
+diff --git a/app/api/items/route.ts b/app/api/items/route.ts
+index 6192fb0..45ceb1f 100644
+--- a/app/api/items/route.ts
++++ b/app/api/items/route.ts
+@@ -10,7 +10,19 @@ export async function GET(request: NextRequest) {
+     const type = searchParams.get('type')
+     const parentId = searchParams.get('parentId')
+     const limit = parseInt(searchParams.get('limit') || '100')
+-    
++
++    // Get workspace_id to filter results properly
++    let workspaceId: string
++    try {
++      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
++    } catch (e) {
++      console.error('Failed to get workspace ID:', e)
++      return NextResponse.json(
++        { error: 'Failed to get workspace' },
++        { status: 500 }
++      )
++    }
++
+     let query: string
+     let values: any[] = []
+     
+@@ -22,15 +34,16 @@ export async function GET(request: NextRequest) {
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE deleted_at IS NULL
+-          AND (name ILIKE $1 OR path ILIKE $1)
+-          ${type ? 'AND type = $2' : ''}
++        WHERE workspace_id = $1
++          AND deleted_at IS NULL
++          AND (name ILIKE $2 OR path ILIKE $2)
++          ${type ? 'AND type = $3' : ''}
+         ORDER BY 
+-          CASE WHEN name ILIKE $1 THEN 0 ELSE 1 END,
++          CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END,
+           length(path)
+-        LIMIT $${type ? 3 : 2}
++        LIMIT $${type ? 4 : 3}
+       `
+-      values = [`%${search}%`]
++      values = [workspaceId, `%${search}%`]
+       if (type) values.push(type)
+       values.push(limit)
+     } else if (type && !parentId) {
+@@ -41,12 +54,13 @@ export async function GET(request: NextRequest) {
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE deleted_at IS NULL
+-          AND type = $1
++        WHERE workspace_id = $1
++          AND deleted_at IS NULL
++          AND type = $2
+         ORDER BY path
+-        LIMIT $2
++        LIMIT $3
+       `
+-      values = [type, limit]
++      values = [workspaceId, type, limit]
+     } else if (parentId !== undefined) {
+       // Get children of specific parent
+       query = `
+@@ -55,11 +69,12 @@ export async function GET(request: NextRequest) {
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE parent_id ${parentId === 'null' ? 'IS NULL' : '= $1'} 
++        WHERE workspace_id = $1
++          AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'} 
+           AND deleted_at IS NULL
+         ORDER BY type DESC, position, name
+       `
+-      values = parentId === 'null' ? [] : [parentId]
++      values = parentId === 'null' ? [workspaceId] : [workspaceId, parentId]
+     } else {
+       // Get full tree structure (limited depth for performance)
+       query = `
+@@ -70,7 +85,8 @@ export async function GET(request: NextRequest) {
+             created_at, updated_at,
+             0 as depth
+           FROM items 
+-          WHERE parent_id IS NULL AND deleted_at IS NULL
++          WHERE workspace_id = $1
++            AND parent_id IS NULL AND deleted_at IS NULL
+           
+           UNION ALL
+           
+@@ -81,11 +97,11 @@ export async function GET(request: NextRequest) {
+             t.depth + 1
+           FROM items i
+           JOIN tree t ON i.parent_id = t.id
+-          WHERE i.deleted_at IS NULL AND t.depth < 3
++          WHERE i.workspace_id = $1 AND i.deleted_at IS NULL AND t.depth < 3
+         )
+         SELECT * FROM tree ORDER BY path
+       `
+-      values = []
++      values = [workspaceId]
+     }
+     
+     const result = await serverPool.query(query, values)
+diff --git a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+index 76ac3ab..7ea3c91 100644
+--- a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
++++ b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+@@ -99,27 +99,17 @@ export async function POST(
+       ? { html: content }
+       : content
+     
+-    // Get workspace_id to ensure consistent data across browsers
+-    let workspaceId: string | null = null;
+-    try {
+-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+-    } catch (e) {
+-      console.error('[POST Document] Failed to get workspace ID:', e);
+-      return NextResponse.json(
+-        { error: 'Failed to get workspace' },
+-        { status: 500 }
+-      );
+-    }
+-    
+     // Save the document
+-    const result = await serverPool.query(
+-      `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
+-       VALUES ($1, $2, $3, $4, $5)
+-       ON CONFLICT (note_id, panel_id, version) 
+-       DO UPDATE SET content = $3, workspace_id = $5, created_at = NOW()
+-       RETURNING *`,
+-      [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
+-    )
++    const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
++      return client.query(
++        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
++         VALUES ($1, $2, $3, $4, $5)
++         ON CONFLICT (note_id, panel_id, workspace_id, version) 
++         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
++         RETURNING *`,
++        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
++      )
++    })
+     
+     return NextResponse.json(result.rows[0])
+   } catch (error) {
+diff --git a/app/api/postgres-offline/documents/batch/route.ts b/app/api/postgres-offline/documents/batch/route.ts
+index f391ae3..9e0b7bf 100644
+--- a/app/api/postgres-offline/documents/batch/route.ts
++++ b/app/api/postgres-offline/documents/batch/route.ts
+@@ -111,15 +111,6 @@ export async function POST(request: NextRequest) {
+       const panelKey = panelId  // Already normalized panel ID
+       
+       // Ensure the note exists (auto-create if missing)
+-      // Always get workspace_id since database requires it (NOT NULL constraint)
+-      let workspaceId: string | null = null;
+-      try {
+-        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+-      } catch (e) {
+-        console.error('[Batch API] Failed to get workspace ID:', e);
+-        throw new Error('Failed to get workspace');
+-      }
+-      
+       await client.query(
+         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
+          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
+@@ -132,9 +123,9 @@ export async function POST(request: NextRequest) {
+       // Skip if content equals latest (content-based coalescing)
+       const latest = await client.query(
+         `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey]
++        [noteKey, panelKey, workspaceId]
+       )
+       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+@@ -147,8 +138,8 @@ export async function POST(request: NextRequest) {
+         const nextVersionRow = await client.query(
+           `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+            FROM document_saves
+-           WHERE note_id = $1 AND panel_id = $2`,
+-          [noteKey, panelKey]
++           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++          [noteKey, panelKey, workspaceId]
+         )
+         const nextVersion = nextVersionRow.rows[0].next_version
+         try {
+@@ -271,15 +262,6 @@ export async function PUT(request: NextRequest) {
+       const panelKey = panelId  // Already normalized panel ID
+       
+       // Ensure the note exists (auto-create if missing)
+-      // Always get workspace_id since database requires it (NOT NULL constraint)
+-      let workspaceId: string | null = null;
+-      try {
+-        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+-      } catch (e) {
+-        console.error('[Batch API] Failed to get workspace ID:', e);
+-        throw new Error('Failed to get workspace');
+-      }
+-      
+       await client.query(
+         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
+          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
+@@ -291,9 +273,9 @@ export async function PUT(request: NextRequest) {
+       
+       const latest = await client.query(
+         `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey]
++        [noteKey, panelKey, workspaceId]
+       )
+       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+diff --git a/app/api/postgres-offline/documents/route.ts b/app/api/postgres-offline/documents/route.ts
+index d91965c..78b4304 100644
+--- a/app/api/postgres-offline/documents/route.ts
++++ b/app/api/postgres-offline/documents/route.ts
+@@ -46,27 +46,17 @@ export async function POST(request: NextRequest) {
+     const normalizedPanelId = normalizePanelId(noteKey, panelId)
+     // Normalized panelId
+     
+-    // Always get workspace_id since database requires it (NOT NULL constraint)
+-    let workspaceId: string | null = null;
+-    try {
+-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+-    } catch (e) {
+-      console.error('[POST /api/postgres-offline/documents] Failed to get workspace ID:', e);
+-      return NextResponse.json(
+-        { error: 'Failed to get workspace' },
+-        { status: 500 }
+-      );
+-    }
+-    
+-    const result = await serverPool.query(
+-      `INSERT INTO document_saves 
+-       (note_id, panel_id, content, version, workspace_id, created_at)
+-       VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+-       ON CONFLICT (note_id, panel_id, version)
+-       DO UPDATE SET content = EXCLUDED.content, workspace_id = EXCLUDED.workspace_id, created_at = NOW()
+-       RETURNING id`,
+-      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+-    )
++    const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
++      return client.query(
++        `INSERT INTO document_saves 
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
++         ON CONFLICT (note_id, panel_id, workspace_id, version)
++         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
++         RETURNING id`,
++        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
++      )
++    })
+     
+     // Save successful
+     
+diff --git a/app/api/postgres-offline/queue/flush/route.ts b/app/api/postgres-offline/queue/flush/route.ts
+index 49bcef3..15cc0f2 100644
+--- a/app/api/postgres-offline/queue/flush/route.ts
++++ b/app/api/postgres-offline/queue/flush/route.ts
+@@ -1,9 +1,8 @@
+ import { NextRequest, NextResponse } from 'next/server'
+-import { Pool } from 'pg'
++import { serverPool } from '@/lib/db/pool'
++import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+ 
+-const pool = new Pool({
+-  connectionString: process.env.DATABASE_URL
+-})
++const pool = serverPool
+ 
+ // POST /api/postgres-offline/queue/flush
+ // Dual-mode:
+@@ -14,6 +13,14 @@ export async function POST(request: NextRequest) {
+   const hasOps = Array.isArray(body?.operations) && body.operations.length > 0
+   const drainDb = body?.drain_db === true || !hasOps
+ 
++  let workspaceId: string
++  try {
++    workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++  } catch (error) {
++    console.error('[queue/flush] Failed to resolve workspace:', error)
++    return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
++  }
++
+   if (!drainDb && hasOps) {
+     try {
+       const { operations = [] } = body
+@@ -27,41 +34,111 @@ export async function POST(request: NextRequest) {
+ 
+           switch (operation) {
+             case 'update': {
+-              const content = JSON.stringify(data?.content ?? {})
+-              await pool.query(
+-                `WITH next AS (
+-                   SELECT COALESCE(MAX(version), 0) + 1 AS v
++              const contentJson = data?.content ?? {}
++              const content = JSON.stringify(contentJson)
++              const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++
++              const latest = await pool.query(
++                `SELECT content, version
+                    FROM document_saves
+-                   WHERE note_id = $1 AND panel_id = $2
+-                 )
+-                 INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+-                 SELECT $1, $2, $3::jsonb, next.v, NOW()
+-                 FROM next`,
+-                [noteId, panelId, content]
++                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++                  ORDER BY version DESC
++                  LIMIT 1`,
++                [noteId, panelId, workspaceId]
+               )
+-              results.push({ ...op, status: 'success' })
++
++              if (
++                latest.rows[0] &&
++                JSON.stringify(latest.rows[0].content) === content
++              ) {
++                results.push({ ...op, status: 'skipped', reason: 'no-change' })
++                break
++              }
++
++              if (
++                latest.rows[0] &&
++                baseVersion !== null &&
++                latest.rows[0].version > baseVersion
++              ) {
++                results.push({
++                  ...op,
++                  status: 'skipped',
++                  reason: 'stale_remote_newer',
++                })
++                break
++              }
++
++              const nextVersionRow = await pool.query(
++                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
++                   FROM document_saves
++                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++                [noteId, panelId, workspaceId]
++              )
++              const nextVersion = nextVersionRow.rows[0].next_version
++
++              await pool.query(
++                `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
++                 VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
++                [noteId, panelId, content, nextVersion, workspaceId]
++              )
++              results.push({ ...op, status: 'success', version: nextVersion })
+               break
+             }
+             case 'create': {
+-              const content = JSON.stringify(data?.content ?? {})
+-              await pool.query(
+-                `WITH next AS (
+-                   SELECT COALESCE(MAX(version), 0) + 1 AS v
++              const contentJson = data?.content ?? {}
++              const content = JSON.stringify(contentJson)
++              const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++
++              const latest = await pool.query(
++                `SELECT content, version
+                    FROM document_saves
+-                   WHERE note_id = $1 AND panel_id = $2
+-                 )
+-                 INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+-                 SELECT $1, $2, $3::jsonb, next.v, NOW()
+-                 FROM next`,
+-                [noteId, panelId, content]
++                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++                  ORDER BY version DESC
++                  LIMIT 1`,
++                [noteId, panelId, workspaceId]
+               )
+-              results.push({ ...op, status: 'success' })
++
++              if (
++                latest.rows[0] &&
++                JSON.stringify(latest.rows[0].content) === content
++              ) {
++                results.push({ ...op, status: 'skipped', reason: 'no-change' })
++                break
++              }
++
++              if (
++                latest.rows[0] &&
++                baseVersion !== null &&
++                latest.rows[0].version > baseVersion
++              ) {
++                results.push({
++                  ...op,
++                  status: 'skipped',
++                  reason: 'stale_remote_newer',
++                })
++                break
++              }
++
++              const nextVersionRow = await pool.query(
++                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
++                   FROM document_saves
++                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++                [noteId, panelId, workspaceId]
++              )
++              const nextVersion = nextVersionRow.rows[0].next_version
++
++              await pool.query(
++                `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
++                 VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
++                [noteId, panelId, content, nextVersion, workspaceId]
++              )
++              results.push({ ...op, status: 'success', version: nextVersion })
+               break
+             }
+             case 'delete': {
+               await pool.query(
+-                `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
+-                [noteId, panelId]
++                `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++                [noteId, panelId, workspaceId]
+               )
+               results.push({ ...op, status: 'success' })
+               break
+@@ -97,6 +174,10 @@ export async function POST(request: NextRequest) {
+   const errors: any[] = []
+   try {
+     await client.query('BEGIN')
++    await client.query('SELECT set_config($1, $2, false)', [
++      'app.current_workspace_id',
++      workspaceId,
++    ])
+ 
+     const expireRes = await client.query(
+       `UPDATE offline_queue
+@@ -123,7 +204,7 @@ export async function POST(request: NextRequest) {
+ 
+     for (const row of pending.rows) {
+       try {
+-        await processQueueOperation(client, row)
++        await processQueueOperation(client, row, workspaceId)
+         await client.query(
+           `UPDATE offline_queue SET status = 'processing', updated_at = NOW() WHERE id = $1`,
+           [row.id]
+@@ -175,7 +256,7 @@ function getPanelId(data: any): string | null {
+   return data?.panelId || data?.panel_id || null
+ }
+ 
+-async function processQueueOperation(client: any, row: any) {
++async function processQueueOperation(client: any, row: any, workspaceId: string) {
+   const { type, table_name, entity_id, data } = row
+   const table = String(table_name)
+   const op = String(type)
+@@ -187,21 +268,51 @@ async function processQueueOperation(client: any, row: any) {
+       const panelId = getPanelId(data)
+       if (!noteId || !panelId) throw new Error('document_saves requires noteId and panelId in data')
+       if (op === 'delete') {
+-        await client.query(`DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2`, [noteId, panelId])
+-      } else {
+-        const content = JSON.stringify(data?.content ?? {})
+-        await client.query(
+-          `WITH next AS (
+-             SELECT COALESCE(MAX(version), 0) + 1 AS v
+-             FROM document_saves
+-             WHERE note_id = $1 AND panel_id = $2
+-           )
+-           INSERT INTO document_saves (note_id, panel_id, content, version, created_at)
+-           SELECT $1, $2, $3::jsonb, next.v, NOW()
+-           FROM next`,
+-          [noteId, panelId, content]
+-        )
++        await client.query(`DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`, [noteId, panelId, workspaceId])
++        return
++      }
++
++      const contentJson = data?.content ?? {}
++      const content = JSON.stringify(contentJson)
++      const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++
++      const latest = await client.query(
++        `SELECT content, version
++           FROM document_saves
++          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++          ORDER BY version DESC
++          LIMIT 1`,
++        [noteId, panelId, workspaceId]
++      )
++
++      if (
++        latest.rows[0] &&
++        JSON.stringify(latest.rows[0].content) === content
++      ) {
++        return
++      }
++
++      if (
++        latest.rows[0] &&
++        baseVersion !== null &&
++        latest.rows[0].version > baseVersion
++      ) {
++        return
+       }
++
++      const nextVersionRow = await client.query(
++        `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
++           FROM document_saves
++          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++        [noteId, panelId, workspaceId]
++      )
++      const nextVersion = nextVersionRow.rows[0].next_version
++
++      await client.query(
++        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
++        [noteId, panelId, content, nextVersion, workspaceId]
++      )
+       return
+     }
+ 
+diff --git a/app/api/search/route.ts b/app/api/search/route.ts
+index cdea8ba..f973222 100644
+--- a/app/api/search/route.ts
++++ b/app/api/search/route.ts
+@@ -1,10 +1,8 @@
+ import { NextRequest, NextResponse } from 'next/server'
+-import { Pool } from 'pg'
++import { serverPool } from '@/lib/db/pool'
++import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+ 
+-// Create connection pool
+-const pool = new Pool({
+-  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
+-})
++const pool = serverPool
+ 
+ export async function GET(request: NextRequest) {
+   const { searchParams } = new URL(request.url)
+@@ -49,11 +47,12 @@ export async function GET(request: NextRequest) {
+           ) as excerpt,
+           created_at
+         FROM notes
+-        WHERE search_vector @@ ${tsquery}
+-          OR title ILIKE '%' || $1 || '%'
++        WHERE workspace_id = $4
++          AND (search_vector @@ ${tsquery}
++           OR title ILIKE '%' || $1 || '%')
+         ORDER BY rank DESC, created_at DESC
+         LIMIT $2 OFFSET $3`,
+-        [query, limit, offset]
++        [query, limit, offset, workspaceId]
+       )
+       
+       results.results.notes = {
+@@ -81,10 +80,11 @@ export async function GET(request: NextRequest) {
+           ds.created_at
+         FROM document_saves ds
+         LEFT JOIN notes n ON ds.note_id = n.id
+-        WHERE ds.search_vector @@ ${tsquery}
++        WHERE ds.workspace_id = $4
++          AND ds.search_vector @@ ${tsquery}
+         ORDER BY rank DESC, ds.created_at DESC
+         LIMIT $2 OFFSET $3`,
+-        [query, limit, offset]
++        [query, limit, offset, workspaceId]
+       )
+       
+       results.results.documents = {
+@@ -115,10 +115,11 @@ export async function GET(request: NextRequest) {
+           b.created_at
+         FROM branches b
+         LEFT JOIN notes n ON b.note_id = n.id
+-        WHERE to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
++        WHERE b.workspace_id = $4
++          AND to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
+         ORDER BY rank DESC, b.created_at DESC
+         LIMIT $2 OFFSET $3`,
+-        [query, limit, offset]
++        [query, limit, offset, workspaceId]
+       )
+       
+       results.results.branches = {
+@@ -147,10 +148,11 @@ export async function GET(request: NextRequest) {
+           ds.created_at
+         FROM document_saves ds
+         LEFT JOIN notes n ON ds.note_id = n.id
+-        WHERE ds.document_text % $1
++        WHERE ds.workspace_id = $4
++          AND ds.document_text % $1
+         ORDER BY similarity DESC
+         LIMIT $2 OFFSET $3`,
+-        [query, limit, offset]
++        [query, limit, offset, workspaceId]
+       )
+       
+       results.results.fuzzy = {
+@@ -193,14 +195,18 @@ export async function POST(request: NextRequest) {
+       offset = 0
+     } = body
+     
+-    if (!query || query.trim().length === 0) {
+-      return NextResponse.json({ error: 'Query is required' }, { status: 400 })
++    let workspaceId: string
++    try {
++      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++    } catch (error) {
++      console.error('[search POST] Failed to resolve workspace:', error)
++      return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
+     }
+-    
++
+     // Build dynamic query based on filters
+-    let whereClause = 'WHERE search_vector @@ plainto_tsquery($1)'
+-    const params = [query]
+-    let paramIndex = 2
++    let whereClause = 'WHERE workspace_id = $2 AND search_vector @@ plainto_tsquery($1)'
++    const params = [query, workspaceId]
++    let paramIndex = 3
+     
+     // Add date range filter
+     if (filters.dateFrom) {
+diff --git a/app/api/versions/[noteId]/[panelId]/route.ts b/app/api/versions/[noteId]/[panelId]/route.ts
+index 224f338..a1debf0 100644
+--- a/app/api/versions/[noteId]/[panelId]/route.ts
++++ b/app/api/versions/[noteId]/[panelId]/route.ts
+@@ -1,11 +1,10 @@
+ import { NextRequest, NextResponse } from 'next/server'
+-import { Pool } from 'pg'
++import { serverPool } from '@/lib/db/pool'
++import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+ import crypto from 'crypto'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+-const pool = new Pool({
+-  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
+-})
++const pool = serverPool
+ 
+ // Deterministic mapping for non-UUID IDs (slugs) → UUID
+ const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+@@ -20,6 +19,14 @@ export async function GET(
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+   const { searchParams } = new URL(request.url)
++  let workspaceId: string
++  try {
++    workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++  } catch (error) {
++    console.error('[versions DELETE] Failed to resolve workspace:', error)
++    return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
++  }
++
+   const limit = parseInt(searchParams.get('limit') || '50', 10)
+   const offset = parseInt(searchParams.get('offset') || '0', 10)
+   const versionParam = searchParams.get('version')
+@@ -37,8 +44,8 @@ export async function GET(
+           document_text,
+           created_at
+         FROM document_saves
+-        WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
+-        [noteKey, panelKey, vnum]
++        WHERE note_id = $1 AND panel_id = $2 AND version = $3 AND workspace_id = $4`,
++        [noteKey, panelKey, vnum, workspaceId]
+       )
+       
+       if (result.rows.length === 0) {
+@@ -68,32 +75,32 @@ export async function GET(
+         pg_column_size(content::text) as size_bytes,
+         created_at,
+         CASE 
+-          WHEN version = (SELECT MAX(version) FROM document_saves WHERE note_id = $1 AND panel_id = $2)
++          WHEN version = (SELECT MAX(version) FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3)
+           THEN true 
+           ELSE false 
+         END as is_current
+       FROM document_saves
+-      WHERE note_id = $1 AND panel_id = $2
++      WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+       ORDER BY version DESC
+-      LIMIT $3 OFFSET $4`,
+-      [noteKey, panelKey, limit, offset]
++      LIMIT $4 OFFSET $5`,
++      [noteKey, panelKey, workspaceId, limit, offset]
+     )
+     
+     // Get total count
+     const countResult = await pool.query(
+       `SELECT COUNT(*) as total FROM document_saves 
+-       WHERE note_id = $1 AND panel_id = $2`,
+-      [noteKey, panelKey]
++       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++      [noteKey, panelKey, workspaceId]
+     )
+     
+     // Get current version details
+     const currentResult = await pool.query(
+       `SELECT version, content, created_at
+        FROM document_saves
+-       WHERE note_id = $1 AND panel_id = $2
++       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+        ORDER BY version DESC
+        LIMIT 1`,
+-      [noteKey, panelKey]
++      [noteKey, panelKey, workspaceId]
+     )
+     
+     const currentVersion = currentResult.rows[0]
+@@ -132,7 +139,15 @@ export async function POST(
+   const { noteId, panelId } = await params
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+-  
++
++  let workspaceId: string
++  try {
++    workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++  } catch (error) {
++    console.error('[versions POST] Failed to resolve workspace:', error)
++    return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
++  }
++
+   try {
+     const body = await request.json()
+     const { 
+@@ -156,8 +171,8 @@ export async function POST(
+       // Get the version to restore
+       const versionResult = await pool.query(
+         `SELECT content FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
+-        [noteKey, panelKey, version]
++         WHERE note_id = $1 AND panel_id = $2 AND version = $3 AND workspace_id = $4`,
++        [noteKey, panelKey, version, workspaceId]
+       )
+       
+       if (versionResult.rows.length === 0) {
+@@ -171,8 +186,8 @@ export async function POST(
+       const nextVersionResult = await pool.query(
+         `SELECT COALESCE(MAX(version), 0) + 1 as next_version
+          FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2`,
+-        [noteKey, panelKey]
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++        [noteKey, panelKey, workspaceId]
+       )
+       
+       const nextVersion = nextVersionResult.rows[0].next_version
+@@ -181,10 +196,10 @@ export async function POST(
+       // Create new version with restored content
+       const insertResult = await pool.query(
+         `INSERT INTO document_saves 
+-         (note_id, panel_id, content, version, created_at)
+-         VALUES ($1, $2, $3::jsonb, $4, NOW())
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+          RETURNING *`,
+-        [noteKey, panelKey, JSON.stringify(restoredContent), nextVersion]
++        [noteKey, panelKey, JSON.stringify(restoredContent), nextVersion, workspaceId]
+       )
+       
+       return NextResponse.json({
+@@ -208,10 +223,10 @@ export async function POST(
+       if (base_version !== undefined && !force) {
+         const currentResult = await pool.query(
+           `SELECT version, content FROM document_saves
+-           WHERE note_id = $1 AND panel_id = $2
++           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+            ORDER BY version DESC
+            LIMIT 1`,
+-          [noteKey, panelKey]
++          [noteKey, panelKey, workspaceId]
+         )
+         
+         if (currentResult.rows.length > 0) {
+@@ -260,8 +275,8 @@ export async function POST(
+       const nextVersionResult = await pool.query(
+         `SELECT COALESCE(MAX(version), 0) + 1 as next_version
+          FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2`,
+-        [noteKey, panelKey]
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++        [noteKey, panelKey, workspaceId]
+       )
+       
+       const nextVersion = nextVersionResult.rows[0].next_version
+@@ -269,10 +284,10 @@ export async function POST(
+       // Save new version
+       const insertResult = await pool.query(
+         `INSERT INTO document_saves 
+-         (note_id, panel_id, content, version, created_at)
+-         VALUES ($1, $2, $3::jsonb, $4, NOW())
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+          RETURNING *`,
+-        [noteKey, panelKey, JSON.stringify(content), nextVersion]
++        [noteKey, panelKey, JSON.stringify(content), nextVersion, workspaceId]
+       )
+       
+       const newHash = crypto
+@@ -311,21 +326,29 @@ export async function DELETE(
+   const noteKey = coerceEntityId(noteId)
+   const panelKey = coerceEntityId(panelId)
+   const { searchParams } = new URL(request.url)
++  let workspaceId: string
++  try {
++    workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++  } catch (error) {
++    console.error('[versions DELETE] Failed to resolve workspace:', error)
++    return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
++  }
++
+   const keepLast = Math.max(1, parseInt(searchParams.get('keep') || '10', 10))
+   
+   try {
+     // Delete old versions, keeping the most recent N
+     const result = await pool.query(
+       `DELETE FROM document_saves
+-       WHERE note_id = $1 AND panel_id = $2
++       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          AND version < (
+            SELECT version FROM document_saves
+-           WHERE note_id = $1 AND panel_id = $2
++           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+            ORDER BY version DESC
+-           LIMIT 1 OFFSET $3
++           LIMIT 1 OFFSET $4
+          )
+        RETURNING id, version`,
+-      [noteKey, panelKey, keepLast - 1]
++      [noteKey, panelKey, workspaceId, keepLast - 1]
+     )
+     
+     return NextResponse.json({
+diff --git a/app/api/versions/compare/route.ts b/app/api/versions/compare/route.ts
+index 1410b36..5a923bd 100644
+--- a/app/api/versions/compare/route.ts
++++ b/app/api/versions/compare/route.ts
+@@ -1,11 +1,10 @@
+ import { NextRequest, NextResponse } from 'next/server'
+-import { Pool } from 'pg'
++import { serverPool } from '@/lib/db/pool'
++import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+ import { diffLines, diffWords } from 'diff'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+-const pool = new Pool({
+-  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
+-})
++const pool = serverPool
+ 
+ // Deterministic mapping for non-UUID IDs (slugs) → UUID
+ const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+@@ -47,19 +46,27 @@ export async function POST(request: NextRequest) {
+     const noteKey = coerceEntityId(noteId)
+     const panelKey = coerceEntityId(panelId)
+     
++    let workspaceId: string
++    try {
++      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++    } catch (error) {
++      console.error('[versions compare] Failed to resolve workspace:', error)
++      return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
++    }
++
+     // Fetch both versions
+     const [v1Result, v2Result] = await Promise.all([
+       pool.query(
+         `SELECT version, content, document_text, created_at
+          FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
+-        [noteKey, panelKey, version1]
++         WHERE note_id = $1 AND panel_id = $2 AND version = $3 AND workspace_id = $4`,
++        [noteKey, panelKey, version1, workspaceId]
+       ),
+       pool.query(
+         `SELECT version, content, document_text, created_at
+          FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2 AND version = $3`,
+-        [noteKey, panelKey, version2]
++         WHERE note_id = $1 AND panel_id = $2 AND version = $3 AND workspace_id = $4`,
++        [noteKey, panelKey, version2, workspaceId]
+       )
+     ])
+     
+diff --git a/electron/ipc/postgres-offline-handlers.ts b/electron/ipc/postgres-offline-handlers.ts
+index d7e27d4..ab97e5e 100644
+--- a/electron/ipc/postgres-offline-handlers.ts
++++ b/electron/ipc/postgres-offline-handlers.ts
+@@ -1,6 +1,7 @@
+ const { ipcMain } = require('electron')
+ const { Pool } = require('pg')
+ const { v5: uuidv5 } = require('uuid')
++const { WorkspaceStore } = require('../../lib/workspace/workspace-store')
+ 
+ // Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
+ // deterministic UUID per note using UUID v5 in the DNS namespace.
+@@ -246,14 +247,22 @@ const handlers = {
+         : content
+       
+       const normalizedPanelId = normalizePanelId(noteId, panelId)
+-      
++
++      let workspaceId
++      try {
++        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++      } catch (error: any) {
++        console.error('[postgres-offline:saveDocument] Workspace resolution failed:', error)
++        return { success: false, error: 'Failed to resolve workspace' }
++      }
++
+       await pool.query(
+         `INSERT INTO document_saves 
+-         (note_id, panel_id, content, version, created_at)
+-         VALUES ($1, $2, $3::jsonb, $4, NOW())
+-         ON CONFLICT (note_id, panel_id, version)
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
++         ON CONFLICT (note_id, panel_id, workspace_id, version)
+          DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+-        [noteId, normalizedPanelId, JSON.stringify(contentJson), version]
++        [noteId, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+       )
+       
+       console.log(`[postgres-offline:saveDocument] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
+@@ -268,15 +277,23 @@ const handlers = {
+     const pool = getPool()
+     try {
+       const normalizedPanelId = normalizePanelId(noteId, panelId)
+-      
++
++      let workspaceId
++      try {
++        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++      } catch (error: any) {
++        console.error('[postgres-offline:loadDocument] Workspace resolution failed:', error)
++        return { success: false, error: 'Failed to resolve workspace' }
++      }
++
+       // Get the latest version for this note-panel combination
+       const result = await pool.query(
+         `SELECT content, version 
+          FROM document_saves 
+-         WHERE note_id = $1 AND panel_id = $2
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+-        [noteId, normalizedPanelId]
++        [noteId, normalizedPanelId, workspaceId]
+       )
+       
+       if (result.rows.length === 0) {
+@@ -395,7 +412,20 @@ const handlers = {
+   'postgres-offline:flushQueue': async (event: any) => {
+     const pool = getPool()
+     const client = await pool.connect()
+-    
++
++    let workspaceId: string
++    try {
++      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++      await client.query('SELECT set_config($1, $2, false)', [
++        'app.current_workspace_id',
++        workspaceId,
++      ])
++    } catch (error: any) {
++      client.release()
++      console.error('[postgres-offline:flushQueue] Workspace resolution failed:', error)
++      return { success: false, error: 'Failed to resolve workspace' }
++    }
++
+     let processed = 0
+     let failed = 0
+     let expired = 0
+@@ -437,7 +467,7 @@ const handlers = {
+       for (const row of result.rows) {
+         try {
+           // Process each operation
+-          await processQueueOperation(client, row)
++          await processQueueOperation(client, row, workspaceId)
+           
+           // Mark as processed
+           await client.query(
+@@ -510,7 +540,7 @@ const handlers = {
+ /**
+  * Process a single queue operation
+  */
+-async function processQueueOperation(client: any, row: any) {
++async function processQueueOperation(client: any, row: any, workspaceId: string) {
+   const { type, table_name, entity_id, data } = row
+   
+   switch (type) {
+@@ -540,13 +570,48 @@ async function processQueueOperation(client: any, row: any) {
+     case 'update':
+       if (table_name === 'document_saves') {
+         const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
++        const contentJson = data?.content ?? {}
++        const content = JSON.stringify(contentJson)
++        const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++        const effectiveWorkspaceId = data.workspaceId || workspaceId
++
++        const latest = await client.query(
++          `SELECT content, version
++             FROM document_saves
++            WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++            ORDER BY version DESC
++            LIMIT 1`,
++          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
++        )
++
++        if (
++          latest.rows[0] &&
++          JSON.stringify(latest.rows[0].content) === content
++        ) {
++          break
++        }
++
++        if (
++          latest.rows[0] &&
++          baseVersion !== null &&
++          latest.rows[0].version > baseVersion
++        ) {
++          break
++        }
++
++        const nextVersionRow = await client.query(
++          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
++             FROM document_saves
++            WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
++        )
++        const nextVersion = nextVersionRow.rows[0].next_version
++
+         await client.query(
+           `INSERT INTO document_saves 
+-           (note_id, panel_id, content, version, created_at)
+-           VALUES ($1, $2, $3::jsonb, $4, NOW())
+-           ON CONFLICT (note_id, panel_id, version)
+-           DO UPDATE SET content = EXCLUDED.content`,
+-          [data.noteId, normalizedPanelId, JSON.stringify(data.content), data.version]
++           (note_id, panel_id, content, version, workspace_id, created_at)
++           VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
++          [data.noteId, normalizedPanelId, content, nextVersion, effectiveWorkspaceId]
+         )
+       }
+       // Add other update operations as needed
+@@ -554,6 +619,14 @@ async function processQueueOperation(client: any, row: any) {
+       
+     case 'delete':
+       // Handle delete operations
++      if (table_name === 'document_saves') {
++        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
++        await client.query(
++          `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++          [data.noteId, normalizedPanelId, workspaceId]
++        )
++        break
++      }
+       await client.query(
+         `DELETE FROM ${table_name} WHERE id = $1`,
+         [entity_id]
+diff --git a/lib/adapters/postgres-offline-adapter.ts b/lib/adapters/postgres-offline-adapter.ts
+index fa7036d..52706f6 100644
+--- a/lib/adapters/postgres-offline-adapter.ts
++++ b/lib/adapters/postgres-offline-adapter.ts
+@@ -7,9 +7,10 @@
+  * @module lib/adapters/postgres-offline-adapter
+  */
+ 
+-import { Pool } from 'pg'
++import { Pool, PoolClient } from 'pg'
+ import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ import { PostgresAdapter } from './postgres-adapter'
++import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+ import type { 
+   PlainCrudAdapter, 
+   Note, 
+@@ -27,6 +28,12 @@ import type {
+  * storing content as JSON/HTML instead of Yjs binary format.
+  */
+ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements PlainCrudAdapter {
++
++  private async withWorkspace<T>(fn: (ctx: { client: PoolClient; workspaceId: string }) => Promise<T>): Promise<T> {
++    const pool = this.getPool()
++    return WorkspaceStore.withWorkspace(pool, fn)
++  }
++
+   // UUID namespace for deterministic ID mapping (must match API)
+   private readonly ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+   
+@@ -101,8 +108,6 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+   }
+ 
+   async getNote(id: string): Promise<Note | null> {
+-    const pool = this.getPool()
+-    
+     const result = await pool.query<Note>(
+       `SELECT id, title, metadata, created_at, updated_at
+        FROM notes WHERE id = $1`,
+@@ -239,14 +244,16 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+       ? { html: content } 
+       : content
+     
+-    await pool.query(
+-      `INSERT INTO document_saves 
+-       (note_id, panel_id, content, version, created_at)
+-       VALUES ($1, $2, $3::jsonb, $4, NOW())
+-       ON CONFLICT (note_id, panel_id, version)
+-       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+-      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
+-    )
++    await this.withWorkspace(async ({ client, workspaceId }) => {
++      await client.query(
++        `INSERT INTO document_saves 
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
++         ON CONFLICT (note_id, panel_id, workspace_id, version)
++         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
++        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
++      )
++    })
+     
+     console.log(`[PostgresOfflineAdapter] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
+   }
+@@ -261,14 +268,16 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+     const noteKey = this.coerceEntityId(noteId)
+     const normalizedPanelId = this.normalizePanelId(noteKey, panelId)
+     
++    const workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
++
+     // Get the latest version for this note-panel combination
+     const result = await pool.query(
+       `SELECT content, version 
+        FROM document_saves 
+-       WHERE note_id = $1 AND panel_id = $2
++       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+        ORDER BY version DESC
+        LIMIT 1`,
+-      [noteKey, normalizedPanelId]
++      [noteKey, normalizedPanelId, workspaceId]
+     )
+     
+     if (result.rows.length === 0) {
+@@ -315,6 +324,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+ 
+   async flushQueue(): Promise<{ processed: number; failed: number }> {
+     const pool = this.getPool()
++    const workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
+     const client = await pool.connect()
+     
+     let processed = 0
+@@ -322,6 +332,10 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+     
+     try {
+       await client.query('BEGIN')
++      await client.query('SELECT set_config($1, $2, false)', [
++        'app.current_workspace_id',
++        workspaceId,
++      ])
+       
+       // Get all pending operations
+       const result = await client.query(
+@@ -335,7 +349,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+       for (const row of result.rows) {
+         try {
+           // Process each operation
+-          await this.processQueueOperation(client, row)
++          await this.processQueueOperation(client, row, workspaceId)
+           
+           // Mark as processed
+           await client.query(
+@@ -384,7 +398,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+   /**
+    * Process a single queue operation
+    */
+-  private async processQueueOperation(client: any, row: any): Promise<void> {
++  private async processQueueOperation(client: any, row: any, workspaceId: string): Promise<void> {
+     const { type, table_name, entity_id, data } = row
+     
+     switch (type) {
+@@ -413,20 +427,60 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+         
+       case 'update':
+         if (table_name === 'document_saves') {
++          const contentJson = data?.content ?? {}
++          const content = JSON.stringify(contentJson)
++          const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++
++          const latest = await client.query(
++            `SELECT content, version
++               FROM document_saves
++              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++              ORDER BY version DESC
++              LIMIT 1`,
++            [data.noteId, data.panelId, workspaceId]
++          )
++
++          if (
++            latest.rows[0] &&
++            JSON.stringify(latest.rows[0].content) === content
++          ) {
++            break
++          }
++
++          if (
++            latest.rows[0] &&
++            baseVersion !== null &&
++            latest.rows[0].version > baseVersion
++          ) {
++            break
++          }
++
++          const nextVersionRow = await client.query(
++            `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
++               FROM document_saves
++              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++            [data.noteId, data.panelId, workspaceId]
++          )
++          const nextVersion = nextVersionRow.rows[0].next_version
++
+           await client.query(
+             `INSERT INTO document_saves 
+-             (note_id, panel_id, content, version, created_at)
+-             VALUES ($1, $2, $3::jsonb, $4, NOW())
+-             ON CONFLICT (note_id, panel_id, version)
+-             DO UPDATE SET content = EXCLUDED.content`,
+-            [data.noteId, data.panelId, JSON.stringify(data.content), data.version]
++             (note_id, panel_id, content, version, workspace_id, created_at)
++             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
++            [data.noteId, data.panelId, content, nextVersion, workspaceId]
+           )
+         }
+         // Add other update operations as needed
+         break
+         
+       case 'delete':
+-        // Handle delete operations
++        if (table_name === 'document_saves') {
++          await client.query(
++            `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++            [data.noteId || entity_id, data.panelId || data.panel_id, workspaceId]
++          )
++        }
++        // Handle other delete operations as needed
+         break
+     }
+   }
+diff --git a/lib/workspace/workspace-store.ts b/lib/workspace/workspace-store.ts
+index f6c9541..e66fa45 100644
+--- a/lib/workspace/workspace-store.ts
++++ b/lib/workspace/workspace-store.ts
+@@ -12,15 +12,52 @@ export class WorkspaceStore {
+    */
+   static async getDefaultWorkspaceId(pool: Pool): Promise<string> {
+     if (!workspaceIdCache.has(pool)) {
+-      const workspacePromise = pool
+-        .query<{ get_or_create_default_workspace: string }>(
+-          'SELECT get_or_create_default_workspace() AS get_or_create_default_workspace'
+-        )
+-        .then(result => result.rows[0].get_or_create_default_workspace)
+-        .catch(error => {
+-          workspaceIdCache.delete(pool);
+-          throw error;
+-        });
++      const workspacePromise = (async () => {
++        const existing = await pool.query<{ id: string }>(
++          'SELECT id FROM workspaces WHERE is_default = true LIMIT 1'
++        );
++        if (existing.rowCount > 0) {
++          return existing.rows[0].id;
++        }
++
++        const adoptFromNotes = await pool.query<{ workspace_id: string }>(
++          `SELECT workspace_id
++             FROM notes
++            WHERE workspace_id IS NOT NULL
++            ORDER BY updated_at DESC
++            LIMIT 1`
++        );
++        if (adoptFromNotes.rowCount > 0) {
++          const workspaceId = adoptFromNotes.rows[0].workspace_id;
++          await pool.query('UPDATE workspaces SET is_default = (id = $1)', [workspaceId]);
++          return workspaceId;
++        }
++
++        const adoptFromDocuments = await pool.query<{ workspace_id: string }>(
++          `SELECT workspace_id
++             FROM document_saves
++            WHERE workspace_id IS NOT NULL
++            ORDER BY created_at DESC
++            LIMIT 1`
++        );
++        if (adoptFromDocuments.rowCount > 0) {
++          const workspaceId = adoptFromDocuments.rows[0].workspace_id;
++          await pool.query('UPDATE workspaces SET is_default = (id = $1)', [workspaceId]);
++          return workspaceId;
++        }
++
++        const inserted = await pool.query<{ id: string }>(
++          `INSERT INTO workspaces (name, is_default)
++           VALUES ('Default Workspace', true)
++           ON CONFLICT ON CONSTRAINT only_one_default
++           DO UPDATE SET is_default = true, updated_at = NOW()
++           RETURNING id`
++        );
++        return inserted.rows[0].id;
++      })().catch(error => {
++        workspaceIdCache.delete(pool);
++        throw error;
++      });
+ 
+       workspaceIdCache.set(pool, workspacePromise);
+     }
+@@ -57,7 +94,7 @@ export class WorkspaceStore {
+  * Can be toggled via environment variable for gradual rollout
+  */
+ export const FEATURE_WORKSPACE_SCOPING =
+-  process.env.NEXT_PUBLIC_FEATURE_WORKSPACE_SCOPING === 'true';
++  process.env.NEXT_PUBLIC_FEATURE_WORKSPACE_SCOPING !== 'false';
+ 
+ /**
+  * Helper function to simplify API route usage

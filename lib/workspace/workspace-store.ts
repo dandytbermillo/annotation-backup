@@ -12,15 +12,52 @@ export class WorkspaceStore {
    */
   static async getDefaultWorkspaceId(pool: Pool): Promise<string> {
     if (!workspaceIdCache.has(pool)) {
-      const workspacePromise = pool
-        .query<{ get_or_create_default_workspace: string }>(
-          'SELECT get_or_create_default_workspace() AS get_or_create_default_workspace'
-        )
-        .then(result => result.rows[0].get_or_create_default_workspace)
-        .catch(error => {
-          workspaceIdCache.delete(pool);
-          throw error;
-        });
+      const workspacePromise = (async () => {
+        const existing = await pool.query<{ id: string }>(
+          'SELECT id FROM workspaces WHERE is_default = true LIMIT 1'
+        );
+        if (existing.rowCount > 0) {
+          return existing.rows[0].id;
+        }
+
+        const adoptFromNotes = await pool.query<{ workspace_id: string }>(
+          `SELECT workspace_id
+             FROM notes
+            WHERE workspace_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT 1`
+        );
+        if (adoptFromNotes.rowCount > 0) {
+          const workspaceId = adoptFromNotes.rows[0].workspace_id;
+          await pool.query('UPDATE workspaces SET is_default = (id = $1)', [workspaceId]);
+          return workspaceId;
+        }
+
+        const adoptFromDocuments = await pool.query<{ workspace_id: string }>(
+          `SELECT workspace_id
+             FROM document_saves
+            WHERE workspace_id IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 1`
+        );
+        if (adoptFromDocuments.rowCount > 0) {
+          const workspaceId = adoptFromDocuments.rows[0].workspace_id;
+          await pool.query('UPDATE workspaces SET is_default = (id = $1)', [workspaceId]);
+          return workspaceId;
+        }
+
+        const inserted = await pool.query<{ id: string }>(
+          `INSERT INTO workspaces (name, is_default)
+           VALUES ('Default Workspace', true)
+           ON CONFLICT ON CONSTRAINT only_one_default
+           DO UPDATE SET is_default = true, updated_at = NOW()
+           RETURNING id`
+        );
+        return inserted.rows[0].id;
+      })().catch(error => {
+        workspaceIdCache.delete(pool);
+        throw error;
+      });
 
       workspaceIdCache.set(pool, workspacePromise);
     }
@@ -57,7 +94,7 @@ export class WorkspaceStore {
  * Can be toggled via environment variable for gradual rollout
  */
 export const FEATURE_WORKSPACE_SCOPING =
-  process.env.NEXT_PUBLIC_FEATURE_WORKSPACE_SCOPING === 'true';
+  process.env.NEXT_PUBLIC_FEATURE_WORKSPACE_SCOPING !== 'false';
 
 /**
  * Helper function to simplify API route usage

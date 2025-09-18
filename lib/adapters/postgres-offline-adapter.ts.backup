@@ -7,10 +7,9 @@
  * @module lib/adapters/postgres-offline-adapter
  */
 
-import { Pool, PoolClient } from 'pg'
+import { Pool } from 'pg'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 import { PostgresAdapter } from './postgres-adapter'
-import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import type { 
   PlainCrudAdapter, 
   Note, 
@@ -28,12 +27,6 @@ import type {
  * storing content as JSON/HTML instead of Yjs binary format.
  */
 export abstract class PostgresOfflineAdapter extends PostgresAdapter implements PlainCrudAdapter {
-
-  private async withWorkspace<T>(fn: (ctx: { client: PoolClient; workspaceId: string }) => Promise<T>): Promise<T> {
-    const pool = this.getPool()
-    return WorkspaceStore.withWorkspace(pool, fn)
-  }
-
   // UUID namespace for deterministic ID mapping (must match API)
   private readonly ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
   
@@ -108,6 +101,8 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
   }
 
   async getNote(id: string): Promise<Note | null> {
+    const pool = this.getPool()
+    
     const result = await pool.query<Note>(
       `SELECT id, title, metadata, created_at, updated_at
        FROM notes WHERE id = $1`,
@@ -244,16 +239,14 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
       ? { html: content } 
       : content
     
-    await this.withWorkspace(async ({ client, workspaceId }) => {
-      await client.query(
-        `INSERT INTO document_saves 
-         (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-         ON CONFLICT (note_id, panel_id, workspace_id, version)
-         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
-        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
-      )
-    })
+    await pool.query(
+      `INSERT INTO document_saves 
+       (note_id, panel_id, content, version, created_at)
+       VALUES ($1, $2, $3::jsonb, $4, NOW())
+       ON CONFLICT (note_id, panel_id, version)
+       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()`,
+      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
+    )
     
     console.log(`[PostgresOfflineAdapter] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
   }
@@ -268,16 +261,14 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
     const noteKey = this.coerceEntityId(noteId)
     const normalizedPanelId = this.normalizePanelId(noteKey, panelId)
     
-    const workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
-
     // Get the latest version for this note-panel combination
     const result = await pool.query(
       `SELECT content, version 
        FROM document_saves 
-       WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+       WHERE note_id = $1 AND panel_id = $2
        ORDER BY version DESC
        LIMIT 1`,
-      [noteKey, normalizedPanelId, workspaceId]
+      [noteKey, normalizedPanelId]
     )
     
     if (result.rows.length === 0) {
@@ -324,7 +315,6 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
 
   async flushQueue(): Promise<{ processed: number; failed: number }> {
     const pool = this.getPool()
-    const workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
     const client = await pool.connect()
     
     let processed = 0
@@ -332,10 +322,6 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
     
     try {
       await client.query('BEGIN')
-      await client.query('SELECT set_config($1, $2, false)', [
-        'app.current_workspace_id',
-        workspaceId,
-      ])
       
       // Get all pending operations
       const result = await client.query(
@@ -349,7 +335,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
       for (const row of result.rows) {
         try {
           // Process each operation
-          await this.processQueueOperation(client, row, workspaceId)
+          await this.processQueueOperation(client, row)
           
           // Mark as processed
           await client.query(
@@ -398,7 +384,7 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
   /**
    * Process a single queue operation
    */
-  private async processQueueOperation(client: any, row: any, workspaceId: string): Promise<void> {
+  private async processQueueOperation(client: any, row: any): Promise<void> {
     const { type, table_name, entity_id, data } = row
     
     switch (type) {
@@ -427,65 +413,20 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
         
       case 'update':
         if (table_name === 'document_saves') {
-          const contentJson = data?.content ?? {}
-          const content = JSON.stringify(contentJson)
-          const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
-
-          const latest = await client.query(
-            `SELECT content, version
-               FROM document_saves
-              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
-              ORDER BY version DESC
-              LIMIT 1`,
-            [data.noteId, data.panelId, workspaceId]
-          )
-
-          if (
-            latest.rows[0] &&
-            JSON.stringify(latest.rows[0].content) === content
-          ) {
-            break
-          }
-
-          if (
-            latest.rows[0] &&
-            baseVersion !== null &&
-            latest.rows[0].version > baseVersion
-          ) {
-            break
-          }
-
-          const nextVersionRow = await client.query(
-            `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-               FROM document_saves
-              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-            [data.noteId, data.panelId, workspaceId]
-          )
-          const nextVersion = nextVersionRow.rows[0].next_version
-
-          const payloadVersion = typeof data?.version === 'number' ? data.version : null
-          if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
-            throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
-          }
-
           await client.query(
             `INSERT INTO document_saves 
-             (note_id, panel_id, content, version, workspace_id, created_at)
-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-            [data.noteId, data.panelId, content, nextVersion, workspaceId]
+             (note_id, panel_id, content, version, created_at)
+             VALUES ($1, $2, $3::jsonb, $4, NOW())
+             ON CONFLICT (note_id, panel_id, version)
+             DO UPDATE SET content = EXCLUDED.content`,
+            [data.noteId, data.panelId, JSON.stringify(data.content), data.version]
           )
         }
         // Add other update operations as needed
         break
         
       case 'delete':
-        if (table_name === 'document_saves') {
-          await client.query(
-            `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-            [data.noteId || entity_id, data.panelId || data.panel_id, workspaceId]
-          )
-        }
-        // Handle other delete operations as needed
+        // Handle delete operations
         break
     }
   }

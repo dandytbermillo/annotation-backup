@@ -46,27 +46,17 @@ export async function POST(request: NextRequest) {
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
     // Normalized panelId
     
-    // Always get workspace_id since database requires it (NOT NULL constraint)
-    let workspaceId: string | null = null;
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
-    } catch (e) {
-      console.error('[POST /api/postgres-offline/documents] Failed to get workspace ID:', e);
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      );
-    }
-    
-    const result = await serverPool.query(
-      `INSERT INTO document_saves 
-       (note_id, panel_id, content, version, workspace_id, created_at)
-       VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-       ON CONFLICT (note_id, panel_id, version)
-       DO UPDATE SET content = EXCLUDED.content, workspace_id = EXCLUDED.workspace_id, created_at = NOW()
-       RETURNING id`,
-      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
-    )
+    const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+      return client.query(
+        `INSERT INTO document_saves 
+         (note_id, panel_id, content, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+         ON CONFLICT (note_id, panel_id, workspace_id, version)
+         DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+         RETURNING id`,
+        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+      )
+    })
     
     // Save successful
     

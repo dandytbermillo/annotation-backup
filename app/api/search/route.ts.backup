@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverPool } from '@/lib/db/pool'
-import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+import { Pool } from 'pg'
 
-const pool = serverPool
+// Create connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/annotation_dev'
+})
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -47,12 +49,11 @@ export async function GET(request: NextRequest) {
           ) as excerpt,
           created_at
         FROM notes
-        WHERE workspace_id = $4
-          AND (search_vector @@ ${tsquery}
-           OR title ILIKE '%' || $1 || '%')
+        WHERE search_vector @@ ${tsquery}
+          OR title ILIKE '%' || $1 || '%'
         ORDER BY rank DESC, created_at DESC
         LIMIT $2 OFFSET $3`,
-        [query, limit, offset, workspaceId]
+        [query, limit, offset]
       )
       
       results.results.notes = {
@@ -80,11 +81,10 @@ export async function GET(request: NextRequest) {
           ds.created_at
         FROM document_saves ds
         LEFT JOIN notes n ON ds.note_id = n.id
-        WHERE ds.workspace_id = $4
-          AND ds.search_vector @@ ${tsquery}
+        WHERE ds.search_vector @@ ${tsquery}
         ORDER BY rank DESC, ds.created_at DESC
         LIMIT $2 OFFSET $3`,
-        [query, limit, offset, workspaceId]
+        [query, limit, offset]
       )
       
       results.results.documents = {
@@ -115,11 +115,10 @@ export async function GET(request: NextRequest) {
           b.created_at
         FROM branches b
         LEFT JOIN notes n ON b.note_id = n.id
-        WHERE b.workspace_id = $4
-          AND to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
+        WHERE to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
         ORDER BY rank DESC, b.created_at DESC
         LIMIT $2 OFFSET $3`,
-        [query, limit, offset, workspaceId]
+        [query, limit, offset]
       )
       
       results.results.branches = {
@@ -148,11 +147,10 @@ export async function GET(request: NextRequest) {
           ds.created_at
         FROM document_saves ds
         LEFT JOIN notes n ON ds.note_id = n.id
-        WHERE ds.workspace_id = $4
-          AND ds.document_text % $1
+        WHERE ds.document_text % $1
         ORDER BY similarity DESC
         LIMIT $2 OFFSET $3`,
-        [query, limit, offset, workspaceId]
+        [query, limit, offset]
       )
       
       results.results.fuzzy = {
@@ -195,18 +193,14 @@ export async function POST(request: NextRequest) {
       offset = 0
     } = body
     
-    let workspaceId: string
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
-    } catch (error) {
-      console.error('[search POST] Failed to resolve workspace:', error)
-      return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
+    if (!query || query.trim().length === 0) {
+      return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
-
+    
     // Build dynamic query based on filters
-    let whereClause = 'WHERE workspace_id = $2 AND search_vector @@ plainto_tsquery($1)'
-    const params = [query, workspaceId]
-    let paramIndex = 3
+    let whereClause = 'WHERE search_vector @@ plainto_tsquery($1)'
+    const params = [query]
+    let paramIndex = 2
     
     // Add date range filter
     if (filters.dateFrom) {

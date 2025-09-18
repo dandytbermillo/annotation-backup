@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Pool } from 'pg'
+import { serverPool } from '@/lib/db/pool'
+import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
-
-// Create connection pool
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-})
 
 // Deterministic mapping for non-UUID IDs (slugs) → UUID
 const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
@@ -50,14 +46,26 @@ export async function POST(request: NextRequest) {
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
     // Normalized panelId
     
-    const result = await pool.query(
+    // Always get workspace_id since database requires it (NOT NULL constraint)
+    let workspaceId: string | null = null;
+    try {
+      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool);
+    } catch (e) {
+      console.error('[POST /api/postgres-offline/documents] Failed to get workspace ID:', e);
+      return NextResponse.json(
+        { error: 'Failed to get workspace' },
+        { status: 500 }
+      );
+    }
+    
+    const result = await serverPool.query(
       `INSERT INTO document_saves 
-       (note_id, panel_id, content, version, created_at)
-       VALUES ($1, $2, $3::jsonb, $4, NOW())
+       (note_id, panel_id, content, version, workspace_id, created_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
        ON CONFLICT (note_id, panel_id, version)
-       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+       DO UPDATE SET content = EXCLUDED.content, workspace_id = EXCLUDED.workspace_id, created_at = NOW()
        RETURNING id`,
-      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version]
+      [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
     )
     
     // Save successful

@@ -1,0 +1,227 @@
+--- a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
++++ b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+@@ -115,8 +115,8 @@
+     const result = await serverPool.query(
+       `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id)
+        VALUES ($1, $2, $3, $4, $5)
+-       ON CONFLICT (note_id, panel_id, version) 
+-       DO UPDATE SET content = $3, workspace_id = $5, created_at = NOW()
++       ON CONFLICT (note_id, panel_id, workspace_id, version) 
++       DO UPDATE SET content = $3, created_at = NOW()
+        RETURNING *`,
+       [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
+     )
+
+--- a/app/api/postgres-offline/documents/route.ts
++++ b/app/api/postgres-offline/documents/route.ts
+@@ -62,8 +62,8 @@
+       `INSERT INTO document_saves 
+        (note_id, panel_id, content, version, workspace_id, created_at)
+        VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+-       ON CONFLICT (note_id, panel_id, version)
+-       DO UPDATE SET content = EXCLUDED.content, workspace_id = EXCLUDED.workspace_id, created_at = NOW()
++       ON CONFLICT (note_id, panel_id, workspace_id, version)
++       DO UPDATE SET content = EXCLUDED.content, created_at = NOW()
+        RETURNING id`,
+       [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+     )
+
+--- a/app/api/postgres-offline/documents/batch/route.ts
++++ b/app/api/postgres-offline/documents/batch/route.ts
+@@ -132,9 +132,9 @@
+       // Skip if content equals latest (content-based coalescing)
+       const latest = await client.query(
+         `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey]
++        [noteKey, panelKey, workspaceId]
+       )
+       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+@@ -147,8 +147,8 @@
+         const nextVersionRow = await client.query(
+           `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+            FROM document_saves
+-           WHERE note_id = $1 AND panel_id = $2`,
+-          [noteKey, panelKey]
++           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++          [noteKey, panelKey, workspaceId]
+         )
+         const nextVersion = nextVersionRow.rows[0].next_version
+         try {
+@@ -291,9 +291,9 @@
+       
+       const latest = await client.query(
+         `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2
++         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey]
++        [noteKey, panelKey, workspaceId]
+       )
+       if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+         results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+
+--- a/app/api/items/route.ts
++++ b/app/api/items/route.ts
+@@ -10,10 +10,21 @@
+     const type = searchParams.get('type')
+     const parentId = searchParams.get('parentId')
+     const limit = parseInt(searchParams.get('limit') || '100')
+-    
++
++    let workspaceId: string
++    try {
++      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
++    } catch (e) {
++      console.error('Failed to get workspace ID:', e)
++      return NextResponse.json(
++        { error: 'Failed to get workspace' },
++        { status: 500 }
++      )
++    }
++
+     let query: string
+     let values: any[] = []
+-    
++
+     if (search) {
+       // Search items
+       query = `
+@@ -22,15 +33,16 @@
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE deleted_at IS NULL
+-          AND (name ILIKE $1 OR path ILIKE $1)
+-          ${type ? 'AND type = $2' : ''}
++        WHERE workspace_id = $1
++          AND deleted_at IS NULL
++          AND (name ILIKE $2 OR path ILIKE $2)
++          ${type ? 'AND type = $3' : ''}
+         ORDER BY 
+-          CASE WHEN name ILIKE $1 THEN 0 ELSE 1 END,
++          CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END,
+           length(path)
+-        LIMIT $${type ? 3 : 2}
+-      `
+-      values = [`%${search}%`]
++        LIMIT $${type ? 4 : 3}
++      `
++      values = [workspaceId, `%${search}%`]
+       if (type) values.push(type)
+       values.push(limit)
+     } else if (type && !parentId) {
+@@ -41,12 +53,13 @@
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE deleted_at IS NULL
+-          AND type = $1
++        WHERE workspace_id = $1
++          AND deleted_at IS NULL
++          AND type = $2
+         ORDER BY path
+-        LIMIT $2
+-      `
+-      values = [type, limit]
++        LIMIT $3
++      `
++      values = [workspaceId, type, limit]
+     } else if (parentId !== undefined) {
+       // Get children of specific parent
+       query = `
+@@ -55,11 +68,12 @@
+           metadata, icon, color, last_accessed_at,
+           created_at, updated_at
+         FROM items 
+-        WHERE parent_id ${parentId === 'null' ? 'IS NULL' : '= $1'} 
++        WHERE workspace_id = $1
++          AND ${parentId === 'null' ? 'parent_id IS NULL' : 'parent_id = $2'} 
+           AND deleted_at IS NULL
+         ORDER BY type DESC, position, name
+       `
+-      values = parentId === 'null' ? [] : [parentId]
++      values = parentId === 'null' ? [workspaceId] : [workspaceId, parentId]
+     } else {
+       // Get full tree structure (limited depth for performance)
+       query = `
+@@ -70,7 +84,8 @@
+             created_at, updated_at,
+             0 as depth
+           FROM items 
+-          WHERE parent_id IS NULL AND deleted_at IS NULL
++          WHERE workspace_id = $1
++            AND parent_id IS NULL AND deleted_at IS NULL
+           
+           UNION ALL
+           
+@@ -81,13 +96,13 @@
+             t.depth + 1
+           FROM items i
+           JOIN tree t ON i.parent_id = t.id
+-          WHERE i.deleted_at IS NULL AND t.depth < 3
++          WHERE i.workspace_id = $1 AND i.deleted_at IS NULL AND t.depth < 3
+         )
+         SELECT * FROM tree ORDER BY path
+       `
+-      values = []
+-    }
+-    
++      values = [workspaceId]
++    }
++
+     const result = await serverPool.query(query, values)
+     
+     const items = result.rows.map(row => ({
+
+--- /dev/null
++++ b/migrations/022_document_saves_workspace_scope.up.sql
+@@ -0,0 +1,25 @@
++-- Ensure document_saves rows remain scoped per workspace
++BEGIN;
++
++-- Align existing rows with their parent note workspace_id
++UPDATE document_saves ds
++SET workspace_id = n.workspace_id
++FROM notes n
++WHERE ds.note_id = n.id
++  AND ds.workspace_id IS DISTINCT FROM n.workspace_id;
++
++-- Drop legacy uniqueness that ignored workspace scope
++ALTER TABLE document_saves
++  DROP CONSTRAINT IF EXISTS document_saves_note_id_panel_id_version_key;
++
++DROP INDEX IF EXISTS idx_document_saves_note_panel;
++
++-- Enforce workspace-aware uniqueness and supporting index
++ALTER TABLE document_saves
++  ADD CONSTRAINT document_saves_note_panel_ws_version_unique
++    UNIQUE (note_id, panel_id, workspace_id, version);
++
++CREATE INDEX IF NOT EXISTS idx_document_saves_workspace_note_panel_version
++  ON document_saves(workspace_id, note_id, panel_id, version DESC);
++
++COMMIT;
+
+--- /dev/null
++++ b/migrations/022_document_saves_workspace_scope.down.sql
+@@ -0,0 +1,16 @@
++-- Revert workspace-aware uniqueness on document_saves
++BEGIN;
++
++ALTER TABLE document_saves
++  DROP CONSTRAINT IF EXISTS document_saves_note_panel_ws_version_unique;
++
++DROP INDEX IF EXISTS idx_document_saves_workspace_note_panel_version;
++
++ALTER TABLE document_saves
++  ADD CONSTRAINT document_saves_note_id_panel_id_version_key
++    UNIQUE (note_id, panel_id, version);
++
++CREATE INDEX IF NOT EXISTS idx_document_saves_note_panel
++  ON document_saves(note_id, panel_id, version DESC);
++
++COMMIT;
