@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-18 21:32Z] 25764cf: apply the patch plain-mode-optimistic-concurrency.patch
 - commit [2025-09-18 20:29Z] 0c23f6f: still fixing the issue
 - commit [2025-09-18 18:14Z] adff35f: fixing browsers have thier own version of the same file
 - commit [2025-09-18 12:34Z] 2828c62: fix error in the debug lod, modified the claude.md
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-17 12:16Z] d0eb1df: fixed error
 - commit [2025-09-17 04:15Z] 3db66d2: canvas components layering start testing
 - commit [2025-09-17 03:22Z] 2d2d61d: canvas components layering start implenting
-- commit [2025-09-17 02:12Z] b655726: set feature flag by default
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
