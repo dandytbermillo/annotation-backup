@@ -241,6 +241,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ### Implementation Approach:
 - **Plan before coding** - Write out your approach before implementing
+- **Create backups before editing** - Before modifying any file, create a copy in the same directory with the suffix `.backup` appended (e.g., `component.tsx` → `component.tsx.backup`); keep the backup until the fix is verified.
 - **Make incremental changes** - Small, focused changes that can be easily reverted
 - **One fix at a time** - Don't combine multiple fixes in a single change
 - **Test mentally first** - Think through the execution path with your changes
