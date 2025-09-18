@@ -1,8 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
 const pool = serverPool
+
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
+const isUuid = (s: string): boolean => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)
+const normalizePanelId = (noteId: string, panelId: string): string => (isUuid(panelId) ? panelId : uuidv5(`${noteId}:${panelId}`, uuidv5.DNS))
+const toVersionNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) ? value : null)
+
+type DirectResult = {
+  noteId: string
+  panelId: string
+  status: 'success' | 'skipped' | 'conflict' | 'error'
+  version?: number
+  reason?: string
+  error?: string
+  latestVersion?: number
+  baseVersion?: number
+  requestedVersion?: number
+}
 
 // POST /api/postgres-offline/queue/flush
 // Dual-mode:
@@ -24,7 +43,7 @@ export async function POST(request: NextRequest) {
   if (!drainDb && hasOps) {
     try {
       const { operations = [] } = body
-      const results: any[] = []
+      const results: DirectResult[] = []
       const errors: any[] = []
 
       for (const op of operations) {
@@ -32,67 +51,19 @@ export async function POST(request: NextRequest) {
           const { noteId, panelId, operation, data } = op
           if (!noteId || !panelId) throw new Error('noteId and panelId are required')
 
+          const noteKey = coerceEntityId(noteId)
+          const panelKey = normalizePanelId(noteKey, panelId)
+
           switch (operation) {
-            case 'update': {
-              const contentJson = data?.content ?? {}
-              const content = JSON.stringify(contentJson)
-              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
-              if (baseVersion === null) {
-                throw new Error('baseVersion required for queue operation')
-              }
-
-              const latest = await pool.query(
-                `SELECT content, version
-                   FROM document_saves
-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
-                  ORDER BY version DESC
-                  LIMIT 1`,
-                [noteId, panelId, workspaceId]
-              )
-
-              if (
-                latest.rows[0] &&
-                JSON.stringify(latest.rows[0].content) === content
-              ) {
-                results.push({ ...op, status: 'skipped', reason: 'no-change' })
-                break
-              }
-
-              if (
-                latest.rows[0] &&
-                baseVersion !== null &&
-                latest.rows[0].version > baseVersion
-              ) {
-                results.push({
-                  ...op,
-                  status: 'skipped',
-                  reason: 'stale_remote_newer',
-                })
-                break
-              }
-
-              const nextVersionRow = await pool.query(
-                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-                   FROM document_saves
-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-                [noteId, panelId, workspaceId]
-              )
-              const nextVersion = nextVersionRow.rows[0].next_version
-
-              await pool.query(
-                `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
-                 VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-                [noteId, panelId, content, nextVersion, workspaceId]
-              )
-              results.push({ ...op, status: 'success', version: nextVersion })
-              break
-            }
+            case 'update':
             case 'create': {
               const contentJson = data?.content ?? {}
-              const content = JSON.stringify(contentJson)
-              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
-              if (baseVersion === null) {
-                throw new Error('baseVersion required for queue operation')
+              const contentString = JSON.stringify(contentJson)
+              const baseVersion = toVersionNumber(data?.baseVersion)
+              const version = toVersionNumber(data?.version)
+
+              if (baseVersion === null || version === null) {
+                throw new Error('baseVersion and version must be numbers')
               }
 
               const latest = await pool.query(
@@ -101,70 +72,93 @@ export async function POST(request: NextRequest) {
                   WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
                   ORDER BY version DESC
                   LIMIT 1`,
-                [noteId, panelId, workspaceId]
+                [noteKey, panelKey, workspaceId]
               )
 
+              const latestRow = latest.rows[0]
+              const latestVersion: number = latestRow?.version ?? 0
+
               if (
-                latest.rows[0] &&
-                JSON.stringify(latest.rows[0].content) === content
+                latestRow &&
+                JSON.stringify(latestRow.content) === contentString &&
+                version === latestVersion
               ) {
-                results.push({ ...op, status: 'skipped', reason: 'no-change' })
+                results.push({ noteId, panelId, status: 'skipped', reason: 'no-change', version: latestVersion })
                 break
               }
 
-              if (
-                latest.rows[0] &&
-                baseVersion !== null &&
-                latest.rows[0].version > baseVersion
-              ) {
+              if (latestVersion > baseVersion) {
                 results.push({
-                  ...op,
-                  status: 'skipped',
-                  reason: 'stale_remote_newer',
+                  noteId,
+                  panelId,
+                  status: 'conflict',
+                  error: `stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`,
+                  latestVersion,
+                  baseVersion,
+                  requestedVersion: version
                 })
                 break
               }
 
-              const nextVersionRow = await pool.query(
-                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-                   FROM document_saves
-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-                [noteId, panelId, workspaceId]
-              )
-              const nextVersion = nextVersionRow.rows[0].next_version
+              if (version <= latestVersion) {
+                results.push({
+                  noteId,
+                  panelId,
+                  status: 'conflict',
+                  error: `non-incrementing version ${version} (latest ${latestVersion})`,
+                  latestVersion,
+                  baseVersion,
+                  requestedVersion: version
+                })
+                break
+              }
+
+              if (version !== baseVersion + 1) {
+                console.warn(`[queue/flush] Non-sequential version (direct op): base=${baseVersion}, version=${version}`)
+              }
 
               await pool.query(
                 `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
                  VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-                [noteId, panelId, content, nextVersion, workspaceId]
+                [noteKey, panelKey, contentString, version, workspaceId]
               )
-              results.push({ ...op, status: 'success', version: nextVersion })
+              results.push({ noteId, panelId, status: 'success', version })
               break
             }
             case 'delete': {
               await pool.query(
                 `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-                [noteId, panelId, workspaceId]
+                [noteKey, panelKey, workspaceId]
               )
-              results.push({ ...op, status: 'success' })
+              results.push({ noteId, panelId, status: 'success' })
               break
             }
             default:
               errors.push({ ...op, error: `Unknown operation: ${operation}` })
           }
         } catch (error: any) {
-          console.error(`[Queue Flush] Error processing operation:`, error)
+          console.error('[Queue Flush] Error processing operation:', error)
           errors.push({ ...op, error: error?.message || String(error) })
         }
       }
 
-      return NextResponse.json({
-        processed: results.length,
-        succeeded: results.length,
-        failed: errors.length,
-        results,
-        errors
-      })
+      const conflicts = results.filter(r => r.status === 'conflict').length
+      const failed = errors.length + results.filter(r => r.status === 'error').length
+      const processed = results.filter(r => r.status === 'success').length
+      const skipped = results.filter(r => r.status === 'skipped').length
+      const status = failed > 0 ? 500 : conflicts > 0 ? 409 : 200
+
+      return NextResponse.json(
+        {
+          processed,
+          skipped,
+          conflicts,
+          failed,
+          results,
+          errors
+        },
+        { status }
+      )
     } catch (error) {
       console.error('[POST /api/postgres-offline/queue/flush] Error:', error)
       return NextResponse.json({ error: 'Failed to flush queue' }, { status: 500 })
@@ -241,21 +235,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Delete successfully processed items
     if (processedIds.length > 0) {
-      await client.query(`DELETE FROM offline_queue WHERE id = ANY($1::uuid[]) AND status = 'processing'`, [processedIds])
+      await client.query(
+        `DELETE FROM offline_queue WHERE status = 'processing' AND id = ANY($1::uuid[])`,
+        [processedIds]
+      )
     }
+
     await client.query('COMMIT')
-    return NextResponse.json({ success: true, data: { processed, failed, expired }, errors })
   } catch (error) {
     await client.query('ROLLBACK')
-    console.error('[queue/flush] error:', error)
-    return NextResponse.json({ error: 'Failed to drain queue' }, { status: 500 })
-  } finally {
     client.release()
+    console.error('[queue/flush] Queue flush failed:', error)
+    return NextResponse.json({ error: 'Failed to flush queue' }, { status: 500 })
   }
+
+  client.release()
+  return NextResponse.json({ processed, failed, expired, errors })
 }
 
-// Helpers
 function getNoteId(data: any): string | null {
   return data?.noteId || data?.note_id || null
 }
@@ -271,19 +270,28 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
   // Whitelist and route per table with parameterized SQL only
   switch (table) {
     case 'document_saves': {
-      const noteId = getNoteId(data)
-      const panelId = getPanelId(data)
-      if (!noteId || !panelId) throw new Error('document_saves requires noteId and panelId in data')
+      const rawNoteId = getNoteId(data) ?? entity_id
+      const rawPanelId = getPanelId(data)
+      if (!rawNoteId || !rawPanelId) {
+        throw new Error('document_saves requires noteId and panelId in data')
+      }
+
+      const noteId = coerceEntityId(rawNoteId)
+      const panelId = normalizePanelId(noteId, rawPanelId)
+
       if (op === 'delete') {
         await client.query(`DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`, [noteId, panelId, workspaceId])
         return
       }
 
-      const contentJson = data?.content ?? {}
-      const content = JSON.stringify(contentJson)
-      const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
-      if (baseVersion === null) {
-        throw new Error('baseVersion required for queue operation')
+      const rawContent = data?.content ?? {}
+      const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
+      const contentString = JSON.stringify(contentJson)
+      const baseVersion = toVersionNumber(data?.baseVersion)
+      const version = toVersionNumber(data?.version)
+
+      if (baseVersion === null || version === null) {
+        throw new Error('baseVersion and version must be numbers')
       }
 
       const latest = await client.query(
@@ -295,37 +303,33 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
         [noteId, panelId, workspaceId]
       )
 
+      const latestRow = latest.rows[0]
+      const latestVersion: number = latestRow?.version ?? 0
+
       if (
-        latest.rows[0] &&
-        JSON.stringify(latest.rows[0].content) === content
+        latestRow &&
+        JSON.stringify(latestRow.content) === contentString &&
+        version === latestVersion
       ) {
         return
       }
 
-      if (
-        latest.rows[0] &&
-        baseVersion !== null &&
-        latest.rows[0].version > baseVersion
-      ) {
-        return
+      if (latestVersion > baseVersion) {
+        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
       }
 
-      const nextVersionRow = await client.query(
-        `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-           FROM document_saves
-          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-        [noteId, panelId, workspaceId]
-      )
-      const nextVersion = nextVersionRow.rows[0].next_version
-
-      const payloadVersion = typeof data?.version === 'number' ? data.version : null
-      if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
-        throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
+      if (version <= latestVersion) {
+        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
       }
+
+      if (version !== baseVersion + 1) {
+        console.warn(`[queue/flush] Non-sequential version (queue op): base=${baseVersion}, version=${version}`)
+      }
+
       await client.query(
         `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-        [noteId, panelId, content, nextVersion, workspaceId]
+        [noteId, panelId, contentString, version, workspaceId]
       )
       return
     }
@@ -359,56 +363,5 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
       )
       return
     }
-
-    case 'notes': {
-      if (op === 'delete') {
-        await client.query(`DELETE FROM notes WHERE id = $1`, [entity_id])
-        return
-      }
-      await client.query(
-        `INSERT INTO notes (id, title, metadata, created_at, updated_at)
-         VALUES ($1, COALESCE($2, 'Untitled'), COALESCE($3::jsonb, '{}'::jsonb), NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           title = COALESCE(EXCLUDED.title, notes.title),
-           metadata = COALESCE(EXCLUDED.metadata, notes.metadata),
-           updated_at = NOW()`,
-        [
-          entity_id,
-          data?.title || null,
-          data?.metadata ? JSON.stringify(data.metadata) : null
-        ]
-      )
-      return
-    }
-
-    case 'panels': {
-      if (op === 'delete') {
-        await client.query(`DELETE FROM panels WHERE id = $1`, [entity_id])
-        return
-      }
-      await client.query(
-        `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, last_accessed)
-         VALUES ($1, $2, $3, COALESCE($4::jsonb, '{"x":0,"y":0}'::jsonb), COALESCE($5::jsonb, '{"width":400,"height":300}'::jsonb), COALESCE($6, 'active'), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           note_id = EXCLUDED.note_id,
-           panel_id = EXCLUDED.panel_id,
-           position = COALESCE(EXCLUDED.position, panels.position),
-           dimensions = COALESCE(EXCLUDED.dimensions, panels.dimensions),
-           state = COALESCE(EXCLUDED.state, panels.state),
-           last_accessed = NOW()`,
-        [
-          entity_id,
-          data?.noteId || data?.note_id,
-          data?.panelId || data?.panel_id,
-          data?.position ? JSON.stringify(data.position) : null,
-          data?.dimensions ? JSON.stringify(data.dimensions) : null,
-          data?.state || null
-        ]
-      )
-      return
-    }
-
-    default:
-      throw new Error(`Unsupported table: ${table}`)
   }
 }

@@ -89,23 +89,29 @@ export async function POST(
     const { noteId, panelId } = await params
     const body = await request.json()
     const { content, version } = body
-    
+
+    if (content === undefined || content === null) {
+      throw new Error('content required')
+    }
+
+    if (typeof version !== 'number' || Number.isNaN(version)) {
+      throw new Error('version must be a number')
+    }
+
+    const baseVersionRaw = body.baseVersion
+    if (typeof baseVersionRaw !== 'number' || Number.isNaN(baseVersionRaw)) {
+      throw new Error('baseVersion must be a number')
+    }
+    const baseVersion = baseVersionRaw
+
     // Coerce noteId slug to UUID if needed
     const noteKey = coerceEntityId(noteId)
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
-    
+
     // Prepare content - wrap string content in HTML format
     const contentToSave = typeof content === 'string' 
       ? { html: content }
       : content
-    
-    // Save the document
-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
-
-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
-    if (baseVersion === undefined) {
-      throw new Error('baseVersion required')
-    }
 
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
       const latest = await client.query(
@@ -142,7 +148,7 @@ export async function POST(
         `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
          RETURNING *`,
-        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
+        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version, workspaceId]
       )
 
       return { skipped: false, row: inserted.rows[0] }
@@ -159,7 +165,7 @@ export async function POST(
     const message = error instanceof Error ? error.message : 'Failed to save document'
     const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
       ? 409
-      : message.includes('required')
+      : message.includes('required') || message.includes('must be a number')
       ? 400
       : 500
     return NextResponse.json(

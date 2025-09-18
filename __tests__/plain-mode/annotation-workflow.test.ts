@@ -66,8 +66,42 @@ class MockAdapter implements PlainCrudAdapter {
     return Array.from(this.branches.values()).filter(b => b.noteId === noteId)
   }
   
-  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
+  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number) {
     const key = `${noteId}-${panelId}`
+    const current = this.documents.get(key)
+
+    if (typeof version !== 'number' || Number.isNaN(version)) {
+      throw new Error('version must be a number')
+    }
+
+    if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
+      throw new Error('baseVersion must be a number')
+    }
+
+    const incomingSnapshot = typeof content === 'string' ? content : JSON.stringify(content)
+
+    if (current) {
+      const prevSnapshot = typeof current.content === 'string' ? current.content : JSON.stringify(current.content)
+
+      if (prevSnapshot === incomingSnapshot && current.version === version) {
+        return
+      }
+
+      if (current.version > baseVersion) {
+        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${current.version}`)
+      }
+
+      if (version <= current.version) {
+        throw new Error(`non-incrementing version ${version} (latest ${current.version})`)
+      }
+    } else if (baseVersion !== 0) {
+      throw new Error(`stale document save: baseVersion ${baseVersion} behind latest 0`)
+    }
+
+    if (version !== baseVersion + 1) {
+      throw new Error(`non-sequential version ${version} (expected ${baseVersion + 1})`)
+    }
+
     this.documents.set(key, { content, version })
   }
   

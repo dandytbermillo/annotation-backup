@@ -168,12 +168,16 @@ async function runTests() {
       {
         noteId: 'test-note-1',
         panelId: 'test-panel-1',
-        content: '<p>Batch document 1</p>'
+        content: '<p>Batch document 1</p>',
+        version: 1,
+        baseVersion: 0
       },
       {
         noteId: 'test-note-2',
         panelId: 'test-panel-2',
-        content: '<p>Batch document 2</p>'
+        content: '<p>Batch document 2</p>',
+        version: 1,
+        baseVersion: 0
       }
     ]
   };

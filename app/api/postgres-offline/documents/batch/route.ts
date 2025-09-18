@@ -10,8 +10,40 @@ export const runtime = 'nodejs'
 const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
 const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
-// Idempotency tracking (in production, use Redis or database)
-type ProcessedEntry = { timestamp: number; result: any }
+// Check if a string is a valid UUID
+const isUuid = (s: string): boolean => {
+  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)
+}
+
+// Normalize panelId helper (same as in regular documents route)
+const normalizePanelId = (noteId: string, panelId: string): string => {
+  if (isUuid(panelId)) return panelId
+  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+}
+
+const toVersionNumber = (value: unknown): number | null => {
+  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value)
+    ? value
+    : null
+}
+
+type SaveResult = {
+  noteId: string
+  panelId: string
+  version?: number
+  skipped?: boolean
+  success?: boolean
+  status?: 'conflict' | 'error'
+  reason?: string
+  error?: string
+  id?: string
+  latestVersion?: number
+  baseVersion?: number
+  requestedVersion?: number
+  cached?: boolean
+}
+
+type ProcessedEntry = { timestamp: number; result: SaveResult }
 const IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000 // 24 hours
 const IDEMPOTENCY_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
 
@@ -33,367 +65,298 @@ function cleanupProcessedKeys(): void {
   store.lastSweep = now
 }
 
-// Normalize panelId helper (same as in regular documents route)
-const normalizePanelId = (noteId: string, panelId: string): string => {
-  // Fixed regex: UUID format is 8-4-4-4-12, not 8-8-8-12
-  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
-  if (isUuid.test(panelId)) return panelId
-  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+type BatchSummary = { body: { success: boolean; processed: number; skipped: number; conflicts: number; failed: number; results: SaveResult[] }; status: number }
+
+type PendingSave = {
+  noteKey: string
+  panelKey: string
+  responseNoteId: string
+  responsePanelId: string
+  contentJson: any
+  version: number
+  baseVersion: number
+  idempotencyKey?: string
 }
 
-export async function POST(request: NextRequest) {
-  const client = await serverPool.connect()
-  
-  try {
-    // Lazy cleanup of idempotency cache; no background timers
+async function handleBatchSave(operations: any[], logLabel: string): Promise<BatchSummary> {
+  return WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
     cleanupProcessedKeys()
     const store = getProcessedStore()
-    
-    const { operations } = await request.json()
-    
-    if (!Array.isArray(operations) || operations.length === 0) {
-      return NextResponse.json(
-        { error: 'Invalid operations array' },
-        { status: 400 }
-      )
-    }
-    
-    console.log(`[Batch API - Documents] Processing ${operations.length} create operations`)
-    
-    const results: any[] = []
-    
-    await client.query('BEGIN')
-    
-    // Coalesce by (noteId, panelId) — keep the LAST content in this batch
-    const byPanel = new Map<string, { noteId: string; panelId: string; contentJson: any; idempotencyKey?: string }>()
-    
-    for (const op of operations) {
-      // Check idempotency
-      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
-        const cached = store.map.get(op.idempotencyKey)
-        results.push({ ...cached?.result, cached: true })
+
+    const grouped = new Map<string, PendingSave>()
+    const results: SaveResult[] = []
+
+    for (const rawOp of operations) {
+      const data = rawOp?.data ?? rawOp
+      const idempotencyKey = typeof rawOp?.idempotencyKey === 'string' ? rawOp.idempotencyKey : undefined
+
+      if (idempotencyKey && store.map.has(idempotencyKey)) {
+        const cached = store.map.get(idempotencyKey)!
+        results.push({ ...cached.result, cached: true })
         continue
       }
-      
-      try {
-        // Validate required fields (server will compute version)
-        const { noteId, panelId, content } = op
-        
-        if (!noteId || !panelId || !content) {
-          results.push({ 
-            error: 'Missing required fields', 
-            operation: op 
-          })
-          continue
-        }
-        
-        // Coerce noteId to UUID first, THEN normalize panelId
-        const noteKey = coerceEntityId(noteId)
-        const normalizedPanelId = normalizePanelId(noteKey, panelId)
-        console.log(`[Batch] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
-        
-        const contentJson = typeof content === 'string' ? { html: content } : content
-        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
-      } catch (error) {
-        console.error('[Batch API - Documents] Operation failed:', error)
-        results.push({ 
-          error: 'Operation failed', 
-          message: error instanceof Error ? error.message : 'Unknown error',
-          operation: op 
+
+      const noteId = typeof data?.noteId === 'string' ? data.noteId : undefined
+      const panelId = typeof data?.panelId === 'string' ? data.panelId : undefined
+      const content = data?.content
+      const version = toVersionNumber(data?.version)
+      const baseVersion = toVersionNumber(data?.baseVersion)
+
+      if (!noteId || !panelId || content === undefined) {
+        results.push({
+          noteId: noteId ?? '',
+          panelId: panelId ?? '',
+          status: 'error',
+          error: 'Missing required fields: noteId, panelId, content'
         })
+        continue
       }
+
+      if (version === null) {
+        results.push({
+          noteId,
+          panelId,
+          status: 'error',
+          error: 'version must be a number'
+        })
+        continue
+      }
+
+      if (baseVersion === null) {
+        results.push({
+          noteId,
+          panelId,
+          status: 'error',
+          error: 'baseVersion must be a number'
+        })
+        continue
+      }
+
+      const noteKey = coerceEntityId(noteId)
+      const panelKey = normalizePanelId(noteKey, panelId)
+      const contentJson = typeof content === 'string' ? { html: content } : content
+
+      grouped.set(`${noteKey}:${panelKey}`, {
+        noteKey,
+        panelKey,
+        responseNoteId: noteId,
+        responsePanelId: panelId,
+        contentJson,
+        version,
+        baseVersion,
+        idempotencyKey
+      })
     }
-    
-    // Persist one row per (noteId, panelId) with server-computed version
-    for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
-      // noteId and panelId are already processed - use as-is
-      const noteKey = noteId  // Already coerced UUID
-      const panelKey = panelId  // Already normalized panel ID
-      
-      // Ensure the note exists (auto-create if missing)
+
+    for (const entry of grouped.values()) {
+      // Ensure the parent note row exists so workspace scoping remains consistent
       await client.query(
         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
          ON CONFLICT (id) DO UPDATE SET 
            workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
            updated_at = NOW()`,
-        [noteKey, workspaceId]
+        [entry.noteKey, workspaceId]
       )
-      
-      // Skip if content equals latest (content-based coalescing)
+
+      const contentString = JSON.stringify(entry.contentJson)
       const latest = await client.query(
-        `SELECT content, version FROM document_saves
-         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
-         ORDER BY version DESC LIMIT 1`,
-        [noteKey, panelKey, workspaceId]
+        `SELECT id, content, version
+           FROM document_saves
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+        [entry.noteKey, entry.panelKey, workspaceId]
       )
-      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
-        results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+
+      const latestRow = latest.rows[0]
+      const latestVersion: number = latestRow?.version ?? 0
+
+      if (
+        latestRow &&
+        JSON.stringify(latestRow.content) === contentString &&
+        entry.version === latestVersion
+      ) {
+        results.push({
+          noteId: entry.responseNoteId,
+          panelId: entry.responsePanelId,
+          skipped: true,
+          reason: 'no-change',
+          version: latestVersion,
+          id: latestRow.id
+        })
         continue
       }
 
-      // Compute next version and insert with retry-on-conflict (concurrent batches)
-      let inserted = false
-      for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
-        const nextVersionRow = await client.query(
-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-           FROM document_saves
-           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-          [noteKey, panelKey, workspaceId]
-        )
-        const nextVersion = nextVersionRow.rows[0].next_version
-        try {
-          const ins = await client.query(
-            `INSERT INTO document_saves 
-             (note_id, panel_id, content, version, workspace_id, created_at)
-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-             RETURNING id`,
-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
-          )
-          const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
-          results.push(operationResult)
-          if (idempotencyKey) {
-            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
-          }
-          inserted = true
-        } catch (e: any) {
-          // Unique violation — concurrent insert used same version; retry
-          if (e && e.code === '23505') continue
-          throw e
-        }
+      if (latestVersion > entry.baseVersion) {
+        results.push({
+          noteId: entry.responseNoteId,
+          panelId: entry.responsePanelId,
+          status: 'conflict',
+          error: `stale document save: baseVersion ${entry.baseVersion} behind latest ${latestVersion}`,
+          latestVersion,
+          baseVersion: entry.baseVersion,
+          requestedVersion: entry.version
+        })
+        continue
       }
-      if (!inserted) {
-        results.push({ success: false, error: 'version_conflict', noteId, panelId })
+
+      if (entry.version <= latestVersion) {
+        results.push({
+          noteId: entry.responseNoteId,
+          panelId: entry.responsePanelId,
+          status: 'conflict',
+          error: `non-incrementing version ${entry.version} (latest ${latestVersion})`,
+          latestVersion,
+          baseVersion: entry.baseVersion,
+          requestedVersion: entry.version
+        })
+        continue
+      }
+
+      if (entry.version !== entry.baseVersion + 1) {
+        console.warn(`[${logLabel}] Non-sequential version: base=${entry.baseVersion}, version=${entry.version}`)
+      }
+
+      const inserted = await client.query(
+        `INSERT INTO document_saves 
+         (note_id, panel_id, content, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+         RETURNING id`,
+        [entry.noteKey, entry.panelKey, contentString, entry.version, workspaceId]
+      )
+
+      const operationResult: SaveResult = {
+        noteId: entry.responseNoteId,
+        panelId: entry.responsePanelId,
+        success: true,
+        version: entry.version,
+        id: inserted.rows[0]?.id
+      }
+
+      results.push(operationResult)
+
+      if (entry.idempotencyKey) {
+        store.map.set(entry.idempotencyKey, { timestamp: Date.now(), result: operationResult })
       }
     }
-    
-    await client.query('COMMIT')
-    console.log(`[Batch API - Documents] Successfully processed ${byPanel.size} grouped operations`)
-    return NextResponse.json({
-      success: true,
-      results,
-      processed: results.filter(r => r.success && !r.skipped).length,
-      skipped: results.filter(r => r.skipped).length,
-      failed: results.filter(r => r.error).length
-    })
+
+    const conflicts = results.filter(r => r.status === 'conflict').length
+    const failed = results.filter(r => r.status === 'error').length
+    const processed = results.filter(r => r.success).length
+    const skipped = results.filter(r => r.skipped).length
+    const hasError = failed > 0
+    const hasConflict = conflicts > 0
+
+    const body = {
+      success: !hasError && !hasConflict,
+      processed,
+      skipped,
+      conflicts,
+      failed,
+      results
+    }
+
+    const status = hasError ? 500 : hasConflict ? 409 : 200
+
+    return { body, status }
+  })
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { operations } = await request.json()
+
+    if (!Array.isArray(operations) || operations.length === 0) {
+      return NextResponse.json(
+        { error: 'Invalid operations array' },
+        { status: 400 }
+      )
+    }
+
+    console.log(`[Batch API - Documents] Processing ${operations.length} create operations`)
+    const { body, status } = await handleBatchSave(operations, 'Batch POST /documents')
+    return NextResponse.json(body, { status })
   } catch (error) {
-    await client.query('ROLLBACK')
-    console.error('[Batch API - Documents] Batch operation failed:', error)
+    console.error('[Batch API - Documents] Batch POST failed:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'Batch operation failed',
         message: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     )
-  } finally {
-    client.release()
   }
 }
 
 export async function PUT(request: NextRequest) {
-  const client = await serverPool.connect()
-  
   try {
-    // Lazy cleanup of idempotency cache; no background timers
-    cleanupProcessedKeys()
-    const store = getProcessedStore()
-    
     const { operations } = await request.json()
-    
+
     if (!Array.isArray(operations) || operations.length === 0) {
       return NextResponse.json(
         { error: 'Invalid operations array' },
         { status: 400 }
       )
     }
-    
-    console.log(`[Batch API - Documents] Processing ${operations.length} update operations`)
-    
-    const results: any[] = []
-    
-    await client.query('BEGIN')
-    
-    // Coalesce by (noteId, panelId) — keep the LAST content in this batch
-    const byPanel = new Map<string, { noteId: string; panelId: string; contentJson: any; idempotencyKey?: string }>()
-    
-    for (const op of operations) {
-      // Check idempotency
-      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
-        const cached = store.map.get(op.idempotencyKey)
-        results.push({ ...cached?.result, cached: true })
-        continue
-      }
-      
-      try {
-        // Extract data; server computes version
-        const data = op.data || op
-        const { noteId, panelId, content } = data
-        
-        if (!noteId || !panelId || !content) {
-          results.push({ 
-            error: 'Missing required fields', 
-            operation: op 
-          })
-          continue
-        }
-        
-        // Coerce noteId to UUID first, THEN normalize panelId
-        const noteKey = coerceEntityId(noteId)
-        const normalizedPanelId = normalizePanelId(noteKey, panelId)
-        console.log(`[Batch PUT] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
-        
-        const contentJson = typeof content === 'string' ? { html: content } : content
-        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
-      } catch (error) {
-        console.error('[Batch API - Documents] Operation failed:', error)
-        results.push({ 
-          error: 'Operation failed', 
-          message: error instanceof Error ? error.message : 'Unknown error',
-          operation: op 
-        })
-      }
-    }
-    
-    // Persist one row per (noteId, panelId) with server-computed version
-    for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
-      // noteId and panelId are already processed - use as-is
-      const noteKey = noteId  // Already coerced UUID
-      const panelKey = panelId  // Already normalized panel ID
-      
-      // Ensure the note exists (auto-create if missing)
-      await client.query(
-        `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
-         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
-         ON CONFLICT (id) DO UPDATE SET 
-           workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
-           updated_at = NOW()`,
-        [noteKey, workspaceId]
-      )
-      
-      const latest = await client.query(
-        `SELECT content, version FROM document_saves
-         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
-         ORDER BY version DESC LIMIT 1`,
-        [noteKey, panelKey, workspaceId]
-      )
-      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
-        results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
-        continue
-      }
 
-      let inserted = false
-      for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
-        const nextVersionRow = await client.query(
-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-           FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
-          [noteKey, panelKey]
-        )
-        const nextVersion = nextVersionRow.rows[0].next_version
-        try {
-          const ins = await client.query(
-            `INSERT INTO document_saves 
-             (note_id, panel_id, content, version, workspace_id, created_at)
-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
-             RETURNING id`,
-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
-          )
-          const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
-          results.push(operationResult)
-          if (idempotencyKey) {
-            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
-          }
-          inserted = true
-        } catch (e: any) {
-          if (e && e.code === '23505') continue
-          throw e
-        }
-      }
-      if (!inserted) {
-        results.push({ success: false, error: 'version_conflict', noteId, panelId })
-      }
-    }
-    
-    await client.query('COMMIT')
-    console.log(`[Batch API - Documents] Successfully processed ${byPanel.size} grouped operations`)
-    return NextResponse.json({
-      success: true,
-      results,
-      processed: results.filter(r => r.success && !r.skipped).length,
-      skipped: results.filter(r => r.skipped).length,
-      failed: results.filter(r => r.error).length
-    })
+    console.log(`[Batch API - Documents] Processing ${operations.length} update operations`)
+    const { body, status } = await handleBatchSave(operations, 'Batch PUT /documents')
+    return NextResponse.json(body, { status })
   } catch (error) {
-    await client.query('ROLLBACK')
-    console.error('[Batch API - Documents] Batch operation failed:', error)
+    console.error('[Batch API - Documents] Batch PUT failed:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'Batch operation failed',
         message: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     )
-  } finally {
-    client.release()
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  const client = await serverPool.connect()
-  
   try {
     const { ids } = await request.json()
-    
+
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json(
         { error: 'Invalid ids array' },
         { status: 400 }
       )
     }
-    
-    console.log(`[Batch API - Documents] Processing ${ids.length} delete operations`)
-    
-    await client.query('BEGIN')
-    
-    // Parse entity IDs to extract noteId and panelId
-    const deletions = ids.map(id => {
-      const [noteId, panelId] = id.split(':')
-      return { noteId, panelId }
-    })
-    
-    // Delete all documents in batch
-    for (const { noteId, panelId } of deletions) {
-      if (noteId && panelId) {
-        // Coerce slugs to UUIDs
-        const noteKey = coerceEntityId(noteId)
-        const panelKey = coerceEntityId(panelId)
-        
-        await client.query(
-          'DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2',
-          [noteKey, panelKey]
+
+    const summary = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+      let deleted = 0
+
+      for (const rawId of ids) {
+        if (typeof rawId !== 'string') continue
+        const [rawNoteId, rawPanelId] = rawId.split(':')
+        if (!rawNoteId || !rawPanelId) continue
+
+        const noteKey = coerceEntityId(rawNoteId)
+        const panelKey = normalizePanelId(noteKey, rawPanelId)
+
+        const res = await client.query(
+          `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+          [noteKey, panelKey, workspaceId]
         )
+        deleted += res.rowCount ?? 0
       }
-    }
-    
-    await client.query('COMMIT')
-    
-    console.log(`[Batch API - Documents] Successfully deleted ${ids.length} documents`)
-    
-    return NextResponse.json({ 
-      success: true, 
-      deleted: ids.length 
+
+      return deleted
     })
+
+    console.log(`[Batch API - Documents] Successfully deleted ${summary} documents`)
+    return NextResponse.json({ success: true, deleted: summary })
   } catch (error) {
-    await client.query('ROLLBACK')
     console.error('[Batch API - Documents] Batch delete failed:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'Batch delete failed',
         message: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
     )
-  } finally {
-    client.release()
   }
 }

@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     
     // Process document save request
     
-    if (!noteId || !panelId || !content || version === undefined) {
+    if (!noteId || !panelId || content === undefined || version === undefined) {
       return NextResponse.json(
         { error: 'Missing required fields: noteId, panelId, content, version' },
         { status: 400 }
@@ -45,11 +45,16 @@ export async function POST(request: NextRequest) {
     
     const normalizedPanelId = normalizePanelId(noteKey, panelId)
     // Normalized panelId
-    
-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
-    if (baseVersion === undefined) {
-      throw new Error('baseVersion required')
+
+    if (typeof version !== 'number' || Number.isNaN(version)) {
+      throw new Error('version must be a number')
     }
+
+    const baseVersionRaw = body.baseVersion
+    if (typeof baseVersionRaw !== 'number' || Number.isNaN(baseVersionRaw)) {
+      throw new Error('baseVersion must be a number')
+    }
+    const baseVersion = baseVersionRaw
 
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
       const latest = await client.query(
@@ -103,7 +108,7 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Failed to save document'
     const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
       ? 409
-      : message.includes('required')
+      : message.includes('required') || message.includes('must be a number')
       ? 400
       : 500
     return NextResponse.json(

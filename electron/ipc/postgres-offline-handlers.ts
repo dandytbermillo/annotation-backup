@@ -1,15 +1,20 @@
 const { ipcMain } = require('electron')
 const { Pool } = require('pg')
-const { v5: uuidv5 } = require('uuid')
+const { v5: uuidv5, validate: validateUuid } = require('uuid')
 const { WorkspaceStore } = require('../../lib/workspace/workspace-store')
+
+const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
+const UUID_REGEX = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
+const coerceEntityId = (id: string): string => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
 
 // Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
 // deterministic UUID per note using UUID v5 in the DNS namespace.
 const normalizePanelId = (noteId: string, panelId: string): string => {
-  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
-  if (isUuid.test(panelId)) return panelId
+  if (UUID_REGEX.test(panelId)) return panelId
   return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
 }
+
+const toVersionNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) ? value : null)
 
 // Get database URL based on environment
 const getDatabaseUrl = () => {
@@ -241,11 +246,20 @@ const handlers = {
   'postgres-offline:saveDocument': async (event: any, noteId: string, panelId: string, content: any, version: number, baseVersion: number) => {
     const pool = getPool()
     try {
+      if (typeof version !== 'number' || Number.isNaN(version)) {
+        return { success: false, error: 'version must be a number' }
+      }
+
+      if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
+        return { success: false, error: 'baseVersion must be a number' }
+      }
+
       const contentJson = typeof content === 'string' 
         ? { html: content } 
         : content
       
-      const normalizedPanelId = normalizePanelId(noteId, panelId)
+      const noteKey = coerceEntityId(noteId)
+      const normalizedPanelId = normalizePanelId(noteKey, panelId)
 
       let workspaceId
       try {
@@ -261,7 +275,7 @@ const handlers = {
           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
           ORDER BY version DESC
           LIMIT 1`,
-        [noteId, normalizedPanelId, workspaceId]
+        [noteKey, normalizedPanelId, workspaceId]
       )
 
       const latestVersion: number = latest.rows[0]?.version ?? 0
@@ -286,7 +300,7 @@ const handlers = {
         `INSERT INTO document_saves 
          (note_id, panel_id, content, version, workspace_id, created_at)
          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-        [noteId, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
       )
       
       console.log(`[postgres-offline:saveDocument] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
@@ -300,7 +314,8 @@ const handlers = {
   'postgres-offline:loadDocument': async (event: any, noteId: string, panelId: string) => {
     const pool = getPool()
     try {
-      const normalizedPanelId = normalizePanelId(noteId, panelId)
+      const noteKey = coerceEntityId(noteId)
+      const normalizedPanelId = normalizePanelId(noteKey, panelId)
 
       let workspaceId
       try {
@@ -317,7 +332,7 @@ const handlers = {
          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
          ORDER BY version DESC
          LIMIT 1`,
-        [noteId, normalizedPanelId, workspaceId]
+        [noteKey, normalizedPanelId, workspaceId]
       )
       
       if (result.rows.length === 0) {
@@ -593,11 +608,24 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
       
     case 'update':
       if (table_name === 'document_saves') {
-        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
-        const contentJson = data?.content ?? {}
+        const rawNoteId = data?.noteId || data?.note_id || entity_id
+        const rawPanelId = data?.panelId || data?.panel_id
+        if (!rawNoteId || !rawPanelId) {
+          throw new Error('document_saves queue update requires noteId and panelId')
+        }
+
+        const noteId = coerceEntityId(rawNoteId)
+        const normalizedPanelId = normalizePanelId(noteId, rawPanelId)
+        const rawContent = data?.content ?? {}
+        const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
         const content = JSON.stringify(contentJson)
-        const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
+        const baseVersion = toVersionNumber(data?.baseVersion)
+        const version = toVersionNumber(data?.version)
         const effectiveWorkspaceId = data.workspaceId || workspaceId
+
+        if (baseVersion === null || version === null) {
+          throw new Error('baseVersion and version must be numbers')
+        }
 
         const latest = await client.query(
           `SELECT content, version
@@ -605,42 +633,37 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
             WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
             ORDER BY version DESC
             LIMIT 1`,
-          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
+          [noteId, normalizedPanelId, effectiveWorkspaceId]
         )
 
+        const latestRow = latest.rows[0]
+        const latestVersion: number = latestRow?.version ?? 0
+
         if (
-          latest.rows[0] &&
-          JSON.stringify(latest.rows[0].content) === content
+          latestRow &&
+          JSON.stringify(latestRow.content) === content &&
+          version === latestVersion
         ) {
           break
         }
 
-        if (
-          latest.rows[0] &&
-          baseVersion !== null &&
-          latest.rows[0].version > baseVersion
-        ) {
-          break
+        if (latestVersion > baseVersion) {
+          throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
         }
 
-        const nextVersionRow = await client.query(
-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-             FROM document_saves
-            WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
-        )
-        const nextVersion = nextVersionRow.rows[0].next_version
+        if (version <= latestVersion) {
+          throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+        }
 
-        const payloadVersion = typeof data?.version === 'number' ? data.version : null
-        if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
-          throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
+        if (version !== baseVersion + 1) {
+          console.warn(`[postgres-offline:queue] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
         }
 
         await client.query(
           `INSERT INTO document_saves 
            (note_id, panel_id, content, version, workspace_id, created_at)
            VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-          [data.noteId, normalizedPanelId, content, nextVersion, effectiveWorkspaceId]
+          [noteId, normalizedPanelId, content, version, effectiveWorkspaceId]
         )
       }
       // Add other update operations as needed
@@ -649,10 +672,17 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
     case 'delete':
       // Handle delete operations
       if (table_name === 'document_saves') {
-        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
+        const rawNoteId = data?.noteId || data?.note_id || entity_id
+        const rawPanelId = data?.panelId || data?.panel_id
+        if (!rawNoteId || !rawPanelId) {
+          throw new Error('document_saves queue delete requires noteId and panelId')
+        }
+
+        const noteId = coerceEntityId(rawNoteId)
+        const normalizedPanelId = normalizePanelId(noteId, rawPanelId)
         await client.query(
           `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-          [data.noteId, normalizedPanelId, workspaceId]
+          [noteId, normalizedPanelId, workspaceId]
         )
         break
       }

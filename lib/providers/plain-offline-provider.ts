@@ -342,7 +342,12 @@ export class PlainOfflineProvider extends EventEmitter {
         } catch (error) {
           console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
           const message = error instanceof Error ? error.message : ''
-          if (message.includes('stale document save') || message.includes('non-incrementing version') || message.includes('baseVersion required')) {
+          if (
+            message.includes('stale document save') ||
+            message.includes('non-incrementing version') ||
+            message.includes('must be a number') ||
+            message.includes('baseVersion')
+          ) {
             throw error
           }
           // Queue for offline sync

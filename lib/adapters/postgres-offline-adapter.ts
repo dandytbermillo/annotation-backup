@@ -451,9 +451,23 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
         
       case 'update':
         if (table_name === 'document_saves') {
-          const contentJson = data?.content ?? {}
-          const content = JSON.stringify(contentJson)
-          const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
+          const rawNoteId = data?.noteId ?? data?.note_id ?? entity_id
+          const rawPanelId = data?.panelId ?? data?.panel_id
+          if (!rawNoteId || !rawPanelId) {
+            throw new Error('document_saves requires noteId and panelId in data')
+          }
+
+          const noteId = this.coerceEntityId(rawNoteId)
+          const panelId = this.normalizePanelId(noteId, rawPanelId)
+          const rawContent = data?.content ?? {}
+          const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
+          const contentString = JSON.stringify(contentJson)
+          const baseVersion = typeof data?.baseVersion === 'number' && Number.isInteger(data.baseVersion) ? data.baseVersion : null
+          const version = typeof data?.version === 'number' && Number.isInteger(data.version) ? data.version : null
+
+          if (baseVersion === null || version === null) {
+            throw new Error('baseVersion and version must be numbers')
+          }
 
           const latest = await client.query(
             `SELECT content, version
@@ -461,42 +475,37 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
               WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
               ORDER BY version DESC
               LIMIT 1`,
-            [data.noteId, data.panelId, workspaceId]
+            [noteId, panelId, workspaceId]
           )
 
+          const latestRow = latest.rows[0]
+          const latestVersion: number = latestRow?.version ?? 0
+
           if (
-            latest.rows[0] &&
-            JSON.stringify(latest.rows[0].content) === content
+            latestRow &&
+            JSON.stringify(latestRow.content) === contentString &&
+            version === latestVersion
           ) {
             break
           }
 
-          if (
-            latest.rows[0] &&
-            baseVersion !== null &&
-            latest.rows[0].version > baseVersion
-          ) {
-            break
+          if (latestVersion > baseVersion) {
+            throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
           }
 
-          const nextVersionRow = await client.query(
-            `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-               FROM document_saves
-              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-            [data.noteId, data.panelId, workspaceId]
-          )
-          const nextVersion = nextVersionRow.rows[0].next_version
+          if (version <= latestVersion) {
+            throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+          }
 
-          const payloadVersion = typeof data?.version === 'number' ? data.version : null
-          if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
-            throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
+          if (version !== baseVersion + 1) {
+            console.warn(`[PostgresOfflineAdapter] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
           }
 
           await client.query(
             `INSERT INTO document_saves 
              (note_id, panel_id, content, version, workspace_id, created_at)
              VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-            [data.noteId, data.panelId, content, nextVersion, workspaceId]
+            [noteId, panelId, contentString, version, workspaceId]
           )
         }
         // Add other update operations as needed
@@ -504,9 +513,18 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
         
       case 'delete':
         if (table_name === 'document_saves') {
+          const rawNoteId = data?.noteId ?? data?.note_id ?? entity_id
+          const rawPanelId = data?.panelId ?? data?.panel_id
+          if (!rawNoteId || !rawPanelId) {
+            throw new Error('document_saves delete requires noteId and panelId')
+          }
+
+          const noteId = this.coerceEntityId(rawNoteId)
+          const panelId = this.normalizePanelId(noteId, rawPanelId)
+
           await client.query(
             `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
-            [data.noteId || entity_id, data.panelId || data.panel_id, workspaceId]
+            [noteId, panelId, workspaceId]
           )
         }
         // Handle other delete operations as needed

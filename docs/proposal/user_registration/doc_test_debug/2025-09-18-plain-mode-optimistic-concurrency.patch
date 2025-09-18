@@ -1,0 +1,1697 @@
+diff --git a/__tests__/plain-mode/annotation-workflow.test.ts b/__tests__/plain-mode/annotation-workflow.test.ts
+index efa0fb4..48d8fc4 100644
+--- a/__tests__/plain-mode/annotation-workflow.test.ts
++++ b/__tests__/plain-mode/annotation-workflow.test.ts
+@@ -66,8 +66,42 @@ class MockAdapter implements PlainCrudAdapter {
+     return Array.from(this.branches.values()).filter(b => b.noteId === noteId)
+   }
+   
+-  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
++  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number) {
+     const key = `${noteId}-${panelId}`
++    const current = this.documents.get(key)
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
++      throw new Error('baseVersion must be a number')
++    }
++
++    const incomingSnapshot = typeof content === 'string' ? content : JSON.stringify(content)
++
++    if (current) {
++      const prevSnapshot = typeof current.content === 'string' ? current.content : JSON.stringify(current.content)
++
++      if (prevSnapshot === incomingSnapshot && current.version === version) {
++        return
++      }
++
++      if (current.version > baseVersion) {
++        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${current.version}`)
++      }
++
++      if (version <= current.version) {
++        throw new Error(`non-incrementing version ${version} (latest ${current.version})`)
++      }
++    } else if (baseVersion !== 0) {
++      throw new Error(`stale document save: baseVersion ${baseVersion} behind latest 0`)
++    }
++
++    if (version !== baseVersion + 1) {
++      throw new Error(`non-sequential version ${version} (expected ${baseVersion + 1})`)
++    }
++
+     this.documents.set(key, { content, version })
+   }
+   
+diff --git a/__tests__/plain-mode/fix-preservation.test.ts b/__tests__/plain-mode/fix-preservation.test.ts
+index 593fb67..aee588a 100644
+--- a/__tests__/plain-mode/fix-preservation.test.ts
++++ b/__tests__/plain-mode/fix-preservation.test.ts
+@@ -51,8 +51,42 @@ class MockAdapter implements PlainCrudAdapter {
+     return branches
+   }
+   
+-  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
++  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number) {
+     const key = `doc:${noteId}:${panelId}`
++    const current = this.storage.get(key) as any
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
++      throw new Error('baseVersion must be a number')
++    }
++
++    const incomingSnapshot = typeof content === 'string' ? content : JSON.stringify(content)
++
++    if (current) {
++      const prevSnapshot = typeof current.content === 'string' ? current.content : JSON.stringify(current.content)
++
++      if (prevSnapshot === incomingSnapshot && current.version === version) {
++        return
++      }
++
++      if (current.version > baseVersion) {
++        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${current.version}`)
++      }
++
++      if (version <= current.version) {
++        throw new Error(`non-incrementing version ${version} (latest ${current.version})`)
++      }
++    } else if (baseVersion !== 0) {
++      throw new Error(`stale document save: baseVersion ${baseVersion} behind latest 0`)
++    }
++
++    if (version !== baseVersion + 1) {
++      throw new Error(`non-sequential version ${version} (expected ${baseVersion + 1})`)
++    }
++
+     this.storage.set(key, { content, version })
+   }
+   
+diff --git a/__tests__/plain-mode/ten-fixes-preservation.test.ts b/__tests__/plain-mode/ten-fixes-preservation.test.ts
+index 193154d..1c54ba5 100644
+--- a/__tests__/plain-mode/ten-fixes-preservation.test.ts
++++ b/__tests__/plain-mode/ten-fixes-preservation.test.ts
+@@ -52,8 +52,42 @@ class MockPlainCrudAdapter implements PlainCrudAdapter {
+     return branches
+   }
+   
+-  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number = version - 1) {
++  async saveDocument(noteId: string, panelId: string, content: any, version: number, baseVersion: number) {
+     const key = `doc:${noteId}-${panelId}`
++    const current = this.storage.get(key) as any
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
++      throw new Error('baseVersion must be a number')
++    }
++
++    const incomingSnapshot = typeof content === 'string' ? content : JSON.stringify(content)
++
++    if (current) {
++      const prevSnapshot = typeof current.content === 'string' ? current.content : JSON.stringify(current.content)
++
++      if (prevSnapshot === incomingSnapshot && current.version === version) {
++        return
++      }
++
++      if (current.version > baseVersion) {
++        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${current.version}`)
++      }
++
++      if (version <= current.version) {
++        throw new Error(`non-incrementing version ${version} (latest ${current.version})`)
++      }
++    } else if (baseVersion !== 0) {
++      throw new Error(`stale document save: baseVersion ${baseVersion} behind latest 0`)
++    }
++
++    if (version !== baseVersion + 1) {
++      throw new Error(`non-sequential version ${version} (expected ${baseVersion + 1})`)
++    }
++
+     this.storage.set(key, { content, version })
+   }
+   
+diff --git a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+index 61b071d..9a99efa 100644
+--- a/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
++++ b/app/api/postgres-offline/documents/[noteId]/[panelId]/route.ts
+@@ -89,23 +89,29 @@ export async function POST(
+     const { noteId, panelId } = await params
+     const body = await request.json()
+     const { content, version } = body
+-    
++
++    if (content === undefined || content === null) {
++      throw new Error('content required')
++    }
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    const baseVersionRaw = body.baseVersion
++    if (typeof baseVersionRaw !== 'number' || Number.isNaN(baseVersionRaw)) {
++      throw new Error('baseVersion must be a number')
++    }
++    const baseVersion = baseVersionRaw
++
+     // Coerce noteId slug to UUID if needed
+     const noteKey = coerceEntityId(noteId)
+     const normalizedPanelId = normalizePanelId(noteKey, panelId)
+-    
++
+     // Prepare content - wrap string content in HTML format
+     const contentToSave = typeof content === 'string' 
+       ? { html: content }
+       : content
+-    
+-    // Save the document
+-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+-
+-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+-    if (baseVersion === undefined) {
+-      throw new Error('baseVersion required')
+-    }
+ 
+     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+       const latest = await client.query(
+@@ -142,7 +148,7 @@ export async function POST(
+         `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
+          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+          RETURNING *`,
+-        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version || 1, workspaceId]
++        [noteKey, normalizedPanelId, JSON.stringify(contentToSave), version, workspaceId]
+       )
+ 
+       return { skipped: false, row: inserted.rows[0] }
+@@ -159,7 +165,7 @@ export async function POST(
+     const message = error instanceof Error ? error.message : 'Failed to save document'
+     const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
+       ? 409
+-      : message.includes('required')
++      : message.includes('required') || message.includes('must be a number')
+       ? 400
+       : 500
+     return NextResponse.json(
+diff --git a/app/api/postgres-offline/documents/batch/route.ts b/app/api/postgres-offline/documents/batch/route.ts
+index 9e0b7bf..43983fb 100644
+--- a/app/api/postgres-offline/documents/batch/route.ts
++++ b/app/api/postgres-offline/documents/batch/route.ts
+@@ -10,8 +10,40 @@ export const runtime = 'nodejs'
+ const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
+ const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
+ 
+-// Idempotency tracking (in production, use Redis or database)
+-type ProcessedEntry = { timestamp: number; result: any }
++// Check if a string is a valid UUID
++const isUuid = (s: string): boolean => {
++  return /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)
++}
++
++// Normalize panelId helper (same as in regular documents route)
++const normalizePanelId = (noteId: string, panelId: string): string => {
++  if (isUuid(panelId)) return panelId
++  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
++}
++
++const toVersionNumber = (value: unknown): number | null => {
++  return typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value)
++    ? value
++    : null
++}
++
++type SaveResult = {
++  noteId: string
++  panelId: string
++  version?: number
++  skipped?: boolean
++  success?: boolean
++  status?: 'conflict' | 'error'
++  reason?: string
++  error?: string
++  id?: string
++  latestVersion?: number
++  baseVersion?: number
++  requestedVersion?: number
++  cached?: boolean
++}
++
++type ProcessedEntry = { timestamp: number; result: SaveResult }
+ const IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000 // 24 hours
+ const IDEMPOTENCY_SWEEP_INTERVAL = 60 * 60 * 1000 // 1 hour
+ 
+@@ -33,367 +65,298 @@ function cleanupProcessedKeys(): void {
+   store.lastSweep = now
+ }
+ 
+-// Normalize panelId helper (same as in regular documents route)
+-const normalizePanelId = (noteId: string, panelId: string): string => {
+-  // Fixed regex: UUID format is 8-4-4-4-12, not 8-8-8-12
+-  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+-  if (isUuid.test(panelId)) return panelId
+-  return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
++type BatchSummary = { body: { success: boolean; processed: number; skipped: number; conflicts: number; failed: number; results: SaveResult[] }; status: number }
++
++type PendingSave = {
++  noteKey: string
++  panelKey: string
++  responseNoteId: string
++  responsePanelId: string
++  contentJson: any
++  version: number
++  baseVersion: number
++  idempotencyKey?: string
+ }
+ 
+-export async function POST(request: NextRequest) {
+-  const client = await serverPool.connect()
+-  
+-  try {
+-    // Lazy cleanup of idempotency cache; no background timers
++async function handleBatchSave(operations: any[], logLabel: string): Promise<BatchSummary> {
++  return WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+     cleanupProcessedKeys()
+     const store = getProcessedStore()
+-    
+-    const { operations } = await request.json()
+-    
+-    if (!Array.isArray(operations) || operations.length === 0) {
+-      return NextResponse.json(
+-        { error: 'Invalid operations array' },
+-        { status: 400 }
+-      )
+-    }
+-    
+-    console.log(`[Batch API - Documents] Processing ${operations.length} create operations`)
+-    
+-    const results: any[] = []
+-    
+-    await client.query('BEGIN')
+-    
+-    // Coalesce by (noteId, panelId) — keep the LAST content in this batch
+-    const byPanel = new Map<string, { noteId: string; panelId: string; contentJson: any; idempotencyKey?: string }>()
+-    
+-    for (const op of operations) {
+-      // Check idempotency
+-      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+-        const cached = store.map.get(op.idempotencyKey)
+-        results.push({ ...cached?.result, cached: true })
++
++    const grouped = new Map<string, PendingSave>()
++    const results: SaveResult[] = []
++
++    for (const rawOp of operations) {
++      const data = rawOp?.data ?? rawOp
++      const idempotencyKey = typeof rawOp?.idempotencyKey === 'string' ? rawOp.idempotencyKey : undefined
++
++      if (idempotencyKey && store.map.has(idempotencyKey)) {
++        const cached = store.map.get(idempotencyKey)!
++        results.push({ ...cached.result, cached: true })
+         continue
+       }
+-      
+-      try {
+-        // Validate required fields (server will compute version)
+-        const { noteId, panelId, content } = op
+-        
+-        if (!noteId || !panelId || !content) {
+-          results.push({ 
+-            error: 'Missing required fields', 
+-            operation: op 
+-          })
+-          continue
+-        }
+-        
+-        // Coerce noteId to UUID first, THEN normalize panelId
+-        const noteKey = coerceEntityId(noteId)
+-        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+-        console.log(`[Batch] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
+-        
+-        const contentJson = typeof content === 'string' ? { html: content } : content
+-        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+-      } catch (error) {
+-        console.error('[Batch API - Documents] Operation failed:', error)
+-        results.push({ 
+-          error: 'Operation failed', 
+-          message: error instanceof Error ? error.message : 'Unknown error',
+-          operation: op 
++
++      const noteId = typeof data?.noteId === 'string' ? data.noteId : undefined
++      const panelId = typeof data?.panelId === 'string' ? data.panelId : undefined
++      const content = data?.content
++      const version = toVersionNumber(data?.version)
++      const baseVersion = toVersionNumber(data?.baseVersion)
++
++      if (!noteId || !panelId || content === undefined) {
++        results.push({
++          noteId: noteId ?? '',
++          panelId: panelId ?? '',
++          status: 'error',
++          error: 'Missing required fields: noteId, panelId, content'
+         })
++        continue
+       }
++
++      if (version === null) {
++        results.push({
++          noteId,
++          panelId,
++          status: 'error',
++          error: 'version must be a number'
++        })
++        continue
++      }
++
++      if (baseVersion === null) {
++        results.push({
++          noteId,
++          panelId,
++          status: 'error',
++          error: 'baseVersion must be a number'
++        })
++        continue
++      }
++
++      const noteKey = coerceEntityId(noteId)
++      const panelKey = normalizePanelId(noteKey, panelId)
++      const contentJson = typeof content === 'string' ? { html: content } : content
++
++      grouped.set(`${noteKey}:${panelKey}`, {
++        noteKey,
++        panelKey,
++        responseNoteId: noteId,
++        responsePanelId: panelId,
++        contentJson,
++        version,
++        baseVersion,
++        idempotencyKey
++      })
+     }
+-    
+-    // Persist one row per (noteId, panelId) with server-computed version
+-    for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
+-      // noteId and panelId are already processed - use as-is
+-      const noteKey = noteId  // Already coerced UUID
+-      const panelKey = panelId  // Already normalized panel ID
+-      
+-      // Ensure the note exists (auto-create if missing)
++
++    for (const entry of grouped.values()) {
++      // Ensure the parent note row exists so workspace scoping remains consistent
+       await client.query(
+         `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
+          VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
+          ON CONFLICT (id) DO UPDATE SET 
+            workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
+            updated_at = NOW()`,
+-        [noteKey, workspaceId]
++        [entry.noteKey, workspaceId]
+       )
+-      
+-      // Skip if content equals latest (content-based coalescing)
++
++      const contentString = JSON.stringify(entry.contentJson)
+       const latest = await client.query(
+-        `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+-         ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey, workspaceId]
++        `SELECT id, content, version
++           FROM document_saves
++          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
++          ORDER BY version DESC
++          LIMIT 1`,
++        [entry.noteKey, entry.panelKey, workspaceId]
+       )
+-      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+-        results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
++
++      const latestRow = latest.rows[0]
++      const latestVersion: number = latestRow?.version ?? 0
++
++      if (
++        latestRow &&
++        JSON.stringify(latestRow.content) === contentString &&
++        entry.version === latestVersion
++      ) {
++        results.push({
++          noteId: entry.responseNoteId,
++          panelId: entry.responsePanelId,
++          skipped: true,
++          reason: 'no-change',
++          version: latestVersion,
++          id: latestRow.id
++        })
+         continue
+       }
+ 
+-      // Compute next version and insert with retry-on-conflict (concurrent batches)
+-      let inserted = false
+-      for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+-        const nextVersionRow = await client.query(
+-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-           FROM document_saves
+-           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-          [noteKey, panelKey, workspaceId]
+-        )
+-        const nextVersion = nextVersionRow.rows[0].next_version
+-        try {
+-          const ins = await client.query(
+-            `INSERT INTO document_saves 
+-             (note_id, panel_id, content, version, workspace_id, created_at)
+-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+-             RETURNING id`,
+-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
+-          )
+-          const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
+-          results.push(operationResult)
+-          if (idempotencyKey) {
+-            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
+-          }
+-          inserted = true
+-        } catch (e: any) {
+-          // Unique violation — concurrent insert used same version; retry
+-          if (e && e.code === '23505') continue
+-          throw e
+-        }
++      if (latestVersion > entry.baseVersion) {
++        results.push({
++          noteId: entry.responseNoteId,
++          panelId: entry.responsePanelId,
++          status: 'conflict',
++          error: `stale document save: baseVersion ${entry.baseVersion} behind latest ${latestVersion}`,
++          latestVersion,
++          baseVersion: entry.baseVersion,
++          requestedVersion: entry.version
++        })
++        continue
+       }
+-      if (!inserted) {
+-        results.push({ success: false, error: 'version_conflict', noteId, panelId })
++
++      if (entry.version <= latestVersion) {
++        results.push({
++          noteId: entry.responseNoteId,
++          panelId: entry.responsePanelId,
++          status: 'conflict',
++          error: `non-incrementing version ${entry.version} (latest ${latestVersion})`,
++          latestVersion,
++          baseVersion: entry.baseVersion,
++          requestedVersion: entry.version
++        })
++        continue
++      }
++
++      if (entry.version !== entry.baseVersion + 1) {
++        console.warn(`[${logLabel}] Non-sequential version: base=${entry.baseVersion}, version=${entry.version}`)
++      }
++
++      const inserted = await client.query(
++        `INSERT INTO document_saves 
++         (note_id, panel_id, content, version, workspace_id, created_at)
++         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
++         RETURNING id`,
++        [entry.noteKey, entry.panelKey, contentString, entry.version, workspaceId]
++      )
++
++      const operationResult: SaveResult = {
++        noteId: entry.responseNoteId,
++        panelId: entry.responsePanelId,
++        success: true,
++        version: entry.version,
++        id: inserted.rows[0]?.id
++      }
++
++      results.push(operationResult)
++
++      if (entry.idempotencyKey) {
++        store.map.set(entry.idempotencyKey, { timestamp: Date.now(), result: operationResult })
+       }
+     }
+-    
+-    await client.query('COMMIT')
+-    console.log(`[Batch API - Documents] Successfully processed ${byPanel.size} grouped operations`)
+-    return NextResponse.json({
+-      success: true,
+-      results,
+-      processed: results.filter(r => r.success && !r.skipped).length,
+-      skipped: results.filter(r => r.skipped).length,
+-      failed: results.filter(r => r.error).length
+-    })
++
++    const conflicts = results.filter(r => r.status === 'conflict').length
++    const failed = results.filter(r => r.status === 'error').length
++    const processed = results.filter(r => r.success).length
++    const skipped = results.filter(r => r.skipped).length
++    const hasError = failed > 0
++    const hasConflict = conflicts > 0
++
++    const body = {
++      success: !hasError && !hasConflict,
++      processed,
++      skipped,
++      conflicts,
++      failed,
++      results
++    }
++
++    const status = hasError ? 500 : hasConflict ? 409 : 200
++
++    return { body, status }
++  })
++}
++
++export async function POST(request: NextRequest) {
++  try {
++    const { operations } = await request.json()
++
++    if (!Array.isArray(operations) || operations.length === 0) {
++      return NextResponse.json(
++        { error: 'Invalid operations array' },
++        { status: 400 }
++      )
++    }
++
++    console.log(`[Batch API - Documents] Processing ${operations.length} create operations`)
++    const { body, status } = await handleBatchSave(operations, 'Batch POST /documents')
++    return NextResponse.json(body, { status })
+   } catch (error) {
+-    await client.query('ROLLBACK')
+-    console.error('[Batch API - Documents] Batch operation failed:', error)
++    console.error('[Batch API - Documents] Batch POST failed:', error)
+     return NextResponse.json(
+-      { 
++      {
+         error: 'Batch operation failed',
+         message: error instanceof Error ? error.message : 'Unknown error'
+       },
+       { status: 500 }
+     )
+-  } finally {
+-    client.release()
+   }
+ }
+ 
+ export async function PUT(request: NextRequest) {
+-  const client = await serverPool.connect()
+-  
+   try {
+-    // Lazy cleanup of idempotency cache; no background timers
+-    cleanupProcessedKeys()
+-    const store = getProcessedStore()
+-    
+     const { operations } = await request.json()
+-    
++
+     if (!Array.isArray(operations) || operations.length === 0) {
+       return NextResponse.json(
+         { error: 'Invalid operations array' },
+         { status: 400 }
+       )
+     }
+-    
+-    console.log(`[Batch API - Documents] Processing ${operations.length} update operations`)
+-    
+-    const results: any[] = []
+-    
+-    await client.query('BEGIN')
+-    
+-    // Coalesce by (noteId, panelId) — keep the LAST content in this batch
+-    const byPanel = new Map<string, { noteId: string; panelId: string; contentJson: any; idempotencyKey?: string }>()
+-    
+-    for (const op of operations) {
+-      // Check idempotency
+-      if (op.idempotencyKey && store.map.has(op.idempotencyKey)) {
+-        const cached = store.map.get(op.idempotencyKey)
+-        results.push({ ...cached?.result, cached: true })
+-        continue
+-      }
+-      
+-      try {
+-        // Extract data; server computes version
+-        const data = op.data || op
+-        const { noteId, panelId, content } = data
+-        
+-        if (!noteId || !panelId || !content) {
+-          results.push({ 
+-            error: 'Missing required fields', 
+-            operation: op 
+-          })
+-          continue
+-        }
+-        
+-        // Coerce noteId to UUID first, THEN normalize panelId
+-        const noteKey = coerceEntityId(noteId)
+-        const normalizedPanelId = normalizePanelId(noteKey, panelId)
+-        console.log(`[Batch PUT] Normalized: noteId ${noteId} -> ${noteKey}, panelId ${panelId} -> ${normalizedPanelId}`)
+-        
+-        const contentJson = typeof content === 'string' ? { html: content } : content
+-        byPanel.set(`${noteKey}:${normalizedPanelId}`, { noteId: noteKey, panelId: normalizedPanelId, contentJson, idempotencyKey: op.idempotencyKey })
+-      } catch (error) {
+-        console.error('[Batch API - Documents] Operation failed:', error)
+-        results.push({ 
+-          error: 'Operation failed', 
+-          message: error instanceof Error ? error.message : 'Unknown error',
+-          operation: op 
+-        })
+-      }
+-    }
+-    
+-    // Persist one row per (noteId, panelId) with server-computed version
+-    for (const { noteId, panelId, contentJson, idempotencyKey } of byPanel.values()) {
+-      // noteId and panelId are already processed - use as-is
+-      const noteKey = noteId  // Already coerced UUID
+-      const panelKey = panelId  // Already normalized panel ID
+-      
+-      // Ensure the note exists (auto-create if missing)
+-      await client.query(
+-        `INSERT INTO notes (id, title, metadata, workspace_id, created_at, updated_at)
+-         VALUES ($1::uuid, 'Untitled', '{}'::jsonb, $2::uuid, NOW(), NOW())
+-         ON CONFLICT (id) DO UPDATE SET 
+-           workspace_id = COALESCE(notes.workspace_id, EXCLUDED.workspace_id),
+-           updated_at = NOW()`,
+-        [noteKey, workspaceId]
+-      )
+-      
+-      const latest = await client.query(
+-        `SELECT content, version FROM document_saves
+-         WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+-         ORDER BY version DESC LIMIT 1`,
+-        [noteKey, panelKey, workspaceId]
+-      )
+-      if (latest.rows[0] && JSON.stringify(latest.rows[0].content) === JSON.stringify(contentJson)) {
+-        results.push({ success: true, skipped: true, noteId, panelId, reason: 'no-change' })
+-        continue
+-      }
+ 
+-      let inserted = false
+-      for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
+-        const nextVersionRow = await client.query(
+-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-           FROM document_saves WHERE note_id = $1 AND panel_id = $2`,
+-          [noteKey, panelKey]
+-        )
+-        const nextVersion = nextVersionRow.rows[0].next_version
+-        try {
+-          const ins = await client.query(
+-            `INSERT INTO document_saves 
+-             (note_id, panel_id, content, version, workspace_id, created_at)
+-             VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+-             RETURNING id`,
+-            [noteKey, panelKey, JSON.stringify(contentJson), nextVersion, workspaceId]
+-          )
+-          const operationResult = { success: true, id: ins.rows[0]?.id, noteId, panelId, version: nextVersion }
+-          results.push(operationResult)
+-          if (idempotencyKey) {
+-            store.map.set(idempotencyKey, { timestamp: Date.now(), result: operationResult })
+-          }
+-          inserted = true
+-        } catch (e: any) {
+-          if (e && e.code === '23505') continue
+-          throw e
+-        }
+-      }
+-      if (!inserted) {
+-        results.push({ success: false, error: 'version_conflict', noteId, panelId })
+-      }
+-    }
+-    
+-    await client.query('COMMIT')
+-    console.log(`[Batch API - Documents] Successfully processed ${byPanel.size} grouped operations`)
+-    return NextResponse.json({
+-      success: true,
+-      results,
+-      processed: results.filter(r => r.success && !r.skipped).length,
+-      skipped: results.filter(r => r.skipped).length,
+-      failed: results.filter(r => r.error).length
+-    })
++    console.log(`[Batch API - Documents] Processing ${operations.length} update operations`)
++    const { body, status } = await handleBatchSave(operations, 'Batch PUT /documents')
++    return NextResponse.json(body, { status })
+   } catch (error) {
+-    await client.query('ROLLBACK')
+-    console.error('[Batch API - Documents] Batch operation failed:', error)
++    console.error('[Batch API - Documents] Batch PUT failed:', error)
+     return NextResponse.json(
+-      { 
++      {
+         error: 'Batch operation failed',
+         message: error instanceof Error ? error.message : 'Unknown error'
+       },
+       { status: 500 }
+     )
+-  } finally {
+-    client.release()
+   }
+ }
+ 
+ export async function DELETE(request: NextRequest) {
+-  const client = await serverPool.connect()
+-  
+   try {
+     const { ids } = await request.json()
+-    
++
+     if (!Array.isArray(ids) || ids.length === 0) {
+       return NextResponse.json(
+         { error: 'Invalid ids array' },
+         { status: 400 }
+       )
+     }
+-    
+-    console.log(`[Batch API - Documents] Processing ${ids.length} delete operations`)
+-    
+-    await client.query('BEGIN')
+-    
+-    // Parse entity IDs to extract noteId and panelId
+-    const deletions = ids.map(id => {
+-      const [noteId, panelId] = id.split(':')
+-      return { noteId, panelId }
+-    })
+-    
+-    // Delete all documents in batch
+-    for (const { noteId, panelId } of deletions) {
+-      if (noteId && panelId) {
+-        // Coerce slugs to UUIDs
+-        const noteKey = coerceEntityId(noteId)
+-        const panelKey = coerceEntityId(panelId)
+-        
+-        await client.query(
+-          'DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2',
+-          [noteKey, panelKey]
++
++    const summary = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
++      let deleted = 0
++
++      for (const rawId of ids) {
++        if (typeof rawId !== 'string') continue
++        const [rawNoteId, rawPanelId] = rawId.split(':')
++        if (!rawNoteId || !rawPanelId) continue
++
++        const noteKey = coerceEntityId(rawNoteId)
++        const panelKey = normalizePanelId(noteKey, rawPanelId)
++
++        const res = await client.query(
++          `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
++          [noteKey, panelKey, workspaceId]
+         )
++        deleted += res.rowCount ?? 0
+       }
+-    }
+-    
+-    await client.query('COMMIT')
+-    
+-    console.log(`[Batch API - Documents] Successfully deleted ${ids.length} documents`)
+-    
+-    return NextResponse.json({ 
+-      success: true, 
+-      deleted: ids.length 
++
++      return deleted
+     })
++
++    console.log(`[Batch API - Documents] Successfully deleted ${summary} documents`)
++    return NextResponse.json({ success: true, deleted: summary })
+   } catch (error) {
+-    await client.query('ROLLBACK')
+     console.error('[Batch API - Documents] Batch delete failed:', error)
+     return NextResponse.json(
+-      { 
++      {
+         error: 'Batch delete failed',
+         message: error instanceof Error ? error.message : 'Unknown error'
+       },
+       { status: 500 }
+     )
+-  } finally {
+-    client.release()
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/app/api/postgres-offline/documents/route.ts b/app/api/postgres-offline/documents/route.ts
+index 4fb58c6..5f435c2 100644
+--- a/app/api/postgres-offline/documents/route.ts
++++ b/app/api/postgres-offline/documents/route.ts
+@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
+     
+     // Process document save request
+     
+-    if (!noteId || !panelId || !content || version === undefined) {
++    if (!noteId || !panelId || content === undefined || version === undefined) {
+       return NextResponse.json(
+         { error: 'Missing required fields: noteId, panelId, content, version' },
+         { status: 400 }
+@@ -45,11 +45,16 @@ export async function POST(request: NextRequest) {
+     
+     const normalizedPanelId = normalizePanelId(noteKey, panelId)
+     // Normalized panelId
+-    
+-    const baseVersion = typeof body.baseVersion === 'number' ? body.baseVersion : undefined
+-    if (baseVersion === undefined) {
+-      throw new Error('baseVersion required')
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    const baseVersionRaw = body.baseVersion
++    if (typeof baseVersionRaw !== 'number' || Number.isNaN(baseVersionRaw)) {
++      throw new Error('baseVersion must be a number')
+     }
++    const baseVersion = baseVersionRaw
+ 
+     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+       const latest = await client.query(
+@@ -103,7 +108,7 @@ export async function POST(request: NextRequest) {
+     const message = error instanceof Error ? error.message : 'Failed to save document'
+     const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
+       ? 409
+-      : message.includes('required')
++      : message.includes('required') || message.includes('must be a number')
+       ? 400
+       : 500
+     return NextResponse.json(
+diff --git a/app/api/postgres-offline/queue/flush/route.ts b/app/api/postgres-offline/queue/flush/route.ts
+index f0292d5..205d915 100644
+--- a/app/api/postgres-offline/queue/flush/route.ts
++++ b/app/api/postgres-offline/queue/flush/route.ts
+@@ -1,9 +1,28 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { serverPool } from '@/lib/db/pool'
+ import { WorkspaceStore } from '@/lib/workspace/workspace-store'
++import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+ 
+ const pool = serverPool
+ 
++const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
++const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
++const isUuid = (s: string): boolean => /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(s)
++const normalizePanelId = (noteId: string, panelId: string): string => (isUuid(panelId) ? panelId : uuidv5(`${noteId}:${panelId}`, uuidv5.DNS))
++const toVersionNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) ? value : null)
++
++type DirectResult = {
++  noteId: string
++  panelId: string
++  status: 'success' | 'skipped' | 'conflict' | 'error'
++  version?: number
++  reason?: string
++  error?: string
++  latestVersion?: number
++  baseVersion?: number
++  requestedVersion?: number
++}
++
+ // POST /api/postgres-offline/queue/flush
+ // Dual-mode:
+ //  - If body contains operations[] and drain_db !== true: process provided operations (backward compatible)
+@@ -24,7 +43,7 @@ export async function POST(request: NextRequest) {
+   if (!drainDb && hasOps) {
+     try {
+       const { operations = [] } = body
+-      const results: any[] = []
++      const results: DirectResult[] = []
+       const errors: any[] = []
+ 
+       for (const op of operations) {
+@@ -32,13 +51,19 @@ export async function POST(request: NextRequest) {
+           const { noteId, panelId, operation, data } = op
+           if (!noteId || !panelId) throw new Error('noteId and panelId are required')
+ 
++          const noteKey = coerceEntityId(noteId)
++          const panelKey = normalizePanelId(noteKey, panelId)
++
+           switch (operation) {
+-            case 'update': {
++            case 'update':
++            case 'create': {
+               const contentJson = data?.content ?? {}
+-              const content = JSON.stringify(contentJson)
+-              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+-              if (baseVersion === null) {
+-                throw new Error('baseVersion required for queue operation')
++              const contentString = JSON.stringify(contentJson)
++              const baseVersion = toVersionNumber(data?.baseVersion)
++              const version = toVersionNumber(data?.version)
++
++              if (baseVersion === null || version === null) {
++                throw new Error('baseVersion and version must be numbers')
+               }
+ 
+               const latest = await pool.query(
+@@ -47,124 +72,93 @@ export async function POST(request: NextRequest) {
+                   WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+                   ORDER BY version DESC
+                   LIMIT 1`,
+-                [noteId, panelId, workspaceId]
++                [noteKey, panelKey, workspaceId]
+               )
+ 
++              const latestRow = latest.rows[0]
++              const latestVersion: number = latestRow?.version ?? 0
++
+               if (
+-                latest.rows[0] &&
+-                JSON.stringify(latest.rows[0].content) === content
++                latestRow &&
++                JSON.stringify(latestRow.content) === contentString &&
++                version === latestVersion
+               ) {
+-                results.push({ ...op, status: 'skipped', reason: 'no-change' })
++                results.push({ noteId, panelId, status: 'skipped', reason: 'no-change', version: latestVersion })
+                 break
+               }
+ 
+-              if (
+-                latest.rows[0] &&
+-                baseVersion !== null &&
+-                latest.rows[0].version > baseVersion
+-              ) {
++              if (latestVersion > baseVersion) {
+                 results.push({
+-                  ...op,
+-                  status: 'skipped',
+-                  reason: 'stale_remote_newer',
++                  noteId,
++                  panelId,
++                  status: 'conflict',
++                  error: `stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`,
++                  latestVersion,
++                  baseVersion,
++                  requestedVersion: version
+                 })
+                 break
+               }
+ 
+-              const nextVersionRow = await pool.query(
+-                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-                   FROM document_saves
+-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-                [noteId, panelId, workspaceId]
+-              )
+-              const nextVersion = nextVersionRow.rows[0].next_version
+-
+-              await pool.query(
+-                `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
+-                 VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-                [noteId, panelId, content, nextVersion, workspaceId]
+-              )
+-              results.push({ ...op, status: 'success', version: nextVersion })
+-              break
+-            }
+-            case 'create': {
+-              const contentJson = data?.content ?? {}
+-              const content = JSON.stringify(contentJson)
+-              const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+-              if (baseVersion === null) {
+-                throw new Error('baseVersion required for queue operation')
+-              }
+-
+-              const latest = await pool.query(
+-                `SELECT content, version
+-                   FROM document_saves
+-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+-                  ORDER BY version DESC
+-                  LIMIT 1`,
+-                [noteId, panelId, workspaceId]
+-              )
+-
+-              if (
+-                latest.rows[0] &&
+-                JSON.stringify(latest.rows[0].content) === content
+-              ) {
+-                results.push({ ...op, status: 'skipped', reason: 'no-change' })
+-                break
+-              }
+-
+-              if (
+-                latest.rows[0] &&
+-                baseVersion !== null &&
+-                latest.rows[0].version > baseVersion
+-              ) {
++              if (version <= latestVersion) {
+                 results.push({
+-                  ...op,
+-                  status: 'skipped',
+-                  reason: 'stale_remote_newer',
++                  noteId,
++                  panelId,
++                  status: 'conflict',
++                  error: `non-incrementing version ${version} (latest ${latestVersion})`,
++                  latestVersion,
++                  baseVersion,
++                  requestedVersion: version
+                 })
+                 break
+               }
+ 
+-              const nextVersionRow = await pool.query(
+-                `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-                   FROM document_saves
+-                  WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-                [noteId, panelId, workspaceId]
+-              )
+-              const nextVersion = nextVersionRow.rows[0].next_version
++              if (version !== baseVersion + 1) {
++                console.warn(`[queue/flush] Non-sequential version (direct op): base=${baseVersion}, version=${version}`)
++              }
+ 
+               await pool.query(
+                 `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
+                  VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-                [noteId, panelId, content, nextVersion, workspaceId]
++                [noteKey, panelKey, contentString, version, workspaceId]
+               )
+-              results.push({ ...op, status: 'success', version: nextVersion })
++              results.push({ noteId, panelId, status: 'success', version })
+               break
+             }
+             case 'delete': {
+               await pool.query(
+                 `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-                [noteId, panelId, workspaceId]
++                [noteKey, panelKey, workspaceId]
+               )
+-              results.push({ ...op, status: 'success' })
++              results.push({ noteId, panelId, status: 'success' })
+               break
+             }
+             default:
+               errors.push({ ...op, error: `Unknown operation: ${operation}` })
+           }
+         } catch (error: any) {
+-          console.error(`[Queue Flush] Error processing operation:`, error)
++          console.error('[Queue Flush] Error processing operation:', error)
+           errors.push({ ...op, error: error?.message || String(error) })
+         }
+       }
+ 
+-      return NextResponse.json({
+-        processed: results.length,
+-        succeeded: results.length,
+-        failed: errors.length,
+-        results,
+-        errors
+-      })
++      const conflicts = results.filter(r => r.status === 'conflict').length
++      const failed = errors.length + results.filter(r => r.status === 'error').length
++      const processed = results.filter(r => r.status === 'success').length
++      const skipped = results.filter(r => r.status === 'skipped').length
++      const status = failed > 0 ? 500 : conflicts > 0 ? 409 : 200
++
++      return NextResponse.json(
++        {
++          processed,
++          skipped,
++          conflicts,
++          failed,
++          results,
++          errors
++        },
++        { status }
++      )
+     } catch (error) {
+       console.error('[POST /api/postgres-offline/queue/flush] Error:', error)
+       return NextResponse.json({ error: 'Failed to flush queue' }, { status: 500 })
+@@ -241,21 +235,26 @@ export async function POST(request: NextRequest) {
+       }
+     }
+ 
++    // Delete successfully processed items
+     if (processedIds.length > 0) {
+-      await client.query(`DELETE FROM offline_queue WHERE id = ANY($1::uuid[]) AND status = 'processing'`, [processedIds])
++      await client.query(
++        `DELETE FROM offline_queue WHERE status = 'processing' AND id = ANY($1::uuid[])`,
++        [processedIds]
++      )
+     }
++
+     await client.query('COMMIT')
+-    return NextResponse.json({ success: true, data: { processed, failed, expired }, errors })
+   } catch (error) {
+     await client.query('ROLLBACK')
+-    console.error('[queue/flush] error:', error)
+-    return NextResponse.json({ error: 'Failed to drain queue' }, { status: 500 })
+-  } finally {
+     client.release()
++    console.error('[queue/flush] Queue flush failed:', error)
++    return NextResponse.json({ error: 'Failed to flush queue' }, { status: 500 })
+   }
++
++  client.release()
++  return NextResponse.json({ processed, failed, expired, errors })
+ }
+ 
+-// Helpers
+ function getNoteId(data: any): string | null {
+   return data?.noteId || data?.note_id || null
+ }
+@@ -271,19 +270,28 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
+   // Whitelist and route per table with parameterized SQL only
+   switch (table) {
+     case 'document_saves': {
+-      const noteId = getNoteId(data)
+-      const panelId = getPanelId(data)
+-      if (!noteId || !panelId) throw new Error('document_saves requires noteId and panelId in data')
++      const rawNoteId = getNoteId(data) ?? entity_id
++      const rawPanelId = getPanelId(data)
++      if (!rawNoteId || !rawPanelId) {
++        throw new Error('document_saves requires noteId and panelId in data')
++      }
++
++      const noteId = coerceEntityId(rawNoteId)
++      const panelId = normalizePanelId(noteId, rawPanelId)
++
+       if (op === 'delete') {
+         await client.query(`DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`, [noteId, panelId, workspaceId])
+         return
+       }
+ 
+-      const contentJson = data?.content ?? {}
+-      const content = JSON.stringify(contentJson)
+-      const baseVersion = typeof data?.baseVersion === 'number' ? data.baseVersion : null
+-      if (baseVersion === null) {
+-        throw new Error('baseVersion required for queue operation')
++      const rawContent = data?.content ?? {}
++      const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
++      const contentString = JSON.stringify(contentJson)
++      const baseVersion = toVersionNumber(data?.baseVersion)
++      const version = toVersionNumber(data?.version)
++
++      if (baseVersion === null || version === null) {
++        throw new Error('baseVersion and version must be numbers')
+       }
+ 
+       const latest = await client.query(
+@@ -295,37 +303,33 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
+         [noteId, panelId, workspaceId]
+       )
+ 
++      const latestRow = latest.rows[0]
++      const latestVersion: number = latestRow?.version ?? 0
++
+       if (
+-        latest.rows[0] &&
+-        JSON.stringify(latest.rows[0].content) === content
++        latestRow &&
++        JSON.stringify(latestRow.content) === contentString &&
++        version === latestVersion
+       ) {
+         return
+       }
+ 
+-      if (
+-        latest.rows[0] &&
+-        baseVersion !== null &&
+-        latest.rows[0].version > baseVersion
+-      ) {
+-        return
++      if (latestVersion > baseVersion) {
++        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
+       }
+ 
+-      const nextVersionRow = await client.query(
+-        `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-           FROM document_saves
+-          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-        [noteId, panelId, workspaceId]
+-      )
+-      const nextVersion = nextVersionRow.rows[0].next_version
++      if (version <= latestVersion) {
++        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
++      }
+ 
+-      const payloadVersion = typeof data?.version === 'number' ? data.version : null
+-      if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
+-        throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
++      if (version !== baseVersion + 1) {
++        console.warn(`[queue/flush] Non-sequential version (queue op): base=${baseVersion}, version=${version}`)
+       }
++
+       await client.query(
+         `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
+          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-        [noteId, panelId, content, nextVersion, workspaceId]
++        [noteId, panelId, contentString, version, workspaceId]
+       )
+       return
+     }
+@@ -359,56 +363,5 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
+       )
+       return
+     }
+-
+-    case 'notes': {
+-      if (op === 'delete') {
+-        await client.query(`DELETE FROM notes WHERE id = $1`, [entity_id])
+-        return
+-      }
+-      await client.query(
+-        `INSERT INTO notes (id, title, metadata, created_at, updated_at)
+-         VALUES ($1, COALESCE($2, 'Untitled'), COALESCE($3::jsonb, '{}'::jsonb), NOW(), NOW())
+-         ON CONFLICT (id) DO UPDATE SET 
+-           title = COALESCE(EXCLUDED.title, notes.title),
+-           metadata = COALESCE(EXCLUDED.metadata, notes.metadata),
+-           updated_at = NOW()`,
+-        [
+-          entity_id,
+-          data?.title || null,
+-          data?.metadata ? JSON.stringify(data.metadata) : null
+-        ]
+-      )
+-      return
+-    }
+-
+-    case 'panels': {
+-      if (op === 'delete') {
+-        await client.query(`DELETE FROM panels WHERE id = $1`, [entity_id])
+-        return
+-      }
+-      await client.query(
+-        `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, last_accessed)
+-         VALUES ($1, $2, $3, COALESCE($4::jsonb, '{"x":0,"y":0}'::jsonb), COALESCE($5::jsonb, '{"width":400,"height":300}'::jsonb), COALESCE($6, 'active'), NOW())
+-         ON CONFLICT (id) DO UPDATE SET 
+-           note_id = EXCLUDED.note_id,
+-           panel_id = EXCLUDED.panel_id,
+-           position = COALESCE(EXCLUDED.position, panels.position),
+-           dimensions = COALESCE(EXCLUDED.dimensions, panels.dimensions),
+-           state = COALESCE(EXCLUDED.state, panels.state),
+-           last_accessed = NOW()`,
+-        [
+-          entity_id,
+-          data?.noteId || data?.note_id,
+-          data?.panelId || data?.panel_id,
+-          data?.position ? JSON.stringify(data.position) : null,
+-          data?.dimensions ? JSON.stringify(data.dimensions) : null,
+-          data?.state || null
+-        ]
+-      )
+-      return
+-    }
+-
+-    default:
+-      throw new Error(`Unsupported table: ${table}`)
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/electron/ipc/postgres-offline-handlers.ts b/electron/ipc/postgres-offline-handlers.ts
+index 6c840f2..f2c83fe 100644
+--- a/electron/ipc/postgres-offline-handlers.ts
++++ b/electron/ipc/postgres-offline-handlers.ts
+@@ -1,16 +1,21 @@
+ const { ipcMain } = require('electron')
+ const { Pool } = require('pg')
+-const { v5: uuidv5 } = require('uuid')
++const { v5: uuidv5, validate: validateUuid } = require('uuid')
+ const { WorkspaceStore } = require('../../lib/workspace/workspace-store')
+ 
++const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a'
++const UUID_REGEX = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
++const coerceEntityId = (id: string): string => (validateUuid(id) ? id : uuidv5(id, ID_NAMESPACE))
++
+ // Normalize panelId: accept human-readable IDs (e.g., "main") by mapping to a
+ // deterministic UUID per note using UUID v5 in the DNS namespace.
+ const normalizePanelId = (noteId: string, panelId: string): string => {
+-  const isUuid = /^(?:[0-9a-fA-F]{8}-){3}[0-9a-fA-F]{12}$/
+-  if (isUuid.test(panelId)) return panelId
++  if (UUID_REGEX.test(panelId)) return panelId
+   return uuidv5(`${noteId}:${panelId}`, uuidv5.DNS)
+ }
+ 
++const toVersionNumber = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) ? value : null)
++
+ // Get database URL based on environment
+ const getDatabaseUrl = () => {
+   // Try remote first, fallback to local
+@@ -241,11 +246,20 @@ const handlers = {
+   'postgres-offline:saveDocument': async (event: any, noteId: string, panelId: string, content: any, version: number, baseVersion: number) => {
+     const pool = getPool()
+     try {
++      if (typeof version !== 'number' || Number.isNaN(version)) {
++        return { success: false, error: 'version must be a number' }
++      }
++
++      if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
++        return { success: false, error: 'baseVersion must be a number' }
++      }
++
+       const contentJson = typeof content === 'string' 
+         ? { html: content } 
+         : content
+       
+-      const normalizedPanelId = normalizePanelId(noteId, panelId)
++      const noteKey = coerceEntityId(noteId)
++      const normalizedPanelId = normalizePanelId(noteKey, panelId)
+ 
+       let workspaceId
+       try {
+@@ -261,7 +275,7 @@ const handlers = {
+           WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+           ORDER BY version DESC
+           LIMIT 1`,
+-        [noteId, normalizedPanelId, workspaceId]
++        [noteKey, normalizedPanelId, workspaceId]
+       )
+ 
+       const latestVersion: number = latest.rows[0]?.version ?? 0
+@@ -286,7 +300,7 @@ const handlers = {
+         `INSERT INTO document_saves 
+          (note_id, panel_id, content, version, workspace_id, created_at)
+          VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-        [noteId, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
++        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+       )
+       
+       console.log(`[postgres-offline:saveDocument] Saved document for note=${noteId}, panel=${panelId}, version=${version}`)
+@@ -300,7 +314,8 @@ const handlers = {
+   'postgres-offline:loadDocument': async (event: any, noteId: string, panelId: string) => {
+     const pool = getPool()
+     try {
+-      const normalizedPanelId = normalizePanelId(noteId, panelId)
++      const noteKey = coerceEntityId(noteId)
++      const normalizedPanelId = normalizePanelId(noteKey, panelId)
+ 
+       let workspaceId
+       try {
+@@ -317,7 +332,7 @@ const handlers = {
+          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+          ORDER BY version DESC
+          LIMIT 1`,
+-        [noteId, normalizedPanelId, workspaceId]
++        [noteKey, normalizedPanelId, workspaceId]
+       )
+       
+       if (result.rows.length === 0) {
+@@ -593,54 +608,62 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
+       
+     case 'update':
+       if (table_name === 'document_saves') {
+-        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
+-        const contentJson = data?.content ?? {}
++        const rawNoteId = data?.noteId || data?.note_id || entity_id
++        const rawPanelId = data?.panelId || data?.panel_id
++        if (!rawNoteId || !rawPanelId) {
++          throw new Error('document_saves queue update requires noteId and panelId')
++        }
++
++        const noteId = coerceEntityId(rawNoteId)
++        const normalizedPanelId = normalizePanelId(noteId, rawPanelId)
++        const rawContent = data?.content ?? {}
++        const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
+         const content = JSON.stringify(contentJson)
+-        const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++        const baseVersion = toVersionNumber(data?.baseVersion)
++        const version = toVersionNumber(data?.version)
+         const effectiveWorkspaceId = data.workspaceId || workspaceId
+ 
++        if (baseVersion === null || version === null) {
++          throw new Error('baseVersion and version must be numbers')
++        }
++
+         const latest = await client.query(
+           `SELECT content, version
+              FROM document_saves
+             WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+             ORDER BY version DESC
+             LIMIT 1`,
+-          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
++          [noteId, normalizedPanelId, effectiveWorkspaceId]
+         )
+ 
++        const latestRow = latest.rows[0]
++        const latestVersion: number = latestRow?.version ?? 0
++
+         if (
+-          latest.rows[0] &&
+-          JSON.stringify(latest.rows[0].content) === content
++          latestRow &&
++          JSON.stringify(latestRow.content) === content &&
++          version === latestVersion
+         ) {
+           break
+         }
+ 
+-        if (
+-          latest.rows[0] &&
+-          baseVersion !== null &&
+-          latest.rows[0].version > baseVersion
+-        ) {
+-          break
++        if (latestVersion > baseVersion) {
++          throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
+         }
+ 
+-        const nextVersionRow = await client.query(
+-          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-             FROM document_saves
+-            WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-          [data.noteId, normalizedPanelId, effectiveWorkspaceId]
+-        )
+-        const nextVersion = nextVersionRow.rows[0].next_version
++        if (version <= latestVersion) {
++          throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
++        }
+ 
+-        const payloadVersion = typeof data?.version === 'number' ? data.version : null
+-        if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
+-          throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
++        if (version !== baseVersion + 1) {
++          console.warn(`[postgres-offline:queue] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
+         }
+ 
+         await client.query(
+           `INSERT INTO document_saves 
+            (note_id, panel_id, content, version, workspace_id, created_at)
+            VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-          [data.noteId, normalizedPanelId, content, nextVersion, effectiveWorkspaceId]
++          [noteId, normalizedPanelId, content, version, effectiveWorkspaceId]
+         )
+       }
+       // Add other update operations as needed
+@@ -649,10 +672,17 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
+     case 'delete':
+       // Handle delete operations
+       if (table_name === 'document_saves') {
+-        const normalizedPanelId = normalizePanelId(data.noteId, data.panelId)
++        const rawNoteId = data?.noteId || data?.note_id || entity_id
++        const rawPanelId = data?.panelId || data?.panel_id
++        if (!rawNoteId || !rawPanelId) {
++          throw new Error('document_saves queue delete requires noteId and panelId')
++        }
++
++        const noteId = coerceEntityId(rawNoteId)
++        const normalizedPanelId = normalizePanelId(noteId, rawPanelId)
+         await client.query(
+           `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-          [data.noteId, normalizedPanelId, workspaceId]
++          [noteId, normalizedPanelId, workspaceId]
+         )
+         break
+       }
+diff --git a/lib/adapters/postgres-offline-adapter.ts b/lib/adapters/postgres-offline-adapter.ts
+index 4538612..791a33f 100644
+--- a/lib/adapters/postgres-offline-adapter.ts
++++ b/lib/adapters/postgres-offline-adapter.ts
+@@ -451,9 +451,23 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+         
+       case 'update':
+         if (table_name === 'document_saves') {
+-          const contentJson = data?.content ?? {}
+-          const content = JSON.stringify(contentJson)
+-          const baseVersion = typeof data?.version === 'number' ? data.version : data?.version ?? null
++          const rawNoteId = data?.noteId ?? data?.note_id ?? entity_id
++          const rawPanelId = data?.panelId ?? data?.panel_id
++          if (!rawNoteId || !rawPanelId) {
++            throw new Error('document_saves requires noteId and panelId in data')
++          }
++
++          const noteId = this.coerceEntityId(rawNoteId)
++          const panelId = this.normalizePanelId(noteId, rawPanelId)
++          const rawContent = data?.content ?? {}
++          const contentJson = typeof rawContent === 'string' ? { html: rawContent } : rawContent
++          const contentString = JSON.stringify(contentJson)
++          const baseVersion = typeof data?.baseVersion === 'number' && Number.isInteger(data.baseVersion) ? data.baseVersion : null
++          const version = typeof data?.version === 'number' && Number.isInteger(data.version) ? data.version : null
++
++          if (baseVersion === null || version === null) {
++            throw new Error('baseVersion and version must be numbers')
++          }
+ 
+           const latest = await client.query(
+             `SELECT content, version
+@@ -461,42 +475,37 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+               WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+               ORDER BY version DESC
+               LIMIT 1`,
+-            [data.noteId, data.panelId, workspaceId]
++            [noteId, panelId, workspaceId]
+           )
+ 
++          const latestRow = latest.rows[0]
++          const latestVersion: number = latestRow?.version ?? 0
++
+           if (
+-            latest.rows[0] &&
+-            JSON.stringify(latest.rows[0].content) === content
++            latestRow &&
++            JSON.stringify(latestRow.content) === contentString &&
++            version === latestVersion
+           ) {
+             break
+           }
+ 
+-          if (
+-            latest.rows[0] &&
+-            baseVersion !== null &&
+-            latest.rows[0].version > baseVersion
+-          ) {
+-            break
++          if (latestVersion > baseVersion) {
++            throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${latestVersion}`)
+           }
+ 
+-          const nextVersionRow = await client.query(
+-            `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+-               FROM document_saves
+-              WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-            [data.noteId, data.panelId, workspaceId]
+-          )
+-          const nextVersion = nextVersionRow.rows[0].next_version
++          if (version <= latestVersion) {
++            throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
++          }
+ 
+-          const payloadVersion = typeof data?.version === 'number' ? data.version : null
+-          if (payloadVersion !== null && payloadVersion < nextVersion - 1) {
+-            throw new Error(`stale queue payload: incoming version ${payloadVersion} behind current ${nextVersion - 1}`)
++          if (version !== baseVersion + 1) {
++            console.warn(`[PostgresOfflineAdapter] Non-sequential version detected: baseVersion=${baseVersion}, version=${version}`)
+           }
+ 
+           await client.query(
+             `INSERT INTO document_saves 
+              (note_id, panel_id, content, version, workspace_id, created_at)
+              VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
+-            [data.noteId, data.panelId, content, nextVersion, workspaceId]
++            [noteId, panelId, contentString, version, workspaceId]
+           )
+         }
+         // Add other update operations as needed
+@@ -504,9 +513,18 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements
+         
+       case 'delete':
+         if (table_name === 'document_saves') {
++          const rawNoteId = data?.noteId ?? data?.note_id ?? entity_id
++          const rawPanelId = data?.panelId ?? data?.panel_id
++          if (!rawNoteId || !rawPanelId) {
++            throw new Error('document_saves delete requires noteId and panelId')
++          }
++
++          const noteId = this.coerceEntityId(rawNoteId)
++          const panelId = this.normalizePanelId(noteId, rawPanelId)
++
+           await client.query(
+             `DELETE FROM document_saves WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3`,
+-            [data.noteId || entity_id, data.panelId || data.panel_id, workspaceId]
++            [noteId, panelId, workspaceId]
+           )
+         }
+         // Handle other delete operations as needed
+diff --git a/lib/adapters/test-adapter.ts b/lib/adapters/test-adapter.ts
+index a9d1adc..d5d6579 100644
+--- a/lib/adapters/test-adapter.ts
++++ b/lib/adapters/test-adapter.ts
+@@ -84,6 +84,40 @@ export class TestAdapter implements PlainCrudAdapter {
+   
+   async saveDocument(noteId: string, panelId: string, content: ProseMirrorJSON | HtmlString, version: number, baseVersion: number): Promise<void> {
+     const key = `${noteId}-${panelId}`
++    const current = this.documents.get(key)
++
++    if (typeof version !== 'number' || Number.isNaN(version)) {
++      throw new Error('version must be a number')
++    }
++
++    if (typeof baseVersion !== 'number' || Number.isNaN(baseVersion)) {
++      throw new Error('baseVersion must be a number')
++    }
++
++    const incomingSnapshot = typeof content === 'string' ? content : JSON.stringify(content)
++
++    if (current) {
++      const prevSnapshot = typeof current.content === 'string' ? current.content : JSON.stringify(current.content)
++
++      if (prevSnapshot === incomingSnapshot && current.version === version) {
++        return
++      }
++
++      if (current.version > baseVersion) {
++        throw new Error(`stale document save: baseVersion ${baseVersion} behind latest ${current.version}`)
++      }
++
++      if (version <= current.version) {
++        throw new Error(`non-incrementing version ${version} (latest ${current.version})`)
++      }
++    } else if (baseVersion !== 0) {
++      throw new Error(`stale document save: baseVersion ${baseVersion} behind latest 0`)
++    }
++
++    if (version !== baseVersion + 1) {
++      throw new Error(`non-sequential version ${version} (expected ${baseVersion + 1})`)
++    }
++
+     this.documents.set(key, { content, version })
+   }
+   
+diff --git a/lib/providers/plain-offline-provider.ts b/lib/providers/plain-offline-provider.ts
+index 094a9f1..226d97c 100644
+--- a/lib/providers/plain-offline-provider.ts
++++ b/lib/providers/plain-offline-provider.ts
+@@ -342,7 +342,12 @@ export class PlainOfflineProvider extends EventEmitter {
+         } catch (error) {
+           console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
+           const message = error instanceof Error ? error.message : ''
+-          if (message.includes('stale document save') || message.includes('non-incrementing version') || message.includes('baseVersion required')) {
++          if (
++            message.includes('stale document save') ||
++            message.includes('non-incrementing version') ||
++            message.includes('must be a number') ||
++            message.includes('baseVersion')
++          ) {
+             throw error
+           }
+           // Queue for offline sync
+diff --git a/scripts/test-annotation-features.js b/scripts/test-annotation-features.js
+index c1352cd..c6a4a4a 100755
+--- a/scripts/test-annotation-features.js
++++ b/scripts/test-annotation-features.js
+@@ -168,12 +168,16 @@ async function runTests() {
+       {
+         noteId: 'test-note-1',
+         panelId: 'test-panel-1',
+-        content: '<p>Batch document 1</p>'
++        content: '<p>Batch document 1</p>',
++        version: 1,
++        baseVersion: 0
+       },
+       {
+         noteId: 'test-note-2',
+         panelId: 'test-panel-2',
+-        content: '<p>Batch document 2</p>'
++        content: '<p>Batch document 2</p>',
++        version: 1,
++        baseVersion: 0
+       }
+     ]
+   };
