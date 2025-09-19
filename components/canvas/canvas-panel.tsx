@@ -10,7 +10,7 @@ import type * as Y from 'yjs'
 import { EditorToolbar } from "./editor-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
-import type { PlainOfflineProvider } from "@/lib/providers/plain-offline-provider"
+import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { useAutoScroll } from "./use-auto-scroll"
@@ -334,45 +334,39 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [noteId]) // Re-run when noteId changes (when switching notes)
 
-  // Option A fallback: once the plain provider is ready, load the actual
-  // document for this panel and enforce edit mode if truly empty. This
-  // covers async timing where initial state may evaluate before content loads.
-  useEffect(() => {
-    if (!isPlainMode) return
-    if (panelId !== 'main') return
-    if (!plainProvider || !currentNoteId) return
-    if (postLoadEditApplied.current) return
+  const isContentEmptyValue = (value: ProseMirrorJSON | string | null) => {
+    if (!value) return true
+    if (typeof value === 'string') {
+      const stripped = value.replace(/<[^>]*>/g, '').trim()
+      return stripped.length === 0 || value === '<p></p>'
+    }
+    if (typeof value === 'object' && Array.isArray((value as any).content)) {
+      return (value as any).content.length === 0
+    }
+    return false
+  }
 
-    postLoadEditApplied.current = true
-    ;(async () => {
-      try {
-        const loaded = await plainProvider.loadDocument(currentNoteId, panelId)
-        let isEmpty = false
-        if (!loaded) {
-          isEmpty = true
-        } else if (typeof loaded === 'string') {
-          const stripped = loaded.replace(/<[^>]*>/g, '').trim()
-          isEmpty = stripped.length === 0 || loaded === '<p></p>'
-        } else if (typeof loaded === 'object') {
-          // ProseMirror JSON case
-          const content = (loaded as any).content
-          isEmpty = !content || content.length === 0
-        }
+  const handleEditorContentLoaded = useCallback(
+    ({ content: loadedContent }: { content: ProseMirrorJSON | string | null; version: number }) => {
+      if (!isPlainMode) return
+      if (panelId !== 'main') return
+      if (postLoadEditApplied.current) return
 
-        if (isEmpty) {
-          setIsEditing(true)
-          setTimeout(() => {
-            if (editorRef.current) {
-              editorRef.current.setEditable(true as any)
-              editorRef.current.focus()
-            }
-          }, 120)
-        }
-      } catch {
-        // Non-fatal; leave current state
+      const empty = isContentEmptyValue(loadedContent)
+      postLoadEditApplied.current = true
+
+      if (empty) {
+        setIsEditing(true)
+        setTimeout(() => {
+          if (editorRef.current && isLayerInteractive) {
+            editorRef.current.setEditable(true as any)
+            editorRef.current.focus()
+          }
+        }, 120)
       }
-    })()
-  }, [isPlainMode, panelId, plainProvider, currentNoteId])
+    },
+    [isPlainMode, panelId, isLayerInteractive]
+  )
   
   // Update edit mode when branch content changes (Option A only)
   useEffect(() => {
@@ -1202,6 +1196,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     onSelectionChange={handleSelectionChange}
                     placeholder={`Start writing your ${currentBranch.type || 'note'}...`}
                     provider={plainProvider}
+                    onContentLoaded={handleEditorContentLoaded}
                   />
                 ) : (
                   <div style={{

@@ -129,6 +129,8 @@ export interface PlainOfflineProviderOptions {
  * Implements all 10 critical fixes from the Yjs implementation
  */
 export class PlainOfflineProvider extends EventEmitter {
+  public readonly isEmptyContent = this._isEmptyContent.bind(this)
+
   // Fix #2 & #5: Composite key storage
   private documents = new Map<string, ProseMirrorJSON | HtmlString>()
   private documentVersions = new Map<string, number>()
@@ -328,7 +330,7 @@ export class PlainOfflineProvider extends EventEmitter {
   /**
    * Fix #1: Check for empty content before initialization
    */
-  private isEmptyContent(content: any): boolean {
+  private _isEmptyContent(content: any): boolean {
     if (!content) return true
     if (typeof content === 'string') {
       return content === '<p></p>' || content.trim() === ''
@@ -865,7 +867,9 @@ export class PlainOfflineProvider extends EventEmitter {
    */
   getDocument(noteId: string, panelId: string): ProseMirrorJSON | HtmlString | null {
     const cacheKey = this.getCacheKey(noteId, panelId)
-    return this.documents.get(cacheKey) || null
+    const doc = this.documents.get(cacheKey) || null
+    console.log(`[PlainOfflineProvider] getDocument(${cacheKey}): found=${!!doc}, cacheSize=${this.documents.size}`)
+    return doc
   }
 
   /**
@@ -873,7 +877,9 @@ export class PlainOfflineProvider extends EventEmitter {
    */
   getDocumentVersion(noteId: string, panelId: string): number {
     const cacheKey = this.getCacheKey(noteId, panelId)
-    return this.documentVersions.get(cacheKey) || 0
+    const version = this.documentVersions.get(cacheKey) || 0
+    console.log(`[PlainOfflineProvider] getDocumentVersion(${cacheKey}): version=${version}`)
+    return version
   }
 
   /**

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-19 13:25Z] 1ee66e3: still fixing the workspace scoping 1
 - commit [2025-09-19 11:54Z] 5386d32: still fixing the workspace scoping
 - commit [2025-09-19 03:22Z] 2ec6814: fixing the workspace scoping
 - commit [2025-09-19 00:23Z] 0866e10: almost there
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-18 18:14Z] adff35f: fixing browsers have thier own version of the same file
 - commit [2025-09-18 12:34Z] 2828c62: fix error in the debug lod, modified the claude.md
 - note [2025-09-17 14:49Z]: 
-- commit [2025-09-17 13:32Z] 5d81da1: made the sticky note working
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

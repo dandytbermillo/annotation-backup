@@ -37,12 +37,6 @@ import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
-const AUTOSAVE_DEBUG = ['true', '1', 'on', 'yes'].includes((process.env.NEXT_PUBLIC_DEBUG_AUTOSAVE ?? '').toLowerCase())
-const editorAutosaveDebug = (...args: any[]) => {
-  if (!AUTOSAVE_DEBUG) return
-  console.debug('[PlainAutosave][Editor]', ...args)
-}
-
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
   name: 'annotation',
@@ -152,14 +146,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     
     // Track editable state for read-only guard
     const isEditableRef = useRef(isEditable)
-  const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
-  const skipNextSaveRef = useRef<string | null>(null)
-  const pendingRestoreAttemptedRef = useRef(false)
-
-  // Load content from provider when noteId/panelId changes
-  // SIMPLIFIED APPROACH - match the working example
-  useEffect(() => {
-      pendingRestoreAttemptedRef.current = false
+    const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
+    
+    // Load content from provider when noteId/panelId changes
+    // SIMPLIFIED APPROACH - match the working example
+    useEffect(() => {
       if (!provider || !noteId) {
         // No provider or noteId, skipping load
         setIsContentLoading(false)
@@ -201,7 +192,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setIsContentLoading(false)
       })
     }, [provider, noteId, panelId])
-
+    
     // Check for pending saves in localStorage and restore them
     useEffect(() => {
       if (!provider || !noteId || !panelId) return
@@ -209,27 +200,15 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       const pendingKey = `pending_save_${noteId}_${panelId}`
       const pendingData = localStorage.getItem(pendingKey)
       
-      if (!pendingRestoreAttemptedRef.current && !isContentLoading && pendingData) {
+      if (pendingData) {
         try {
           const { content: pendingContent, timestamp } = JSON.parse(pendingData)
           const age = Date.now() - timestamp
-          pendingRestoreAttemptedRef.current = true
-
-          const existingDoc = provider.getDocument(noteId, panelId)
-          const existingVersion = provider.getDocumentVersion(noteId, panelId)
-          const providerHasContent = (() => {
-            if (!existingDoc) return false
-            if (typeof existingDoc === 'string') {
-              return existingDoc.trim().length > 0 && existingDoc !== '<p></p>'
-            }
-            if (existingDoc.type !== 'doc') return true
-            return Array.isArray(existingDoc.content) && existingDoc.content.length > 0
-          })()
-
+          
           // Only restore if less than 5 minutes old
-          if (age < 5 * 60 * 1000 && !providerHasContent && existingVersion === 0) {
+          if (age < 5 * 60 * 1000) {
             console.log(`[TiptapEditorPlain] Restoring pending save for ${noteId}:${panelId} (age: ${Math.round(age/1000)}s)`)
-
+            
             // Save the pending content to provider
             provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
               .then(() => {
@@ -239,11 +218,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
                 setLoadedContent(pendingContent)
               })
               .catch(err => {
-                if (err?.name === 'PlainDocumentConflictError' || err?.message?.includes?.('stale document save')) {
-                  console.warn('[TiptapEditorPlain] Conflict detected while restoring pending save. Latest content has been reloaded.')
-                } else {
-                  console.error('[TiptapEditorPlain] Failed to restore pending save:', err)
-                }
+                console.error('[TiptapEditorPlain] Failed to restore pending save:', err)
               })
           } else {
             // Too old, discard it
@@ -253,10 +228,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         } catch (e) {
           console.error('[TiptapEditorPlain] Failed to parse pending save:', e)
           localStorage.removeItem(pendingKey)
-          pendingRestoreAttemptedRef.current = true
         }
       }
-    }, [provider, noteId, panelId, isContentLoading])
+    }, [provider, noteId, panelId])
     
     // CRITICAL: Always use undefined as initial content when we have a provider
     // This prevents the editor from being recreated when loading state changes
@@ -410,47 +384,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON()
-        const key = `${noteId}:${panelId}`
+        // Hash current content to detect real changes
         const contentStr = JSON.stringify(json)
-
-        if (AUTOSAVE_DEBUG) {
-          editorAutosaveDebug('onUpdate', {
-            key,
-            skipHash: skipNextSaveRef.current,
-            isContentLoading,
-            contentSize: contentStr.length,
-            timestamp: Date.now()
-          })
-        }
-
-        const skipHash = skipNextSaveRef.current
-        if (skipHash && skipHash === contentStr) {
-          skipNextSaveRef.current = null
-          ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
-          ;(window as any).__lastContentHash.set(key, contentStr)
-          if (AUTOSAVE_DEBUG) {
-            editorAutosaveDebug('skipDueToSkipHash', { key })
-          }
-          return
-        }
-
-        skipNextSaveRef.current = null
-
         ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
+        const key = `${noteId}:${panelId}`
         const prev = (window as any).__lastContentHash.get(key)
-        if (prev === contentStr) {
-          if (AUTOSAVE_DEBUG) {
-            editorAutosaveDebug('skipNoChange', { key })
-          }
-          return
-        }
+        if (prev === contentStr) return
         (window as any).__lastContentHash.set(key, contentStr)
 
         // CRITICAL: Don't save empty content if we're still loading
         if (isContentLoading) {
-          if (AUTOSAVE_DEBUG) {
-            editorAutosaveDebug('skipWhileLoading', { key })
-          }
           // Skip save - still loading content
           return
         }
@@ -480,51 +423,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // Debounce saves to reduce version churn
         ;(window as any).__debouncedSave = (window as any).__debouncedSave || new Map()
         const existing = (window as any).__debouncedSave.get(key)
-        if (existing) {
-          if (AUTOSAVE_DEBUG) {
-            editorAutosaveDebug('debounceCleared', { key })
-          }
-          clearTimeout(existing)
-        }
-        const scheduledAt = Date.now()
+        if (existing) clearTimeout(existing)
         const timer = setTimeout(() => {
-          if (AUTOSAVE_DEBUG) {
-            editorAutosaveDebug('debounceFlush', {
-              key,
-              waitedMs: Date.now() - scheduledAt
-            })
-          }
           if (provider && noteId) {
             // Skip batching for document saves to ensure timely persistence
-            const savePromise = provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
-            if (AUTOSAVE_DEBUG) {
-              savePromise.then(() => {
-                editorAutosaveDebug('saveResolved', { key })
-              })
-            }
-            savePromise.catch(err => {
-              if (AUTOSAVE_DEBUG) {
-                editorAutosaveDebug('saveRejected', {
-                  key,
-                  error: err?.message || err
-                })
-              }
-              if (err?.name === 'PlainDocumentConflictError' || err?.message?.includes?.('stale document save')) {
-                console.warn('[TiptapEditorPlain] Conflict detected while saving. Latest content has been reloaded.')
-              } else {
-                console.error('[TiptapEditorPlain] Failed to save content:', err)
-              }
+            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).catch(err => {
+              console.error('[TiptapEditorPlain] Failed to save content:', err)
             })
           }
           onUpdate?.(json)
         }, 300) // Reduced to 300ms for faster saves
-        if (AUTOSAVE_DEBUG) {
-          editorAutosaveDebug('saveScheduled', {
-            key,
-            delay: 300,
-            timerId: timer
-          })
-        }
         ;(window as any).__debouncedSave.set(key, timer)
       },
       onSelectionUpdate: ({ editor }) => {
@@ -587,66 +495,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // },
       },
     })
-
-    useEffect(() => {
-      if (!provider || !noteId || !panelId || !editor) return
-
-      const key = `${noteId}:${panelId}`
-      const handleRemoteUpdate = (payload: any) => {
-        const { noteId: updatedNoteId, panelId: updatedPanelId, content, reason } = payload || {}
-        if (updatedNoteId !== noteId || updatedPanelId !== panelId) return
-
-        const latestContent = content ?? { type: 'doc', content: [] }
-
-        const debouncedMap = (window as any).__debouncedSave
-        if (debouncedMap?.get?.(key)) {
-          clearTimeout(debouncedMap.get(key))
-          debouncedMap.delete(key)
-        }
-
-        skipNextSaveRef.current = null
-        setLoadedContent(latestContent)
-
-        const preserveMarks = reason === 'conflict'
-        if (typeof latestContent === 'string') {
-          editor.commands.setContent(latestContent, preserveMarks)
-        } else {
-          editor.commands.setContent(latestContent, preserveMarks)
-        }
-
-        try {
-          const currentJson = editor.getJSON()
-          ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
-          const currentHash = JSON.stringify(currentJson)
-          ;(window as any).__lastContentHash.set(key, currentHash)
-          skipNextSaveRef.current = currentHash
-        } catch (err) {
-          console.warn('[TiptapEditorPlain] Failed to update content hash after remote refresh:', err)
-          try {
-            const fallbackHash = typeof latestContent === 'string'
-              ? latestContent
-              : JSON.stringify(latestContent)
-            if (fallbackHash) {
-              ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
-              ;(window as any).__lastContentHash.set(key, fallbackHash)
-              skipNextSaveRef.current = fallbackHash
-            } else {
-              skipNextSaveRef.current = null
-            }
-          } catch (fallbackErr) {
-            console.warn('[TiptapEditorPlain] Unable to build fallback hash after remote refresh:', fallbackErr)
-            skipNextSaveRef.current = null
-          }
-        }
-      }
-
-      provider.on('document:remote-update', handleRemoteUpdate)
-      return () => {
-        provider.off?.('document:remote-update', handleRemoteUpdate)
-        skipNextSaveRef.current = null
-      }
-    }, [provider, noteId, panelId, editor])
-
+    
     // Save content before browser unload or visibility change
     useEffect(() => {
       const saveCurrentContent = async (isSync = false) => {
@@ -680,21 +529,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
               // Clear localStorage backup after successful save
               localStorage.removeItem(pendingKey)
             } catch (err) {
-              if (err?.name === 'PlainDocumentConflictError' || err?.message?.includes?.('stale document save')) {
-                console.warn('[TiptapEditorPlain] Conflict detected during visibility change save. Latest content has been reloaded.')
-              } else {
-                console.error('[TiptapEditorPlain] Failed to save content:', err)
-              }
+              console.error('[TiptapEditorPlain] Failed to save content:', err)
             }
           } else {
             // For beforeunload, fire and forget (browser won't wait)
             provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).then(() => {
               // Clear backup if save succeeds (might not happen if page closes)
               localStorage.removeItem(pendingKey)
-            }).catch(err => {
-              if (err?.name === 'PlainDocumentConflictError' || err?.message?.includes?.('stale document save')) {
-                console.warn('[TiptapEditorPlain] Conflict detected during beforeunload save; pending content remains in localStorage.')
-              }
+            }).catch(() => {
               // Keep localStorage backup if save fails
             })
           }
@@ -763,31 +605,6 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.view.updateState(editor.view.state)
             
             const afterContent = editor.getJSON()
-            try {
-              const afterHash = JSON.stringify(afterContent)
-              const key = `${noteId}:${panelId}`
-              ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
-              ;(window as any).__lastContentHash.set(key, afterHash)
-              skipNextSaveRef.current = afterHash
-            } catch (hashErr) {
-              console.warn('[TiptapEditorPlain] Failed to capture hash after loaded content set:', hashErr)
-              try {
-                const fallbackHash = typeof loadedContent === 'string'
-                  ? loadedContent
-                  : JSON.stringify(loadedContent)
-                if (fallbackHash) {
-                  const key = `${noteId}:${panelId}`
-                  ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
-                  ;(window as any).__lastContentHash.set(key, fallbackHash)
-                  skipNextSaveRef.current = fallbackHash
-                } else {
-                  skipNextSaveRef.current = null
-                }
-              } catch (fallbackErr) {
-                console.warn('[TiptapEditorPlain] Unable to compute fallback hash after loaded content set:', fallbackErr)
-                skipNextSaveRef.current = null
-              }
-            }
             
             debugLog('TiptapEditorPlain', 'CONTENT_SET_IN_EDITOR', {
               noteId,
@@ -1341,11 +1158,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // Save to provider if available
         if (provider && noteId) {
           provider.saveDocument(noteId, panelId, json).catch(error => {
-            if (error?.name === 'PlainDocumentConflictError' || error?.message?.includes?.('stale document save')) {
-              console.warn('[TiptapEditorPlain] Conflict detected while saving annotation. Latest content has been reloaded.')
-            } else {
-              console.error('[TiptapEditorPlain] Failed to save annotation:', error)
-            }
+            console.error('[TiptapEditorPlain] Failed to save annotation:', error)
           })
         }
         

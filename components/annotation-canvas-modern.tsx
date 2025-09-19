@@ -24,6 +24,7 @@ import {
   saveStateToStorage, 
   CANVAS_STORAGE_DEBOUNCE 
 } from "@/lib/canvas/canvas-storage"
+import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 
 interface ModernAnnotationCanvasProps {
@@ -192,12 +193,37 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       return
     }
 
+    const plainProvider = getPlainProvider()
+    let providerVersion = 0
+    let providerHasContent = false
+    if (plainProvider) {
+      try {
+        providerVersion = plainProvider.getDocumentVersion(noteId, 'main')
+        const existing = plainProvider.getDocument(noteId, 'main')
+        providerHasContent = existing ? !plainProvider.isEmptyContent(existing) : false
+      } catch (err) {
+        console.warn('[AnnotationCanvas] Failed to inspect provider cache during snapshot load:', err)
+      }
+    }
+
+    if (plainProvider && providerVersion > 0 && providerHasContent) {
+      console.log('[AnnotationCanvas] Skipping snapshot restore: provider already has fresh content', {
+        providerVersion,
+        savedAt: snapshot.savedAt,
+        items: snapshot.items.length,
+      })
+      setIsStateLoaded(true)
+      return
+    }
+
     console.table([
       {
         Action: 'State Loaded',
         NoteId: noteId,
         Items: snapshot.items.length,
         SavedAt: new Date(snapshot.savedAt).toLocaleTimeString(),
+        ProviderVersion: providerVersion,
+        ProviderHasContent: providerHasContent,
       },
     ])
 
