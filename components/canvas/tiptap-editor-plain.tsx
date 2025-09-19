@@ -127,6 +127,7 @@ interface TiptapEditorPlainProps {
   placeholder?: string
   provider?: PlainOfflineProvider
   onCreateAnnotation?: (type: string, selectedText: string) => { id: string; branchId: string } | null
+  onContentLoaded?: (payload: { content: ProseMirrorJSON | string | null; version: number }) => void
 }
 
 export interface TiptapEditorPlainHandle {
@@ -140,13 +141,14 @@ export interface TiptapEditorPlainHandle {
 }
 
 const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainProps>(
-  ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, placeholder, provider, onCreateAnnotation }, ref) => {
+  ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, placeholder, provider, onCreateAnnotation, onContentLoaded }, ref) => {
     // Fix #3: Track loading state
     const [isContentLoading, setIsContentLoading] = useState(true)
     
     // Track editable state for read-only guard
     const isEditableRef = useRef(isEditable)
     const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
+    const pendingRestoreAttemptedRef = useRef(false)
     
     // Load content from provider when noteId/panelId changes
     // SIMPLIFIED APPROACH - match the working example
@@ -178,59 +180,93 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           metadata: { hasContent: !!loadedDoc, contentType: typeof loadedDoc }
         })
         
-        if (loadedDoc) {
-          // loadDocument returns the content directly (ProseMirrorJSON or HtmlString)
-          setLoadedContent(loadedDoc)
-        } else {
-          // No content found, use empty document
-          setLoadedContent({ type: 'doc', content: [] })
+        const resolvedContent = loadedDoc ?? { type: 'doc', content: [] }
+        setLoadedContent(resolvedContent)
+        if (onContentLoaded) {
+          let version = 0
+          if (provider?.getDocumentVersion) {
+            try {
+              version = provider.getDocumentVersion(noteId, panelId)
+            } catch {}
+          }
+          onContentLoaded({ content: resolvedContent, version })
         }
         setIsContentLoading(false)
       }).catch(error => {
         console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
         setLoadedContent({ type: 'doc', content: [] })
+        onContentLoaded?.({ content: { type: 'doc', content: [] }, version: 0 })
         setIsContentLoading(false)
       })
     }, [provider, noteId, panelId])
     
-    // Check for pending saves in localStorage and restore them
+    // Check for pending saves in localStorage and restore when provider cache is behind
+    const normalizeContent = useMemo(
+      () => (value: any) => {
+        if (!value) return ''
+        if (typeof value === 'string') return value
+        try {
+          return JSON.stringify(value)
+        } catch {
+          return ''
+        }
+      },
+      []
+    )
+
     useEffect(() => {
       if (!provider || !noteId || !panelId) return
-      
+      if (isContentLoading) return
+
       const pendingKey = `pending_save_${noteId}_${panelId}`
       const pendingData = localStorage.getItem(pendingKey)
-      
-      if (pendingData) {
-        try {
-          const { content: pendingContent, timestamp } = JSON.parse(pendingData)
-          const age = Date.now() - timestamp
-          
-          // Only restore if less than 5 minutes old
-          if (age < 5 * 60 * 1000) {
-            console.log(`[TiptapEditorPlain] Restoring pending save for ${noteId}:${panelId} (age: ${Math.round(age/1000)}s)`)
-            
-            // Save the pending content to provider
-            provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
-              .then(() => {
-                console.log('[TiptapEditorPlain] Pending save restored successfully')
-                localStorage.removeItem(pendingKey)
-                // Update loaded content to show the restored data
-                setLoadedContent(pendingContent)
-              })
-              .catch(err => {
-                console.error('[TiptapEditorPlain] Failed to restore pending save:', err)
-              })
-          } else {
-            // Too old, discard it
-            console.log(`[TiptapEditorPlain] Discarding old pending save (age: ${Math.round(age/1000)}s)`)
-            localStorage.removeItem(pendingKey)
-          }
-        } catch (e) {
-          console.error('[TiptapEditorPlain] Failed to parse pending save:', e)
+      if (!pendingData) return
+
+      try {
+        const { content: pendingContent, timestamp, version: pendingVersion = 0 } = JSON.parse(pendingData)
+        const age = Date.now() - timestamp
+        const fiveMinutes = 5 * 60 * 1000
+        if (age >= fiveMinutes) {
           localStorage.removeItem(pendingKey)
+          return
         }
+
+        let providerVersion = 0
+        let existingDoc: any = null
+        try {
+          providerVersion = provider.getDocumentVersion(noteId, panelId)
+          existingDoc = provider.getDocument(noteId, panelId)
+        } catch {}
+
+        const sameContent = normalizeContent(existingDoc) === normalizeContent(pendingContent)
+        if (sameContent || providerVersion >= pendingVersion) {
+          localStorage.removeItem(pendingKey)
+          return
+        }
+
+        console.log('[TiptapEditorPlain] Restoring pending save for stale provider content', {
+          noteId,
+          panelId,
+          pendingVersion,
+          providerVersion,
+        })
+
+        provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
+          .then(() => {
+            localStorage.removeItem(pendingKey)
+            setLoadedContent(pendingContent)
+            if (onContentLoaded) {
+              onContentLoaded({ content: pendingContent, version: Math.max(providerVersion, pendingVersion) })
+            }
+          })
+          .catch(err => {
+            console.error('[TiptapEditorPlain] Failed to restore pending save:', err)
+          })
+      } catch (error) {
+        console.error('[TiptapEditorPlain] Failed to parse pending save:', error)
+        localStorage.removeItem(pendingKey)
       }
-    }, [provider, noteId, panelId])
+    }, [provider, noteId, panelId, isContentLoading, normalizeContent, onContentLoaded])
     
     // CRITICAL: Always use undefined as initial content when we have a provider
     // This prevents the editor from being recreated when loading state changes
@@ -512,11 +548,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           // Always save to localStorage synchronously as backup
           const pendingKey = `pending_save_${noteId}_${panelId}`
           try {
+            let providerVersion = 0
+            try {
+              providerVersion = provider.getDocumentVersion(noteId, panelId)
+            } catch {}
             localStorage.setItem(pendingKey, JSON.stringify({
               content: json,
               timestamp: Date.now(),
               noteId,
-              panelId
+              panelId,
+              version: providerVersion,
             }))
           } catch (e) {
             console.warn('[TiptapEditorPlain] Failed to save to localStorage:', e)
