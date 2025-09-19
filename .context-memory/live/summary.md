@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-19 00:23Z] 0866e10: almost there
 - commit [2025-09-18 22:25Z] 10462fe: working a bit
 - commit [2025-09-18 21:32Z] 25764cf: apply the patch plain-mode-optimistic-concurrency.patch
 - commit [2025-09-18 20:29Z] 0c23f6f: still fixing the issue
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-17 13:32Z] 5d81da1: made the sticky note working
 - commit [2025-09-17 12:25Z] 4a0cb00: zoom in or out is smooth now
 - commit [2025-09-17 12:16Z] d0eb1df: fixed error
-- commit [2025-09-17 04:15Z] 3db66d2: canvas components layering start testing
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
