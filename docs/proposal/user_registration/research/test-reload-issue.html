@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Plain Mode Reload Issue</title>
+</head>
+<body>
+    <h1>Testing Plain Mode Document Reload Issue</h1>
+    
+    <div id="test-status"></div>
+    <div id="test-results"></div>
+    
+    <script>
+        // Test script to verify the reload behavior
+        const status = document.getElementById('test-status');
+        const results = document.getElementById('test-results');
+        
+        async function runTest() {
+            status.innerHTML = '<p>Starting test sequence...</p>';
+            
+            // Test configuration
+            const noteId = 'test-note-' + Date.now();
+            const panelId = 'test-panel';
+            const testContent = {
+                type: 'doc',
+                content: [{
+                    type: 'paragraph',
+                    content: [{
+                        type: 'text',
+                        text: 'Test content saved at ' + new Date().toISOString()
+                    }]
+                }]
+            };
+            
+            try {
+                // Step 1: Save a document
+                status.innerHTML += '<p>1. Saving document...</p>';
+                const saveResponse = await fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: testContent,
+                        version: 1,
+                        baseVersion: 0
+                    })
+                });
+                
+                if (!saveResponse.ok) {
+                    throw new Error('Save failed: ' + await saveResponse.text());
+                }
+                
+                status.innerHTML += '<p>✓ Document saved successfully</p>';
+                
+                // Step 2: Load the document immediately
+                status.innerHTML += '<p>2. Loading document immediately after save...</p>';
+                const load1Response = await fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`);
+                const load1Data = await load1Response.json();
+                
+                status.innerHTML += '<p>✓ First load result:</p>';
+                results.innerHTML = '<pre>' + JSON.stringify(load1Data, null, 2) + '</pre>';
+                
+                // Step 3: Check localStorage
+                status.innerHTML += '<p>3. Checking localStorage for pending saves...</p>';
+                const pendingKey = `pending_save_${noteId}_${panelId}`;
+                const pendingData = localStorage.getItem(pendingKey);
+                
+                if (pendingData) {
+                    status.innerHTML += '<p>⚠️ Found pending save in localStorage:</p>';
+                    results.innerHTML += '<pre>localStorage: ' + pendingData + '</pre>';
+                } else {
+                    status.innerHTML += '<p>✓ No pending save in localStorage</p>';
+                }
+                
+                // Step 4: Simulate what happens on reload
+                status.innerHTML += '<p>4. Simulating page reload scenario...</p>';
+                
+                // Check what the provider would see
+                const cacheKey = `${noteId}-${panelId}`;
+                status.innerHTML += `<p>Cache key: ${cacheKey}</p>`;
+                
+                // Step 5: Save another version
+                const updatedContent = {
+                    type: 'doc',
+                    content: [{
+                        type: 'paragraph',
+                        content: [{
+                            type: 'text',
+                            text: 'UPDATED content at ' + new Date().toISOString()
+                        }]
+                    }]
+                };
+                
+                status.innerHTML += '<p>5. Saving updated content...</p>';
+                const save2Response = await fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: updatedContent,
+                        version: 2,
+                        baseVersion: 1
+                    })
+                });
+                
+                if (!save2Response.ok) {
+                    throw new Error('Second save failed: ' + await save2Response.text());
+                }
+                
+                status.innerHTML += '<p>✓ Updated document saved (version 2)</p>';
+                
+                // Step 6: Load again to see what database returns
+                status.innerHTML += '<p>6. Loading document again...</p>';
+                const load2Response = await fetch(`/api/postgres-offline/documents/${noteId}/${panelId}`);
+                const load2Data = await load2Response.json();
+                
+                status.innerHTML += '<p>✓ Second load result:</p>';
+                results.innerHTML += '<pre>Second load: ' + JSON.stringify(load2Data, null, 2) + '</pre>';
+                
+                // Step 7: Simulate localStorage backup
+                localStorage.setItem(pendingKey, JSON.stringify({
+                    content: testContent, // OLD content
+                    timestamp: Date.now(),
+                    noteId,
+                    panelId
+                }));
+                
+                status.innerHTML += '<p>7. Simulated localStorage backup with OLD content</p>';
+                
+                // Step 8: Check what would be restored
+                const backup = JSON.parse(localStorage.getItem(pendingKey));
+                status.innerHTML += '<p>8. Backup content in localStorage:</p>';
+                results.innerHTML += '<pre>Backup: ' + JSON.stringify(backup.content, null, 2) + '</pre>';
+                
+                status.innerHTML += '<h3>Test Complete!</h3>';
+                status.innerHTML += '<p>To test the actual reload behavior:</p>';
+                status.innerHTML += '<ol><li>Open the app in plain mode</li><li>Edit a document</li><li>Wait for autosave</li><li>Reload the page</li><li>Check if you see old or new content</li></ol>';
+                
+            } catch (error) {
+                status.innerHTML += '<p style="color: red;">Error: ' + error.message + '</p>';
+                console.error(error);
+            }
+        }
+        
+        // Run test on load
+        runTest();
+    </script>
+</body>
+</html>

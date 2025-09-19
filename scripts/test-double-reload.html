@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Double Reload Test</title>
+</head>
+<body>
+    <h1>Testing Double Reload Behavior</h1>
+    <div id="log"></div>
+    
+    <script>
+        const log = (msg) => {
+            const div = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.textContent = `${new Date().toISOString()}: ${msg}`;
+            div.appendChild(entry);
+            console.log(msg);
+        };
+
+        // Simulate the key parts of the tiptap-editor-plain behavior
+        
+        // Check what's in localStorage on load
+        const pendingKey = 'pending_save_test_main';
+        const existingBackup = localStorage.getItem(pendingKey);
+        if (existingBackup) {
+            const data = JSON.parse(existingBackup);
+            log(`Found localStorage backup from ${new Date(data.timestamp).toISOString()}: ${data.content}`);
+        } else {
+            log('No localStorage backup found');
+        }
+
+        // Simulate editing
+        let currentContent = 'Original content ' + Date.now();
+        log(`Initial content: ${currentContent}`);
+
+        // Simulate the beforeunload handler
+        window.addEventListener('beforeunload', () => {
+            log('beforeunload fired - saving to localStorage');
+            localStorage.setItem(pendingKey, JSON.stringify({
+                content: currentContent,
+                timestamp: Date.now()
+            }));
+            
+            // Try async save (browser won't wait)
+            fetch('/api/save', { 
+                method: 'POST', 
+                body: JSON.stringify({ content: currentContent })
+            }).then(() => {
+                log('Async save completed (you probably won\'t see this)');
+                localStorage.removeItem(pendingKey);
+            });
+        });
+
+        // Simulate editing after 2 seconds
+        setTimeout(() => {
+            currentContent = 'Edited content ' + Date.now();
+            log(`Content edited: ${currentContent}`);
+            
+            // Simulate debounced save
+            setTimeout(() => {
+                log('Debounced save would fire now (300ms later)');
+            }, 300);
+        }, 2000);
+
+        // Add reload button
+        const btn = document.createElement('button');
+        btn.textContent = 'Reload Page';
+        btn.onclick = () => location.reload();
+        document.body.appendChild(btn);
+    </script>
+</body>
+</html>
