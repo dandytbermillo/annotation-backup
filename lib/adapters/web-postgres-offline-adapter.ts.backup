@@ -123,23 +123,7 @@ export class WebPostgresOfflineAdapter implements PlainCrudAdapter {
     })
     
     if (!response.ok) {
-      let message = `Failed to save document: ${response.status} ${response.statusText}`
-      let payload: any = null
-      try {
-        payload = await response.json()
-        if (payload && typeof payload.error === 'string') {
-          message = payload.error
-        }
-      } catch (error) {
-        // ignore parse errors; fall back to default message
-      }
-
-      const err = new Error(message)
-      ;(err as any).status = response.status
-      if (payload) {
-        ;(err as any).payload = payload
-      }
-      throw err
+      throw new Error(`Failed to save document: ${response.statusText}`)
     }
   }
   
