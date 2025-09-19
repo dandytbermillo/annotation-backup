@@ -37,6 +37,12 @@ import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
+const AUTOSAVE_DEBUG = ['true', '1', 'on', 'yes'].includes((process.env.NEXT_PUBLIC_DEBUG_AUTOSAVE ?? '').toLowerCase())
+const editorAutosaveDebug = (...args: any[]) => {
+  if (!AUTOSAVE_DEBUG) return
+  console.debug('[PlainAutosave][Editor]', ...args)
+}
+
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
   name: 'annotation',
@@ -146,12 +152,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     
     // Track editable state for read-only guard
     const isEditableRef = useRef(isEditable)
-    const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
-    const skipNextSaveRef = useRef<string | null>(null)
-    
-    // Load content from provider when noteId/panelId changes
-    // SIMPLIFIED APPROACH - match the working example
-    useEffect(() => {
+  const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
+  const skipNextSaveRef = useRef<string | null>(null)
+  const pendingRestoreAttemptedRef = useRef(false)
+
+  // Load content from provider when noteId/panelId changes
+  // SIMPLIFIED APPROACH - match the working example
+  useEffect(() => {
+      pendingRestoreAttemptedRef.current = false
       if (!provider || !noteId) {
         // No provider or noteId, skipping load
         setIsContentLoading(false)
@@ -201,15 +209,27 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       const pendingKey = `pending_save_${noteId}_${panelId}`
       const pendingData = localStorage.getItem(pendingKey)
       
-      if (pendingData) {
+      if (!pendingRestoreAttemptedRef.current && !isContentLoading && pendingData) {
         try {
           const { content: pendingContent, timestamp } = JSON.parse(pendingData)
           const age = Date.now() - timestamp
-          
+          pendingRestoreAttemptedRef.current = true
+
+          const existingDoc = provider.getDocument(noteId, panelId)
+          const existingVersion = provider.getDocumentVersion(noteId, panelId)
+          const providerHasContent = (() => {
+            if (!existingDoc) return false
+            if (typeof existingDoc === 'string') {
+              return existingDoc.trim().length > 0 && existingDoc !== '<p></p>'
+            }
+            if (existingDoc.type !== 'doc') return true
+            return Array.isArray(existingDoc.content) && existingDoc.content.length > 0
+          })()
+
           // Only restore if less than 5 minutes old
-          if (age < 5 * 60 * 1000) {
+          if (age < 5 * 60 * 1000 && !providerHasContent && existingVersion === 0) {
             console.log(`[TiptapEditorPlain] Restoring pending save for ${noteId}:${panelId} (age: ${Math.round(age/1000)}s)`)
-            
+
             // Save the pending content to provider
             provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
               .then(() => {
@@ -233,9 +253,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         } catch (e) {
           console.error('[TiptapEditorPlain] Failed to parse pending save:', e)
           localStorage.removeItem(pendingKey)
+          pendingRestoreAttemptedRef.current = true
         }
       }
-    }, [provider, noteId, panelId])
+    }, [provider, noteId, panelId, isContentLoading])
     
     // CRITICAL: Always use undefined as initial content when we have a provider
     // This prevents the editor from being recreated when loading state changes
@@ -389,15 +410,27 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON()
-        // Hash current content to detect real changes
-        const contentStr = JSON.stringify(json)
         const key = `${noteId}:${panelId}`
+        const contentStr = JSON.stringify(json)
+
+        if (AUTOSAVE_DEBUG) {
+          editorAutosaveDebug('onUpdate', {
+            key,
+            skipHash: skipNextSaveRef.current,
+            isContentLoading,
+            contentSize: contentStr.length,
+            timestamp: Date.now()
+          })
+        }
 
         const skipHash = skipNextSaveRef.current
         if (skipHash && skipHash === contentStr) {
           skipNextSaveRef.current = null
           ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
           ;(window as any).__lastContentHash.set(key, contentStr)
+          if (AUTOSAVE_DEBUG) {
+            editorAutosaveDebug('skipDueToSkipHash', { key })
+          }
           return
         }
 
@@ -405,11 +438,19 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
         ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
         const prev = (window as any).__lastContentHash.get(key)
-        if (prev === contentStr) return
+        if (prev === contentStr) {
+          if (AUTOSAVE_DEBUG) {
+            editorAutosaveDebug('skipNoChange', { key })
+          }
+          return
+        }
         (window as any).__lastContentHash.set(key, contentStr)
 
         // CRITICAL: Don't save empty content if we're still loading
         if (isContentLoading) {
+          if (AUTOSAVE_DEBUG) {
+            editorAutosaveDebug('skipWhileLoading', { key })
+          }
           // Skip save - still loading content
           return
         }
@@ -439,11 +480,35 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // Debounce saves to reduce version churn
         ;(window as any).__debouncedSave = (window as any).__debouncedSave || new Map()
         const existing = (window as any).__debouncedSave.get(key)
-        if (existing) clearTimeout(existing)
+        if (existing) {
+          if (AUTOSAVE_DEBUG) {
+            editorAutosaveDebug('debounceCleared', { key })
+          }
+          clearTimeout(existing)
+        }
+        const scheduledAt = Date.now()
         const timer = setTimeout(() => {
+          if (AUTOSAVE_DEBUG) {
+            editorAutosaveDebug('debounceFlush', {
+              key,
+              waitedMs: Date.now() - scheduledAt
+            })
+          }
           if (provider && noteId) {
             // Skip batching for document saves to ensure timely persistence
-            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).catch(err => {
+            const savePromise = provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
+            if (AUTOSAVE_DEBUG) {
+              savePromise.then(() => {
+                editorAutosaveDebug('saveResolved', { key })
+              })
+            }
+            savePromise.catch(err => {
+              if (AUTOSAVE_DEBUG) {
+                editorAutosaveDebug('saveRejected', {
+                  key,
+                  error: err?.message || err
+                })
+              }
               if (err?.name === 'PlainDocumentConflictError' || err?.message?.includes?.('stale document save')) {
                 console.warn('[TiptapEditorPlain] Conflict detected while saving. Latest content has been reloaded.')
               } else {
@@ -453,6 +518,13 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           }
           onUpdate?.(json)
         }, 300) // Reduced to 300ms for faster saves
+        if (AUTOSAVE_DEBUG) {
+          editorAutosaveDebug('saveScheduled', {
+            key,
+            delay: 300,
+            timerId: timer
+          })
+        }
         ;(window as any).__debouncedSave.set(key, timer)
       },
       onSelectionUpdate: ({ editor }) => {

@@ -17,11 +17,11 @@ Implement the sequential save queue and supporting safeguards to eliminate singl
    - Capture timestamps, cache keys, base/current versions, and queue depth.
    - Instrument adapter saves to confirm one in-flight request per document after queue rollout.
 
-2. **Sequential Save Queue (Phase 1)**
-   - Introduce `saveQueues: Map<string, Promise<void>>` in `PlainOfflineProvider`.
-   - Wrap adapter calls via `enqueueSave(cacheKey, task)`; ensure queue clears on resolve/reject.
-   - Add timeout (e.g., 7 s) with warning + queue reset to prevent deadlock.
-   - Keep optimistic cache updates so UI remains immediate.
+2. **Sequential Save Queue (Phase 1)** *(implemented 2025‑05‑06)*
+   - `PlainOfflineProvider` now serializes saves per `(noteId,panelId)` via a guarded promise chain (`saveQueues`, `saveQueueDepth`).
+   - Each queued task re-checks the current version before hitting the adapter and skips if the provider already knows about a newer revision.
+   - A 7 s timeout logs a warning if a request stalls; queue depth is exposed for future backoff logic.
+   - Autosave remains optimistic; instrumentation is gated by `NEXT_PUBLIC_DEBUG_AUTOSAVE` for tracing.
 
 3. **Conflict Refresh Barrier (Phase 2)**
    - After `refreshDocumentFromRemote`, emit `document:refresh-complete` with `noteId`, `panelId`, `version`.

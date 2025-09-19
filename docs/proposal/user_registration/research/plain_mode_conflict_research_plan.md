@@ -49,31 +49,24 @@ Eliminate recurring `stale document save: baseVersion … behind latest …` err
 
 ## Candidate Solutions
 
-### A. Client-Side Sequential Save Queue *(Primary)*
-- Maintain per-`cacheKey` promise chain in `PlainOfflineProvider`:
-  ```ts
-  private saveQueues = new Map<string, Promise<void>>()
-
-  private enqueueSave(key: string, task: () => Promise<void>) {
-    const chain = (this.saveQueues.get(key) || Promise.resolve()).then(task)
-    this.saveQueues.set(key, chain.finally(() => this.saveQueues.delete(key)))
-    return chain
-  }
-  ```
-- `saveDocument` enqueues adapter writes to ensure no overlapping POSTs.
-- Update `tiptap-editor-plain.tsx` to await queue (optional) or at least avoid scheduling new saves while queue length > 0.
+### A. Client-Side Sequential Save Queue *(Primary – implemented)*
+- `PlainOfflineProvider` now maintains a per-`cacheKey` promise chain, re-checks the latest known version before each network request, and skips stale queued payloads. Instrumentation under `NEXT_PUBLIC_DEBUG_AUTOSAVE` confirms only one in-flight save per note/panel.
+- Remaining work: optionally surface queue depth to the editor for adaptive debounce and add UI feedback when saves are queued.
 
 ### B. Refresh Acknowledgement Barrier
 - Add provider event `document:refresh-complete` fired after `refreshDocumentFromRemote` 8 version update.
 - Editor defers next autosave until `refresh-complete` arrives; ensures `documentVersions` matches server before resubmitting.
+- *Status:* pending. Consider if conflict logs persist immediately after refresh despite queue serialization.
 
 ### C. Adaptive Debounce/Backoff
 - If `PlainOfflineProvider` detects in-flight save, extend debounce delay (e.g., 300 ms → 600 ms → 900 ms until queue clears).
 - Reset delay once save resolves.
+- *Status:* optional follow-up; queue depth metrics now available via `getPendingSaveDepth` to drive this when needed.
 
 ### D. Server Idempotency Improvements
 - Already partially implemented: skip insert when content + version unchanged. Confirm HTML vs JSON equality to reduce spurious 409s.
 - Optional: add server-side `ON CONFLICT DO NOTHING` fallback for duplicate payloads (needs to keep unique constraint intact; requires verifying effect on revision history).
+- *Status:* unchanged; evaluate after client-side measures stabilize.
 
 ## Validation Strategy
 1. **Unit Tests**

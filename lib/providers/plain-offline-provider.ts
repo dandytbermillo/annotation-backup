@@ -14,6 +14,12 @@ import { PlainOfflineQueue } from '../batching/plain-offline-queue'
 import { getPlainBatchConfig, mergeConfig } from '../batching/plain-batch-config'
 import type { PlainBatchConfig } from '../batching/plain-batch-config'
 
+const AUTOSAVE_DEBUG = ['true', '1', 'on', 'yes'].includes((process.env.NEXT_PUBLIC_DEBUG_AUTOSAVE ?? '').toLowerCase())
+const providerAutosaveDebug = (...args: any[]) => {
+  if (!AUTOSAVE_DEBUG) return
+  console.debug('[PlainAutosave][Provider]', ...args)
+}
+
 // Types for plain mode - compatible with future Yjs structures
 export interface ProseMirrorJSON {
   type: string
@@ -140,6 +146,11 @@ export class PlainOfflineProvider extends EventEmitter {
     pendingOps: 0,
     updateCount: 0
   }
+
+  // Phase 1: sequential save queue
+  private saveQueues = new Map<string, Promise<void>>()
+  private saveQueueDepth = new Map<string, number>()
+  private readonly SAVE_QUEUE_TIMEOUT_MS = 7000
   
   // Track last access for cache management (from note switching fix)
   private lastAccess = new Map<string, number>()
@@ -227,6 +238,93 @@ export class PlainOfflineProvider extends EventEmitter {
     return noteId ? `${noteId}-${panelId}` : panelId
   }
 
+  private getQueueDepth(cacheKey: string): number {
+    return this.saveQueueDepth.get(cacheKey) || 0
+  }
+
+  public getPendingSaveDepth(noteId: string, panelId: string): number {
+    return this.getQueueDepth(this.getCacheKey(noteId, panelId))
+  }
+
+  private enqueueSave(
+    cacheKey: string,
+    meta: { noteId: string; panelId: string; version: number; baseVersion: number },
+    task: () => Promise<void>
+  ): Promise<void> {
+    const depth = this.getQueueDepth(cacheKey) + 1
+    this.saveQueueDepth.set(cacheKey, depth)
+    if (AUTOSAVE_DEBUG) {
+      providerAutosaveDebug('queue:enqueue', { cacheKey, depth, ...meta })
+    }
+
+    const previous = this.saveQueues.get(cacheKey) || Promise.resolve()
+
+    const runTask = previous
+      .catch(() => undefined)
+      .then(async () => {
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+        let timedOut = false
+        if (AUTOSAVE_DEBUG) {
+          providerAutosaveDebug('queue:start', { cacheKey, ...meta })
+        }
+        if (this.SAVE_QUEUE_TIMEOUT_MS > 0) {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true
+            if (AUTOSAVE_DEBUG) {
+              providerAutosaveDebug('queue:timeout', {
+                cacheKey,
+                timeoutMs: this.SAVE_QUEUE_TIMEOUT_MS,
+                ...meta
+              })
+            } else {
+              console.warn(`[PlainOfflineProvider] Save queue timeout (${this.SAVE_QUEUE_TIMEOUT_MS}ms) for ${cacheKey}`)
+            }
+          }, this.SAVE_QUEUE_TIMEOUT_MS)
+        }
+        try {
+          await task()
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('queue:task-success', { cacheKey, timedOut, ...meta })
+          }
+        } catch (error) {
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('queue:task-error', {
+              cacheKey,
+              error: error instanceof Error ? error.message : error,
+              ...meta
+            })
+          }
+          throw error
+        } finally {
+          if (timeoutHandle) {
+            clearTimeout(timeoutHandle)
+          }
+        }
+      })
+
+    const queued = runTask.finally(() => {
+      const remaining = this.getQueueDepth(cacheKey) - 1
+      if (remaining > 0) {
+        this.saveQueueDepth.set(cacheKey, remaining)
+      } else {
+        this.saveQueueDepth.delete(cacheKey)
+      }
+      if (this.saveQueues.get(cacheKey) === queued) {
+        this.saveQueues.delete(cacheKey)
+      }
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('queue:complete', {
+          cacheKey,
+          remaining: Math.max(remaining, 0),
+          ...meta
+        })
+      }
+    })
+
+    this.saveQueues.set(cacheKey, queued)
+    return queued
+  }
+
   /**
    * Fix #1: Check for empty content before initialization
    */
@@ -249,6 +347,15 @@ export class PlainOfflineProvider extends EventEmitter {
     const cacheKey = this.getCacheKey(noteId, panelId)
     
     console.log(`[PlainOfflineProvider] Loading document for noteId: ${noteId}, panelId: ${panelId}, cacheKey: ${cacheKey}`)
+    if (AUTOSAVE_DEBUG) {
+      providerAutosaveDebug('load:start', {
+        cacheKey,
+        noteId,
+        panelId,
+        hasCache: this.documents.has(cacheKey),
+        pendingLoad: this.loadingStates.has(cacheKey)
+      })
+    }
     
     // Fix #10: Check if already loading
     if (this.loadingStates.has(cacheKey)) {
@@ -256,6 +363,13 @@ export class PlainOfflineProvider extends EventEmitter {
       await this.loadingStates.get(cacheKey)
       const cachedContent = this.documents.get(cacheKey)
       console.log(`[PlainOfflineProvider] After loading wait, cached content:`, cachedContent)
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('load:await-existing', {
+          cacheKey,
+          hasContent: !!cachedContent,
+          version: this.documentVersions.get(cacheKey) || 0
+        })
+      }
       return cachedContent || null
     }
     
@@ -264,6 +378,12 @@ export class PlainOfflineProvider extends EventEmitter {
       const cachedContent = this.documents.get(cacheKey)
       console.log(`[PlainOfflineProvider] Found cached document for ${cacheKey}:`, cachedContent)
       this.updateLastAccess(cacheKey)
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('load:cache-hit', {
+          cacheKey,
+          version: this.documentVersions.get(cacheKey) || 0
+        })
+      }
       return cachedContent || null
     }
     
@@ -272,6 +392,13 @@ export class PlainOfflineProvider extends EventEmitter {
       .then(result => {
         if (result) {
           console.log(`[PlainOfflineProvider] Loaded document for ${cacheKey}, version: ${result.version}, content:`, result.content)
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('load:adapter-success', {
+              cacheKey,
+              version: result.version,
+              isEmpty: this.isEmptyContent(result.content)
+            })
+          }
           
           // Fix #1: Clear empty content
           if (this.isEmptyContent(result.content)) {
@@ -287,10 +414,19 @@ export class PlainOfflineProvider extends EventEmitter {
           }
         } else {
           console.log(`[PlainOfflineProvider] No document found for ${cacheKey}`)
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('load:adapter-empty', { cacheKey })
+          }
         }
       })
       .catch(error => {
         console.error(`[PlainOfflineProvider] Failed to load document for ${cacheKey}:`, error)
+        if (AUTOSAVE_DEBUG) {
+          providerAutosaveDebug('load:error', {
+            cacheKey,
+            error: error instanceof Error ? error.message : error
+          })
+        }
         throw error
       })
       .finally(() => {
@@ -302,8 +438,21 @@ export class PlainOfflineProvider extends EventEmitter {
     
     try {
       await loadPromise
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('load:complete', {
+          cacheKey,
+          hasContent: this.documents.has(cacheKey),
+          version: this.documentVersions.get(cacheKey) || 0
+        })
+      }
       return this.documents.get(cacheKey) || null
     } catch (error) {
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('load:complete-error', {
+          cacheKey,
+          error: error instanceof Error ? error.message : error
+        })
+      }
       return null
     }
   }
@@ -331,7 +480,22 @@ export class PlainOfflineProvider extends EventEmitter {
     this.documentVersions.set(cacheKey, currentVersion)
     const baseVersion = previousVersion
     this.updateLastAccess(cacheKey)
+    if (AUTOSAVE_DEBUG) {
+      providerAutosaveDebug('save:start', {
+        cacheKey,
+        noteId,
+        panelId,
+        baseVersion,
+        nextVersion: currentVersion,
+        changed,
+        skipPersist,
+        batching: this.batchingEnabled && !options?.skipBatching
+      })
+    }
     if (!changed) {
+      if (AUTOSAVE_DEBUG) {
+        providerAutosaveDebug('save:skip-unchanged', { cacheKey, version: currentVersion })
+      }
       return
     }
     
@@ -341,20 +505,48 @@ export class PlainOfflineProvider extends EventEmitter {
     
     // Persist to adapter unless skipped (for initial loads)
     if (!skipPersist) {
-      // Use batching if enabled and not explicitly skipped
-      if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
-        await this.batchManager.enqueue({
-          entityType: 'document',
-          entityId: `${noteId}:${panelId}`,
-          operation: 'update',
-          data: { noteId, panelId, content, version: currentVersion, baseVersion }
-        })
-        console.log(`[PlainOfflineProvider] Document queued for batching: ${cacheKey}`)
-      } else {
+      const meta = { noteId, panelId, version: currentVersion, baseVersion }
+      const persistTask = async () => {
+        const latestKnownVersion = this.documentVersions.get(cacheKey) || 0
+        if (latestKnownVersion > currentVersion) {
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('save:skip-stale-version', {
+              cacheKey,
+              queuedVersion: currentVersion,
+              knownVersion: latestKnownVersion
+            })
+          }
+          return
+        }
+
+        // Use batching if enabled and not explicitly skipped
+        if (this.batchingEnabled && !options?.skipBatching && this.batchManager) {
+          await this.batchManager.enqueue({
+            entityType: 'document',
+            entityId: `${noteId}:${panelId}`,
+            operation: 'update',
+            data: { noteId, panelId, content, version: currentVersion, baseVersion }
+          })
+          console.log(`[PlainOfflineProvider] Document queued for batching: ${cacheKey}`)
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('save:queued-for-batch', {
+              cacheKey,
+              version: currentVersion
+            })
+          }
+          return
+        }
+
         // Direct save without batching
         try {
           await this.adapter.saveDocument(noteId, panelId, content, currentVersion, baseVersion)
           console.log(`[PlainOfflineProvider] Persisted document for ${cacheKey}, version: ${currentVersion}`)
+          if (AUTOSAVE_DEBUG) {
+            providerAutosaveDebug('save:adapter-success', {
+              cacheKey,
+              version: currentVersion
+            })
+          }
           
           // Auto-cleanup if update count is high
           if (this.persistenceState.updateCount > 50) {
@@ -366,6 +558,14 @@ export class PlainOfflineProvider extends EventEmitter {
           console.error(`[PlainOfflineProvider] Failed to persist document for ${cacheKey}:`, error)
           const message = error instanceof Error ? error.message : ''
           if (this.isConflictError(message)) {
+            if (AUTOSAVE_DEBUG) {
+              providerAutosaveDebug('save:conflict', {
+                cacheKey,
+                baseVersion,
+                nextVersion: currentVersion,
+                message
+              })
+            }
             this.revertOptimisticUpdate(cacheKey, prev, previousVersion)
             const latest = await this.refreshDocumentFromRemote(noteId, panelId, 'conflict')
             const conflictError = new PlainDocumentConflictError(noteId, panelId, message, latest || undefined)
@@ -395,6 +595,12 @@ export class PlainOfflineProvider extends EventEmitter {
               data: { noteId, panelId, content, version: currentVersion, baseVersion },
               timestamp: Date.now()
             })
+            if (AUTOSAVE_DEBUG) {
+              providerAutosaveDebug('save:queued-offline', {
+                cacheKey,
+                version: currentVersion
+              })
+            }
           } else {
             await this.adapter.enqueueOffline({
               operation: 'update',
@@ -402,12 +608,26 @@ export class PlainOfflineProvider extends EventEmitter {
               entityId: cacheKey,
               payload: { noteId, panelId, content, version: currentVersion, baseVersion }
             })
+            if (AUTOSAVE_DEBUG) {
+              providerAutosaveDebug('save:enqueue-offline-adapter', {
+                cacheKey,
+                version: currentVersion
+              })
+            }
           }
         }
       }
+
+      await this.enqueueSave(cacheKey, meta, persistTask)
     }
 
     this.emit('document:saved', { noteId, panelId, version: currentVersion })
+    if (AUTOSAVE_DEBUG) {
+      providerAutosaveDebug('save:emitted', {
+        cacheKey,
+        version: currentVersion
+      })
+    }
   }
 
   private isConflictError(message: string): boolean {
