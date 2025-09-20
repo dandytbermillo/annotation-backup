@@ -4,7 +4,7 @@
  */
 
 // Constants
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAMES = {
   DOCS: `docs-cache-${CACHE_VERSION}`,
   LISTS: `lists-cache-${CACHE_VERSION}`,
@@ -93,7 +93,12 @@ self.addEventListener('fetch', (event) => {
   
   // Handle GET requests with caching
   if (request.method === 'GET' && shouldCache(url.pathname)) {
-    event.respondWith(handleCachedRequest(request));
+    if (url.pathname.includes('/documents/')) {
+      // Bypass cache for documents to avoid stale autosave content
+      event.respondWith(fetch(request));
+    } else {
+      event.respondWith(handleCachedRequest(request));
+    }
   }
   // Handle write operations (POST, PUT, DELETE)
   else if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(request.method)) {
