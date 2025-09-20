@@ -1,0 +1,143 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]: Offline Mode - No Collaboration
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - heading "Notes" [level=2] [ref=e9]
+          - generic [ref=e10]:
+            - img [ref=e12]
+            - button "Close sidebar" [ref=e16] [cursor=pointer]:
+              - img [ref=e17] [cursor=pointer]
+        - generic [ref=e20]:
+          - img [ref=e21]
+          - textbox "Search notes" [ref=e24]
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - generic [ref=e27]:
+            - img [ref=e28]
+            - generic [ref=e31]: Recent
+          - generic [ref=e33] [cursor=pointer]:
+            - img [ref=e34] [cursor=pointer]
+            - generic [ref=e37] [cursor=pointer]: first-test-1
+            - generic [ref=e38] [cursor=pointer]: Just now
+            - button "Delete note" [ref=e39] [cursor=pointer]:
+              - img [ref=e40] [cursor=pointer]
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - img [ref=e45]
+            - generic [ref=e47]: Organization
+          - tree "Note organization" [ref=e48]:
+            - treeitem "Collapse Knowledge Base" [expanded] [ref=e49]:
+              - generic [ref=e50] [cursor=pointer]:
+                - button "Collapse" [ref=e51] [cursor=pointer]:
+                  - img [ref=e52] [cursor=pointer]
+                - img [ref=e55] [cursor=pointer]
+                - generic [ref=e57] [cursor=pointer]: Knowledge Base
+                - button [ref=e58] [cursor=pointer]:
+                  - img [ref=e59] [cursor=pointer]
+              - group [ref=e62]:
+                - treeitem "Expand documents" [ref=e63]:
+                  - generic [ref=e64] [cursor=pointer]:
+                    - button "Expand" [ref=e65] [cursor=pointer]:
+                      - img [ref=e66] [cursor=pointer]
+                    - img [ref=e69] [cursor=pointer]
+                    - generic [ref=e71] [cursor=pointer]: documents
+                    - button [ref=e72] [cursor=pointer]:
+                      - img [ref=e73] [cursor=pointer]
+                - treeitem "Expand Projects" [ref=e76]:
+                  - generic [ref=e77] [cursor=pointer]:
+                    - button "Expand" [ref=e78] [cursor=pointer]:
+                      - img [ref=e79] [cursor=pointer]
+                    - img [ref=e82] [cursor=pointer]
+                    - generic [ref=e84] [cursor=pointer]: Projects
+                    - button [ref=e85] [cursor=pointer]:
+                      - img [ref=e86] [cursor=pointer]
+                - treeitem "Expand Uncategorized" [ref=e89]:
+                  - generic [ref=e90] [cursor=pointer]:
+                    - button "Expand" [ref=e91] [cursor=pointer]:
+                      - img [ref=e92] [cursor=pointer]
+                    - img [ref=e95] [cursor=pointer]
+                    - generic [ref=e97] [cursor=pointer]: Uncategorized
+                    - button [ref=e98] [cursor=pointer]:
+                      - img [ref=e99] [cursor=pointer]
+      - button "Create New Note" [ref=e103] [cursor=pointer]:
+        - img [ref=e104] [cursor=pointer]
+        - generic [ref=e105] [cursor=pointer]: Create New Note
+      - generic:
+        - generic:
+          - img
+      - generic [ref=e107]:
+        - generic [ref=e108] [cursor=pointer]:
+          - generic [ref=e109] [cursor=pointer]:
+            - img [ref=e110] [cursor=pointer]
+            - generic [ref=e114] [cursor=pointer]: Layer Controls
+          - button [ref=e115] [cursor=pointer]:
+            - img [ref=e116] [cursor=pointer]
+        - generic [ref=e118]:
+          - generic [ref=e119]:
+            - generic [ref=e120]: Active Layer
+            - generic [ref=e121]:
+              - button "Notes" [ref=e122] [cursor=pointer]:
+                - img [ref=e123] [cursor=pointer]
+                - text: Notes
+              - button "Popups" [ref=e126] [cursor=pointer]:
+                - img [ref=e127] [cursor=pointer]
+                - text: Popups
+            - generic [ref=e129]: Press Tab to toggle
+          - generic [ref=e130]:
+            - generic [ref=e131]: Layer Settings
+            - generic [ref=e132]:
+              - button "Toggle notes visibility" [ref=e133] [cursor=pointer]:
+                - img [ref=e134] [cursor=pointer]
+              - generic [ref=e137]: Notes
+              - slider "Notes layer opacity" [ref=e138] [cursor=pointer]: "100"
+              - generic [ref=e139]: 100%
+            - generic [ref=e140]:
+              - button "Toggle popups visibility" [ref=e141] [cursor=pointer]:
+                - img [ref=e142] [cursor=pointer]
+              - generic [ref=e145]: Popups
+              - slider "Popups layer opacity" [ref=e146] [cursor=pointer]: "100"
+              - generic [ref=e147]: 100%
+          - generic [ref=e148]:
+            - generic [ref=e149]: Sync Settings
+            - generic [ref=e150]:
+              - button "Pan" [ref=e151] [cursor=pointer]:
+                - img [ref=e152] [cursor=pointer]
+                - text: Pan
+              - button "Zoom" [ref=e155] [cursor=pointer]:
+                - img [ref=e156] [cursor=pointer]
+                - text: Zoom
+          - generic [ref=e159]:
+            - button "Reset" [ref=e160] [cursor=pointer]:
+              - img [ref=e161] [cursor=pointer]
+              - text: Reset
+            - button "Hide Sidebar" [ref=e164] [cursor=pointer]:
+              - img [ref=e165] [cursor=pointer]
+              - text: Hide Sidebar
+            - button "Show keyboard shortcuts" [ref=e168] [cursor=pointer]:
+              - img [ref=e169] [cursor=pointer]
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic: Notes
+            - generic:
+              - generic: Popups
+            - generic:
+              - img
+              - generic: Synced
+    - generic [ref=e173]:
+      - heading "Welcome to Annotation Canvas" [level=2] [ref=e174]
+      - paragraph [ref=e175]: Select a note from the explorer or create a new one to get started
+  - generic [ref=e176]:
+    - generic [ref=e177]: PostgreSQL Persistence Monitor
+    - button "Start Monitoring" [ref=e178] [cursor=pointer]
+    - generic [ref=e179]: Check console for details
+  - button "Open Next.js Dev Tools" [ref=e185] [cursor=pointer]:
+    - img [ref=e186] [cursor=pointer]
+  - alert [ref=e189]
+```

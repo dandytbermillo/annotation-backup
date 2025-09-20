@@ -104,3 +104,12 @@
 ---
 
 **Next Steps**: Instrument to gather logs on the first reload, implement version-aware snapshot guard, and update the editor backup logic accordingly.
+
+
+## Supporting Files
+- `docs/proposal/user_registration/research/supporting_files/tiptap-editor-plain.tsx`
+- `docs/proposal/user_registration/research/supporting_files/canvas-panel.tsx`
+- `docs/proposal/user_registration/research/supporting_files/annotation-canvas-modern.tsx`
+- `docs/proposal/user_registration/research/supporting_files/canvas-context.tsx`
+- `docs/proposal/user_registration/research/supporting_files/canvas-storage.ts`
+- `docs/proposal/user_registration/research/supporting_files/plain-offline-provider.ts`

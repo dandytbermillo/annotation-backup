@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-19 22:24Z] 8e375e2: still fixing
 - commit [2025-09-19 21:44Z] fc9938c: single reload on new note
 - commit [2025-09-19 13:25Z] 1ee66e3: still fixing the workspace scoping 1
 - commit [2025-09-19 11:54Z] 5386d32: still fixing the workspace scoping
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-18 21:32Z] 25764cf: apply the patch plain-mode-optimistic-concurrency.patch
 - commit [2025-09-18 20:29Z] 0c23f6f: still fixing the issue
 - commit [2025-09-18 18:14Z] adff35f: fixing browsers have thier own version of the same file
-- commit [2025-09-18 12:34Z] 2828c62: fix error in the debug lod, modified the claude.md
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

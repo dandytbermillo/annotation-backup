@@ -1,0 +1,6 @@
+Experimental Change Tracking
+============================
+
+Set commit UID: 761d4594-f82e-438b-b512-22cbb4003709
+
+All developer modifications to docs/proposal and components/canvas/tiptap-editor-plain.tsx are now in the experimental change list.
