@@ -3,6 +3,8 @@
  * This is the exact working tooltip from the backup repository
  */
 
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
+
 let tooltipElement: HTMLElement | null = null
 let tooltipHideTimeout: NodeJS.Timeout | null = null
 let isOverTooltip = false
@@ -175,22 +177,11 @@ export async function showAnnotationTooltip(branchId: string, type: string, elem
           
           // Only update if tooltip is still visible
           if (tooltipElement && tooltipElement.classList.contains('visible')) {
-            // Extract text content
-            let content = ''
-            if (doc && doc.content) {
-              // If content is HTML, strip tags
-              if (typeof doc.content === 'string') {
-                content = doc.content.replace(/<[^>]*>/g, '').trim()
-              } else if (doc.content.content) {
-                // If it's ProseMirror JSON, extract text
-                content = extractTextFromProseMirrorJSON(doc.content)
-              }
-            }
-            console.log('[showAnnotationTooltip] Extracted content:', content)
-            
-            // Use doc content if available; do NOT fall back to original annotated text
-            const preview = content || 'No notes added yet'
-            
+            const preview = buildBranchPreview(
+              (doc && doc.content) || branch.metadata?.preview || branch.content || '',
+              branch.originalText || ''
+            ) || 'No notes added yet'
+
             tooltipElement.innerHTML = `
               <div class="tooltip-header">
                 <span class="tooltip-icon">${getTypeIcon(branch.type || type)}</span>

@@ -8,6 +8,7 @@ import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
 import { initialData } from "@/lib/initial-data"
 import { getPlainProvider } from "@/lib/provider-switcher"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 
 interface CanvasContextType {
   state: CanvasState
@@ -131,17 +132,117 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
       // Plain mode: Initialize main panel and load branches from database
       console.log('[CanvasProvider] Plain mode: Initializing main panel and loading branches')
       
+      // Restore any cached snapshot before building data
+      let cachedSnapshot: Record<string, any> | null = null
+      const snapshotMap = new Map<string, any>()
+      if (typeof window !== 'undefined') {
+        try {
+          const rawSnapshot = window.localStorage.getItem(`note-data-${noteId}`)
+          if (rawSnapshot) {
+            cachedSnapshot = JSON.parse(rawSnapshot)
+            Object.entries(cachedSnapshot).forEach(([branchId, value]) => {
+              snapshotMap.set(branchId, value as Record<string, any>)
+            })
+          }
+        } catch (snapshotError) {
+          console.warn('[CanvasProvider] Failed to parse cached plain snapshot:', snapshotError)
+        }
+      }
+
       // Initialize main panel in dataStore
+      const persistPlainBranchSnapshot = () => {
+        if (typeof window === 'undefined' || !noteId) return
+        const snapshot: Record<string, any> = {}
+        dataStore.forEach((value, key) => {
+          snapshot[key] = {
+            title: value.title || '',
+            type: value.type,
+            originalText: value.originalText || '',
+            content: value.content || '',
+            preview: value.preview || '',
+            hasHydratedContent: !!value.hasHydratedContent,
+            branches: value.branches || [],
+            parentId: value.parentId ?? null,
+            position: value.position,
+            dimensions: value.dimensions,
+            isEditable: value.isEditable,
+          }
+        })
+        try {
+          const payload = JSON.stringify(snapshot)
+          window.localStorage.setItem(`note-data-${noteId}`, payload)
+          window.dispatchEvent(new CustomEvent('plain-branch-snapshot', { detail: { noteId, snapshot } }))
+          try {
+            fetch('/api/debug-log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                component: 'CanvasProvider',
+                action: 'PLAIN_BRANCH_SNAPSHOT',
+                noteId,
+                metadata: { branchCount: Object.keys(snapshot).length }
+              })
+            })
+          } catch (logError) {
+            console.warn('[CanvasProvider] Failed to log snapshot:', logError)
+          }
+        } catch (error) {
+          console.warn('[CanvasProvider] Failed to persist plain snapshot:', error)
+        }
+      }
+
+      const cachedMain = snapshotMap.get('main') as Record<string, any> | undefined
+
       dataStore.set('main', {
         id: 'main',
         type: 'main' as const,
-        title: 'Main Document',
-        position: { x: 2000, y: 1500 },
-        dimensions: { width: 420, height: 350 },
-        originalText: '',
-        isEditable: true,
-        branches: []
+        title: cachedMain?.title || 'Main Document',
+        position: cachedMain?.position || { x: 2000, y: 1500 },
+        dimensions: cachedMain?.dimensions || { width: 420, height: 350 },
+        originalText: cachedMain?.originalText || '',
+        isEditable: cachedMain?.isEditable ?? true,
+        branches: cachedMain?.branches || [],
+        parentId: cachedMain?.parentId ?? null,
+        content: cachedMain?.content || '',
+        preview: cachedMain?.preview || '',
+        hasHydratedContent: cachedMain?.hasHydratedContent ?? false,
       })
+
+      // Pre-populate additional branches from cache before remote load
+      snapshotMap.forEach((value, key) => {
+        if (key === 'main') return
+        const cachedBranch = value as Record<string, any>
+        dataStore.set(key, {
+          id: key,
+          type: cachedBranch.type,
+          title: cachedBranch.title || '',
+          originalText: cachedBranch.originalText || '',
+          content: cachedBranch.content || '',
+          preview: cachedBranch.preview || '',
+          hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
+          branches: cachedBranch.branches || [],
+          parentId: cachedBranch.parentId ?? 'main',
+          position: cachedBranch.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
+          dimensions: cachedBranch.dimensions || { width: 400, height: 300 },
+          isEditable: cachedBranch.isEditable ?? true,
+          metadata: { displayId: key }
+        })
+      })
+
+      persistPlainBranchSnapshot()
+
+      let snapshotTimeout: NodeJS.Timeout | null = null
+      const scheduleSnapshotSave = () => {
+        if (snapshotTimeout) clearTimeout(snapshotTimeout)
+        snapshotTimeout = setTimeout(() => {
+          persistPlainBranchSnapshot()
+        }, 150)
+      }
+
+      const handleDataStoreChange = () => scheduleSnapshotSave()
+      dataStore.on('set', handleDataStoreChange)
+      dataStore.on('update', handleDataStoreChange)
+      dataStore.on('delete', handleDataStoreChange)
 
       // Update main panel title from the note metadata (keep familiar title like
       // 'AI in Healthcare Research' in Option A without Yjs involvement)
@@ -154,6 +255,7 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
               dataStore.set('main', main)
               // Trigger a re-render to reflect the updated title
               dispatch({ type: 'BRANCH_UPDATED' })
+              persistPlainBranchSnapshot()
             }
           }
         }).catch(() => { /* non-fatal: keep default title */ })
@@ -180,7 +282,7 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
         branches.forEach(branch => {
           // Transform database format to UI format
           const uiId = `branch-${branch.id}`
-          
+
           // Normalize parentId in DB (TEXT) to UI id:
           // - 'main' stays 'main'
           // - 'branch-...' stays as-is
@@ -193,22 +295,39 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
             else parentId = `branch-${raw}`
           }
           
+          const metadata = branch.metadata || {}
+          const cachedBranch = snapshotMap.get(uiId) as Record<string, any> | undefined
+          const previewFromCache = cachedBranch?.preview && cachedBranch.preview.trim()
+            ? cachedBranch.preview.trim()
+            : ''
+          const previewSource = previewFromCache
+            || (typeof metadata.preview === 'string' && metadata.preview.trim() ? metadata.preview.trim() : '')
+            || buildBranchPreview(cachedBranch?.content, branch.originalText)
+            || (branch.originalText || '')
+          const normalizedPreview = previewSource ? previewSource.replace(/\s+/g, ' ').trim() : ''
+
           // Create branch data for dataStore
           const branchData = {
             id: uiId,
             type: branch.type as 'note' | 'explore' | 'promote',
             originalText: branch.originalText || '',
-            position: branch.metadata?.position || { 
+            title: branch.title || '',
+            content: cachedBranch?.content || '',
+            preview: normalizedPreview,
+            hasHydratedContent: cachedBranch?.hasHydratedContent ?? false,
+            position: branch.metadata?.position || cachedBranch?.position || { 
               x: 2500 + Math.random() * 500, 
               y: 1500 + Math.random() * 500 
             },
-            dimensions: branch.metadata?.dimensions || { width: 400, height: 300 },
+            dimensions: branch.metadata?.dimensions || cachedBranch?.dimensions || { width: 400, height: 300 },
             isEditable: true,
             branches: [],
+            parentId,
             metadata: {
-              ...branch.metadata,
+              ...metadata,
               databaseId: branch.id,  // Keep reference to database UUID
-              displayId: branch.metadata?.displayId || uiId
+              displayId: branch.metadata?.displayId || uiId,
+              preview: normalizedPreview || metadata.preview || undefined
             }
           }
           
@@ -253,9 +372,20 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
         
         // Force re-render
         dispatch({ type: "BRANCH_UPDATED" })
+        persistPlainBranchSnapshot()
       }).catch(error => {
         console.error('[CanvasProvider] Failed to load branches:', error)
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem(`note-data-${noteId}`)
+        }
       })
+
+      return () => {
+        dataStore.off('set', handleDataStoreChange)
+        dataStore.off('update', handleDataStoreChange)
+        dataStore.off('delete', handleDataStoreChange)
+        if (snapshotTimeout) clearTimeout(snapshotTimeout)
+      }
     } else {
       // Yjs mode: Initialize data store with initial data
       Object.entries(initialData).forEach(([id, data]) => {

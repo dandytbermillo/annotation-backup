@@ -29,6 +29,8 @@ export interface Branch {
   title: string
   type: "main" | "note" | "explore" | "promote"
   content: string
+  preview?: string
+  hasHydratedContent?: boolean
   branches?: string[]
   parentId?: string
   position: { x: number; y: number }

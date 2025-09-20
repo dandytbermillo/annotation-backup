@@ -3,6 +3,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { UnifiedProvider } from '@/lib/provider-switcher'
 import { trackTooltipShown } from './performance-decorations'
 import { getPlainProvider } from '@/lib/provider-switcher'
+import { buildBranchPreview } from '@/lib/utils/branch-preview'
 
 export const annotationDecorationsKey = new PluginKey('annotationDecorations')
 
@@ -302,9 +303,9 @@ export const AnnotationDecorations = () => {
                        `${(branch.type || type).charAt(0).toUpperCase() + (branch.type || type).slice(1)} annotation`
           
           // Branch-first rendering: use branch content directly
-          const branchPreview = branch.content 
-            ? String(branch.content).replace(/<[^>]*>/g, '').trim() 
-            : ''
+          const branchPreview = branch.preview && branch.preview.trim()
+            ? branch.preview.trim()
+            : buildBranchPreview(branch.content, branch.originalText)
           
           if (branchPreview) {
             // We have branch content - show it immediately

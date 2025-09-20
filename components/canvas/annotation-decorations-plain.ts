@@ -2,6 +2,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { getPlainProvider } from '@/lib/provider-switcher'
 import { trackTooltipShown } from './performance-decorations'
+import { buildBranchPreview, extractPreviewFromContent, stripHtml } from '@/lib/utils/branch-preview'
 
 export const annotationDecorationsKey = new PluginKey('annotationDecorations')
 
@@ -27,45 +28,6 @@ function resolveContextFrom(el: HTMLElement) {
   const noteId = textbox?.getAttribute('data-note') || ''
   const panelId = textbox?.getAttribute('data-panel') || ''
   return { noteId, panelId }
-}
-
-function stripHtml(html: string): string {
-  try { return html.replace(/<[^>]*>/g, '') } catch { return html || '' }
-}
-
-function extractTextFromPMJSON(node: any): string {
-  if (!node) return ''
-  if (typeof node === 'string') return node
-  
-  // Handle text nodes directly
-  if (node.type === 'text' && node.text) {
-    return node.text
-  }
-  
-  // Handle any node with content array (doc, paragraph, etc.)
-  if (node.content && Array.isArray(node.content)) {
-    return node.content.map(extractTextFromPMJSON).join(' ').trim()
-  }
-  
-  // Legacy support for direct text property
-  if (node.text) return node.text
-  
-  return ''
-}
-
-function extractPreviewFromDoc(content: any): string | null {
-  if (!content) return null
-  if (typeof content === 'string') {
-    const s = content.trim()
-    if ((s.startsWith('{') || s.startsWith('['))) {
-      try { return extractTextFromPMJSON(JSON.parse(s)) } catch { return stripHtml(s) }
-    }
-    return stripHtml(s)
-  }
-  if (typeof content === 'object') {
-    try { return extractTextFromPMJSON(content) } catch { return null }
-  }
-  return null
 }
 
 function truncate(s: string, n: number): string { return !s ? '' : (s.length > n ? s.slice(0, n) + '...' : s) }
@@ -190,8 +152,9 @@ export const AnnotationDecorations = () => new Plugin({
       // Unified precedence: branch.content → provider doc → placeholder
       // Keep originalText ONLY for the title, not the preview body
       const titleText = dsBranch?.title || `${capitalize(type)}${dsBranch?.originalText ? ` on "${truncate(dsBranch.originalText, 30)}"` : ''}`
-      const previewText = (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '')
-        || extractPreviewFromDoc(docContent)
+      const previewText = (dsBranch?.preview && String(dsBranch.preview).trim())
+        || (dsBranch?.content ? stripHtml(String(dsBranch.content)) : '')
+        || extractPreviewFromContent(docContent)
         || ''
 
       function renderPreview(text: string) {
@@ -235,12 +198,10 @@ export const AnnotationDecorations = () => new Plugin({
             
             const branch = branches.find((b: any) => b.id === dbId)
             if (branch) {
-              // Use only branch.content for preview; no originalText
-              let txt = ''
-              if (branch.content) {
-                txt = stripHtml(String(branch.content))
-              }
-              // Always render; empty txt shows “No notes added yet”
+              const txt = buildBranchPreview(
+                branch.metadata?.preview || branch.content || '',
+                branch.originalText || ''
+              )
               renderPreview(txt)
             }
           })
@@ -257,11 +218,9 @@ export const AnnotationDecorations = () => new Plugin({
             const ds = (window as any).canvasDataStore
             const retryBranch = ds?.get?.(uiId)
             if (retryBranch) {
-              // Simple: just strip HTML from branch content; do not use originalText
-              let txt = ''
-              if (retryBranch.content) {
-                txt = stripHtml(String(retryBranch.content))
-              }
+              const txt = retryBranch.preview && String(retryBranch.preview).trim()
+                ? String(retryBranch.preview).trim()
+                : buildBranchPreview(retryBranch.content || '', retryBranch.originalText || '')
               renderPreview(txt)
             }
           } catch {}

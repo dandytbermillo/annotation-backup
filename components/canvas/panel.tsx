@@ -2,6 +2,7 @@
 
 import { useRef } from "react"
 import { useCanvas } from "./canvas-context"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { usePanelDragging } from "@/hooks/use-panel-dragging"
 
 interface PanelProps {
@@ -375,7 +376,9 @@ export function Panel({ panelId, panelData }: PanelProps) {
                 const childBranch = dataStore.get(branchId)
                 if (!childBranch) return null
 
-                const preview = childBranch.content.replace(/<[^>]*>/g, "").substring(0, 100) + "..."
+                const preview = childBranch.preview && childBranch.preview.trim()
+                  ? childBranch.preview
+                  : buildBranchPreview(childBranch.content, childBranch.originalText)
 
                 const borderColors = {
                   note: "#64b5f6",

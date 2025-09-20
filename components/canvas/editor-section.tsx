@@ -6,6 +6,7 @@ import type { Branch } from "@/types/canvas"
 import { useAutoSave } from "@/hooks/use-auto-save"
 import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
 import { EditorToolbar } from "./editor-toolbar"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 
 interface EditorSectionProps {
   panelId: string
@@ -17,7 +18,7 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
   const editorRef = useRef<TiptapEditorHandle>(null)
   const [isEditing, setIsEditing] = useState(branch.isEditable !== false)
 
-  const handleUpdate = (html: string) => {
+  const handleUpdate = (payload: string) => {
     // Show saving indicator
     const indicator = document.getElementById(`auto-save-${panelId}`)
     if (indicator) {
@@ -29,7 +30,37 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
 
     // Save after a short delay
     setTimeout(() => {
-      dataStore.update(panelId, { content: html })
+      let previewSource: unknown = payload
+      let serializedContent = payload
+
+      const trimmed = typeof payload === 'string' ? payload.trim() : ''
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(trimmed)
+          previewSource = parsed
+          serializedContent = trimmed
+        } catch {
+          previewSource = payload
+        }
+      }
+
+      const existingBranch = dataStore.get(panelId) || {}
+      const previewText = buildBranchPreview(
+        previewSource,
+        existingBranch.originalText || branch.originalText || ''
+      )
+
+      const nextMetadata = {
+        ...(existingBranch.metadata || {}),
+        preview: previewText,
+      }
+
+      dataStore.update(panelId, {
+        content: serializedContent,
+        preview: previewText,
+        hasHydratedContent: true,
+        metadata: nextMetadata,
+      })
 
       if (indicator) {
         indicator.textContent = "Saved"

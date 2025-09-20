@@ -19,6 +19,7 @@ import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
 import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -349,6 +350,33 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const handleEditorContentLoaded = useCallback(
     ({ content: loadedContent }: { content: ProseMirrorJSON | string | null; version: number }) => {
       if (!isPlainMode) return
+
+      if (loadedContent !== undefined) {
+        const serialized = typeof loadedContent === 'string'
+          ? loadedContent
+          : loadedContent
+            ? JSON.stringify(loadedContent)
+            : ''
+
+        const previewText = buildBranchPreview(
+          loadedContent,
+          branch.originalText || dataStore.get(panelId)?.originalText || ''
+        )
+
+        const existing = dataStore.get(panelId) || {}
+        const nextMetadata = {
+          ...(existing.metadata || {}),
+          preview: previewText,
+        }
+
+        dataStore.update(panelId, {
+          content: serialized,
+          preview: previewText,
+          hasHydratedContent: true,
+          metadata: nextMetadata,
+        })
+      }
+
       if (panelId !== 'main') return
       if (postLoadEditApplied.current) return
 
@@ -365,7 +393,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }, 120)
       }
     },
-    [isPlainMode, panelId, isLayerInteractive]
+    [isPlainMode, panelId, branch.originalText, dataStore, isLayerInteractive]
   )
   
   // Update edit mode when branch content changes (Option A only)

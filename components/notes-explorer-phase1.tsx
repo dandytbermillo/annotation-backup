@@ -653,7 +653,7 @@ function NotesExplorerContent({
           type: branch.type || 'note',
           parentId: branch.parentId,
           children: [],
-          content: branch.content
+          content: branch.preview || branch.content
         })
       })
       
@@ -716,6 +716,20 @@ function NotesExplorerContent({
       }
     }
   }, [selectedNoteId, enableTreeView, usePhase1API, buildTreeFromBranches])
+
+  useEffect(() => {
+    if (!enableTreeView || usePhase1API) return
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ noteId?: string }>).detail || {}
+      if (!detail.noteId || detail.noteId !== selectedNoteId) return
+      const tree = buildTreeFromBranches(detail.noteId)
+      setTreeData(tree)
+    }
+
+    window.addEventListener('plain-branch-snapshot', handler)
+    return () => window.removeEventListener('plain-branch-snapshot', handler)
+  }, [enableTreeView, usePhase1API, selectedNoteId, buildTreeFromBranches])
 
   // Phase 3.1: Fetch ALL folders including nested ones for selection
   const fetchAvailableFolders = useCallback(async () => {

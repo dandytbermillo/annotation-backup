@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-20 05:33Z] da74c06: finally double reload is solved
 - commit [2025-09-20 05:14Z] 6b7593e: testing
 - commit [2025-09-19 22:24Z] 8e375e2: still fixing
 - commit [2025-09-19 21:44Z] fc9938c: single reload on new note
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-19 00:23Z] 0866e10: almost there
 - commit [2025-09-18 22:25Z] 10462fe: working a bit
 - commit [2025-09-18 21:32Z] 25764cf: apply the patch plain-mode-optimistic-concurrency.patch
-- commit [2025-09-18 20:29Z] 0c23f6f: still fixing the issue
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

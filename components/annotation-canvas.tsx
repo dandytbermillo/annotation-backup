@@ -676,7 +676,10 @@ export default function AnnotationCanvas() {
 
                 return filteredBranches.map(branchId => {
                     const branch = this.getBranch(branchId);
-                    const preview = branch.content.replace(/<[^>]*>/g, '').substring(0, 100) + '...';
+                    const basePreview = branch.preview && branch.preview.trim()
+                        ? branch.preview.trim()
+                        : (branch.content ? String(branch.content).replace(/<[^>]*>/g, '').trim() : '');
+                    const preview = basePreview.length > 100 ? basePreview.slice(0, 100) + '...' : basePreview;
                     
                     return \`
                         <div class="branch-item \${branch.type}" onclick="window.app.openBranch('\${branchId}', '\${parentId}')">

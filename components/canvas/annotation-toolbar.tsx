@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from "uuid"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { createAnnotationBranch } from "@/lib/models/annotation"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 
 export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()
@@ -27,11 +28,19 @@ export function AnnotationToolbar() {
     const isPlainMode = !!plainProvider
     
     // Create the branch data with proper quoted content
+    const draftBranch = createAnnotationBranch(type, panel, noteId || '', text, { x: 0, y: 0 })
+    const initialPreview = buildBranchPreview(draftBranch.content, text)
+
     const branchData = {
       id: branchId,
-      ...createAnnotationBranch(type, panel, noteId || '', text, { x: 0, y: 0 }),
+      ...draftBranch,
+      preview: initialPreview,
       branches: [],
       isEditable: true,
+      metadata: {
+        ...draftBranch.metadata,
+        preview: initialPreview,
+      },
     }
 
     // Add the branch to data store
@@ -49,7 +58,8 @@ export function AnnotationToolbar() {
         metadata: {
           annotationType: type,
           annotationId: annotationId,
-          displayId: branchId // Store the UI ID in metadata
+          displayId: branchId, // Store the UI ID in metadata
+          preview: initialPreview,
         },
         anchors: state.selectedRange ? {
           start: state.selectedRange.startOffset,

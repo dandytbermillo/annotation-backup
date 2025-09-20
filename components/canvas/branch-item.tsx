@@ -3,6 +3,7 @@
 import { useCanvas } from "./canvas-context"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
+import { buildBranchPreview } from "@/lib/utils/branch-preview"
 
 interface BranchItemProps {
   branchId: string
@@ -108,7 +109,9 @@ export function BranchItem({ branchId, parentId }: BranchItemProps) {
     }))
   }
 
-  const preview = branch.content.replace(/<[^>]*>/g, "").substring(0, 100) + "..."
+  const preview = branch.preview && branch.preview.trim()
+    ? branch.preview
+    : buildBranchPreview(branch.content, branch.originalText)
 
   const borderColors = {
     note: "border-l-blue-400",

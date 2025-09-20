@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Pool } from 'pg'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-})
+import { serverPool } from '@/lib/db/pool'
+import { FEATURE_WORKSPACE_SCOPING, withWorkspaceClient } from '@/lib/workspace/workspace-store'
 
 // Deterministic mapping for non-UUID IDs (slugs) → UUID
 const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
@@ -34,25 +32,50 @@ export async function POST(request: NextRequest) {
     // Coerce noteId slug to UUID if needed
     const noteKey = coerceEntityId(noteId)
     
-    const result = await pool.query(
+    if (FEATURE_WORKSPACE_SCOPING) {
+      return await withWorkspaceClient(serverPool, async (client, workspaceId) => {
+        const insertResult = await client.query(
+          `INSERT INTO branches 
+           (id, note_id, parent_id, type, original_text, metadata, anchors, workspace_id, created_at, updated_at)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::jsonb, $7::jsonb, $8::uuid, NOW(), NOW())
+           RETURNING id, note_id as "noteId", parent_id as "parentId", 
+                     type, original_text as "originalText", metadata, anchors, 
+                     created_at as "createdAt", updated_at as "updatedAt"`,
+          [
+            idOrNull,
+            noteKey,
+            parentIdOrNull,
+            type,
+            originalText,
+            JSON.stringify(metadata),
+            anchors ? JSON.stringify(anchors) : null,
+            workspaceId
+          ]
+        )
+
+        return NextResponse.json(insertResult.rows[0], { status: 201 })
+      })
+    }
+
+    const result = await serverPool.query(
       `INSERT INTO branches 
        (id, note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
-       VALUES (COALESCE($1, gen_random_uuid()), $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW(), NOW())
+       VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::jsonb, $7::jsonb, NOW(), NOW())
        RETURNING id, note_id as "noteId", parent_id as "parentId", 
                  type, original_text as "originalText", metadata, anchors, 
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         idOrNull,
-        noteKey, 
-        parentIdOrNull, 
-        type, 
-        originalText, 
-        JSON.stringify(metadata), 
+        noteKey,
+        parentIdOrNull,
+        type,
+        originalText,
+        JSON.stringify(metadata),
         anchors ? JSON.stringify(anchors) : null
       ]
     )
-    
-    return NextResponse.json(result.rows[0])
+
+    return NextResponse.json(result.rows[0], { status: 201 })
   } catch (error) {
     console.error('[POST /api/postgres-offline/branches] Error:', error)
     console.error('Request body:', { id, noteId, parentId, type, originalText, anchors })
@@ -79,7 +102,24 @@ export async function GET(request: NextRequest) {
     // Coerce slug to UUID if needed
     const noteKey = coerceEntityId(noteId)
     
-    const result = await pool.query(
+    if (FEATURE_WORKSPACE_SCOPING) {
+      return await withWorkspaceClient(serverPool, async (client) => {
+        const scopedResult = await client.query(
+          `SELECT id, note_id as "noteId", parent_id as "parentId", 
+                  type, original_text as "originalText", metadata, anchors, 
+                  created_at as "createdAt", updated_at as "updatedAt"
+           FROM branches 
+           WHERE note_id = $1
+             AND deleted_at IS NULL
+           ORDER BY created_at ASC`,
+          [noteKey]
+        )
+
+        return NextResponse.json(scopedResult.rows)
+      })
+    }
+
+    const result = await serverPool.query(
       `SELECT id, note_id as "noteId", parent_id as "parentId", 
               type, original_text as "originalText", metadata, anchors, 
               created_at as "createdAt", updated_at as "updatedAt"
