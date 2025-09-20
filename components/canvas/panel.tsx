@@ -252,25 +252,49 @@ export function Panel({ panelId, panelData }: PanelProps) {
               </div>
             )}
 
-            <div
-              contentEditable={isEditable}
-              suppressContentEditableWarning={true}
-              data-panel={panelId}
-              dangerouslySetInnerHTML={{ __html: branch.content }}
-              style={{
+            {(() => {
+              const rawContent = typeof branch.content === 'string' ? branch.content : ''
+              const looksLikeJson = rawContent.trim().startsWith('{') || rawContent.trim().startsWith('[')
+              const contentHtml = looksLikeJson ? '' : rawContent
+              const fallbackText = branch.preview || buildBranchPreview(branch.content, branch.originalText)
+
+              const commonStyle = {
                 background: "#fafbfc",
                 border: "1px solid #e1e8ed",
                 borderRadius: "8px",
                 padding: "20px",
                 minHeight: "250px",
-                fontFamily: "'Georgia', serif",
+                fontFamily: "'Georgia', serif" as const,
                 lineHeight: 1.8,
                 outline: "none",
                 fontSize: "15px",
                 color: "#2c3e50",
-                resize: "none",
-              }}
-            />
+                resize: "none" as const,
+              }
+
+              if (contentHtml) {
+                return (
+                  <div
+                    contentEditable={isEditable}
+                    suppressContentEditableWarning
+                    data-panel={panelId}
+                    dangerouslySetInnerHTML={{ __html: contentHtml }}
+                    style={commonStyle}
+                  />
+                )
+              }
+
+              return (
+                <div
+                  contentEditable={isEditable}
+                  suppressContentEditableWarning
+                  data-panel={panelId}
+                  style={commonStyle}
+                >
+                  {fallbackText}
+                </div>
+              )
+            })()}
           </div>
         </div>
 

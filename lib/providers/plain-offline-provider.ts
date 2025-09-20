@@ -334,12 +334,55 @@ export class PlainOfflineProvider extends EventEmitter {
    */
   private _isEmptyContent(content: any): boolean {
     if (!content) return true
+
     if (typeof content === 'string') {
-      return content === '<p></p>' || content.trim() === ''
+      const trimmed = content.trim()
+      return trimmed.length === 0 || trimmed === '<p></p>'
     }
-    if (content.type === 'doc' && (!content.content || content.content.length === 0)) {
-      return true
+
+    if (typeof content === 'object') {
+      try {
+        const normalized = JSON.parse(JSON.stringify(content))
+        const doc = normalized?.type === 'doc' ? normalized : { type: 'doc', content: [normalized] }
+
+        if (!Array.isArray(doc.content) || doc.content.length === 0) {
+          return true
+        }
+
+        const queue = [...doc.content]
+        while (queue.length > 0) {
+          const node = queue.shift()
+          if (!node) continue
+
+          if (typeof node === 'string') {
+            const trimmed = node.trim()
+            if (trimmed.length > 0) return false
+            continue
+          }
+
+          if (typeof node.text === 'string') {
+            const trimmed = node.text.trim()
+            if (trimmed.length > 0) return false
+          }
+
+          if (Array.isArray(node.content)) {
+            queue.push(...node.content)
+          }
+        }
+
+        return true
+      } catch {
+        // If parsing fails, fall through to stringification heuristic
+      }
+
+      try {
+        const stringified = JSON.stringify(content)
+        return stringified === '{}' || stringified === '[]'
+      } catch {
+        return false
+      }
     }
+
     return false
   }
 

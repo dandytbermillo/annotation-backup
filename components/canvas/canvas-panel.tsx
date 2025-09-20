@@ -351,36 +351,34 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     ({ content: loadedContent }: { content: ProseMirrorJSON | string | null; version: number }) => {
       if (!isPlainMode) return
 
-      if (loadedContent !== undefined) {
-        const serialized = typeof loadedContent === 'string'
-          ? loadedContent
-          : loadedContent
-            ? JSON.stringify(loadedContent)
-            : ''
-
-        const previewText = buildBranchPreview(
-          loadedContent,
-          branch.originalText || dataStore.get(panelId)?.originalText || ''
-        )
-
+      if (loadedContent !== undefined && loadedContent !== null && !isContentEmptyValue(loadedContent)) {
         const existing = dataStore.get(panelId) || {}
+        const previewFallback = existing.preview
+          || existing.metadata?.preview
+          || existing.originalText
+          || branch.originalText
+          || ''
+        const computedPreview = buildBranchPreview(loadedContent)
+        const previewText = computedPreview || previewFallback
+
         const nextMetadata = {
           ...(existing.metadata || {}),
           preview: previewText,
         }
 
         dataStore.update(panelId, {
-          content: serialized,
+          content: loadedContent,
           preview: previewText,
           hasHydratedContent: true,
           metadata: nextMetadata,
         })
       }
 
+      const empty = isContentEmptyValue(loadedContent)
+
       if (panelId !== 'main') return
       if (postLoadEditApplied.current) return
 
-      const empty = isContentEmptyValue(loadedContent)
       postLoadEditApplied.current = true
 
       if (empty) {
@@ -457,15 +455,37 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   }
   const currentBranch = getBranchData()
 
-  const handleUpdate = (html: string) => {
-    // Update both stores with panel-specific content
-    const updatedData = { ...currentBranch, content: html }
+  const handleUpdate = (payload: ProseMirrorJSON | string) => {
+    const existing = dataStore.get(panelId) || {}
+
+    const previewFallback = existing.preview
+      || existing.metadata?.preview
+      || existing.originalText
+      || branch.originalText
+      || ''
+    const isPayloadEmpty = isContentEmptyValue(payload as any)
+    const computedPreview = buildBranchPreview(payload)
+    const previewText = computedPreview || (isPayloadEmpty ? '' : previewFallback)
+
+    const updatedData = {
+      ...currentBranch,
+      content: payload,
+      preview: previewText,
+      hasHydratedContent: true,
+      metadata: {
+        ...(currentBranch.metadata || {}),
+        preview: previewText,
+      },
+    }
+
+    // Update both stores with panel-specific content + preview
     dataStore.update(panelId, updatedData)
     
     // Also update in CollaborationProvider
     const branchData = branchesMap.get(panelId)
     if (branchData) {
-      branchData.content = html
+      branchData.content = payload
+      branchData.preview = previewText
       branchesMap.set(panelId, branchData)
     } else {
       // If not in YJS yet, add the full data

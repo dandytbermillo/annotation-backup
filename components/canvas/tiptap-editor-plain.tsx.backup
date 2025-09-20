@@ -36,6 +36,66 @@ import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
+import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
+
+const JSON_START_RE = /^\s*[\[{]/
+
+function providerContentIsEmpty(provider: PlainOfflineProvider | undefined, value: any): boolean {
+  if (!value) return true
+  if (provider && typeof (provider as any).isEmptyContent === 'function') {
+    try {
+      return (provider as any).isEmptyContent(value)
+    } catch {
+      // fall back to heuristics
+    }
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length === 0 || trimmed === '<p></p>'
+  }
+  if (typeof value === 'object') {
+    try {
+      const preview = extractPreviewFromContent(value)
+      return preview.trim().length === 0
+    } catch {
+      const content = (value as any).content
+      return Array.isArray(content) && content.length === 0
+    }
+  }
+  return false
+}
+
+function coerceStoredContent(value: any): ProseMirrorJSON | string | null {
+  if (!value) return null
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (JSON_START_RE.test(trimmed)) {
+      try {
+        return JSON.parse(trimmed)
+      } catch {
+        return trimmed
+      }
+    }
+    return value
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.parse(JSON.stringify(value))
+    } catch {
+      return value as ProseMirrorJSON
+    }
+  }
+  return null
+}
+
+const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
+
+type PendingRestoreState = {
+  content: ProseMirrorJSON | string
+  version: number
+  key: string
+}
 
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
@@ -149,58 +209,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const isEditableRef = useRef(isEditable)
     const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
     const pendingRestoreAttemptedRef = useRef(false)
-    
-    // Load content from provider when noteId/panelId changes
-    // SIMPLIFIED APPROACH - match the working example
-    useEffect(() => {
-      if (!provider || !noteId) {
-        // No provider or noteId, skipping load
-        setIsContentLoading(false)
-        return
-      }
-      
-      // Loading content for noteId and panelId
-      debugLog('TiptapEditorPlain', 'START_LOAD', {
-        noteId,
-        panelId,
-        metadata: { component: 'editor', action: 'start_load' }
-      })
-      
-      setIsContentLoading(true)
-      // DON'T clear loaded content here - it causes the fallback effect to trigger
-      // The loaded content will be updated when the new content arrives
-      
-      // Load content from provider asynchronously
-      provider.loadDocument(noteId, panelId).then(loadedDoc => {
-        // Document loaded successfully
-        debugLog('TiptapEditorPlain', 'CONTENT_LOADED', {
-          noteId,
-          panelId,
-          contentPreview: createContentPreview(loadedDoc),
-          metadata: { hasContent: !!loadedDoc, contentType: typeof loadedDoc }
-        })
-        
-        const resolvedContent = loadedDoc ?? { type: 'doc', content: [] }
-        setLoadedContent(resolvedContent)
-        if (onContentLoaded) {
-          let version = 0
-          if (provider?.getDocumentVersion) {
-            try {
-              version = provider.getDocumentVersion(noteId, panelId)
-            } catch {}
-          }
-          onContentLoaded({ content: resolvedContent, version })
-        }
-        setIsContentLoading(false)
-      }).catch(error => {
-        console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
-        setLoadedContent({ type: 'doc', content: [] })
-        onContentLoaded?.({ content: { type: 'doc', content: [] }, version: 0 })
-        setIsContentLoading(false)
-      })
-    }, [provider, noteId, panelId])
-    
-    // Check for pending saves in localStorage and restore when provider cache is behind
+    const pendingPromotionRef = useRef<PendingRestoreState | null>(null)
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -213,10 +222,212 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       []
     )
+    
+    useEffect(() => {
+      if (typeof window !== 'undefined') {
+        const existingSession = window.localStorage.getItem('debug-logger-session-id')
+        if (!existingSession) {
+          debugLog('TiptapEditorPlain', 'SESSION_INIT', {
+            noteId,
+            panelId,
+            metadata: { autoInitialized: true }
+          })
+        }
+      }
+    }, [noteId, panelId])
 
+    // Load content from provider when noteId/panelId changes
+    // SIMPLIFIED APPROACH - match the working example
+    useEffect(() => {
+      if (!provider || !noteId) {
+        setIsContentLoading(false)
+        pendingPromotionRef.current = null
+        return
+      }
+
+      pendingRestoreAttemptedRef.current = false
+      let isActive = true
+      const pendingKey = `pending_save_${noteId}_${panelId}`
+      let pendingPayload: { content: ProseMirrorJSON | string; version: number } | null = null
+
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem(pendingKey)
+          debugLog('TiptapEditorPlain', 'PENDING_PAYLOAD_RAW', {
+            noteId,
+            panelId,
+            metadata: { hasRaw: !!raw }
+          })
+          if (raw) {
+            const parsed = JSON.parse(raw) as { content?: any; timestamp?: number; version?: number }
+            debugLog('TiptapEditorPlain', 'PENDING_PAYLOAD_PARSED', {
+            noteId,
+            panelId,
+            metadata: { hasContent: !!parsed?.content, version: parsed?.version }
+          })
+            const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : 0
+            if (timestamp) {
+              const age = Date.now() - timestamp
+              if (age < PENDING_SAVE_MAX_AGE_MS && Object.prototype.hasOwnProperty.call(parsed, 'content')) {
+                pendingPayload = {
+                  content: parsed.content as ProseMirrorJSON | string,
+                  version: typeof parsed.version === 'number' ? parsed.version : 0
+                }
+              } else if (age >= PENDING_SAVE_MAX_AGE_MS) {
+                localStorage.removeItem(pendingKey)
+              }
+            } else {
+              localStorage.removeItem(pendingKey)
+            }
+          }
+        } catch (error) {
+          console.error('[TiptapEditorPlain] Failed to parse pending save snapshot:', error)
+          localStorage.removeItem(pendingKey)
+        }
+      }
+
+      if (pendingPayload) {
+        debugLog('TiptapEditorPlain', 'PENDING_PAYLOAD_DETECTED', {
+          noteId,
+          panelId,
+          metadata: { version: pendingPayload.version }
+        })
+        pendingRestoreAttemptedRef.current = true
+        pendingPromotionRef.current = { ...pendingPayload, key: pendingKey }
+        setLoadedContent(pendingPayload.content)
+        setIsContentLoading(false)
+        onContentLoaded?.({ content: pendingPayload.content, version: pendingPayload.version })
+      } else {
+        pendingPromotionRef.current = null
+        setIsContentLoading(true)
+      }
+
+      debugLog('TiptapEditorPlain', 'START_LOAD', {
+        noteId,
+        panelId,
+        metadata: { component: 'editor', action: 'start_load' }
+      })
+
+      provider.loadDocument(noteId, panelId).then(() => {
+        if (!isActive) return
+
+        let remoteContent: ProseMirrorJSON | string | null = null
+        try {
+          remoteContent = provider.getDocument(noteId, panelId)
+        } catch {}
+
+        let resolvedContent: ProseMirrorJSON | string | null = remoteContent
+
+        const needsFallback = !resolvedContent || providerContentIsEmpty(provider, resolvedContent)
+        if (needsFallback && typeof window !== 'undefined') {
+          try {
+            const ds = (window as any).canvasDataStore
+            const branchEntry = ds?.get?.(panelId)
+            const fallbackRaw = branchEntry?.content || branchEntry?.metadata?.htmlSnapshot
+            const fallback = coerceStoredContent(fallbackRaw)
+
+            if (fallback && !providerContentIsEmpty(provider, fallback)) {
+              resolvedContent = fallback
+
+              // Persist fallback to server so future loads don't regress
+              provider.saveDocument(noteId, panelId, fallback, false, { skipBatching: true }).catch(err => {
+                console.warn('[TiptapEditorPlain] Failed to persist fallback content:', err)
+              })
+            }
+          } catch (fallbackError) {
+            console.warn('[TiptapEditorPlain] Failed to derive fallback content:', fallbackError)
+          }
+        }
+
+        if (!resolvedContent) {
+          resolvedContent = { type: 'doc', content: [] }
+        }
+
+        let remoteVersion = 0
+        try {
+          remoteVersion = provider.getDocumentVersion(noteId, panelId)
+        } catch {}
+
+        debugLog('TiptapEditorPlain', 'CONTENT_LOADED', {
+          noteId,
+          panelId,
+          contentPreview: createContentPreview(resolvedContent),
+          metadata: { hasContent: !!remoteContent, contentType: typeof resolvedContent }
+        })
+
+        const promoted = pendingPromotionRef.current
+        if (promoted) {
+          const pendingVersion = typeof promoted.version === 'number' ? promoted.version : 0
+          const sameContent = normalizeContent(resolvedContent) === normalizeContent(promoted.content)
+          const remoteNotOlder = remoteVersion >= pendingVersion
+          debugLog('TiptapEditorPlain', 'REMOTE_LOAD_WITH_PENDING', {
+            noteId,
+            panelId,
+            metadata: { remoteVersion, pendingVersion, remoteNotOlder, sameContent }
+          })
+
+          if (remoteNotOlder && sameContent) {
+            setLoadedContent(resolvedContent)
+            onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
+            localStorage.removeItem(promoted.key)
+            pendingPromotionRef.current = null
+            setIsContentLoading(false)
+            return
+          }
+
+          debugLog('TiptapEditorPlain', 'PROMOTE_PENDING_SNAPSHOT', {
+            noteId,
+            panelId,
+            metadata: { remoteVersion, pendingVersion, sameContent }
+          })
+
+          const targetVersion = remoteNotOlder ? remoteVersion + 1 : Math.max(remoteVersion + 1, pendingVersion)
+          setLoadedContent(promoted.content)
+          onContentLoaded?.({
+            content: promoted.content,
+            version: targetVersion
+          })
+          setIsContentLoading(false)
+
+          provider.saveDocument(noteId, panelId, promoted.content, false, { skipBatching: true })
+            .then(() => {
+              localStorage.removeItem(promoted.key)
+              pendingPromotionRef.current = null
+            })
+            .catch(err => {
+              console.error('[TiptapEditorPlain] Failed to persist pending restore:', err)
+            })
+          return
+        }
+
+        setLoadedContent(resolvedContent)
+        onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
+        setIsContentLoading(false)
+      }).catch(error => {
+        console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
+        if (!pendingPromotionRef.current) {
+          setLoadedContent({ type: 'doc', content: [] })
+          onContentLoaded?.({ content: { type: 'doc', content: [] }, version: 0 })
+        }
+        setIsContentLoading(false)
+      })
+
+      return () => {
+        isActive = false
+      }
+    }, [provider, noteId, panelId, normalizeContent, onContentLoaded])
+    
+    // Check for pending saves in localStorage and restore when provider cache is behind
     useEffect(() => {
       if (!provider || !noteId || !panelId) return
       if (isContentLoading) return
+      if (pendingRestoreAttemptedRef.current) return
+
+      pendingRestoreAttemptedRef.current = true
+      debugLog('TiptapEditorPlain', 'SECONDARY_PENDING_RESTORE_CHECK', {
+        noteId,
+        panelId
+      })
 
       const pendingKey = `pending_save_${noteId}_${panelId}`
       const pendingData = localStorage.getItem(pendingKey)
@@ -224,9 +435,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
       try {
         const { content: pendingContent, timestamp, version: pendingVersion = 0 } = JSON.parse(pendingData)
+        if (typeof timestamp !== 'number') {
+          localStorage.removeItem(pendingKey)
+          return
+        }
         const age = Date.now() - timestamp
-        const fiveMinutes = 5 * 60 * 1000
-        if (age >= fiveMinutes) {
+        if (age >= PENDING_SAVE_MAX_AGE_MS) {
           localStorage.removeItem(pendingKey)
           return
         }
@@ -239,17 +453,31 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         } catch {}
 
         const sameContent = normalizeContent(existingDoc) === normalizeContent(pendingContent)
-        if (sameContent || providerVersion >= pendingVersion) {
+
+        debugLog('TiptapEditorPlain', 'FALLBACK_PENDING_RESTORE', {
+          noteId,
+          panelId,
+          metadata: { providerVersion, pendingVersion, sameContent }
+        })
+
+        if (providerVersion >= pendingVersion) {
+          if (!sameContent) {
+            debugLog('TiptapEditorPlain', 'FALLBACK_DISCARD_PENDING', {
+              noteId,
+              panelId,
+              metadata: { providerVersion, pendingVersion, reason: 'provider-newer' }
+            })
+            localStorage.removeItem(pendingKey)
+            return
+          }
+          debugLog('TiptapEditorPlain', 'FALLBACK_PENDING_MATCH', {
+            noteId,
+            panelId,
+            metadata: { providerVersion, pendingVersion }
+          })
           localStorage.removeItem(pendingKey)
           return
         }
-
-        console.log('[TiptapEditorPlain] Restoring pending save for stale provider content', {
-          noteId,
-          panelId,
-          pendingVersion,
-          providerVersion,
-        })
 
         provider.saveDocument(noteId, panelId, pendingContent, false, { skipBatching: true })
           .then(() => {
@@ -290,13 +518,22 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       autofocus: isEditable ? 'end' : false, // Auto-focus at end if editable
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
-        console.log(`[TiptapEditorPlain-${panelId}] Editor CREATED for note ${noteId}, initialContent:`, initialContent)
-        // Register ProseMirror plugins
-        console.log('[TiptapEditorPlain] Editor created with:', {
-          isEditable,
-          autofocus: isEditable ? 'end' : false,
+        debugLog('TiptapEditorPlain', 'EDITOR_CREATED', {
+          noteId,
           panelId,
-          initialContent: typeof initialContent === 'string' ? initialContent.substring(0, 100) : initialContent
+          contentPreview: initialContent ? createContentPreview(initialContent) : undefined,
+          metadata: { initialContentType: typeof initialContent }
+        })
+        // Register ProseMirror plugins
+        debugLog('TiptapEditorPlain', 'EDITOR_CREATE_CONFIG', {
+          noteId,
+          panelId,
+          contentPreview: initialContent ? createContentPreview(initialContent) : undefined,
+          metadata: {
+            isEditable,
+            autofocus: isEditable ? 'end' : false,
+            initialContentType: typeof initialContent
+          }
         })
         // Browser detection for compatibility
         
@@ -347,7 +584,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             clearTimeout(tooltipTimeout)
             tooltipTimeout = null
           }
-          console.log('[TiptapEditorPlain] Hiding tooltip')
+          debugLog('TiptapEditorPlain', 'HIDE_TOOLTIP', {
+          noteId,
+          panelId,
+          metadata: { reason: 'hover leave' }
+        })
           hideAnnotationTooltipSoon()
         })
         
@@ -364,7 +605,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           
           const branchId = hoverIcon.element.getAttribute('data-branch-id')
           if (branchId) {
-            console.log('[TiptapEditorPlain] Opening panel for branch:', branchId)
+            debugLog('TiptapEditorPlain', 'OPEN_BRANCH_PANEL', {
+          noteId,
+          panelId,
+          metadata: { branchId }
+        })
             window.dispatchEvent(new CustomEvent('create-panel', { 
               detail: { panelId: branchId } 
             }))
@@ -420,6 +665,28 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON()
+
+        const pendingKey = `pending_save_${noteId}_${panelId}`
+        if (typeof window !== 'undefined') {
+          try {
+            let providerVersion = 0
+            if (provider) {
+              try {
+                providerVersion = provider.getDocumentVersion(noteId, panelId)
+              } catch {}
+            }
+            window.localStorage.setItem(pendingKey, JSON.stringify({
+              content: json,
+              timestamp: Date.now(),
+              noteId,
+              panelId,
+              version: providerVersion,
+            }))
+          } catch (err) {
+            console.warn('[TiptapEditorPlain] Failed to persist pending snapshot during update:', err)
+          }
+        }
+
         // Hash current content to detect real changes
         const contentStr = JSON.stringify(json)
         ;(window as any).__lastContentHash = (window as any).__lastContentHash || new Map()
@@ -463,9 +730,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         const timer = setTimeout(() => {
           if (provider && noteId) {
             // Skip batching for document saves to ensure timely persistence
-            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).catch(err => {
-              console.error('[TiptapEditorPlain] Failed to save content:', err)
-            })
+            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
+              .catch(err => {
+                console.error('[TiptapEditorPlain] Failed to save content:', err)
+              })
           }
           onUpdate?.(json)
         }, 300) // Reduced to 300ms for faster saves
@@ -548,16 +816,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           // Always save to localStorage synchronously as backup
           const pendingKey = `pending_save_${noteId}_${panelId}`
           try {
-            let providerVersion = 0
-            try {
-              providerVersion = provider.getDocumentVersion(noteId, panelId)
-            } catch {}
             localStorage.setItem(pendingKey, JSON.stringify({
               content: json,
               timestamp: Date.now(),
               noteId,
-              panelId,
-              version: providerVersion,
+              panelId
             }))
           } catch (e) {
             console.warn('[TiptapEditorPlain] Failed to save to localStorage:', e)
@@ -567,17 +830,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             // For visibilitychange, we can await the async save
             try {
               await provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
-              // Clear localStorage backup after successful save
-              localStorage.removeItem(pendingKey)
             } catch (err) {
               console.error('[TiptapEditorPlain] Failed to save content:', err)
             }
           } else {
             // For beforeunload, fire and forget (browser won't wait)
-            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).then(() => {
-              // Clear backup if save succeeds (might not happen if page closes)
-              localStorage.removeItem(pendingKey)
-            }).catch(() => {
+            provider.saveDocument(noteId, panelId, json, false, { skipBatching: true }).catch(() => {
               // Keep localStorage backup if save fails
             })
           }
@@ -636,6 +894,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       // Content update effect triggered
       
       if (editor && loadedContent && !isContentLoading) {
+        debugLog('TiptapEditorPlain', 'APPLY_LOADED_CONTENT', {
+          noteId,
+          panelId,
+          hasPending: !!pendingPromotionRef.current,
+          isString: typeof loadedContent === 'string'
+        })
         // Use a slight delay to ensure editor is fully ready
         setTimeout(() => {
           if (editor && !editor.isDestroyed) {

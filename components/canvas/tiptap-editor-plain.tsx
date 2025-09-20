@@ -36,6 +36,63 @@ import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
+import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
+
+const JSON_START_RE = /^\s*[\[{]/
+
+function providerContentIsEmpty(provider: PlainOfflineProvider | undefined, value: any): boolean {
+  if (!value) return true
+  if (provider && typeof (provider as any).isEmptyContent === 'function') {
+    try {
+      return (provider as any).isEmptyContent(value)
+    } catch {
+      // fall back to heuristics
+    }
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed.length === 0 || trimmed === '<p></p>'
+  }
+  if (typeof value === 'object') {
+    try {
+      const preview = extractPreviewFromContent(value)
+      if (preview.trim().length === 0) {
+        const content = (value as any).content
+        if (!Array.isArray(content) || content.length === 0) return true
+        return content.every((node: any) => providerContentIsEmpty(provider, node))
+      }
+      return false
+    } catch {
+      const content = (value as any).content
+      return Array.isArray(content) && content.length === 0
+    }
+  }
+  return false
+}
+
+function coerceStoredContent(value: any): ProseMirrorJSON | string | null {
+  if (!value) return null
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    if (JSON_START_RE.test(trimmed)) {
+      try {
+        return JSON.parse(trimmed)
+      } catch {
+        return trimmed
+      }
+    }
+    return value
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.parse(JSON.stringify(value))
+    } catch {
+      return value as ProseMirrorJSON
+    }
+  }
+  return null
+}
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -158,6 +215,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
     const pendingRestoreAttemptedRef = useRef(false)
     const pendingPromotionRef = useRef<PendingRestoreState | null>(null)
+    const hasHydratedRef = useRef(false)
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -182,6 +240,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           })
         }
       }
+    }, [noteId, panelId])
+
+    useEffect(() => {
+      hasHydratedRef.current = false
     }, [noteId, panelId])
 
     // Load content from provider when noteId/panelId changes
@@ -245,6 +307,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setLoadedContent(pendingPayload.content)
         setIsContentLoading(false)
         onContentLoaded?.({ content: pendingPayload.content, version: pendingPayload.version })
+        if (!providerContentIsEmpty(provider, pendingPayload.content)) {
+          hasHydratedRef.current = true
+        }
       } else {
         pendingPromotionRef.current = null
         setIsContentLoading(true)
@@ -264,7 +329,45 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           remoteContent = provider.getDocument(noteId, panelId)
         } catch {}
 
-        const resolvedContent = remoteContent ?? { type: 'doc', content: [] }
+        let resolvedContent: ProseMirrorJSON | string | null = remoteContent
+
+        const needsFallback = !resolvedContent || providerContentIsEmpty(provider, resolvedContent)
+        if (needsFallback && typeof window !== 'undefined') {
+          try {
+            const ds = (window as any).canvasDataStore
+            const branchEntry = ds?.get?.(panelId)
+            const fallbackRaw = branchEntry?.content || branchEntry?.metadata?.htmlSnapshot
+            let fallback = coerceStoredContent(fallbackRaw)
+
+            if (!fallback || providerContentIsEmpty(provider, fallback)) {
+              const previewText = branchEntry?.preview || branchEntry?.metadata?.preview
+              if (typeof previewText === 'string' && previewText.trim().length > 0) {
+                fallback = {
+                  type: 'doc',
+                  content: [{
+                    type: 'paragraph',
+                    content: [{ type: 'text', text: previewText.trim() }]
+                  }]
+                }
+              }
+            }
+
+            if (fallback && !providerContentIsEmpty(provider, fallback)) {
+              resolvedContent = fallback
+
+              // Persist fallback to server so future loads don't regress
+              provider.saveDocument(noteId, panelId, fallback, false, { skipBatching: true }).catch(err => {
+                console.warn('[TiptapEditorPlain] Failed to persist fallback content:', err)
+              })
+            }
+          } catch (fallbackError) {
+            console.warn('[TiptapEditorPlain] Failed to derive fallback content:', fallbackError)
+          }
+        }
+
+        if (!resolvedContent) {
+          resolvedContent = { type: 'doc', content: [] }
+        }
 
         let remoteVersion = 0
         try {
@@ -326,6 +429,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setLoadedContent(resolvedContent)
         onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
         setIsContentLoading(false)
+        if (!providerContentIsEmpty(provider, resolvedContent)) {
+          hasHydratedRef.current = true
+        }
       }).catch(error => {
         console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
         if (!pendingPromotionRef.current) {
@@ -588,6 +694,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       onUpdate: ({ editor }) => {
         const json = editor.getJSON()
+        const isEmptyDoc = providerContentIsEmpty(provider, json)
+
+        if (!hasHydratedRef.current) {
+          if (isEmptyDoc) {
+            return
+          }
+          hasHydratedRef.current = true
+        }
 
         const pendingKey = `pending_save_${noteId}_${panelId}`
         if (typeof window !== 'undefined') {
@@ -625,10 +739,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
 
         // Log when we're about to save empty content
-        const isEmpty = !json.content || json.content.length === 0 || 
-          (json.content.length === 1 && json.content[0].type === 'paragraph' && !json.content[0].content)
-        
-        if (isEmpty) {
+        if (isEmptyDoc) {
           console.warn(`[TiptapEditorPlain-${panelId}] WARNING: Saving empty content for note ${noteId}, panel ${panelId}`)
           debugLog('TiptapEditorPlain', 'EMPTY_CONTENT_SAVE', {
             noteId,

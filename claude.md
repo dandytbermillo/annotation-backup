@@ -41,6 +41,16 @@
 - **ALWAYS read command specifications, documentation, and requirements fully** - No shortcuts or assumptions
 - **ALWAYS start with the source of truth** - Don't rely on summaries, inline snippets, or your assumptions
 
+### Investigation and Analysis Policy:
+- **ALWAYS read the codebase thoroughly** - When investigating issues, read all relevant files completely, not just snippets
+- **NEVER draw conclusions without using tools** - Use SQL queries, run scripts, examine logs, and verify with actual data
+- **NEVER lie or fabricate understanding** - If you don't know or don't understand something, explicitly state so
+- **When unsure, iterate until certain** - Keep investigating and verifying until you have complete confidence in your findings
+- **ALWAYS verify database state with actual queries** - Don't assume what's in the database; run SQL queries to check
+- **ALWAYS trace execution paths completely** - Follow the code flow from start to finish, reading every file involved
+- **ALWAYS test your conclusions** - After forming a hypothesis, verify it with concrete evidence (queries, logs, tool output)
+- **Document your investigation process** - Show the tools used, commands run, and actual output received
+
 ### Agreement and Understanding Policy:
 - **NEVER agree with the user without understanding** - Don't say "you're right" or "absolutely correct" unless you have:
   1. Read and analyzed the relevant code/data

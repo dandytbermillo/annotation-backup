@@ -66,13 +66,15 @@ export function AnnotationToolbar() {
           end: state.selectedRange.endOffset,
           context: text
         } : undefined
+      }).then(() => {
+        return plainProvider.saveDocument(noteId, branchId, branchData.content, false, { skipBatching: true })
       }).catch(error => {
-        console.error('[AnnotationToolbar] Failed to create branch:', error)
+        console.error('[AnnotationToolbar] Failed to create branch or persist initial content:', error)
       })
-      
-      // Update parent's branches list
-      const parentPanel = dataStore.get(panel)
-      if (parentPanel) {
+     
+     // Update parent's branches list
+     const parentPanel = dataStore.get(panel)
+     if (parentPanel) {
         const branches = parentPanel.branches || []
         dataStore.update(panel, { branches: [...branches, branchId] })
       }

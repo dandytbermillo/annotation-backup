@@ -1,3 +1,5 @@
+import type { ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
+
 export interface CanvasState {
   canvasState: {
     zoom: number
@@ -28,7 +30,7 @@ export interface CanvasState {
 export interface Branch {
   title: string
   type: "main" | "note" | "explore" | "promote"
-  content: string
+  content: string | ProseMirrorJSON
   preview?: string
   hasHydratedContent?: boolean
   branches?: string[]
