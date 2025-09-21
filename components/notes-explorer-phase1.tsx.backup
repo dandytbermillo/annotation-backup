@@ -4,10 +4,11 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { createPortal } from 'react-dom'
 import { 
   Trash2, Plus, FileText, Search, X, ChevronRight, ChevronDown, Clock,
-  FolderOpen, Folder, Database, WifiOff, Eye, Layers, ChevronUp
+  FolderOpen, Folder, Database, WifiOff, Eye
 } from "lucide-react"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { useLayer } from "@/components/canvas/layer-provider"
+import { LayerControls, layerControlsStyles } from "@/components/canvas/layer-controls"
 import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortcuts"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
@@ -138,13 +139,6 @@ function NotesExplorerContent({
   // Multi-select state
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null)
-  
-  // Tab state for sidebar navigation
-  type SidebarTab = 'all' | 'recent' | 'organization'
-  const [activeTab, setActiveTab] = useState<SidebarTab>('all')
-  
-  // Layer Controls state
-  const [isLayerControlsExpanded, setIsLayerControlsExpanded] = useState(false)
   
   // Drag and drop state
   const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set())
@@ -2137,46 +2131,10 @@ function NotesExplorerContent({
         )}
       </div>
 
-      {/* Tab Navigation */}
-      <div className="px-4 pb-2">
-        <div className="flex bg-gray-800 rounded-lg p-1">
-          <button
-            onClick={() => setActiveTab('all')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'all'
-                ? 'bg-indigo-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            All
-          </button>
-          <button
-            onClick={() => setActiveTab('recent')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'recent'
-                ? 'bg-indigo-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            Recent
-          </button>
-          <button
-            onClick={() => setActiveTab('organization')}
-            className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'organization'
-                ? 'bg-indigo-600 text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
-            }`}
-          >
-            Organization
-          </button>
-        </div>
-      </div>
-
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto">
         {/* Recent Notes Section */}
-        {enableTreeView && recentNotesWithData.length > 0 && (activeTab === 'all' || activeTab === 'recent') && (
+        {enableTreeView && recentNotesWithData.length > 0 && (
           <div className="p-2 border-b border-gray-800">
             <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-gray-400 uppercase">
               <Clock size={14} />
@@ -2228,7 +2186,7 @@ function NotesExplorerContent({
         )}
 
         {/* Tree View - Simplified after removing Recent folder */}
-        {enableTreeView && (usePhase1API ? apiTreeData.length > 0 : (selectedNoteId && treeData.length > 0)) && (activeTab === 'all' || activeTab === 'organization') && (
+        {enableTreeView && (usePhase1API ? apiTreeData.length > 0 : (selectedNoteId && treeData.length > 0)) && (
           <div className="p-2 border-b border-gray-800">
             <div className="flex items-center gap-2 px-2 py-1 text-xs font-semibold text-gray-400 uppercase">
               <Folder size={14} />
@@ -2345,86 +2303,64 @@ function NotesExplorerContent({
               createNewNote() // Phase 0: Direct creation
             }
           }}
-          className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+          className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors mb-4"
         >
           <Plus size={18} />
           <span>Create New Note</span>
         </button>
-        
-        {/* Layer Controls - Inline Version */}
-        {multiLayerEnabled && layerContext && (
-          <div className="mt-3">
-            <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-              {/* Header */}
-              <div 
-                className="px-3 py-2 bg-gray-700 border-b border-gray-600 flex items-center justify-between cursor-pointer hover:bg-gray-650 transition-colors"
-                onClick={() => setIsLayerControlsExpanded(!isLayerControlsExpanded)}
-              >
-                <div className="flex items-center gap-2">
-                  <Layers size={16} className="text-blue-400" />
-                  <span className="text-sm font-medium text-white">Layer Controls</span>
-                </div>
-                <button className="p-0.5 hover:bg-gray-600 rounded">
-                  {isLayerControlsExpanded ? (
-                    <ChevronUp size={16} className="text-gray-400" />
-                  ) : (
-                    <ChevronDown size={16} className="text-gray-400" />
-                  )}
-                </button>
-              </div>
-              
-              {/* Controls */}
-              {isLayerControlsExpanded && (
-                <div className="p-3 space-y-3">
-                  {/* Active Layer Toggle */}
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-500 uppercase tracking-wider">Active Layer</div>
-                    <div className="flex gap-1 bg-gray-700 p-1 rounded">
-                      <button
-                        onClick={() => layerContext.setActiveLayer('notes')}
-                        className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                          layerContext.activeLayer === 'notes' 
-                            ? 'bg-blue-600 text-white' 
-                            : 'text-gray-400 hover:text-white hover:bg-gray-600'
-                        }`}
-                      >
-                        Notes
-                      </button>
-                      <button
-                        onClick={() => layerContext.setActiveLayer('popups')}
-                        className={`flex-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-                          layerContext.activeLayer === 'popups' 
-                            ? 'bg-purple-600 text-white' 
-                            : 'text-gray-400 hover:text-white hover:bg-gray-600'
-                        }`}
-                      >
-                        Popups
-                      </button>
-                    </div>
-                  </div>
-                  
-                  {/* Quick Actions */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => layerContext.toggleSidebar()}
-                      className="flex-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors"
-                    >
-                      Toggle Sidebar
-                    </button>
-                    <button
-                      onClick={() => layerContext.resetView()}
-                      className="flex-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-xs text-gray-300 transition-colors"
-                    >
-                      Reset View
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
+      {/* Navigation Controls - Disabled for now */}
+      {/* {selectedNoteId && (
+        <div className="px-4 pb-4">
+          <div className="mb-4">
+            <div className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Navigation</div>
+            <div className="space-y-2">
+              <button
+                onClick={onResetView}
+                className="w-full flex items-center gap-3 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+              >
+                <Home size={16} />
+                <span>Reset View</span>
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={onZoomIn}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                >
+                  <ZoomIn size={16} />
+                  <span>Zoom In</span>
+                </button>
+                <button
+                  onClick={onZoomOut}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                >
+                  <ZoomOut size={16} />
+                  <span>Zoom Out</span>
+                </button>
+              </div>
+              <div className="text-center py-2 px-3 bg-gray-800 rounded-lg text-sm font-medium text-gray-300">
+                {Math.round(zoom)}%
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold text-gray-400 mb-2 uppercase tracking-wide">Connections</div>
+            <button
+              onClick={onToggleConnections}
+              className={`w-full flex items-center justify-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                showConnections
+                  ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                  : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+              }`}
+            >
+              {showConnections ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+              <span>Toggle Lines</span>
+            </button>
+          </div>
+        </div>
+      )} */}
 
       {/* Phase 2: Create Note Dialog */}
       {showCreateDialog && usePhase1API && (
@@ -3135,6 +3071,14 @@ function NotesExplorerContent({
                 onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
               />
             )
+      )}
+      
+      {/* Layer Controls UI (Phase 2) */}
+      {multiLayerEnabled && (
+        <>
+          <LayerControls position="bottom-right" />
+          <style>{layerControlsStyles}</style>
+        </>
       )}
     </div>
   )

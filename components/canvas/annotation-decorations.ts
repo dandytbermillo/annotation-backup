@@ -305,7 +305,7 @@ export const AnnotationDecorations = () => {
           // Branch-first rendering: use branch content directly
           const branchPreview = branch.preview && branch.preview.trim()
             ? branch.preview.trim()
-            : buildBranchPreview(branch.content, branch.originalText)
+            : buildBranchPreview(branch.content)
           
           if (branchPreview) {
             // We have branch content - show it immediately

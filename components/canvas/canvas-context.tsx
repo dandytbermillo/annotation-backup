@@ -297,16 +297,41 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
           
           const metadata = branch.metadata || {}
           const cachedBranch = snapshotMap.get(uiId) as Record<string, any> | undefined
-          const previewFromCache = cachedBranch?.preview && cachedBranch.preview.trim()
-            ? cachedBranch.preview.trim()
-            : ''
+
+          const normalizeSoft = (value: string | undefined | null) =>
+            value ? value.replace(/\s+/g, ' ').trim() : ''
+
+          const normalizedOriginal = normalizeSoft(branch.originalText)
+
+          const rawCachedPreview = normalizeSoft(cachedBranch?.preview)
+          const previewFromCache = rawCachedPreview && rawCachedPreview.toLowerCase() === normalizedOriginal.toLowerCase()
+            ? ''
+            : rawCachedPreview
+
+          const metadataPreviewRaw = typeof metadata.preview === 'string' ? normalizeSoft(metadata.preview) : ''
+          const sanitizedMetadataPreview = metadataPreviewRaw && metadataPreviewRaw.toLowerCase() === normalizedOriginal.toLowerCase()
+            ? ''
+            : metadataPreviewRaw
+
           const previewSource = previewFromCache
-            || (typeof metadata.preview === 'string' && metadata.preview.trim() ? metadata.preview.trim() : '')
-            || buildBranchPreview(cachedBranch?.content, branch.originalText)
-            || (branch.originalText || '')
+            || sanitizedMetadataPreview
+            || buildBranchPreview(cachedBranch?.content)
+            || ''
           const normalizedPreview = previewSource ? previewSource.replace(/\s+/g, ' ').trim() : ''
 
           // Create branch data for dataStore
+          const branchMetadata = {
+            ...metadata,
+            databaseId: branch.id,  // Keep reference to database UUID
+            displayId: branch.metadata?.displayId || uiId,
+          }
+
+          if (normalizedPreview) {
+            branchMetadata.preview = normalizedPreview
+          } else {
+            delete branchMetadata.preview
+          }
+
           const branchData = {
             id: uiId,
             type: branch.type as 'note' | 'explore' | 'promote',
@@ -323,12 +348,7 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
             isEditable: true,
             branches: [],
             parentId,
-            metadata: {
-              ...metadata,
-              databaseId: branch.id,  // Keep reference to database UUID
-              displayId: branch.metadata?.displayId || uiId,
-              preview: normalizedPreview || metadata.preview || undefined
-            }
+            metadata: branchMetadata
           }
           
           // Add to dataStore

@@ -199,8 +199,7 @@ export const AnnotationDecorations = () => new Plugin({
             const branch = branches.find((b: any) => b.id === dbId)
             if (branch) {
               const txt = buildBranchPreview(
-                branch.metadata?.preview || branch.content || '',
-                branch.originalText || ''
+                branch.metadata?.preview || branch.content || ''
               )
               renderPreview(txt)
             }
@@ -220,7 +219,7 @@ export const AnnotationDecorations = () => new Plugin({
             if (retryBranch) {
               const txt = retryBranch.preview && String(retryBranch.preview).trim()
                 ? String(retryBranch.preview).trim()
-                : buildBranchPreview(retryBranch.content || '', retryBranch.originalText || '')
+                : buildBranchPreview(retryBranch.content || '')
               renderPreview(txt)
             }
           } catch {}

@@ -27,6 +27,8 @@ import {
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 
+const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
+
 interface ModernAnnotationCanvasProps {
   noteId: string
   isNotesExplorerOpen?: boolean
@@ -204,6 +206,44 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       } catch (err) {
         console.warn('[AnnotationCanvas] Failed to inspect provider cache during snapshot load:', err)
       }
+    }
+
+    let pendingSnapshotBlocked = false
+    if (plainProvider && typeof window !== 'undefined') {
+      try {
+        const pendingKey = `pending_save_${noteId}_main`
+        const pendingData = window.localStorage.getItem(pendingKey)
+        if (pendingData) {
+          const parsed = JSON.parse(pendingData) as { timestamp?: number; version?: number }
+          const timestamp = typeof parsed.timestamp === 'number' ? parsed.timestamp : 0
+          if (timestamp) {
+            const age = Date.now() - timestamp
+            if (age < PENDING_SAVE_MAX_AGE_MS) {
+              const pendingVersion = typeof parsed.version === 'number' ? parsed.version : 0
+              if (pendingVersion > providerVersion) {
+                pendingSnapshotBlocked = true
+              } else {
+                window.localStorage.removeItem(pendingKey)
+              }
+            } else {
+              window.localStorage.removeItem(pendingKey)
+            }
+          } else {
+            window.localStorage.removeItem(pendingKey)
+          }
+        }
+      } catch (error) {
+        console.warn('[AnnotationCanvas] Failed to inspect pending backup for snapshot guard:', error)
+      }
+    }
+
+    if (pendingSnapshotBlocked) {
+      console.log('[AnnotationCanvas] Deferring snapshot restore; pending save has newer content', {
+        noteId,
+        providerVersion,
+      })
+      setIsStateLoaded(true)
+      return
     }
 
     if (plainProvider && providerVersion > 0 && providerHasContent) {

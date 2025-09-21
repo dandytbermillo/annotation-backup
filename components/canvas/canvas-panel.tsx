@@ -355,21 +355,38 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         const existing = dataStore.get(panelId) || {}
         const previewFallback = existing.preview
           || existing.metadata?.preview
-          || existing.originalText
-          || branch.originalText
           || ''
         const computedPreview = buildBranchPreview(loadedContent)
-        const previewText = computedPreview || previewFallback
+        const previewText = (computedPreview || previewFallback || '').replace(/\s+/g, ' ').trim()
 
         const nextMetadata = {
           ...(existing.metadata || {}),
-          preview: previewText,
+        }
+
+        if (previewText) {
+          nextMetadata.preview = previewText
+        } else {
+          delete nextMetadata.preview
         }
 
         dataStore.update(panelId, {
           content: loadedContent,
           preview: previewText,
           hasHydratedContent: true,
+          metadata: nextMetadata,
+        })
+      } else if (loadedContent !== undefined && loadedContent !== null) {
+        // Ensure preview clears when empty content is applied
+        const existing = dataStore.get(panelId) || {}
+        const nextMetadata = {
+          ...(existing.metadata || {}),
+        }
+        delete nextMetadata.preview
+
+        dataStore.update(panelId, {
+          content: loadedContent,
+          preview: '',
+          hasHydratedContent: false,
           metadata: nextMetadata,
         })
       }
@@ -460,22 +477,28 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
     const previewFallback = existing.preview
       || existing.metadata?.preview
-      || existing.originalText
-      || branch.originalText
       || ''
     const isPayloadEmpty = isContentEmptyValue(payload as any)
     const computedPreview = buildBranchPreview(payload)
-    const previewText = computedPreview || (isPayloadEmpty ? '' : previewFallback)
+    const resolvedPreview = computedPreview || (isPayloadEmpty ? '' : previewFallback)
+    const previewText = resolvedPreview.replace(/\s+/g, ' ').trim()
+
+    const nextMetadata = {
+      ...(currentBranch.metadata || {}),
+    }
+
+    if (previewText) {
+      nextMetadata.preview = previewText
+    } else {
+      delete nextMetadata.preview
+    }
 
     const updatedData = {
       ...currentBranch,
       content: payload,
       preview: previewText,
       hasHydratedContent: true,
-      metadata: {
-        ...(currentBranch.metadata || {}),
-        preview: previewText,
-      },
+      metadata: nextMetadata,
     }
 
     // Update both stores with panel-specific content + preview

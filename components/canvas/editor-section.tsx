@@ -45,19 +45,22 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
       }
 
       const existingBranch = dataStore.get(panelId) || {}
-      const previewText = buildBranchPreview(
-        previewSource,
-        existingBranch.originalText || branch.originalText || ''
-      )
+      const previewText = buildBranchPreview(previewSource)
+      const normalizedPreview = previewText.replace(/\s+/g, ' ').trim()
 
       const nextMetadata = {
         ...(existingBranch.metadata || {}),
-        preview: previewText,
+      }
+
+      if (normalizedPreview) {
+        nextMetadata.preview = normalizedPreview
+      } else {
+        delete nextMetadata.preview
       }
 
       dataStore.update(panelId, {
         content: serializedContent,
-        preview: previewText,
+        preview: normalizedPreview,
         hasHydratedContent: true,
         metadata: nextMetadata,
       })
