@@ -64,7 +64,6 @@ interface NotesExplorerProps {
   onNoteSelect: (noteId: string) => void
   isOpen: boolean
   onClose: () => void
-  onAddComponent?: () => void  // For opening Add Component menu
   // Navigation controls props - disabled for now
   // zoom?: number
   // onZoomIn?: () => void
@@ -114,7 +113,6 @@ function NotesExplorerContent({
   onNoteSelect,
   isOpen,
   onClose,
-  onAddComponent,
   enableTreeView = true,
   usePhase1API = false,
   multiLayerEnabled = false
@@ -2339,34 +2337,19 @@ function NotesExplorerContent({
 
       {/* Create Note Button */}
       <div className="p-4 border-t border-gray-800">
-        <div className="flex gap-2">
-          {/* Add Component Button */}
-          {onAddComponent && (
-            <button
-              onClick={onAddComponent}
-              className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 rounded-lg transition-all text-white"
-              title="Add Components"
-            >
-              <Plus size={18} />
-              <span className="text-sm">Components</span>
-            </button>
-          )}
-          
-          {/* Create New Note Button */}
-          <button
-            onClick={() => {
-              if (usePhase1API) {
-                setShowCreateDialog(true) // Phase 2: Open dialog
-              } else {
-                createNewNote() // Phase 0: Direct creation
-              }
-            }}
-            className="flex-1 flex items-center justify-center gap-2 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
-          >
-            <Plus size={18} />
-            <span className="text-sm">New Note</span>
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            if (usePhase1API) {
+              setShowCreateDialog(true) // Phase 2: Open dialog
+            } else {
+              createNewNote() // Phase 0: Direct creation
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors"
+        >
+          <Plus size={18} />
+          <span>Create New Note</span>
+        </button>
         
         {/* Layer Controls - Inline Version */}
         {multiLayerEnabled && layerContext && (

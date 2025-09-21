@@ -547,7 +547,59 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
         />
       </div>
       
-      {/* Status Indicators - Disabled per user request */}
+      {/* Status Indicators */}
+      <div className="px-4 pb-3 space-y-1 text-xs">
+        <div className="flex justify-between">
+          <span className="text-gray-400">Shift:</span>
+          <span className={isShiftPressed ? "text-green-400" : "text-gray-500"}>
+            {isShiftPressed ? 'ON' : 'OFF'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Hovering:</span>
+          <span className={isHovering ? "text-green-400" : "text-gray-500"}>
+            {isHovering ? 'YES' : 'NO'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Mouse:</span>
+          <span className="text-gray-300">
+            {hoveredComponent ? dataStore.get(hoveredComponent)?.title || 'None' : 'None'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Hovered:</span>
+          <span className="text-gray-300">
+            {hoveredComponent ? dataStore.get(hoveredComponent)?.title || 'None' : 'None'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Interacting:</span>
+          <span className={isInteracting ? "text-green-400" : "text-gray-500"}>
+            {isInteracting ? 'YES' : 'NO'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Pinned:</span>
+          <span className={isPinned ? "text-green-400" : "text-gray-500"}>
+            {isPinned ? 'YES' : 'NO'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Preview:</span>
+          <span className={isPreviewShown ? "text-green-400" : "text-gray-500"}>
+            {isPreviewShown ? 'YES' : 'NO'}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Panels:</span>
+          <span className="text-white font-semibold">{panels.length}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Components:</span>
+          <span className="text-white font-semibold">{components.length}</span>
+        </div>
+      </div>
       
       {/* Instructions */}
       <div className="bg-gray-800 px-4 py-2 border-t border-gray-700">

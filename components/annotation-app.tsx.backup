@@ -28,7 +28,6 @@ function AnnotationAppContent() {
     zoom: 1,
     showConnections: true
   })
-  const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
   
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
@@ -185,7 +184,6 @@ function AnnotationAppContent() {
           onNoteSelect={handleNoteSelect} 
           isOpen={true} // Always render, control visibility with transform
           onClose={closeNotesExplorer}
-          onAddComponent={() => setShowAddComponentMenu(true)}
           zoom={canvasState.zoom * 100}
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
@@ -231,8 +229,6 @@ function AnnotationAppContent() {
             ref={canvasRef}
             isNotesExplorerOpen={isNotesExplorerOpen}
             onCanvasStateChange={setCanvasState}
-            showAddComponentMenu={showAddComponentMenu}
-            onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-950">

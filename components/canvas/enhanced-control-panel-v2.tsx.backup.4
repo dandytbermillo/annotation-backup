@@ -16,7 +16,7 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
   const { state, dispatch } = useCanvas()
   const { enabled: isolationEnabled, setEnabled: setIsolationEnabled, config: isolationConfig } = useIsolationSystem()
   const isolatedIds = useIsolatedIds()
-  const [activeTab, setActiveTab] = useState<'canvas' | 'isolation' | 'state' | 'debug'>('canvas')
+  const [activeTab, setActiveTab] = useState<'canvas' | 'isolation' | 'state'>('canvas')
   const [fps, setFps] = useState<number | null>(null)
   const [memory, setMemory] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -172,7 +172,7 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
       
       {/* Tab Navigation */}
       <div className="flex border-b border-gray-700">
-        {['canvas', 'isolation', 'state', 'debug'].map(tab => (
+        {['canvas', 'isolation', 'state'].map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab as any)}
@@ -332,6 +332,72 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
                 <span className="text-white">{isolationConfig.maxIsolated}</span>
               </div>
             </div>
+            
+            {/* Debug Actions */}
+            <div className="bg-gray-800 rounded p-3">
+              <div className="text-sm text-gray-400 mb-2 flex items-center gap-2">
+                <Bug size={14} />
+                Debug Actions
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const debug = (window as any).__isolationDebug
+                    if (debug) {
+                      debug.isolate('test-component-' + Date.now())
+                      console.table([{
+                        Action: 'Test Isolate',
+                        Time: new Date().toLocaleTimeString(),
+                        List: debug.list().join(', ') || 'None'
+                      }])
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs flex items-center gap-1"
+                  title="Create a test isolation"
+                >
+                  <Lock size={12} />
+                  Test Isolate
+                </button>
+                <button
+                  onClick={() => {
+                    const debug = (window as any).__isolationDebug
+                    if (debug) {
+                      const result = debug.attempt()
+                      console.table([{
+                        Action: 'Force Attempt',
+                        Result: result ? 'Success' : 'Failed',
+                        Time: new Date().toLocaleTimeString(),
+                        List: debug.list().join(', ') || 'None'
+                      }])
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs flex items-center gap-1"
+                  title="Force isolate heaviest component"
+                >
+                  <Zap size={12} />
+                  Force Isolate
+                </button>
+                <button
+                  onClick={() => {
+                    const debug = (window as any).__isolationDebug
+                    if (debug) {
+                      const list = debug.list()
+                      list.forEach(id => debug.restore(id))
+                      console.table([{
+                        Action: 'Clear All',
+                        Cleared: list.length + ' components',
+                        Time: new Date().toLocaleTimeString()
+                      }])
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-xs flex items-center gap-1"
+                  title="Clear all isolations"
+                >
+                  <Unlock size={12} />
+                  Clear All
+                </button>
+              </div>
+            </div>
           </div>
         )}
         
@@ -418,165 +484,6 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
                   className="hidden"
                 />
               </label>
-            </div>
-          </div>
-        )}
-        
-        {activeTab === 'debug' && (
-          <div className="space-y-4">
-            {/* Performance Metrics */}
-            <div className="bg-gray-800 rounded p-3">
-              <div className="text-sm text-gray-400 mb-2">Performance Metrics</div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Current FPS:</span>
-                  <span className={`font-mono font-bold ${
-                    fps === null ? 'text-gray-500' :
-                    fps >= 50 ? 'text-green-400' :
-                    fps >= 30 ? 'text-yellow-400' : 'text-red-400'
-                  }`}>
-                    {fps ?? 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Memory:</span>
-                  <span className={`font-mono font-bold ${
-                    memory === null ? 'text-gray-500' :
-                    memory < 100 ? 'text-green-400' : 'text-yellow-400'
-                  }`}>
-                    {memory !== null ? `${memory}MB` : 'N/A'}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Isolated:</span>
-                  <span className="font-mono font-bold text-white">{isolatedIds.length}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">System:</span>
-                  <span className={`font-mono font-bold ${
-                    isolationEnabled ? 'text-green-400' : 'text-gray-400'
-                  }`}>
-                    {isolationEnabled ? 'ON' : 'OFF'}
-                  </span>
-                </div>
-              </div>
-            </div>
-            
-            {/* Debug Actions */}
-            <div className="bg-gray-800 rounded p-3">
-              <div className="text-sm text-gray-400 mb-3 flex items-center gap-2">
-                <Bug size={14} />
-                Debug Actions
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => {
-                    const debug = (window as any).__isolationDebug
-                    if (debug) {
-                      debug.isolate('test-component-' + Date.now())
-                      console.table([{
-                        Action: 'Test Isolate',
-                        Time: new Date().toLocaleTimeString(),
-                        List: debug.list().join(', ') || 'None'
-                      }])
-                    }
-                  }}
-                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs flex items-center gap-1"
-                  title="Create a test isolation"
-                >
-                  <Lock size={12} />
-                  Test Isolate
-                </button>
-                <button
-                  onClick={() => {
-                    const debug = (window as any).__isolationDebug
-                    if (debug) {
-                      const result = debug.attempt()
-                      console.table([{
-                        Action: 'Force Attempt',
-                        Result: result ? 'Success' : 'Failed',
-                        Time: new Date().toLocaleTimeString(),
-                        List: debug.list().join(', ') || 'None'
-                      }])
-                    }
-                  }}
-                  className="px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded text-xs flex items-center gap-1"
-                  title="Force isolate heaviest component"
-                >
-                  <Zap size={12} />
-                  Force Isolate
-                </button>
-                <button
-                  onClick={() => {
-                    const debug = (window as any).__isolationDebug
-                    if (debug) {
-                      const list = debug.list()
-                      list.forEach(id => debug.restore(id))
-                      console.table([{
-                        Action: 'Clear All',
-                        Cleared: list.length + ' components',
-                        Time: new Date().toLocaleTimeString()
-                      }])
-                    }
-                  }}
-                  className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-xs flex items-center gap-1"
-                  title="Clear all isolations"
-                >
-                  <Unlock size={12} />
-                  Clear All
-                </button>
-                <button
-                  onClick={() => {
-                    const debug = (window as any).__isolationDebug
-                    if (debug) {
-                      console.log('=== Isolation Debug Info ===')
-                      console.log('Isolated IDs:', debug.list())
-                      console.log('FPS:', debug.getFps ? debug.getFps() : 'N/A')
-                      console.log('Enabled:', isolationEnabled)
-                      console.log('Config:', isolationConfig)
-                    }
-                  }}
-                  className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded text-xs flex items-center gap-1"
-                  title="Log debug info to console"
-                >
-                  <Activity size={12} />
-                  Console Log
-                </button>
-              </div>
-            </div>
-            
-            {/* Active Isolations */}
-            {isolatedIds.length > 0 && (
-              <div className="bg-gray-800 rounded p-3">
-                <div className="text-sm text-gray-400 mb-2">Active Isolations</div>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
-                  {isolatedIds.map(id => (
-                    <div key={id} className="flex items-center justify-between py-1 px-2 bg-gray-700 rounded text-xs">
-                      <span className="text-yellow-400 font-mono truncate">{id}</span>
-                      <button
-                        onClick={() => {
-                          const debug = (window as any).__isolationDebug
-                          if (debug) {
-                            debug.restore(id)
-                            console.log('Restored:', id)
-                          }
-                        }}
-                        className="text-blue-400 hover:text-blue-300 text-xs"
-                      >
-                        Restore
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            {/* Debug Console Output */}
-            <div className="bg-black rounded p-3">
-              <div className="text-xs text-gray-500 mb-2">Console Output (Open DevTools)</div>
-              <div className="text-xs text-green-400 font-mono">
-                Check browser console for detailed debug logs
-              </div>
             </div>
           </div>
         )}
