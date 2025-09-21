@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-21 05:29Z] c64a8f7: cleaning the main view again
 - commit [2025-09-21 04:52Z] 215289b: cleaning the main view
 - commit [2025-09-21 03:28Z] c7c6b85: made note sidebar overlay
 - commit [2025-09-21 02:48Z] 1a5a4e3: branch content being replaced with branch title is fixed
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-19 22:24Z] 8e375e2: still fixing
 - commit [2025-09-19 21:44Z] fc9938c: single reload on new note
 - commit [2025-09-19 13:25Z] 1ee66e3: still fixing the workspace scoping 1
-- commit [2025-09-19 11:54Z] 5386d32: still fixing the workspace scoping
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

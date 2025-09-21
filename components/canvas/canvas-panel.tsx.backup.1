@@ -48,16 +48,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
   
-  // Sidebar toggle state - must be declared early before useEffects that use it
-  const [isSidebarVisible, setIsSidebarVisible] = useState(false)
-  const [isSidebarHovering, setIsSidebarHovering] = useState(false)
-  const sidebarTimeoutRef = useRef<NodeJS.Timeout>()
-  
-  // Annotation actions toggle state
-  const [isActionsVisible, setIsActionsVisible] = useState(false)
-  const [isActionsHovering, setIsActionsHovering] = useState(false)
-  const actionsTimeoutRef = useRef<NodeJS.Timeout>()
-  
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
   useEffect(() => {
@@ -94,58 +84,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     multiLayerEnabledRef.current = multiLayerEnabled
     layerContextRef.current = layerContext
   }, [multiLayerEnabled, layerContext])
-  
-  // Cleanup timeouts on unmount
-  useEffect(() => {
-    return () => {
-      if (sidebarTimeoutRef.current) {
-        clearTimeout(sidebarTimeoutRef.current)
-      }
-      if (actionsTimeoutRef.current) {
-        clearTimeout(actionsTimeoutRef.current)
-      }
-    }
-  }, [])
-  
-  // Handle clicking outside to close dropdowns
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement
-      
-      // Close sidebar if clicking outside of it
-      if (isSidebarHovering || isSidebarVisible) {
-        const sidebar = document.getElementById(`branches-sidebar-${panelId}`)
-        const button = document.getElementById(`branches-button-${panelId}`)
-        
-        if (sidebar && !sidebar.contains(target) && button && !button.contains(target)) {
-          setIsSidebarHovering(false)
-          setIsSidebarVisible(false)
-          if (sidebarTimeoutRef.current) {
-            clearTimeout(sidebarTimeoutRef.current)
-          }
-        }
-      }
-      
-      // Close actions panel if clicking outside of it
-      if (isActionsHovering || isActionsVisible) {
-        const actions = document.getElementById(`actions-panel-${panelId}`)
-        const button = document.getElementById(`actions-button-${panelId}`)
-        
-        if (actions && !actions.contains(target) && button && !button.contains(target)) {
-          setIsActionsHovering(false)
-          setIsActionsVisible(false)
-          if (actionsTimeoutRef.current) {
-            clearTimeout(actionsTimeoutRef.current)
-          }
-        }
-      }
-    }
-    
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [isSidebarHovering, isSidebarVisible, isActionsHovering, isActionsVisible, panelId])
   
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
@@ -1150,108 +1088,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             panelId={panelId}
           />
           
-          {/* Sidebar Toggle button */}
-          <button
-            id={`branches-button-${panelId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              setIsSidebarVisible(!isSidebarVisible)
-              // Clear any hover state when clicking
-              if (sidebarTimeoutRef.current) {
-                clearTimeout(sidebarTimeoutRef.current)
-              }
-              setIsSidebarHovering(false)
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
-              // Show sidebar on hover
-              if (sidebarTimeoutRef.current) {
-                clearTimeout(sidebarTimeoutRef.current)
-              }
-              setIsSidebarHovering(true)
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
-              // Hide sidebar after a delay when mouse leaves
-              sidebarTimeoutRef.current = setTimeout(() => {
-                setIsSidebarHovering(false)
-              }, 300)
-            }}
-            title={isSidebarVisible ? "Hide branches" : "Show branches"}
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "none",
-              borderRadius: "4px",
-              padding: "4px 8px",
-              cursor: "pointer",
-              fontSize: "11px",
-              color: "white",
-              transition: "all 0.2s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              height: "24px",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-              <line x1="14" y1="8" x2="18" y2="8" />
-              <line x1="14" y1="12" x2="18" y2="12" />
-              <line x1="14" y1="16" x2="18" y2="16" />
-            </svg>
-            <span>Branches</span>
-          </button>
-          
-          {/* Actions button (Note/Explore/Promote) */}
-          <button
-            id={`actions-button-${panelId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              setIsActionsVisible(!isActionsVisible)
-              // Clear any hover state when clicking
-              if (actionsTimeoutRef.current) {
-                clearTimeout(actionsTimeoutRef.current)
-              }
-              setIsActionsHovering(false)
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
-              // Show actions panel on hover
-              if (actionsTimeoutRef.current) {
-                clearTimeout(actionsTimeoutRef.current)
-              }
-              setIsActionsHovering(true)
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
-              // Hide actions panel after a delay when mouse leaves
-              actionsTimeoutRef.current = setTimeout(() => {
-                setIsActionsHovering(false)
-              }, 300)
-            }}
-            title="Create annotation"
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "none",
-              borderRadius: "4px",
-              padding: "4px 8px",
-              cursor: "pointer",
-              fontSize: "11px",
-              color: "white",
-              transition: "all 0.2s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              height: "24px",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span>Actions</span>
-          </button>
-          
           {/* Lock/Unlock button */}
           <button
             onClick={(e) => {
@@ -1333,8 +1169,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           {/* Editor Section */}
           <div style={{
-            flex: 1,
+            flex: 2,
             padding: '20px 25px 25px 25px',
+            borderRight: '1px solid #e9ecef',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -1467,192 +1304,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </div>
         </div>
 
-      </div>
-      )}
-      
-      {/* Actions Panel - Note/Explore/Promote */}
-      {(isActionsVisible || isActionsHovering) && (
-        <div
-          id={`actions-panel-${panelId}`}
-          onMouseEnter={() => {
-            // Keep actions panel visible when hovering over it
-            if (actionsTimeoutRef.current) {
-              clearTimeout(actionsTimeoutRef.current)
-            }
-            setIsActionsHovering(true)
-          }}
-          onMouseLeave={() => {
-            // Hide actions panel after delay when leaving
-            actionsTimeoutRef.current = setTimeout(() => {
-              setIsActionsHovering(false)
-            }, 300)
-          }}
-          style={{
-            position: 'absolute',
-            top: '60px',
-            right: '10px',
-            background: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-            padding: '12px',
-            display: 'flex',
-            gap: '8px',
-            zIndex: zIndex + 10,
-          }}
-        >
-          <button
-            onClick={() => {
-              // Dispatch Note annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "note",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(52, 152, 219, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            📝 Note
-          </button>
-
-          <button
-            onClick={() => {
-              // Dispatch Explore annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "explore",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(243, 156, 18, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            🔍 Explore
-          </button>
-
-          <button
-            onClick={() => {
-              // Dispatch Promote annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "promote",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            ⭐ Promote
-          </button>
-        </div>
-      )}
-      
-      {/* Branches Sidebar - Floating Panel */}
-      {(isSidebarVisible || isSidebarHovering) && (
-        <div 
-          id={`branches-sidebar-${panelId}`}
-          onMouseEnter={() => {
-            // Keep sidebar visible when hovering over it
-            if (sidebarTimeoutRef.current) {
-              clearTimeout(sidebarTimeoutRef.current)
-            }
-            setIsSidebarHovering(true)
-          }}
-          onMouseLeave={() => {
-            // Hide sidebar after delay when leaving
-            sidebarTimeoutRef.current = setTimeout(() => {
-              setIsSidebarHovering(false)
-            }, 300)
-          }}
-          style={{
-          position: 'absolute',
-          top: '60px',
-          right: '10px',
-          width: '300px',
-          maxHeight: 'calc(100% - 80px)',
+        {/* Branches Section */}
+        <div style={{
+          flex: 1,
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          borderRadius: '12px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
           padding: '20px',
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          zIndex: zIndex + 10,
         }}>
           <div style={{
             color: 'white',
@@ -1781,6 +1440,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             )}
           </div>
         </div>
+      </div>
       )}
 
       {/* Connection points */}
