@@ -537,24 +537,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return data
   }
   const currentBranch = getBranchData()
-  
-  // Generate title for branch panels if not set
-  const getPanelTitle = () => {
-    if (currentBranch.title) {
-      return currentBranch.title
-    }
-    
-    // For branch panels without a title, use the originalText
-    if (panelId !== 'main' && currentBranch.originalText) {
-      const truncatedText = currentBranch.originalText.length > 30 
-        ? currentBranch.originalText.substring(0, 30) + '...' 
-        : currentBranch.originalText
-      return `"${truncatedText}"`
-    }
-    
-    // Fallback to panelId if no title can be generated
-    return panelId
-  }
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
@@ -1065,7 +1047,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>{getPanelTitle()}</span>
+          <span>{currentBranch.title}</span>
           {isIsolated && (
             <span style={{
               background: '#ef4444',
@@ -1407,8 +1389,50 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             Saved
           </div>
 
+          {/* Editor Header */}
+          <div style={{
+            marginBottom: '20px',
+            paddingBottom: '15px',
+            borderBottom: '2px solid #f1f3f4',
+          }}>
+            <div style={{
+              fontSize: '20px',
+              fontWeight: 700,
+              color: '#2c3e50',
+              marginBottom: '8px',
+            }}>
+              {currentBranch.title}
+            </div>
+            {generateBreadcrumb() && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                fontSize: '12px',
+                color: '#6c757d',
+                gap: '5px',
+              }}>
+                {generateBreadcrumb()}
+              </div>
+            )}
+          </div>
+
           {/* Editor Content */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
+            {currentBranch.originalText && (
+              <div style={{
+                background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
+                padding: '15px',
+                borderLeft: '4px solid #2196f3',
+                marginBottom: '20px',
+                fontStyle: 'italic',
+                borderRadius: '0 8px 8px 0',
+                color: '#1565c0',
+                fontSize: '14px',
+              }}>
+                "{currentBranch.originalText}"
+              </div>
+            )}
+
             <div className="rich-editor-wrapper">
               
               {isContentLoading ? (

@@ -2211,13 +2211,25 @@ function NotesExplorerContent({
                   >
                     <FileText size={14} />
                     <span className="flex-1 text-sm truncate">{note.title}</span>
-                    <span className="text-xs text-gray-400">{timeStr}</span>
+                    <span className="text-xs text-gray-400 group-hover:opacity-0 transition-opacity">{timeStr}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleNoteSelect(note.id, e, true) // true = open note
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-blue-600 rounded transition-all"
+                      title="View"
+                      aria-label="View note"
+                    >
+                      <Eye size={14} />
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
                         deleteNote(note.id)
                       }}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-600 rounded transition-all"
+                      title="Delete"
                       aria-label="Delete note"
                     >
                       <Trash2 size={14} />

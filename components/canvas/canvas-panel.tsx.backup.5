@@ -537,24 +537,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return data
   }
   const currentBranch = getBranchData()
-  
-  // Generate title for branch panels if not set
-  const getPanelTitle = () => {
-    if (currentBranch.title) {
-      return currentBranch.title
-    }
-    
-    // For branch panels without a title, use the originalText
-    if (panelId !== 'main' && currentBranch.originalText) {
-      const truncatedText = currentBranch.originalText.length > 30 
-        ? currentBranch.originalText.substring(0, 30) + '...' 
-        : currentBranch.originalText
-      return `"${truncatedText}"`
-    }
-    
-    // Fallback to panelId if no title can be generated
-    return panelId
-  }
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
@@ -1065,7 +1047,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>{getPanelTitle()}</span>
+          <span>{currentBranch.title}</span>
           {isIsolated && (
             <span style={{
               background: '#ef4444',

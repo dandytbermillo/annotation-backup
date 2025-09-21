@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react"
 import { 
   Trash2, Plus, FileText, Search, X, Home, ZoomIn, ZoomOut, 
   ToggleLeft, ToggleRight, ChevronRight, ChevronDown, Clock,
-  FolderOpen, Folder, Eye
+  FolderOpen, Folder
 } from "lucide-react"
 
 interface Note {
@@ -445,7 +445,7 @@ export function NotesExplorerEnhanced({
                   <div
                     key={note.id}
                     onClick={() => handleNoteSelect(note.id)}
-                    className={`group flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors ${
+                    className={`flex items-center gap-2 px-3 py-2 rounded cursor-pointer transition-colors ${
                       selectedNoteId === note.id
                         ? 'bg-indigo-600 text-white'
                         : 'hover:bg-gray-800'
@@ -453,29 +453,7 @@ export function NotesExplorerEnhanced({
                   >
                     <FileText size={14} />
                     <span className="flex-1 text-sm truncate">{note.title}</span>
-                    <span className="text-xs text-gray-400 group-hover:hidden">{timeStr}</span>
-                    <div className="hidden group-hover:flex gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleNoteSelect(note.id)
-                        }}
-                        className="p-1 hover:bg-blue-600 rounded transition-colors"
-                        title="View"
-                      >
-                        <Eye size={14} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          deleteNote(note.id)
-                        }}
-                        className="p-1 hover:bg-red-600 rounded transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
+                    <span className="text-xs text-gray-400">{timeStr}</span>
                   </div>
                 )
               })}
