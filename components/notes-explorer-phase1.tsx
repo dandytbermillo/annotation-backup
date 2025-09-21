@@ -984,8 +984,30 @@ function NotesExplorerContent({
             }
           }
           
-          await fetchTreeFromAPI() // Refresh tree
-          await fetchRecentFromAPI() // Refresh recent notes
+          // Update tree locally by removing the deleted node
+          const removeNodeFromTree = (nodes: TreeNode[]): TreeNode[] => {
+            return nodes.reduce((acc: TreeNode[], node) => {
+              if (node.id === noteId) {
+                // Skip this node (it's deleted)
+                return acc
+              }
+              
+              // If it's a folder, recursively check its children
+              if (node.type === 'folder' && node.children) {
+                const updatedChildren = removeNodeFromTree(node.children)
+                return [...acc, { ...node, children: updatedChildren }]
+              }
+              
+              // Keep the node as is
+              return [...acc, node]
+            }, [])
+          }
+          
+          // Update the API tree data locally
+          setApiTreeData(prev => removeNodeFromTree(prev))
+          
+          // Update recent notes locally
+          setApiRecentNotes(prev => prev.filter(item => item.id !== noteId))
           
           // Also refresh the main notes list
           const notesResponse = await fetch('/api/postgres-offline/notes')
@@ -2049,6 +2071,32 @@ function NotesExplorerContent({
             }
           </span>
           <span className="text-sm truncate flex-1">{node.name || node.title}</span>
+          {node.type === 'note' && (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleNoteSelect(node.id, e, true) // true = open note
+                }}
+                className="p-1 hover:bg-blue-600 rounded transition-colors opacity-0 group-hover:opacity-100"
+                title="View"
+                aria-label="View note"
+              >
+                <Eye className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  deleteNote(node.id)
+                }}
+                className="p-1 hover:bg-red-600 rounded transition-colors opacity-0 group-hover:opacity-100"
+                title="Delete"
+                aria-label="Delete note"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
           {isFolder && (
             <button
               onClick={(e) => {
