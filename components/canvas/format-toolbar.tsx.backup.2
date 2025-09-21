@@ -1,10 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { createPortal } from "react-dom"
 import type { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import type { TiptapEditorHandle } from "./tiptap-editor-collab"
-import { debugLog } from "@/lib/debug-logger"
 
 type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
 
@@ -14,72 +12,28 @@ interface FormatToolbarProps {
 }
 
 export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
-  const [isVisible, setIsVisible] = useState(false) // Start hidden
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
+  const [isVisible, setIsVisible] = useState(false)
   const timeoutRef = useRef<NodeJS.Timeout>()
-  const buttonRef = useRef<HTMLButtonElement>(null)
 
   const executeCommand = (command: string, value?: any) => {
     if (!editorRef.current) return
     editorRef.current.executeCommand(command, value)
   }
 
-  const updateDropdownPosition = () => {
-    if (buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect()
-      const newPosition = {
-        top: rect.bottom + 4,
-        left: Math.max(10, rect.right - 250) // Ensure it doesn't go off the left edge
-      }
-      debugLog('FormatToolbar', 'updateDropdownPosition', {
-        panelId,
-        metadata: {
-          buttonRect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom },
-          dropdownPosition: newPosition
-        }
-      })
-      setDropdownPosition(newPosition)
-    } else {
-      debugLog('FormatToolbar', 'updateDropdownPosition-failed', {
-        panelId,
-        metadata: {
-          buttonRefNull: true
-        }
-      })
-    }
-  }
-
   const handleMouseEnter = () => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
     }
-    updateDropdownPosition()
     setIsVisible(true)
-    const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-    if (dropdown) {
-      dropdown.style.display = "grid"
-      dropdown.style.opacity = "1"
-      dropdown.style.pointerEvents = "auto"
-    }
   }
 
   const handleMouseLeave = () => {
     timeoutRef.current = setTimeout(() => {
-      const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-      // Only hide if not hovering over the dropdown
-      if (dropdown && !dropdown.matches(':hover')) {
-        setIsVisible(false)
-        dropdown.style.display = "none"
-        dropdown.style.opacity = "0"
-        dropdown.style.pointerEvents = "none"
-      }
+      setIsVisible(false)
     }, 300)
   }
 
   useEffect(() => {
-    // Update position on mount
-    updateDropdownPosition()
-    
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
@@ -95,41 +49,8 @@ export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
       onMouseLeave={handleMouseLeave}
     >
       <button
-        ref={buttonRef}
         className="format-toolbar-trigger"
-        onClick={(e) => {
-          e.stopPropagation()
-          const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-          
-          debugLog('FormatToolbar', 'buttonClick', {
-            panelId,
-            metadata: {
-              currentVisibility: isVisible,
-              dropdownFound: !!dropdown,
-              dropdownId: `format-toolbar-dropdown-${panelId}`
-            }
-          })
-          
-          if (!isVisible) {
-            updateDropdownPosition()
-            setIsVisible(true)
-            // Also manipulate via DOM for immediate effect
-            if (dropdown) {
-              dropdown.style.display = "grid"
-              dropdown.style.opacity = "1"
-              dropdown.style.pointerEvents = "auto"
-              debugLog('FormatToolbar', 'showDropdown', { panelId })
-            }
-          } else {
-            setIsVisible(false)
-            if (dropdown) {
-              dropdown.style.display = "none"
-              dropdown.style.opacity = "0"
-              dropdown.style.pointerEvents = "none"
-              debugLog('FormatToolbar', 'hideDropdown', { panelId })
-            }
-          }
-        }}
+        onClick={() => setIsVisible(!isVisible)}
         title="Text Formatting"
         style={{
           background: "rgba(255,255,255,0.2)",
@@ -159,29 +80,26 @@ export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
         <span>Format</span>
       </button>
 
-      {typeof window !== 'undefined' && createPortal(
+      {isVisible && (
         <div
-          id={`format-toolbar-dropdown-${panelId}`}
-        className="format-toolbar-dropdown"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        style={{
-          position: "fixed",
-          top: `${dropdownPosition.top}px`,
-          left: `${dropdownPosition.left}px`,
-          background: "#e8eaed",
-          border: "1px solid #dadce0",
-          borderRadius: "12px",
-          padding: "8px",
-          boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
-          zIndex: 99999,
-          display: isVisible ? "grid" : "none",
-          gridTemplateColumns: "repeat(5, 1fr)",
-          gap: "6px",
-          minWidth: "250px",
-          opacity: isVisible ? 1 : 0,
-          pointerEvents: isVisible ? "auto" : "none",
-        }}
+          className="format-toolbar-dropdown"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            right: "0",
+            background: "#e8eaed",
+            border: "1px solid #dadce0",
+            borderRadius: "12px",
+            padding: "8px",
+            boxShadow: "0 2px 10px rgba(0,0,0,0.2)",
+            zIndex: 1000,
+            display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)",
+            gap: "6px",
+            minWidth: "250px",
+          }}
         >
           {/* First row */}
           <button
@@ -486,8 +404,7 @@ export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
           >
             ✕
           </button>
-        </div>,
-        document.body
+        </div>
       )}
     </div>
   )

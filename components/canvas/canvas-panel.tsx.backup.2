@@ -9,9 +9,6 @@ import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
 import { EditorToolbar } from "./editor-toolbar"
 import { FormatToolbar } from "./format-toolbar"
-import { v4 as uuidv4 } from "uuid"
-import { createAnnotationBranch } from "@/lib/models/annotation"
-import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
@@ -604,7 +601,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       },
     })
 
-    // Don't show toolbar on text selection - only show via Actions button
+    const toolbar = document.getElementById("annotation-toolbar")
+    if (toolbar && text.length > 0) {
+      const selection = window.getSelection()
+      if (selection && selection.rangeCount > 0) {
+        const rect = selection.getRangeAt(0).getBoundingClientRect()
+        toolbar.style.left = rect.left + rect.width / 2 + "px"
+        toolbar.style.top = rect.top - 80 + "px"
+        toolbar.classList.add("visible")
+      }
+    } else if (toolbar) {
+      toolbar.classList.remove("visible")
+    }
   }
 
   const handleToggleEditing = () => {
@@ -1206,57 +1214,20 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 clearTimeout(actionsTimeoutRef.current)
               }
               setIsActionsHovering(false)
-              
-              // Toggle the annotation toolbar
-              const toolbar = document.getElementById("annotation-toolbar")
-              if (toolbar) {
-                if (!isActionsVisible) {
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  toolbar.style.position = "fixed"
-                  toolbar.style.left = `${rect.left + rect.width / 2}px`
-                  toolbar.style.top = `${rect.bottom + 8}px`
-                  toolbar.style.opacity = "1"
-                  toolbar.style.pointerEvents = "auto"
-                  toolbar.classList.add("visible")
-                } else {
-                  toolbar.style.opacity = "0"
-                  toolbar.style.pointerEvents = "none"
-                  toolbar.classList.remove("visible")
-                }
-              }
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "rgba(255,255,255,0.3)"
-              // Show annotation toolbar on hover
+              // Show actions panel on hover
               if (actionsTimeoutRef.current) {
                 clearTimeout(actionsTimeoutRef.current)
               }
               setIsActionsHovering(true)
-              
-              // Position the annotation toolbar below the Actions button
-              const toolbar = document.getElementById("annotation-toolbar")
-              if (toolbar) {
-                const rect = e.currentTarget.getBoundingClientRect()
-                toolbar.style.position = "fixed"
-                toolbar.style.left = `${rect.left + rect.width / 2}px`
-                toolbar.style.top = `${rect.bottom + 8}px`
-                toolbar.style.opacity = "1"
-                toolbar.style.pointerEvents = "auto"
-                toolbar.classList.add("visible")
-              }
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "rgba(255,255,255,0.2)"
-              // Hide annotation toolbar after a delay when mouse leaves
+              // Hide actions panel after a delay when mouse leaves
               actionsTimeoutRef.current = setTimeout(() => {
                 setIsActionsHovering(false)
-                const toolbar = document.getElementById("annotation-toolbar")
-                // Only hide if not hovering over the toolbar
-                if (toolbar && !toolbar.matches(':hover')) {
-                  toolbar.style.opacity = "0"
-                  toolbar.style.pointerEvents = "none"
-                  toolbar.classList.remove("visible")
-                }
               }, 300)
             }}
             title="Create annotation"
@@ -1499,6 +1470,157 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       </div>
       )}
       
+      {/* Actions Panel - Note/Explore/Promote */}
+      {(isActionsVisible || isActionsHovering) && (
+        <div
+          id={`actions-panel-${panelId}`}
+          onMouseEnter={() => {
+            // Keep actions panel visible when hovering over it
+            if (actionsTimeoutRef.current) {
+              clearTimeout(actionsTimeoutRef.current)
+            }
+            setIsActionsHovering(true)
+          }}
+          onMouseLeave={() => {
+            // Hide actions panel after delay when leaving
+            actionsTimeoutRef.current = setTimeout(() => {
+              setIsActionsHovering(false)
+            }, 300)
+          }}
+          style={{
+            position: 'absolute',
+            top: '60px',
+            right: '10px',
+            background: 'white',
+            borderRadius: '12px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+            padding: '12px',
+            display: 'flex',
+            gap: '8px',
+            zIndex: zIndex + 10,
+          }}
+        >
+          <button
+            onClick={() => {
+              // Dispatch Note annotation event
+              dispatch({
+                type: "CREATE_ANNOTATION",
+                payload: {
+                  type: "note",
+                  panelId,
+                  selectedText: state.selection?.text || "",
+                },
+              })
+              setIsActionsVisible(false)
+              setIsActionsHovering(false)
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(52, 152, 219, 0.3)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
+            📝 Note
+          </button>
+
+          <button
+            onClick={() => {
+              // Dispatch Explore annotation event
+              dispatch({
+                type: "CREATE_ANNOTATION",
+                payload: {
+                  type: "explore",
+                  panelId,
+                  selectedText: state.selection?.text || "",
+                },
+              })
+              setIsActionsVisible(false)
+              setIsActionsHovering(false)
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(243, 156, 18, 0.3)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
+            🔍 Explore
+          </button>
+
+          <button
+            onClick={() => {
+              // Dispatch Promote annotation event
+              dispatch({
+                type: "CREATE_ANNOTATION",
+                payload: {
+                  type: "promote",
+                  panelId,
+                  selectedText: state.selection?.text || "",
+                },
+              })
+              setIsActionsVisible(false)
+              setIsActionsHovering(false)
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)'
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)'
+              e.currentTarget.style.boxShadow = 'none'
+            }}
+          >
+            ⭐ Promote
+          </button>
+        </div>
+      )}
       
       {/* Branches Sidebar - Floating Panel */}
       {(isSidebarVisible || isSidebarHovering) && (

@@ -188,24 +188,6 @@ export function AnnotationToolbar() {
     <div
       id="annotation-toolbar"
       className="annotation-toolbar"
-      onMouseEnter={() => {
-        const toolbar = document.getElementById("annotation-toolbar")
-        if (toolbar) {
-          toolbar.style.opacity = "1"
-          toolbar.style.pointerEvents = "auto"
-          toolbar.classList.add("visible")
-        }
-      }}
-      onMouseLeave={() => {
-        setTimeout(() => {
-          const toolbar = document.getElementById("annotation-toolbar")
-          if (toolbar && !toolbar.matches(':hover')) {
-            toolbar.style.opacity = "0"
-            toolbar.style.pointerEvents = "none"
-            toolbar.classList.remove("visible")
-          }
-        }, 300)
-      }}
       style={{
         position: "fixed",
         background: "white",

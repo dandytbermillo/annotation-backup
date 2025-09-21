@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-21 12:50Z] 46239a4: organize panels
 - commit [2025-09-21 05:29Z] c64a8f7: cleaning the main view again
 - commit [2025-09-21 04:52Z] 215289b: cleaning the main view
 - commit [2025-09-21 03:28Z] c7c6b85: made note sidebar overlay
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-20 05:14Z] 6b7593e: testing
 - commit [2025-09-19 22:24Z] 8e375e2: still fixing
 - commit [2025-09-19 21:44Z] fc9938c: single reload on new note
-- commit [2025-09-19 13:25Z] 1ee66e3: still fixing the workspace scoping 1
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

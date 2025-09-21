@@ -841,8 +841,9 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           stickyOverlayEl
         )}
 
-        {/* Annotation Toolbar */}
+        {/* Annotation Toolbar - controlled by Actions button */}
         <AnnotationToolbar />
+
       </div>
     </CanvasProvider>
     </IsolationProvider>
