@@ -136,3 +136,6 @@
 {"ts":"2025-09-21T12:50:38.412Z","type":"commit","sha":"46239a42a2e380adb4daf0512020143c135d6312","files_changed":8,"message":"organize panels"}
 {"ts":"2025-09-21T18:59:54.558Z","type":"commit","sha":"8d6429568fb04cb02086d24cf4c838593472392e","files_changed":9,"message":"eye or view button added"}
 {"ts":"2025-09-21T19:53:59.128Z","type":"commit","sha":"59da9543efed70345c94111b3c8533bf37456682","files_changed":4,"message":"delete and eye buttons added in the tree view"}
+{"ts":"2025-09-21T20:26:31.401Z","type":"commit","sha":"b95f5e2f9921a863dcfa9c31548cbf26c0864aa7","files_changed":10,"message":"add possitioning for panels when appear"}
+{"ts":"2025-09-21T20:42:48.3NZ","type":"note","text":"Updated git-commit-and-push helper with menu option to kill dev ports then run npm dev."}
+{"ts":"2025-09-21T20:46:06.3NZ","type":"note","text":"Extended scripts/main.sh menu with new option to kill dev ports and start npm dev."}

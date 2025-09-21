@@ -1042,16 +1042,70 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         const currentX = matrix.m41
         const currentY = matrix.m42
         
-        // Check if there's enough space on the right side
-        // If current panel is beyond x=3000, place new panel on the left
-        const placeOnLeft = currentX > 3000
+        // Smart positioning logic:
+        // 1. Check if there are already panels on either side
+        // 2. Prefer right side by default
+        // 3. Use left if right side would go too far (beyond viewport or x > 4000)
+        // 4. Alternate sides if multiple branches are opened
+        
+        // Get all existing panels to check for collisions
+        const allPanels = document.querySelectorAll('[data-panel-id]')
+        let rightOccupied = false
+        let leftOccupied = false
+        
+        allPanels.forEach((panel) => {
+          if (panel === currentPanel) return
+          
+          const panelStyle = window.getComputedStyle(panel)
+          const panelTransform = panelStyle.transform
+          
+          if (panelTransform && panelTransform !== 'none') {
+            const panelMatrix = new DOMMatrixReadOnly(panelTransform)
+            const panelX = panelMatrix.m41
+            
+            // Check if a panel is already on the right
+            if (panelX > currentX + panelWidth && 
+                panelX < currentX + panelWidth + gap + 100) {
+              rightOccupied = true
+            }
+            
+            // Check if a panel is already on the left
+            if (panelX < currentX - gap && 
+                panelX > currentX - panelWidth - gap - 100) {
+              leftOccupied = true
+            }
+          }
+        })
+        
+        // Decide placement based on occupancy and viewport constraints
+        let placeOnLeft = false
+        
+        if (!rightOccupied && !leftOccupied) {
+          // Neither side occupied - check viewport constraints
+          const viewportWidth = window.innerWidth
+          const rightEdgePosition = currentX + panelWidth + gap + panelWidth
+          
+          // Place on left if right would exceed viewport or go beyond x=4000
+          placeOnLeft = rightEdgePosition > viewportWidth || currentX > 2500
+        } else if (rightOccupied && !leftOccupied) {
+          // Right is occupied, left is free
+          placeOnLeft = true
+        } else if (!rightOccupied && leftOccupied) {
+          // Left is occupied, right is free
+          placeOnLeft = false
+        } else {
+          // Both sides occupied - stack on the right with offset
+          placeOnLeft = false
+          // Add vertical offset to avoid complete overlap
+          parentPosition.y = currentY + 100
+        }
         
         // Position the new panel to the left or right of the parent with gap
         parentPosition = {
           x: placeOnLeft 
             ? currentX - panelWidth - gap // Panel width + gap on the left
             : currentX + panelWidth + gap, // Panel width + gap on the right
-          y: currentY // Same vertical position
+          y: parentPosition.y || currentY // Use offset Y if set, otherwise same vertical position
         }
       } else {
         // Fallback: try to get position from data stores
@@ -1060,7 +1114,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           : branchesMap.get(panelId)
         
         if (panelData?.position) {
-          const placeOnLeft = panelData.position.x > 3000
+          // Simple fallback logic when transform not available
+          const placeOnLeft = panelData.position.x > 2500
           parentPosition = {
             x: placeOnLeft 
               ? panelData.position.x - panelWidth - gap 
@@ -1147,25 +1202,117 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
-          gap: '10px',
-          opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 0 : 1,
-          transition: 'opacity 0.2s ease',
+          gap: '8px',
+          flex: 1,
         }}>
-          <span>{getPanelTitle()}</span>
-          {isIsolated && (
-            <span style={{
-              background: '#ef4444',
-              color: 'white',
-              fontSize: '10px',
-              padding: '2px 8px',
-              borderRadius: '12px',
-              fontWeight: 'bold',
-              textTransform: 'uppercase',
-            }}>
-              ISOLATED
-            </span>
-          )}
+          {/* Lock and Close buttons - moved to left side before title */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '4px',
+            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
+            transition: 'opacity 0.2s ease',
+            pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none'
+          }}>
+            {/* Lock/Unlock button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const debug = (window as any).__isolationDebug
+                if (debug) {
+                  if (isIsolated) {
+                    debug.restore(panelId)
+                  } else {
+                    debug.isolate(panelId)
+                  }
+                }
+              }}
+              style={{
+                background: isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '50%',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                color: 'white',
+                fontSize: '12px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.3)'
+                e.currentTarget.style.transform = 'scale(1.1)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)'
+                e.currentTarget.style.transform = 'scale(1)'
+              }}
+              title={isIsolated ? 'Restore panel' : 'Isolate panel'}
+            >
+              {isIsolated ? '🔓' : '🔒'}
+            </button>
+            
+            {onClose && (
+              <button 
+                className="panel-close"
+                onClick={onClose}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  fontSize: '14px',
+                  color: 'white',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  e.currentTarget.style.transform = 'scale(1.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+                title="Close panel"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          
+          {/* Panel Title */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '10px',
+            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 0 : 1,
+            transition: 'opacity 0.2s ease',
+          }}>
+            <span>{getPanelTitle()}</span>
+            {isIsolated && (
+              <span style={{
+                background: '#ef4444',
+                color: 'white',
+                fontSize: '10px',
+                padding: '2px 8px',
+                borderRadius: '12px',
+                fontWeight: 'bold',
+                textTransform: 'uppercase',
+              }}>
+                ISOLATED
+              </span>
+            )}
+          </div>
         </div>
+        
+        {/* Right side buttons */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -1391,76 +1538,36 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             </svg>
             <span>Actions</span>
           </button>
-          
-          {/* Lock/Unlock button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              const debug = (window as any).__isolationDebug
-              if (debug) {
-                if (isIsolated) {
-                  debug.restore(panelId)
-                } else {
-                  debug.isolate(panelId)
-                }
-              }
-            }}
-            style={{
-              background: isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '50%',
-              width: '28px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              color: 'white',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.3)'
-              e.currentTarget.style.transform = 'scale(1.1)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)'
-              e.currentTarget.style.transform = 'scale(1)'
-            }}
-            title={isIsolated ? 'Restore panel' : 'Isolate panel'}
-          >
-            {isIsolated ? '🔓' : '🔒'}
-          </button>
-          {onClose && (
-            <button 
-              className="panel-close"
-              onClick={onClose}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: 'none',
-                borderRadius: '50%',
-                width: '28px',
-                height: '28px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                fontSize: '16px',
-                color: 'white',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                e.currentTarget.style.transform = 'scale(1.1)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                e.currentTarget.style.transform = 'scale(1)'
-              }}
-              title="Close panel"
-            >
-              ×
-            </button>
-          )}
+        </div>
+        
+        {/* Drag Handle Indicator - Always visible, hides on hover as a hint */}
+        <div
+          className="drag-indicator"
+          style={{
+            background: 'rgba(255,255,255,0.2)',
+            border: 'none',
+            borderRadius: '4px',
+            width: '32px',
+            height: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'move',
+            transition: 'opacity 0.2s ease',
+            color: 'white',
+            opacity: isPanelHovered ? 0 : 0.7, // Hide when panel is hovered
+            pointerEvents: 'none', // Allow clicks to pass through to the draggable title bar
+          }}
+          title="Drag to move panel"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="9" cy="8" r="1" fill="currentColor" />
+            <circle cx="15" cy="8" r="1" fill="currentColor" />
+            <circle cx="9" cy="12" r="1" fill="currentColor" />
+            <circle cx="15" cy="12" r="1" fill="currentColor" />
+            <circle cx="9" cy="16" r="1" fill="currentColor" />
+            <circle cx="15" cy="16" r="1" fill="currentColor" />
+          </svg>
         </div>
       </div>
 

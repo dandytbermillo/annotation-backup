@@ -6,6 +6,9 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- note: Extended scripts/main.sh menu with new option to kill dev ports and start npm dev.
+- note: Updated git-commit-and-push helper with menu option to kill dev ports then run npm dev.
+- commit [2025-09-21 20:26Z] b95f5e2: add possitioning for panels when appear
 - commit [2025-09-21 19:53Z] 59da954: delete and eye buttons added in the tree view
 - commit [2025-09-21 18:59Z] 8d64295: eye or view button added
 - commit [2025-09-21 12:50Z] 46239a4: organize panels
@@ -13,9 +16,6 @@ Recent Activity
 - commit [2025-09-21 04:52Z] 215289b: cleaning the main view
 - commit [2025-09-21 03:28Z] c7c6b85: made note sidebar overlay
 - commit [2025-09-21 02:48Z] 1a5a4e3: branch content being replaced with branch title is fixed
-- commit [2025-09-20 19:05Z] 3e827dd: annotation branch list is working partally
-- commit [2025-09-20 05:33Z] da74c06: finally double reload is solved
-- commit [2025-09-20 05:14Z] 6b7593e: testing
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

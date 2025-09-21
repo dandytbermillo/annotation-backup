@@ -10,6 +10,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
+cd "${ROOT_DIR}"
+
 # Ensure we're inside a git repository
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "Error: Not inside a git repository."
@@ -50,5 +55,25 @@ git commit -m "$commit_msg" || {
 echo "Pushing to origin main (updating remote main)"
 git push origin main
 
-echo "Done."
+echo "\nSelect next action:"
+echo "  1) Exit"
+echo "  2) Run npm run dev"
+echo "  3) Kill dev ports 3000/3010, then run npm run dev"
+printf "Choice [1-3]: "
+read -r post_choice || true
 
+case "${post_choice:-1}" in
+  2)
+    echo "Running npm run dev..."
+    npm run dev
+    ;;
+  3)
+    echo "Killing dev processes on ports 3000 and 3010..."
+    bash "${SCRIPT_DIR}/kill-dev.sh" 3000 3010
+    echo "Starting npm run dev..."
+    npm run dev
+    ;;
+  *)
+    echo "Done."
+    ;;
+esac
