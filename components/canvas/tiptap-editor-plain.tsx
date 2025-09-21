@@ -94,6 +94,29 @@ function coerceStoredContent(value: any): ProseMirrorJSON | string | null {
   return null
 }
 
+function normalizePreview(value: string | undefined | null): string {
+  return (value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function extractPreviewSafe(content: ProseMirrorJSON | string | null): string {
+  if (!content) return ''
+  return extractPreviewFromContent(content)?.toString() ?? ''
+}
+
+function isPlaceholderDocument(
+  content: ProseMirrorJSON | string | null,
+  branchEntry: any
+): boolean {
+  const preview = normalizePreview(extractPreviewSafe(content))
+  if (!preview) return true
+
+  if (preview.includes('start writing your') && preview.endsWith('...')) {
+    return true
+  }
+
+  return false
+}
+
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
 type PendingRestoreState = {
@@ -216,6 +239,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const pendingRestoreAttemptedRef = useRef(false)
     const pendingPromotionRef = useRef<PendingRestoreState | null>(null)
     const hasHydratedRef = useRef(false)
+    const fallbackSourceRef = useRef<'preview' | 'content' | null>(null)
+    const previewFallbackContentRef = useRef<ProseMirrorJSON | string | null>(null)
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -307,9 +332,6 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setLoadedContent(pendingPayload.content)
         setIsContentLoading(false)
         onContentLoaded?.({ content: pendingPayload.content, version: pendingPayload.version })
-        if (!providerContentIsEmpty(provider, pendingPayload.content)) {
-          hasHydratedRef.current = true
-        }
       } else {
         pendingPromotionRef.current = null
         setIsContentLoading(true)
@@ -321,6 +343,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         metadata: { component: 'editor', action: 'start_load' }
       })
 
+      const branchEntry = typeof window !== 'undefined'
+        ? (window as any).canvasDataStore?.get?.(panelId)
+        : null
+
       provider.loadDocument(noteId, panelId).then(() => {
         if (!isActive) return
 
@@ -331,11 +357,18 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
         let resolvedContent: ProseMirrorJSON | string | null = remoteContent
 
-        const needsFallback = !resolvedContent || providerContentIsEmpty(provider, resolvedContent)
+        fallbackSourceRef.current = null
+        previewFallbackContentRef.current = null
+
+        const treatAsPlaceholder = branchEntry
+          ? isPlaceholderDocument(resolvedContent, branchEntry)
+          : false
+
+        const needsFallback = !resolvedContent
+          || providerContentIsEmpty(provider, resolvedContent)
+          || treatAsPlaceholder
         if (needsFallback && typeof window !== 'undefined') {
           try {
-            const ds = (window as any).canvasDataStore
-            const branchEntry = ds?.get?.(panelId)
             const fallbackRaw = branchEntry?.content || branchEntry?.metadata?.htmlSnapshot
             let fallback = coerceStoredContent(fallbackRaw)
 
@@ -349,19 +382,36 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
                     content: [{ type: 'text', text: previewText.trim() }]
                   }]
                 }
+                fallbackSourceRef.current = 'preview'
+                previewFallbackContentRef.current = fallback
               }
             }
 
             if (fallback && !providerContentIsEmpty(provider, fallback)) {
+              debugLog('TiptapEditorPlain', 'FALLBACK_DOC_RESTORED', {
+                noteId,
+                panelId,
+                contentPreview: createContentPreview(fallback),
+                metadata: { source: fallbackSourceRef.current ?? 'content', hadPreview: !!fallbackRaw }
+              })
               resolvedContent = fallback
 
-              // Persist fallback to server so future loads don't regress
-              provider.saveDocument(noteId, panelId, fallback, false, { skipBatching: true }).catch(err => {
-                console.warn('[TiptapEditorPlain] Failed to persist fallback content:', err)
-              })
+              // Persist fallback to server only if it came from stored content
+              if (fallbackSourceRef.current !== 'preview') {
+                fallbackSourceRef.current = 'content'
+                previewFallbackContentRef.current = null
+                provider.saveDocument(noteId, panelId, fallback, false, { skipBatching: true }).catch(err => {
+                  console.error('[TiptapEditorPlain] Failed to persist fallback content:', err)
+                })
+              }
             }
           } catch (fallbackError) {
             console.warn('[TiptapEditorPlain] Failed to derive fallback content:', fallbackError)
+            debugLog('TiptapEditorPlain', 'FALLBACK_DOC_ERROR', {
+              noteId,
+              panelId,
+              metadata: { reason: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) }
+            })
           }
         }
 
@@ -408,29 +458,56 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           })
 
           const targetVersion = remoteNotOlder ? remoteVersion + 1 : Math.max(remoteVersion + 1, pendingVersion)
+          const promotedIsPlaceholder = branchEntry
+            ? isPlaceholderDocument(promoted.content, branchEntry)
+            : false
+
+          fallbackSourceRef.current = promotedIsPlaceholder ? 'preview' : null
+          previewFallbackContentRef.current = promotedIsPlaceholder ? promoted.content : null
+
           setLoadedContent(promoted.content)
-          onContentLoaded?.({
-            content: promoted.content,
-            version: targetVersion
-          })
           setIsContentLoading(false)
 
-          provider.saveDocument(noteId, panelId, promoted.content, false, { skipBatching: true })
-            .then(() => {
-              localStorage.removeItem(promoted.key)
-              pendingPromotionRef.current = null
+          if (promotedIsPlaceholder) {
+            debugLog('TiptapEditorPlain', 'FALLBACK_PREVIEW_DISPLAYED', {
+              noteId,
+              panelId,
+              contentPreview: createContentPreview(promoted.content),
+              metadata: { source: 'pending-preview' }
             })
-            .catch(err => {
-              console.error('[TiptapEditorPlain] Failed to persist pending restore:', err)
+            localStorage.removeItem(promoted.key)
+            pendingPromotionRef.current = null
+          } else {
+            onContentLoaded?.({
+              content: promoted.content,
+              version: targetVersion
             })
+            provider.saveDocument(noteId, panelId, promoted.content, false, { skipBatching: true })
+              .then(() => {
+                localStorage.removeItem(promoted.key)
+                pendingPromotionRef.current = null
+              })
+              .catch(err => {
+                console.error('[TiptapEditorPlain] Failed to persist pending restore:', err)
+              })
+          }
           return
         }
 
+        const notifyLoad = fallbackSourceRef.current !== 'preview'
         setLoadedContent(resolvedContent)
-        onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
         setIsContentLoading(false)
-        if (!providerContentIsEmpty(provider, resolvedContent)) {
-          hasHydratedRef.current = true
+        if (notifyLoad) {
+          onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
+          fallbackSourceRef.current = null
+          previewFallbackContentRef.current = null
+        } else {
+          debugLog('TiptapEditorPlain', 'FALLBACK_PREVIEW_DISPLAYED', {
+            noteId,
+            panelId,
+            contentPreview: createContentPreview(resolvedContent),
+            metadata: { source: 'provider-preview' }
+          })
         }
       }).catch(error => {
         console.error(`[TiptapEditorPlain-${panelId}] Failed to load content:`, error)
@@ -944,6 +1021,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.view.updateState(editor.view.state)
             
             const afterContent = editor.getJSON()
+
+            const treatedAsPreview = fallbackSourceRef.current === 'preview'
+            const appliedIsEmpty = providerContentIsEmpty(provider, loadedContent)
+            if (!treatedAsPreview && !appliedIsEmpty) {
+              hasHydratedRef.current = true
+            } else if (treatedAsPreview) {
+              hasHydratedRef.current = false
+            }
             
             debugLog('TiptapEditorPlain', 'CONTENT_SET_IN_EDITOR', {
               noteId,

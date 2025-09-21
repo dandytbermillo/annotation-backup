@@ -123,9 +123,7 @@ export function createAnnotationBranch(
     parentId,
     type,
     title: `${type.charAt(0).toUpperCase() + type.slice(1)} on "${truncatedText}"`,
-    content: selectedText.trim()
-      ? `<blockquote><p>${selectedText}</p></blockquote>`
-      : `<blockquote><p></p></blockquote>`,
+    content: `<blockquote><p>${selectedText}</p></blockquote><p>Start writing your ${type} here...</p>`,
     originalText: selectedText,
     metadata: {
       annotationType: type,
