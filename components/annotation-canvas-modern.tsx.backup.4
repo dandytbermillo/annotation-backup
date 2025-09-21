@@ -406,8 +406,8 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
   }
 
-  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }) => {
-    console.log('[AnnotationCanvas] Creating panel:', panelId, 'with parent:', parentPanelId, 'at position:', parentPosition)
+  const handleCreatePanel = (panelId: string) => {
+    console.log('[AnnotationCanvas] Creating panel:', panelId)
     
     // Check if we're in plain mode
     const isPlainMode = isPlainModeActive()
@@ -422,17 +422,6 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         // Plain mode: Check if panel data exists
         // Note: We'll need to get dataStore from context provider
         console.log('[Plain mode] Creating panel:', panelId)
-        
-        // If parent position is provided, update the dataStore
-        if (parentPosition && (window as any).canvasDataStore) {
-          const dataStore = (window as any).canvasDataStore
-          const panelData = dataStore.get(panelId)
-          if (panelData) {
-            // Update position to be beside parent
-            panelData.position = parentPosition
-            dataStore.set(panelId, panelData)
-          }
-        }
       } else {
         // Ensure the provider knows about the current note
         const provider = UnifiedProvider.getInstance()
@@ -445,12 +434,6 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         if (!panelData) {
           console.warn(`No data found for panel ${panelId}`)
           return prev
-        }
-        
-        // If parent position is provided, update the position
-        if (parentPosition && panelData) {
-          panelData.position = parentPosition
-          branchesMap.set(panelId, panelData)
         }
       }
       
@@ -546,11 +529,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   useEffect(() => {
     const handlePanelEvent = (event: CustomEvent) => {
       if (event.detail?.panelId) {
-        handleCreatePanel(
-          event.detail.panelId, 
-          event.detail.parentPanelId, 
-          event.detail.parentPosition
-        )
+        handleCreatePanel(event.detail.panelId)
       }
     }
 

@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-21 19:53Z] 59da954: delete and eye buttons added in the tree view
 - commit [2025-09-21 18:59Z] 8d64295: eye or view button added
 - commit [2025-09-21 12:50Z] 46239a4: organize panels
 - commit [2025-09-21 05:29Z] c64a8f7: cleaning the main view again
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-20 19:05Z] 3e827dd: annotation branch list is working partally
 - commit [2025-09-20 05:33Z] da74c06: finally double reload is solved
 - commit [2025-09-20 05:14Z] 6b7593e: testing
-- commit [2025-09-19 22:24Z] 8e375e2: still fixing
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

@@ -936,14 +936,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     if (isPlainMode) {
       // Set up listener for dataStore changes
       const handleDataStoreUpdate = (updatedPanelId: string) => {
-        // Defer state updates to avoid React warning
-        setTimeout(() => {
-          // If this panel or its branches were updated, force re-render
-          if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
-            setLastBranchUpdate(Date.now())
-            forceUpdate()
-          }
-        }, 0)
+        // If this panel or its branches were updated, force re-render
+        if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
+          setLastBranchUpdate(Date.now())
+          forceUpdate()
+        }
       }
       
       // Listen for dataStore updates
@@ -963,24 +960,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
     
     const updateHandler = (event: any) => {
-      // Defer state updates to avoid React warning
-      setTimeout(() => {
-        // Check if this panel's branches were updated
-        if (event && event.keysChanged && event.keysChanged.has(panelId)) {
-          setLastBranchUpdate(Date.now())
-        }
-        
-        forceUpdate()
-      }, 0)
+      // Check if this panel's branches were updated
+      if (event && event.keysChanged && event.keysChanged.has(panelId)) {
+        setLastBranchUpdate(Date.now())
+      }
+      
+      forceUpdate()
     }
     
     // Listen for changes to the YJS native structure
     const branchesArrayUpdateHandler = () => {
-      // Defer state updates to avoid React warning
-      setTimeout(() => {
-        setLastBranchUpdate(Date.now())
-        forceUpdate()
-      }, 0)
+      setLastBranchUpdate(Date.now())
+      forceUpdate()
     }
     
     // Listen for any changes to the branches map (legacy)
@@ -1022,62 +1013,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       return
     }
     
-    // Get current panel's position from the DOM
-    const currentPanel = panelRef.current
-    let parentPosition = { x: 2000, y: 1500 } // Default position
-    
-    if (currentPanel) {
-      // Get the actual panel dimensions
-      const rect = currentPanel.getBoundingClientRect()
-      const panelWidth = rect.width || 800 // Fallback to 800 if width not available
-      const gap = 50 // Gap between panels
-      
-      // Get the transform values from the panel's style
-      const style = window.getComputedStyle(currentPanel)
-      const transform = style.transform
-      
-      if (transform && transform !== 'none') {
-        // Extract translation values from the transform matrix
-        const matrix = new DOMMatrixReadOnly(transform)
-        const currentX = matrix.m41
-        const currentY = matrix.m42
-        
-        // Check if there's enough space on the right side
-        // If current panel is beyond x=3000, place new panel on the left
-        const placeOnLeft = currentX > 3000
-        
-        // Position the new panel to the left or right of the parent with gap
-        parentPosition = {
-          x: placeOnLeft 
-            ? currentX - panelWidth - gap // Panel width + gap on the left
-            : currentX + panelWidth + gap, // Panel width + gap on the right
-          y: currentY // Same vertical position
-        }
-      } else {
-        // Fallback: try to get position from data stores
-        const panelData = isPlainMode 
-          ? dataStore.get(panelId) 
-          : branchesMap.get(panelId)
-        
-        if (panelData?.position) {
-          const placeOnLeft = panelData.position.x > 3000
-          parentPosition = {
-            x: placeOnLeft 
-              ? panelData.position.x - panelWidth - gap 
-              : panelData.position.x + panelWidth + gap,
-            y: panelData.position.y
-          }
-        }
-      }
-    }
-    
-    // Dispatch event to create panel with parent position
+    // Dispatch event to create panel
     window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { 
-        panelId: branchId,
-        parentPanelId: panelId,
-        parentPosition: parentPosition
-      },
+      detail: { panelId: branchId },
       bubbles: true 
     }))
   }
