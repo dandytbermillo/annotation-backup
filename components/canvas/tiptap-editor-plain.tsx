@@ -26,6 +26,7 @@ import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
 import { WebKitAnnotationCursorFix } from './webkit-annotation-cursor-fix'
+import { AnnotationArrowNavigationFix } from './annotation-arrow-navigation-fix'
 // import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
 // import { WebKitAnnotationClickFix } from './webkit-annotation-click-fix'
 // import { SafariInlineBlockFix } from './safari-inline-block-fix'
@@ -739,6 +740,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         
         editor.registerPlugin(PerformanceMonitor())
         editor.registerPlugin(AnnotationStartBoundaryFix())
+        editor.registerPlugin(AnnotationArrowNavigationFix())
         editor.registerPlugin(ReadOnlyGuard(isEditableRef))
         // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         

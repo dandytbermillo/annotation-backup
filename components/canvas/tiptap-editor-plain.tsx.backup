@@ -114,16 +114,6 @@ function isPlaceholderDocument(
     return true
   }
 
-  const original = normalizePreview(branchEntry?.originalText)
-  if (original && preview === original) {
-    return true
-  }
-
-  const storedPreview = normalizePreview(branchEntry?.preview || branchEntry?.metadata?.preview)
-  if (storedPreview && preview === storedPreview) {
-    return true
-  }
-
   return false
 }
 
@@ -249,6 +239,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const pendingRestoreAttemptedRef = useRef(false)
     const pendingPromotionRef = useRef<PendingRestoreState | null>(null)
     const hasHydratedRef = useRef(false)
+    const fallbackSourceRef = useRef<'preview' | 'content' | null>(null)
+    const previewFallbackContentRef = useRef<ProseMirrorJSON | string | null>(null)
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -340,9 +332,6 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setLoadedContent(pendingPayload.content)
         setIsContentLoading(false)
         onContentLoaded?.({ content: pendingPayload.content, version: pendingPayload.version })
-        if (!providerContentIsEmpty(provider, pendingPayload.content)) {
-          hasHydratedRef.current = true
-        }
       } else {
         pendingPromotionRef.current = null
         setIsContentLoading(true)
@@ -510,11 +499,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setIsContentLoading(false)
         if (notifyLoad) {
           onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
-          if (!providerContentIsEmpty(provider, resolvedContent)) {
-            hasHydratedRef.current = true
-            fallbackSourceRef.current = null
-            previewFallbackContentRef.current = null
-          }
+          fallbackSourceRef.current = null
+          previewFallbackContentRef.current = null
         } else {
           debugLog('TiptapEditorPlain', 'FALLBACK_PREVIEW_DISPLAYED', {
             noteId,
@@ -1035,6 +1021,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.view.updateState(editor.view.state)
             
             const afterContent = editor.getJSON()
+
+            const treatedAsPreview = fallbackSourceRef.current === 'preview'
+            const appliedIsEmpty = providerContentIsEmpty(provider, loadedContent)
+            if (!treatedAsPreview && !appliedIsEmpty) {
+              hasHydratedRef.current = true
+            } else if (treatedAsPreview) {
+              hasHydratedRef.current = false
+            }
             
             debugLog('TiptapEditorPlain', 'CONTENT_SET_IN_EDITOR', {
               noteId,
