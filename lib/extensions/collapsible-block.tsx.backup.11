@@ -511,23 +511,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     }, 500) // Allow extra time to move between icon and tooltip
   }
 
-  const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement
-    if (target.closest('[data-collapsible-arrow]')) {
-      return
-    }
-    if (target.closest('[data-collapsible-actions]')) {
-      return
-    }
-    if (target.closest('[data-preview-icon]')) {
-      return
-    }
-
-    e.preventDefault()
-    e.stopPropagation()
-    setIsEditingTitle(true)
-  }
-
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
@@ -625,14 +608,11 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
           userSelect: 'none',
           padding: isCollapsed ? '2px 0' : '0',
         }}
-        contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
-        onClick={handleHeaderClick}
       >
         <span 
           onClick={toggleCollapse}
-          data-collapsible-arrow
           style={{
             fontSize: '16px',
             marginRight: '8px',
@@ -700,7 +680,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             gap: '6px',
             marginLeft: headerMetaLabel ? '12px' : 'auto',
           }}
-          data-collapsible-actions
         >
           <button
             type="button"
@@ -794,7 +773,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               background: 'rgba(155, 89, 182, 0.1)',
               transition: 'all 0.2s ease',
             }}
-            data-preview-icon
             onMouseOver={(e) => {
               e.currentTarget.style.background = 'rgba(155, 89, 182, 0.2)'
               e.currentTarget.style.transform = 'scale(1.1)'

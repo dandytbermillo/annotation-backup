@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-22 21:00Z] b7a0a9b: fix the issue of empty block base title
 - commit [2025-09-22 20:16Z] 07d295e: added Quick actions in the header
 - commit [2025-09-22 19:58Z] ece0ef6: added Collapsible hierarchy cues
 - commit [2025-09-22 18:40Z] 3465c73: block based format with tooltips preview works
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-22 00:37Z] f3fb188: arrow past the annotated text solved
 - commit [2025-09-22 00:16Z] abeb4f7: refine the repositioning of the panels
 - note: Removed post-push action menu from git-commit-and-push helper.
-- commit [2025-09-21 21:12Z] d60a8a1: added draggable icon on the title bar
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

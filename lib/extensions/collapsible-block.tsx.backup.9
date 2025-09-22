@@ -173,16 +173,6 @@ export const CollapsibleBlock = Node.create({
         },
         '⧉',
       ],
-      [
-        'button',
-        {
-          type: 'button',
-          'data-action': 'delete',
-          'aria-label': 'Delete block',
-          style: 'border:none;background:none;padding:0;cursor:pointer;color:#cc4a4a;font-size:14px;',
-        },
-        '🗑',
-      ],
     ]
 
     return [
@@ -350,18 +340,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     editor.view.focus()
   }
 
-  const handleDelete = () => {
-    const pos = resolvePos()
-    if (pos == null) return
-    const confirmed = window.confirm('Delete this block and all nested content?')
-    if (!confirmed) {
-      return
-    }
-    const tr = editor.view.state.tr.delete(pos, pos + node.nodeSize)
-    editor.view.dispatch(tr)
-    editor.view.focus()
-  }
-
   const handleMove = (direction: 'up' | 'down') => {
     const pos = resolvePos()
     if (pos == null) return
@@ -511,23 +489,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     }, 500) // Allow extra time to move between icon and tooltip
   }
 
-  const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement
-    if (target.closest('[data-collapsible-arrow]')) {
-      return
-    }
-    if (target.closest('[data-collapsible-actions]')) {
-      return
-    }
-    if (target.closest('[data-preview-icon]')) {
-      return
-    }
-
-    e.preventDefault()
-    e.stopPropagation()
-    setIsEditingTitle(true)
-  }
-
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
@@ -625,14 +586,11 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
           userSelect: 'none',
           padding: isCollapsed ? '2px 0' : '0',
         }}
-        contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
-        onClick={handleHeaderClick}
       >
         <span 
           onClick={toggleCollapse}
-          data-collapsible-arrow
           style={{
             fontSize: '16px',
             marginRight: '8px',
@@ -700,7 +658,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             gap: '6px',
             marginLeft: headerMetaLabel ? '12px' : 'auto',
           }}
-          data-collapsible-actions
         >
           <button
             type="button"
@@ -756,24 +713,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
           >
             ⧉
           </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDelete()
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#cc4a4a',
-              fontSize: '14px',
-            }}
-            aria-label="Delete block"
-          >
-            🗑
-          </button>
         </div>
 
         {/* Preview Icon - shows when collapsed and hovered */}
@@ -794,7 +733,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               background: 'rgba(155, 89, 182, 0.1)',
               transition: 'all 0.2s ease',
             }}
-            data-preview-icon
             onMouseOver={(e) => {
               e.currentTarget.style.background = 'rgba(155, 89, 182, 0.2)'
               e.currentTarget.style.transform = 'scale(1.1)'

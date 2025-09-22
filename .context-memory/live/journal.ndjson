@@ -149,3 +149,4 @@
 {"ts":"2025-09-22T18:40:10.959Z","type":"commit","sha":"3465c7370dc6c0503594df53fd07536f91c84abf","files_changed":6,"message":"block based format with tooltips preview works"}
 {"ts":"2025-09-22T19:58:01.970Z","type":"commit","sha":"ece0ef642dcd045cef02811b427a2830a2403f23","files_changed":11,"message":"added Collapsible hierarchy cues"}
 {"ts":"2025-09-22T20:16:44.570Z","type":"commit","sha":"07d295ef9c01c5a029fa8bc3f210e46e16488d85","files_changed":4,"message":"added Quick actions in the header"}
+{"ts":"2025-09-22T21:00:33.716Z","type":"commit","sha":"b7a0a9b120934b776bb9c287408beb8cdff450dc","files_changed":6,"message":"fix the issue of empty block base title"}
