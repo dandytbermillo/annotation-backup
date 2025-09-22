@@ -6,6 +6,8 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- note: Removed post-push action menu from git-commit-and-push helper.
+- commit [2025-09-21 21:12Z] d60a8a1: added draggable icon on the title bar
 - note: Extended scripts/main.sh menu with new option to kill dev ports and start npm dev.
 - note: Updated git-commit-and-push helper with menu option to kill dev ports then run npm dev.
 - commit [2025-09-21 20:26Z] b95f5e2: add possitioning for panels when appear
@@ -14,8 +16,6 @@ Recent Activity
 - commit [2025-09-21 12:50Z] 46239a4: organize panels
 - commit [2025-09-21 05:29Z] c64a8f7: cleaning the main view again
 - commit [2025-09-21 04:52Z] 215289b: cleaning the main view
-- commit [2025-09-21 03:28Z] c7c6b85: made note sidebar overlay
-- commit [2025-09-21 02:48Z] 1a5a4e3: branch content being replaced with branch title is fixed
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

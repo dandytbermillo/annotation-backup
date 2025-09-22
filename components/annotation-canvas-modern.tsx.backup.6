@@ -409,24 +409,6 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }) => {
     console.log('[AnnotationCanvas] Creating panel:', panelId, 'with parent:', parentPanelId, 'at position:', parentPosition)
     
-    // Log to debug_logs table
-    fetch('/api/debug/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        component: 'AnnotationCanvas',
-        action: 'handle_create_panel',
-        metadata: {
-          panelId: panelId,
-          parentPanelId: parentPanelId,
-          parentPosition: parentPosition,
-          isPlainMode: isPlainModeActive()
-        },
-        content_preview: `Creating panel ${panelId} at x=${parentPosition?.x}, y=${parentPosition?.y}`,
-        note_id: noteId
-      })
-    }).catch(console.error)
-    
     // Check if we're in plain mode
     const isPlainMode = isPlainModeActive()
     
@@ -505,10 +487,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
                        panelId.includes('explore') ? 'explore' : 
                        panelId.includes('promote') ? 'promote' : 'note'
       
-      // Use parentPosition if provided, otherwise use default
-      const position = parentPosition || { x: 2000, y: 1500 }
-      
-      return [...prev, createPanelItem(panelId, position, panelType)]
+      return [...prev, createPanelItem(panelId, { x: 2000, y: 1500 }, panelType)]
     })
   }
   

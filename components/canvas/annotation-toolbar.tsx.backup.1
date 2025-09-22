@@ -103,37 +103,100 @@ export function AnnotationToolbar() {
       }
     }
 
-    // Calculate position for new panel
+    // Calculate smart position for new panel (similar to branch list positioning)
     const branchesMap = isPlainMode ? new Map() : UnifiedProvider.getInstance().getBranchesMap()
     const parentBranch = branchesMap.get(panel) || dataStore.get(panel)
     
-    if (!parentBranch || !parentBranch.position) {
-      console.warn(`Parent branch ${panel} not found or has no position`)
-      // Use default position if parent not found
-      const defaultPosition = { x: 3000, y: 1500 }
-      dataStore.update(branchId, { position: defaultPosition })
-      const branchData = branchesMap.get(branchId)
-      if (branchData) {
-        branchData.position = defaultPosition
+    // Function to calculate smart position relative to parent panel
+    const calculateSmartPosition = () => {
+      // Try to find the parent panel element
+      const parentPanelEl = document.querySelector(`[data-panel-id="${panel}"]`) as HTMLElement
+      
+      if (!parentPanelEl) {
+        console.warn(`Parent panel element ${panel} not found`)
+        return { x: 3000, y: 1500 } // Default fallback
       }
-    } else {
-      // Count siblings
-      const currentBranches = isPlainMode 
-        ? (dataStore.get(panel)?.branches || [])
-        : UnifiedProvider.getInstance().getBranches(panel)
-      const siblingCount = currentBranches.length - 1 // Subtract 1 because we just added this branch
-
-      const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
-      const targetY = parentBranch.position.y + siblingCount * 650 // PANEL_SPACING_Y
-
-      // Update position in both stores
-      dataStore.update(branchId, {
-        position: { x: targetX, y: targetY },
-      })
-      const branchData = branchesMap.get(branchId)
-      if (branchData) {
-        branchData.position = { x: targetX, y: targetY }
+      
+      // Get the actual panel dimensions
+      const rect = parentPanelEl.getBoundingClientRect()
+      const panelWidth = rect.width || 800
+      const gap = 50
+      
+      // Get the transform values from the panel's style
+      const style = window.getComputedStyle(parentPanelEl)
+      const transform = style.transform
+      
+      if (transform && transform !== 'none') {
+        // Extract translation values from the transform matrix
+        const matrix = new DOMMatrixReadOnly(transform)
+        const currentX = matrix.m41
+        const currentY = matrix.m42
+        
+        // Smart positioning logic (same as branch list)
+        // Check for existing panels to avoid collisions
+        const allPanels = document.querySelectorAll('[data-panel-id]')
+        let rightOccupied = false
+        let leftOccupied = false
+        
+        allPanels.forEach((existingPanel) => {
+          if (existingPanel === parentPanelEl) return
+          
+          const panelStyle = window.getComputedStyle(existingPanel)
+          const panelTransform = panelStyle.transform
+          
+          if (panelTransform && panelTransform !== 'none') {
+            const panelMatrix = new DOMMatrixReadOnly(panelTransform)
+            const panelX = panelMatrix.m41
+            
+            // Check if a panel is already on the right
+            if (panelX > currentX + panelWidth && 
+                panelX < currentX + panelWidth + gap + 100) {
+              rightOccupied = true
+            }
+            
+            // Check if a panel is already on the left
+            if (panelX < currentX - gap && 
+                panelX > currentX - panelWidth - gap - 100) {
+              leftOccupied = true
+            }
+          }
+        })
+        
+        // Determine position based on occupancy and viewport constraints
+        const viewportWidth = window.innerWidth
+        let targetX = currentX
+        
+        // Prefer right side, but check constraints
+        if (!rightOccupied && currentX + panelWidth * 2 + gap < Math.min(4000, viewportWidth - 100)) {
+          targetX = currentX + panelWidth + gap
+        } else if (!leftOccupied && currentX - panelWidth - gap > 500) {
+          targetX = currentX - panelWidth - gap
+        } else {
+          // Both sides occupied or constrained, stack vertically
+          targetX = currentX + panelWidth + gap
+        }
+        
+        return { x: targetX, y: currentY }
       }
+      
+      // Fallback if no transform found
+      if (parentBranch?.position) {
+        return { 
+          x: parentBranch.position.x + 900, 
+          y: parentBranch.position.y 
+        }
+      }
+      
+      return { x: 3000, y: 1500 }
+    }
+    
+    const smartPosition = calculateSmartPosition()
+    
+    // Update position in both stores
+    dataStore.update(branchId, { position: smartPosition })
+    const updatedBranchData = branchesMap.get(branchId)
+    if (updatedBranchData) {
+      updatedBranchData.position = smartPosition
     }
 
     // Dispatch both panel-specific and global events for annotation insertion
@@ -163,9 +226,13 @@ export function AnnotationToolbar() {
       detail: eventDetail 
     }))
 
-    // Create the panel for the new branch
+    // Create the panel for the new branch with smart position
     window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { panelId: branchId } 
+      detail: { 
+        panelId: branchId,
+        parentPanelId: panel,
+        parentPosition: smartPosition
+      } 
     }))
 
     // Force a re-render by triggering branch updated action

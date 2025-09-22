@@ -27,13 +27,143 @@ export function AnnotationToolbar() {
     const plainProvider = getPlainProvider()
     const isPlainMode = !!plainProvider
     
-    // Create the branch data with proper quoted content
-    const draftBranch = createAnnotationBranch(type, panel, noteId || '', text, { x: 0, y: 0 })
+    // Calculate smart position FIRST before creating branch data
+    const calculateSmartPosition = () => {
+      const currentPanel = document.querySelector(`[data-panel-id="${panel}"]`) as HTMLElement
+      let parentPosition = { x: 2000, y: 1500 }
+      
+      // Debug: Check if panel was found
+      if (!currentPanel) {
+        fetch('/api/debug/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            component: 'AnnotationToolbar',
+            action: 'panel_not_found',
+            metadata: {
+              parentPanel: panel,
+              selector: `[data-panel-id="${panel}"]`,
+              availablePanels: Array.from(document.querySelectorAll('[data-panel-id]')).map(el => el.getAttribute('data-panel-id'))
+            },
+            content_preview: `Parent panel ${panel} not found in DOM`,
+            note_id: noteId
+          })
+        }).catch(console.error)
+      }
+      
+      if (currentPanel) {
+        const rect = currentPanel.getBoundingClientRect()
+        const panelWidth = rect.width || 800
+        const gap = 50
+        
+        const style = window.getComputedStyle(currentPanel)
+        
+        // Panels use absolute positioning with left/top, not transforms
+        const leftStr = style.left
+        const topStr = style.top
+        const currentX = parseFloat(leftStr) || 0
+        const currentY = parseFloat(topStr) || 0
+        
+        // Debug: Log position
+        fetch('/api/debug/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            component: 'AnnotationToolbar',
+            action: 'panel_position',
+            metadata: {
+              parentPanel: panel,
+              left: leftStr,
+              top: topStr,
+              currentX: currentX,
+              currentY: currentY,
+              rect: { width: rect.width, height: rect.height }
+            },
+            content_preview: `Panel ${panel} at x=${currentX}, y=${currentY}`,
+            note_id: noteId
+          })
+        }).catch(console.error)
+        
+        if (currentX || currentY) {
+          // Position calculation remains the same
+          
+          const allPanels = document.querySelectorAll('[data-panel-id]')
+          let rightOccupied = false
+          let leftOccupied = false
+          
+          allPanels.forEach((panel) => {
+            if (panel === currentPanel) return
+            
+            const panelStyle = window.getComputedStyle(panel)
+            const panelLeft = parseFloat(panelStyle.left) || 0
+            const panelX = panelLeft
+            
+            if (panelX > currentX + panelWidth && 
+                panelX < currentX + panelWidth + gap + 100) {
+              rightOccupied = true
+            }
+            
+            if (panelX < currentX - gap && 
+                panelX > currentX - panelWidth - gap - 100) {
+              leftOccupied = true
+            }
+          })
+          
+          let placeOnLeft = false
+          
+          if (!rightOccupied && !leftOccupied) {
+            // Prefer right side by default (same as branch list behavior)
+            // Only use left if panel is already far to the right
+            placeOnLeft = currentX > 2500
+          } else if (rightOccupied && !leftOccupied) {
+            placeOnLeft = true
+          } else if (!rightOccupied && leftOccupied) {
+            placeOnLeft = false
+          } else {
+            placeOnLeft = false
+            parentPosition.y = currentY + 100
+          }
+          
+          parentPosition = {
+            x: placeOnLeft 
+              ? currentX - panelWidth - gap
+              : currentX + panelWidth + gap,
+            y: parentPosition.y || currentY
+          }
+        }
+      }
+      
+      return parentPosition
+    }
+    
+    const smartPosition = calculateSmartPosition()
+    
+    // Log to debug_logs table
+    fetch('/api/debug/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        component: 'AnnotationToolbar',
+        action: 'calculate_smart_position',
+        metadata: {
+          parentPanel: panel,
+          calculatedPosition: smartPosition,
+          branchId: branchId,
+          annotationType: type
+        },
+        content_preview: `Position for ${type} annotation: x=${smartPosition.x}, y=${smartPosition.y}`,
+        note_id: noteId
+      })
+    }).catch(console.error)
+
+    // Create the branch data with proper quoted content AND position
+    const draftBranch = createAnnotationBranch(type, panel, noteId || '', text, smartPosition)
     const initialPreview = buildBranchPreview(draftBranch.content, text)
 
     const branchData = {
       id: branchId,
       ...draftBranch,
+      position: smartPosition, // Include position in branch data
       preview: initialPreview,
       branches: [],
       isEditable: true,
@@ -43,7 +173,7 @@ export function AnnotationToolbar() {
       },
     }
 
-    // Add the branch to data store
+    // Add the branch to data store with position already set
     dataStore.set(branchId, branchData)
     
     if (isPlainMode && plainProvider && noteId) {
@@ -103,38 +233,7 @@ export function AnnotationToolbar() {
       }
     }
 
-    // Calculate position for new panel
-    const branchesMap = isPlainMode ? new Map() : UnifiedProvider.getInstance().getBranchesMap()
-    const parentBranch = branchesMap.get(panel) || dataStore.get(panel)
-    
-    if (!parentBranch || !parentBranch.position) {
-      console.warn(`Parent branch ${panel} not found or has no position`)
-      // Use default position if parent not found
-      const defaultPosition = { x: 3000, y: 1500 }
-      dataStore.update(branchId, { position: defaultPosition })
-      const branchData = branchesMap.get(branchId)
-      if (branchData) {
-        branchData.position = defaultPosition
-      }
-    } else {
-      // Count siblings
-      const currentBranches = isPlainMode 
-        ? (dataStore.get(panel)?.branches || [])
-        : UnifiedProvider.getInstance().getBranches(panel)
-      const siblingCount = currentBranches.length - 1 // Subtract 1 because we just added this branch
-
-      const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
-      const targetY = parentBranch.position.y + siblingCount * 650 // PANEL_SPACING_Y
-
-      // Update position in both stores
-      dataStore.update(branchId, {
-        position: { x: targetX, y: targetY },
-      })
-      const branchData = branchesMap.get(branchId)
-      if (branchData) {
-        branchData.position = { x: targetX, y: targetY }
-      }
-    }
+    // Position is already set in branchData, no need to calculate again
 
     // Dispatch both panel-specific and global events for annotation insertion
     const eventDetail = {
@@ -163,9 +262,13 @@ export function AnnotationToolbar() {
       detail: eventDetail 
     }))
 
-    // Create the panel for the new branch
+    // Create the panel for the new branch with smart position
     window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { panelId: branchId } 
+      detail: { 
+        panelId: branchId,
+        parentPanelId: panel,
+        parentPosition: smartPosition
+      } 
     }))
 
     // Force a re-render by triggering branch updated action
