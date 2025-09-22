@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-22 18:40Z] 3465c73: block based format with tooltips preview works
 - commit [2025-09-22 12:55Z] 21c5278: tooltips can now display the rendered formatted texts even without expanding it
 - commit [2025-09-22 12:39Z] f28e447: testing the tooltip issue not displaying the rendered content
 - commit [2025-09-22 03:15Z] 701160f: added collapsible format (block based)
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-21 21:12Z] d60a8a1: added draggable icon on the title bar
 - note: Extended scripts/main.sh menu with new option to kill dev ports and start npm dev.
 - note: Updated git-commit-and-push helper with menu option to kill dev ports then run npm dev.
-- commit [2025-09-21 20:26Z] b95f5e2: add possitioning for panels when appear
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

@@ -1,0 +1,324 @@
+/* TipTap Editor Styling - Professional Note-taking App Look */
+
+/* Main editor wrapper with proper margins */
+.tiptap-editor-wrapper {
+  background: #f8f9fa;
+  height: 100%;
+  min-height: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Editor document container - fills parent height */
+.tiptap-editor-document {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 850px;
+  width: 100%;
+  margin: 0 auto;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  height: 100%;
+}
+
+/* Content wrapper to maintain full height */
+.tiptap-editor-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* The actual ProseMirror editor - fills available space */
+.ProseMirror {
+  flex: 1;
+  padding: 60px 80px 80px 80px;
+  min-height: 100%;
+  outline: none;
+  font-size: 16px;
+  line-height: 1.8;
+  color: #2c3e50;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+}
+
+/* Responsive padding for smaller screens */
+@media (max-width: 768px) {
+  .tiptap-editor-wrapper {
+    padding: 16px;
+  }
+  
+  .ProseMirror {
+    padding: 40px 24px;
+  }
+  
+  .tiptap-editor-document {
+    border-radius: 8px;
+  }
+}
+
+/* Placeholder text */
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #adb5bd;
+  pointer-events: none;
+  height: 0;
+}
+
+/* Paragraph spacing for better readability */
+.ProseMirror p {
+  margin: 0 0 1.2em 0;
+  line-height: 1.8;
+}
+
+.ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+/* Headings with proper spacing */
+.ProseMirror h1 {
+  font-size: 2.2em;
+  font-weight: 700;
+  margin: 1.8em 0 0.8em 0;
+  line-height: 1.3;
+  color: #1a202c;
+}
+
+.ProseMirror h2 {
+  font-size: 1.8em;
+  font-weight: 600;
+  margin: 1.6em 0 0.7em 0;
+  line-height: 1.35;
+  color: #2d3748;
+}
+
+.ProseMirror h3 {
+  font-size: 1.4em;
+  font-weight: 600;
+  margin: 1.4em 0 0.6em 0;
+  line-height: 1.4;
+  color: #2d3748;
+}
+
+.ProseMirror h1:first-child,
+.ProseMirror h2:first-child,
+.ProseMirror h3:first-child {
+  margin-top: 0;
+}
+
+/* Lists with better spacing */
+.ProseMirror ul,
+.ProseMirror ol {
+  margin: 1em 0;
+  padding-left: 2em;
+}
+
+.ProseMirror li {
+  margin: 0.5em 0;
+  line-height: 1.8;
+}
+
+.ProseMirror ul ul,
+.ProseMirror ol ol,
+.ProseMirror ul ol,
+.ProseMirror ol ul {
+  margin: 0.5em 0;
+}
+
+/* Blockquotes */
+.ProseMirror blockquote {
+  border-left: 4px solid #e1e8ed;
+  padding-left: 20px;
+  margin: 1.5em 0;
+  color: #6c757d;
+  font-style: italic;
+}
+
+/* Code blocks */
+.ProseMirror pre {
+  background: #f6f8fa;
+  border-radius: 6px;
+  padding: 16px;
+  margin: 1.5em 0;
+  overflow-x: auto;
+}
+
+.ProseMirror code {
+  background: #f6f8fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  font-size: 0.9em;
+}
+
+/* Horizontal rules */
+.ProseMirror hr {
+  border: none;
+  border-top: 2px solid #e1e8ed;
+  margin: 2em 0;
+}
+
+/* Links */
+.ProseMirror a {
+  color: #667eea;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.ProseMirror a:hover {
+  border-bottom-color: #667eea;
+}
+
+/* Selection */
+.ProseMirror ::selection {
+  background: rgba(102, 126, 234, 0.15);
+}
+
+/* Focus state */
+.ProseMirror:focus {
+  outline: none;
+}
+
+/* Annotation highlights with better spacing */
+.annotation-note,
+.annotation-explore,
+.annotation-promote {
+  padding: 3px 6px;
+  margin: 0 2px;
+  border-radius: 4px;
+  display: inline-block;
+  line-height: 1.6;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.annotation-note {
+  background-color: #a7f3d0;
+  border: 1px solid transparent;
+}
+
+.annotation-note:hover {
+  background-color: #86efac;
+  border-color: #4ade80;
+}
+
+.annotation-explore {
+  background-color: #fed7aa;
+  border: 1px solid transparent;
+}
+
+.annotation-explore:hover {
+  background-color: #fdba74;
+  border-color: #fb923c;
+}
+
+.annotation-promote {
+  background-color: #ddd6fe;
+  border: 1px solid transparent;
+}
+
+.annotation-promote:hover {
+  background-color: #c4b5fd;
+  border-color: #a78bfa;
+}
+
+/* Collapsible blocks with proper indentation */
+.collapsible-block {
+  margin: 24px 0;
+  padding: 16px 0;
+}
+
+/* Highlight extension */
+.ProseMirror mark {
+  background-color: #fff59d;
+  padding: 2px 0;
+}
+
+/* Table support (if you add tables later) */
+.ProseMirror table {
+  border-collapse: collapse;
+  margin: 1.5em 0;
+  overflow: hidden;
+}
+
+.ProseMirror td,
+.ProseMirror th {
+  border: 1px solid #e1e8ed;
+  padding: 12px 16px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ProseMirror th {
+  background: #f6f8fa;
+  font-weight: 600;
+}
+
+/* Loading state - also fills container */
+.tiptap-editor-loading {
+  flex: 1;
+  background: #fafbfc;
+  border: 1px solid #e1e8ed;
+  border-radius: 8px;
+  padding: 40px;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #667eea;
+  font-size: 16px;
+}
+
+/* Ensure panel content areas use full height */
+.panel-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Override any conflicting min-height */
+.ProseMirror-focused {
+  min-height: 100%;
+}
+
+/* Toolbar spacing (if toolbar is inside document) */
+.editor-toolbar {
+  border-bottom: 1px solid #e1e8ed;
+  padding: 12px 20px;
+  background: #fafbfc;
+}
+
+/* Fix for cursor issues in Safari */
+.ProseMirror[contenteditable="true"] {
+  -webkit-user-modify: read-write-plaintext-only;
+}
+
+/* Ensure proper text wrapping */
+.ProseMirror {
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* Better typography for professional look */
+.ProseMirror strong {
+  font-weight: 600;
+  color: #1a202c;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+.ProseMirror u {
+  text-decoration: underline;
+  text-decoration-color: #667eea;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}

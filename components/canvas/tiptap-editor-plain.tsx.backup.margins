@@ -10,7 +10,6 @@
  * @module components/canvas/tiptap-editor-plain
  */
 
-import '@/styles/tiptap-editor.css'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
@@ -1633,8 +1632,18 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     // Show loading state
     if (isContentLoading && provider) {
       return (
-        <div className="tiptap-editor-document" style={{ height: '100%' }}>
-          <div className="tiptap-editor-loading">
+        <div className="tiptap-editor-wrapper">
+          <div className="tiptap-editor-loading" style={{
+            background: '#fafbfc',
+            border: '1px solid #e1e8ed',
+            borderRadius: '8px',
+            padding: '20px',
+            minHeight: '250px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#667eea'
+          }}>
             Loading content...
           </div>
         </div>
@@ -1642,25 +1651,25 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     }
 
     return (
-      <div className="tiptap-editor-document" style={{ height: '100%' }}>
-        <div 
-          className="tiptap-editor-content"
-          style={{ flex: 1 }}
-          onFocus={(e) => {
-            const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
-            if (target) {
-              target.classList.add('plain-mode')
-            }
-          }}
-          onBlur={(e) => {
-            const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
-            if (target) {
-              target.classList.remove('plain-mode')
-            }
-          }}
-        >
-          <EditorContent editor={editor} style={{ height: '100%' }} />
-        </div>
+      <div 
+        className="tiptap-editor-wrapper"
+        onFocus={(e) => {
+          const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
+          if (target) {
+            target.classList.add('plain-mode')
+            target.style.borderColor = '#4caf50'
+            target.style.boxShadow = '0 0 0 3px rgba(76, 175, 80, 0.1)'
+          }
+        }}
+        onBlur={(e) => {
+          const target = e.currentTarget.querySelector('[role="textbox"]') as HTMLElement
+          if (target) {
+            target.style.borderColor = '#e1e8ed'
+            target.style.boxShadow = 'none'
+          }
+        }}
+      >
+        <EditorContent editor={editor} />
       </div>
     )
   }
