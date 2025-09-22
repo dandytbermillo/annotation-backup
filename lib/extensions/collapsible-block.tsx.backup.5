@@ -128,44 +128,6 @@ export const CollapsibleBlock = Node.create({
       ])
     }
 
-    const actionStrip = [
-      'span',
-      {
-        'data-collapsible-actions': '',
-        style: 'display:none;align-items:center;gap:6px;margin-left:12px;',
-      },
-      [
-        'button',
-        {
-          type: 'button',
-          'data-action': 'move-up',
-          'aria-label': 'Move block up',
-          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
-        },
-        '▲',
-      ],
-      [
-        'button',
-        {
-          type: 'button',
-          'data-action': 'move-down',
-          'aria-label': 'Move block down',
-          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
-        },
-        '▼',
-      ],
-      [
-        'button',
-        {
-          type: 'button',
-          'data-action': 'duplicate',
-          'aria-label': 'Duplicate block',
-          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
-        },
-        '⧉',
-      ],
-    ]
-
     return [
       'div',
       attributes,
@@ -173,10 +135,9 @@ export const CollapsibleBlock = Node.create({
         'div',
         {
           'data-collapsible-header': '',
-          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;',
+          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;',
         },
         ...headerChildren,
-        actionStrip,
       ],
       [
         'div',
@@ -289,7 +250,7 @@ export const CollapsibleBlock = Node.create({
 })
 
 // React component for the collapsible block
-function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: any) {
+function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   const [isCollapsed, setIsCollapsed] = useState(node.attrs.collapsed)
   const [title, setTitle] = useState(node.attrs.title)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -302,58 +263,12 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   const [cachedContent, setCachedContent] = useState<string>('')
   const [cachedHtmlContent, setCachedHtmlContent] = useState<string>('')
   const [isTooltipHovered, setIsTooltipHovered] = useState(false)
-  const [showActions, setShowActions] = useState(false)
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const tooltipElementRef = useRef<HTMLDivElement | null>(null)
 
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
   const headerMetaLabel = stats.directChildren ? `Inside this block · ${metaBase}` : metaBase
-
-  const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
-
-  const handleDuplicate = () => {
-    const pos = resolvePos()
-    if (pos == null) return
-    const clone = node.copy(node.content)
-    const tr = editor.view.state.tr.insert(pos + node.nodeSize, clone)
-    editor.view.dispatch(tr)
-    editor.view.focus()
-  }
-
-  const handleMove = (direction: 'up' | 'down') => {
-    const pos = resolvePos()
-    if (pos == null) return
-
-    const { state } = editor.view
-    const $pos = state.doc.resolve(pos)
-    const parent = $pos.parent
-    const index = $pos.index()
-    if (!parent) return
-
-    const targetIndex = direction === 'up' ? index - 1 : index + 1
-    if (targetIndex < 0 || targetIndex >= parent.childCount) {
-      return
-    }
-
-    const sibling = parent.child(targetIndex)
-    const tr = state.tr
-    const from = pos
-    const to = pos + node.nodeSize
-    tr.delete(from, to)
-
-    const mappedSiblingPos = direction === 'up'
-      ? tr.mapping.map(pos - sibling.nodeSize)
-      : tr.mapping.map(pos)
-
-    const insertPos = direction === 'up'
-      ? mappedSiblingPos
-      : mappedSiblingPos + sibling.nodeSize
-
-    tr.insert(insertPos, node.copy(node.content))
-    editor.view.dispatch(tr)
-    editor.view.focus()
-  }
 
   const toggleCollapse = () => {
     const newCollapsed = !isCollapsed
@@ -461,7 +376,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
-    setShowActions(true)
     if (isCollapsed) {
       setShowPreviewIcon(true)
     }
@@ -472,7 +386,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     setIsHovered(false)
     setShowPreviewIcon(false)
     scheduleTooltipHide(e.relatedTarget)
-    setShowActions(false)
   }
 
   // Handle icon hover
@@ -555,8 +468,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
           userSelect: 'none',
           padding: isCollapsed ? '2px 0' : '0',
         }}
-        onMouseEnter={() => setShowActions(true)}
-        onMouseLeave={() => setShowActions(false)}
       >
         <span 
           onClick={toggleCollapse}
@@ -617,71 +528,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             {headerMetaLabel}
           </span>
         )}
-
-        <div
-          style={{
-            display: showActions ? 'inline-flex' : 'none',
-            alignItems: 'center',
-            gap: '6px',
-            marginLeft: headerMetaLabel ? '12px' : 'auto',
-          }}
-        >
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleMove('up')
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
-            }}
-            aria-label="Move block up"
-          >
-            ▲
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleMove('down')
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
-            }}
-            aria-label="Move block down"
-          >
-            ▼
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDuplicate()
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
-            }}
-            aria-label="Duplicate block"
-          >
-            ⧉
-          </button>
-        </div>
-
+        
         {/* Preview Icon - shows when collapsed and hovered */}
         {isCollapsed && showPreviewIcon && (
           <div

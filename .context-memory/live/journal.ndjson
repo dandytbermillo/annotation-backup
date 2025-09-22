@@ -147,3 +147,4 @@
 {"ts":"2025-09-22T12:39:50.801Z","type":"commit","sha":"f28e447cc53eaec47aeed11efd234aa39bf84255","files_changed":4,"message":"testing the tooltip issue not displaying the rendered content"}
 {"ts":"2025-09-22T12:55:04.949Z","type":"commit","sha":"21c5278fd9a88460e98124d661950a2786ffb4d7","files_changed":4,"message":"tooltips can now display the rendered formatted texts even without expanding it"}
 {"ts":"2025-09-22T18:40:10.959Z","type":"commit","sha":"3465c7370dc6c0503594df53fd07536f91c84abf","files_changed":6,"message":"block based format with tooltips preview works"}
+{"ts":"2025-09-22T19:58:01.970Z","type":"commit","sha":"ece0ef642dcd045cef02811b427a2830a2403f23","files_changed":11,"message":"added Collapsible hierarchy cues"}
