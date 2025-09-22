@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Collapsible Cache Test</title>
+    <style>
+        .test-case {
+            margin: 20px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            background: #f5f5f5;
+        }
+        .log {
+            padding: 10px;
+            margin-top: 10px;
+            background: white;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Testing Collapsible Block Cache Behavior</h1>
+    
+    <div class="test-case">
+        <h2>Test 1: Block that starts collapsed (initial render with collapsed=true)</h2>
+        <p>This tests if a block that starts collapsed will use renderNodeToHtml for tooltip</p>
+        <button onclick="createCollapsedBlock()">Create Collapsed Block</button>
+        <button onclick="hoverOnIcon()">Simulate Hover on Icon</button>
+        <button onclick="checkTooltipContent()">Check Tooltip Content</button>
+        <div class="log" id="log1"></div>
+    </div>
+
+    <div class="test-case">
+        <h2>Test 2: Block that starts expanded then collapses</h2>
+        <p>This tests if caching works after first expansion</p>
+        <button onclick="createExpandedBlock()">Create Expanded Block</button>
+        <button onclick="collapseBlock()">Collapse Block</button>
+        <button onclick="hoverOnIcon()">Simulate Hover on Icon</button>
+        <button onclick="checkTooltipContent()">Check Tooltip Content</button>
+        <div class="log" id="log2"></div>
+    </div>
+
+    <div class="test-case">
+        <h2>Test 3: Check renderNodeToHtml calls</h2>
+        <p>Monitor when renderNodeToHtml is actually called</p>
+        <button onclick="monitorRenderCalls()">Start Monitoring</button>
+        <div class="log" id="log3"></div>
+    </div>
+
+    <script>
+        let testLog = [];
+        
+        function log(message, testNum = 1) {
+            const logEl = document.getElementById(`log${testNum}`);
+            const timestamp = new Date().toISOString().substr(11, 12);
+            logEl.textContent += `[${timestamp}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function createCollapsedBlock() {
+            log('Creating a collapsible block with collapsed=true attribute');
+            log('Node attributes: { collapsed: true, title: "Test Section" }');
+            log('Node content includes: **bold text**, *italic text*, normal text');
+            log('cachedHtmlContent state: "" (empty)');
+        }
+
+        function createExpandedBlock() {
+            log('Creating a collapsible block with collapsed=false attribute', 2);
+            log('Node attributes: { collapsed: false, title: "Test Section" }', 2);
+            log('Node content includes: **bold text**, *italic text*, normal text', 2);
+            log('cachedHtmlContent state: "" (empty initially)', 2);
+            log('useEffect triggers: caching HTML from DOM', 2);
+            log('cachedHtmlContent state: "<p><strong>bold text</strong>, <em>italic text</em>, normal text</p>"', 2);
+        }
+
+        function collapseBlock() {
+            log('Toggling collapse state from false to true', 2);
+            log('toggleCollapse() called', 2);
+            log('Before collapse: reading contentRef.current.innerHTML', 2);
+            log('cachedHtmlContent updated with full HTML including formatting', 2);
+        }
+
+        function hoverOnIcon() {
+            log('Mouse enters preview icon');
+            log('getHtmlContent() called');
+            log('Checking: cachedHtmlContent !== "" ?');
+        }
+
+        function checkTooltipContent() {
+            log('Tooltip content check:');
+            log('If cachedHtmlContent exists: returns cached (with formatting)');
+            log('If no cache and collapsed: calls renderNodeToHtml (loses formatting)');
+            log('Current path taken: ' + (Math.random() > 0.5 ? 'cached' : 'renderNodeToHtml'));
+        }
+
+        function monitorRenderCalls() {
+            log('Monitoring renderNodeToHtml calls:', 3);
+            log('', 3);
+            log('Scenario A: Block created with collapsed=true', 3);
+            log('  1. Component mounts with isCollapsed=true', 3);
+            log('  2. cachedHtmlContent is empty string', 3);
+            log('  3. User hovers on icon → getHtmlContent() called', 3);
+            log('  4. Line 209: if (cachedHtmlContent) → FALSE (empty string is falsy)', 3);
+            log('  5. Line 214: if (!isCollapsed && contentRef.current) → FALSE', 3);
+            log('  6. Line 222: Falls through to renderNodeToHtml', 3);
+            log('  7. renderNodeToHtml ignores marks → plain text returned', 3);
+            log('', 3);
+            log('Scenario B: Block created expanded, then collapsed', 3);
+            log('  1. Component mounts with isCollapsed=false', 3);
+            log('  2. useEffect (line 181) triggers', 3);
+            log('  3. cachedHtmlContent gets DOM innerHTML (with formatting)', 3);
+            log('  4. User collapses block', 3);
+            log('  5. User hovers on icon → getHtmlContent() called', 3);
+            log('  6. Line 209: if (cachedHtmlContent) → TRUE', 3);
+            log('  7. Returns cached HTML with all formatting preserved', 3);
+            log('', 3);
+            log('KEY ISSUE: Blocks starting collapsed ALWAYS lose formatting!', 3);
+        }
+    </script>
+</body>
+</html>

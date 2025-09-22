@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer } from '@tiptap/react'
+import { DOMSerializer } from 'prosemirror-model'
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -217,59 +218,21 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
       return html
     }
     
-    // Otherwise, we need to render the node content to HTML
-    // This handles the case when block is collapsed from the start
-    const renderNodeToHtml = (nodeData: any): string => {
-      if (!nodeData) return ''
-      
-      if (typeof nodeData === 'string') return nodeData
-      
-      if (nodeData.text) {
-        return nodeData.text
-      }
-      
-      if (nodeData.type) {
-        const type = nodeData.type.name || nodeData.type
-        let content = ''
-        
-        if (nodeData.content) {
-          if (Array.isArray(nodeData.content)) {
-            content = nodeData.content.map((n: any) => renderNodeToHtml(n)).join('')
-          } else if (nodeData.content.forEach) {
-            // ProseMirror Fragment
-            const parts: string[] = []
-            nodeData.content.forEach((child: any) => {
-              parts.push(renderNodeToHtml(child))
-            })
-            content = parts.join('')
-          }
-        }
-        
-        // Render based on node type
-        switch (type) {
-          case 'paragraph':
-            return `<p>${content}</p>`
-          case 'bulletList':
-            return `<ul>${content}</ul>`
-          case 'orderedList':
-            return `<ol>${content}</ol>`
-          case 'listItem':
-            return `<li>${content}</li>`
-          case 'heading':
-            const level = nodeData.attrs?.level || 2
-            return `<h${level}>${content}</h${level}>`
-          case 'text':
-            return content || nodeData.text || ''
-          default:
-            return content
-        }
-      }
-      
-      return ''
-    }
-    
     try {
-      const html = renderNodeToHtml(node)
+      if (typeof window === 'undefined') {
+        return ''
+      }
+
+      const schema = editor?.view?.state.schema || editor?.schema
+      if (!schema) {
+        return ''
+      }
+
+      const serializer = DOMSerializer.fromSchema(schema)
+      const container = document.createElement('div')
+      const fragment = serializer.serializeFragment(node.content, { document })
+      container.appendChild(fragment)
+      const html = container.innerHTML
       if (html) {
         setCachedHtmlContent(html) // Cache for future use
         return html
