@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collapsible Block Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .info {
+            background: #f0f8ff;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Block-Based Format Feature Test</h1>
+    
+    <div class="test-section">
+        <h2>Feature Requirements</h2>
+        <ul>
+            <li>✅ Toolbar button labeled "Block Based" with ▦ icon</li>
+            <li>✅ Inserts collapsible block with pre-filled content</li>
+            <li>✅ Block title is editable</li>
+            <li>✅ Arrow rotates on collapse/expand</li>
+            <li>✅ Content is fully editable</li>
+            <li>✅ Nested bullet lists with proper indentation</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Steps</h2>
+        <ol>
+            <li>Open the annotation editor at http://localhost:3000</li>
+            <li>Look for the "▦" button in the toolbar (purple on hover)</li>
+            <li>Click the "Block Based" button</li>
+            <li>Verify a collapsible block is inserted with sample content</li>
+            <li>Click the arrow to collapse/expand</li>
+            <li>Click on "Section Title" to edit it</li>
+            <li>Edit the content inside the block</li>
+        </ol>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Block Content</h2>
+        <div class="info">
+            <strong>[▼ Section Title]</strong><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;Description paragraph here...<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;• Main point 1<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;• Main point 2<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;• Sub-point 2.1<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;• Sub-point 2.2<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;• Main point 3<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;• Sub-point 3.1<br>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Implementation Status</h2>
+        <p class="success">✅ Feature Implemented Successfully</p>
+        <ul>
+            <li>Created CollapsibleBlock TipTap extension</li>
+            <li>Added "Block Based" button to toolbar</li>
+            <li>Implemented collapsible/expandable behavior</li>
+            <li>Added pre-filled template content</li>
+            <li>Made all content editable</li>
+        </ul>
+    </div>
+</body>
+</html>

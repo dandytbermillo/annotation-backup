@@ -341,38 +341,6 @@ export function EditorToolbar({ panelId, editorRef, isMainPanel, onToggleEditing
 
       <button
         className="toolbar-btn"
-        onClick={() => executeCommand('collapsibleBlock')}
-        title="Block Based"
-        style={{
-          background: "white",
-          border: "1px solid #dee2e6",
-          borderRadius: "8px",
-          padding: "8px 12px",
-          cursor: "pointer",
-          transition: "all 0.2s ease",
-          fontSize: "14px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minWidth: "36px",
-          height: "36px",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "#9b59b6"
-          e.currentTarget.style.color = "white"
-          e.currentTarget.style.transform = "translateY(-1px)"
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "white"
-          e.currentTarget.style.color = "inherit"
-          e.currentTarget.style.transform = "translateY(0)"
-        }}
-      >
-        ▦
-      </button>
-
-      <button
-        className="toolbar-btn"
         onClick={() => executeCommand('removeFormat')}
         title="Clear Format"
         style={{

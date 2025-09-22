@@ -455,7 +455,34 @@ export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
             </svg>
           </button>
 
-          <div style={{ width: "42px" }}></div>
+          <button
+            onClick={() => { executeCommand("collapsibleBlock"); setIsVisible(false) }}
+            title="Block Based"
+            style={{
+              background: "white",
+              border: "1px solid #dadce0",
+              borderRadius: "8px",
+              width: "42px",
+              height: "42px",
+              cursor: "pointer",
+              transition: "all 0.15s ease",
+              fontSize: "20px",
+              color: "#202124",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#f1f3f4"
+              e.currentTarget.style.borderColor = "#5f6368"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "white"
+              e.currentTarget.style.borderColor = "#dadce0"
+            }}
+          >
+            ▦
+          </button>
 
           {/* Third row - only Clear Format */}
           <button
