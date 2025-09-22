@@ -1,0 +1,262 @@
+import { Node, mergeAttributes } from '@tiptap/core'
+import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer } from '@tiptap/react'
+import { useState } from 'react'
+
+// Define the schema for the collapsible block
+export const CollapsibleBlock = Node.create({
+  name: 'collapsibleBlock',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  
+  addOptions() {
+    return {
+      HTMLAttributes: {},
+    }
+  },
+
+  addAttributes() {
+    return {
+      collapsed: {
+        default: false,
+        parseHTML: element => element.getAttribute('data-collapsed') === 'true',
+        renderHTML: attributes => {
+          return { 'data-collapsed': attributes.collapsed }
+        },
+      },
+      title: {
+        default: 'Section Title',
+        parseHTML: element => element.getAttribute('data-title'),
+        renderHTML: attributes => {
+          return { 'data-title': attributes.title }
+        },
+      },
+    }
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-collapsible-block]',
+      },
+    ]
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-collapsible-block': '' }), 0]
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(CollapsibleBlockComponent)
+  },
+
+  addCommands() {
+    return {
+      insertCollapsibleBlock: () => ({ commands }) => {
+        // Create the pre-filled content structure
+        const content = {
+          type: 'collapsibleBlock',
+          attrs: {
+            collapsed: false,
+            title: 'Section Title'
+          },
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'Description paragraph here...' }
+              ]
+            },
+            {
+              type: 'bulletList',
+              content: [
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [{ type: 'text', text: 'Main point 1' }]
+                    }
+                  ]
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [{ type: 'text', text: 'Main point 2' }]
+                    },
+                    {
+                      type: 'bulletList',
+                      content: [
+                        {
+                          type: 'listItem',
+                          content: [
+                            {
+                              type: 'paragraph',
+                              content: [{ type: 'text', text: 'Sub-point 2.1' }]
+                            }
+                          ]
+                        },
+                        {
+                          type: 'listItem',
+                          content: [
+                            {
+                              type: 'paragraph',
+                              content: [{ type: 'text', text: 'Sub-point 2.2' }]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [{ type: 'text', text: 'Main point 3' }]
+                    },
+                    {
+                      type: 'bulletList',
+                      content: [
+                        {
+                          type: 'listItem',
+                          content: [
+                            {
+                              type: 'paragraph',
+                              content: [{ type: 'text', text: 'Sub-point 3.1' }]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        
+        return commands.insertContent(content)
+      },
+    }
+  },
+})
+
+// React component for the collapsible block
+function CollapsibleBlockComponent({ node, updateAttributes }: any) {
+  const [isCollapsed, setIsCollapsed] = useState(node.attrs.collapsed)
+  const [title, setTitle] = useState(node.attrs.title)
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
+
+  const toggleCollapse = () => {
+    const newCollapsed = !isCollapsed
+    setIsCollapsed(newCollapsed)
+    updateAttributes({ collapsed: newCollapsed })
+  }
+
+  const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setTitle(e.target.value)
+  }
+
+  const handleTitleBlur = () => {
+    setIsEditingTitle(false)
+    updateAttributes({ title })
+  }
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleTitleBlur()
+    }
+  }
+
+  return (
+    <NodeViewWrapper 
+      className="collapsible-block"
+      style={{
+        borderLeft: isCollapsed ? 'none' : `3px solid ${isHovered ? '#9b59b6' : '#e1e8ed'}`,
+        borderRadius: '0',
+        padding: isCollapsed ? '4px 0' : '4px 0 4px 12px',
+        marginBottom: '12px',
+        background: isCollapsed 
+          ? (isHovered ? 'rgba(248, 249, 250, 0.3)' : 'transparent')
+          : 'transparent',
+        transition: 'all 0.2s ease',
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div 
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          marginBottom: isCollapsed ? '0' : '12px',
+          cursor: 'pointer',
+          userSelect: 'none',
+          padding: isCollapsed ? '2px 0' : '0',
+        }}
+      >
+        <span 
+          onClick={toggleCollapse}
+          style={{
+            fontSize: '16px',
+            marginRight: '8px',
+            transition: 'transform 0.2s ease',
+            transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+            display: 'inline-block',
+          }}
+        >
+          ▼
+        </span>
+        {isEditingTitle ? (
+          <input
+            type="text"
+            value={title}
+            onChange={handleTitleChange}
+            onBlur={handleTitleBlur}
+            onKeyDown={handleTitleKeyDown}
+            autoFocus
+            style={{
+              fontSize: '16px',
+              fontWeight: '600',
+              border: '1px solid #667eea',
+              borderRadius: '4px',
+              padding: '2px 6px',
+              outline: 'none',
+              background: 'white',
+            }}
+          />
+        ) : (
+          <span 
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsEditingTitle(true)
+            }}
+            style={{
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: 'text',
+            }}
+          >
+            {title}
+          </span>
+        )}
+      </div>
+      
+      {!isCollapsed && (
+        <div 
+          style={{
+            paddingLeft: '20px',
+            marginTop: '8px',
+          }}
+        >
+          <NodeViewContent className="content" />
+        </div>
+      )}
+    </NodeViewWrapper>
+  )
+}

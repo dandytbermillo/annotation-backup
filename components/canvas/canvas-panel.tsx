@@ -1173,7 +1173,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         left: renderPosition.x + 'px',
         top: renderPosition.y + 'px',
         width: '500px',
-        minHeight: '400px',
+        height: '500px',
+        maxHeight: '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
         boxShadow: isIsolated 
@@ -1197,7 +1198,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             : currentBranch.type === 'explore'
             ? 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)'
             : 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-          padding: '20px 25px',
+          padding: '12px 20px',
+          height: '56px',
+          minHeight: '56px',
+          maxHeight: '56px',
           color: 'white',
           fontWeight: 600,
           fontSize: '16px',
@@ -1208,6 +1212,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           alignItems: 'center',
           pointerEvents: 'auto',
           borderBottom: isIsolated ? '3px solid #ef4444' : 'none',
+          flexShrink: 0,
         }}
       >
         <div style={{ 
@@ -1305,8 +1310,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             gap: '10px',
             opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 0 : 1,
             transition: 'opacity 0.2s ease',
+            overflow: 'hidden',
+            flex: 1,
           }}>
-            <span>{getPanelTitle()}</span>
+            <span style={{
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxWidth: '300px',
+            }}>{getPanelTitle()}</span>
             {isIsolated && (
               <span style={{
                 background: '#ef4444',
