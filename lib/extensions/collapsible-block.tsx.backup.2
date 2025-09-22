@@ -202,7 +202,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   const [cachedHtmlContent, setCachedHtmlContent] = useState<string>('')
   const [isTooltipHovered, setIsTooltipHovered] = useState(false)
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const tooltipElementRef = useRef<HTMLDivElement | null>(null)
 
   const toggleCollapse = () => {
     const newCollapsed = !isCollapsed
@@ -291,22 +290,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     return '<p style="color: #999; font-style: italic;">No content preview available</p>'
   }
 
-  const scheduleTooltipHide = (relatedTarget?: EventTarget | null) => {
-    if (tooltipTimeoutRef.current) {
-      clearTimeout(tooltipTimeoutRef.current)
-      tooltipTimeoutRef.current = null
-    }
-
-    const movingTowardTooltip = relatedTarget instanceof HTMLElement && relatedTarget.closest?.('.annotation-tooltip')
-
-    tooltipTimeoutRef.current = setTimeout(() => {
-      const tooltipHovered = tooltipElementRef.current?.matches(':hover') || false
-      if (!tooltipHovered && !movingTowardTooltip) {
-        setShowTooltip(false)
-      }
-    }, 500) // Allow extra time to move between icon and tooltip
-  }
-
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
@@ -316,10 +299,10 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   }
 
   // Handle container mouse leave
-  const handleMouseLeave = (e: React.MouseEvent) => {
+  const handleMouseLeave = () => {
     setIsHovered(false)
     setShowPreviewIcon(false)
-    scheduleTooltipHide(e.relatedTarget)
+    setShowTooltip(false)
   }
 
   // Handle icon hover
@@ -328,10 +311,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     const rect = iconRef.current?.getBoundingClientRect()
     console.log('Icon hover - rect:', rect) // Debug log
     if (rect) {
-      if (tooltipTimeoutRef.current) {
-        clearTimeout(tooltipTimeoutRef.current)
-        tooltipTimeoutRef.current = null
-      }
       setTooltipPosition({
         x: rect.left + rect.width / 2,
         y: rect.bottom + 8
@@ -346,9 +325,13 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     e.stopPropagation()
     
     // Set a timeout to hide tooltip, giving user time to move to it
-    scheduleTooltipHide(e.relatedTarget)
+    tooltipTimeoutRef.current = setTimeout(() => {
+      if (!isTooltipHovered) {
+        setShowTooltip(false)
+      }
+    }, 300) // 300ms delay to move to tooltip
   }
-
+  
   // Handle tooltip mouse enter
   const handleTooltipMouseEnter = () => {
     setIsTooltipHovered(true)
@@ -360,10 +343,10 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   }
   
   // Handle tooltip mouse leave
-  const handleTooltipMouseLeave = (e: React.MouseEvent) => {
-    console.log('Tooltip mouse leave - scheduling hide') // Debug log
+  const handleTooltipMouseLeave = () => {
+    console.log('Tooltip mouse leave - hiding tooltip') // Debug log
     setIsTooltipHovered(false)
-    scheduleTooltipHide(e.relatedTarget)
+    setShowTooltip(false)
   }
   
   // Cleanup on unmount
@@ -501,7 +484,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     {/* Tooltip - render with Portal to ensure it appears above everything */}
     {showTooltip && isCollapsed && typeof window !== 'undefined' && createPortal(
       <div
-        ref={tooltipElementRef}
         className="annotation-tooltip visible"
         onMouseEnter={handleTooltipMouseEnter}
         onMouseLeave={handleTooltipMouseLeave}

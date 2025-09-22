@@ -145,3 +145,4 @@
 {"ts":"2025-09-22T00:37:58.416Z","type":"commit","sha":"f3fb188b0ca0d5c2f609bc2c8137ff60d504dec7","files_changed":5,"message":"arrow past the annotated text solved"}
 {"ts":"2025-09-22T03:15:07.615Z","type":"commit","sha":"701160f603091fb59ce0705cf4195850a255c3b1","files_changed":14,"message":"added collapsible format (block based)"}
 {"ts":"2025-09-22T12:39:50.801Z","type":"commit","sha":"f28e447cc53eaec47aeed11efd234aa39bf84255","files_changed":4,"message":"testing the tooltip issue not displaying the rendered content"}
+{"ts":"2025-09-22T12:55:04.949Z","type":"commit","sha":"21c5278fd9a88460e98124d661950a2786ffb4d7","files_changed":4,"message":"tooltips can now display the rendered formatted texts even without expanding it"}

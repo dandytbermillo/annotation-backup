@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Keyboard Shortcut</title>
+    <style>
+        body {
+            padding: 40px;
+            font-family: system-ui;
+        }
+        .status {
+            padding: 20px;
+            background: #f0f0f0;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .key-log {
+            padding: 10px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            min-height: 200px;
+            font-family: monospace;
+            white-space: pre;
+        }
+        .issue {
+            color: red;
+            font-weight: bold;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Debugging Cmd+B / Ctrl+B Shortcut</h1>
+    
+    <div class="status">
+        <h2>Issue Analysis:</h2>
+        <p>The Cmd+B (Mac) or Ctrl+B (Windows/Linux) shortcut is not working. Possible reasons:</p>
+        <ol>
+            <li class="issue">Multi-layer Canvas feature flag is disabled</li>
+            <li>Keyboard event is being intercepted by another handler</li>
+            <li>The sidebar toggle function is not properly connected</li>
+        </ol>
+    </div>
+
+    <div class="status">
+        <h2>How to Enable the Feature:</h2>
+        <p>Run this in your browser console:</p>
+        <code style="display: block; padding: 10px; background: #333; color: #0f0; border-radius: 4px;">
+localStorage.setItem('feature:ui.multiLayerCanvas', 'true');<br>
+// Then refresh the page
+        </code>
+    </div>
+
+    <div class="status">
+        <h2>Test Keyboard Events:</h2>
+        <p>Press Cmd+B (Mac) or Ctrl+B (Windows) below to see if events are captured:</p>
+        <div class="key-log" id="keyLog">Waiting for keyboard input...</div>
+    </div>
+
+    <div class="status">
+        <h2>Current Implementation:</h2>
+        <pre style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto;">
+// In use-layer-keyboard-shortcuts.ts (lines 105-110):
+if ((event.metaKey || event.ctrlKey) && event.code === 'KeyB') {
+    event.preventDefault();
+    callbacks.toggleSidebar?.();
+    return;
+}
+
+// In notes-explorer-phase1.tsx:
+const shortcuts = multiLayerEnabled ? useLayerKeyboardShortcuts({
+    toggleSidebar: () => layerContext?.toggleSidebar(),
+    // ...
+}) : null
+
+// In layer-provider.tsx:
+const toggleSidebar = useCallback(() => {
+    setIsSidebarVisible(prev => !prev);
+    // Updates layer visibility
+}, []);
+        </pre>
+    </div>
+
+    <script>
+        const logEl = document.getElementById('keyLog');
+        let log = [];
+        
+        function addLog(msg) {
+            const timestamp = new Date().toISOString().substr(11, 12);
+            log.push(`[${timestamp}] ${msg}`);
+            if (log.length > 10) log.shift();
+            logEl.textContent = log.join('\n');
+        }
+        
+        // Check feature flag
+        const featureFlag = localStorage.getItem('feature:ui.multiLayerCanvas');
+        addLog(`Feature flag 'ui.multiLayerCanvas': ${featureFlag || 'not set (disabled)'}`);
+        
+        if (!featureFlag || featureFlag !== 'true') {
+            addLog('⚠️ Feature is DISABLED - shortcut won't work!');
+            addLog('Run the command above to enable it.');
+        }
+        
+        // Monitor keyboard events
+        document.addEventListener('keydown', (e) => {
+            const isMac = navigator.platform.toLowerCase().includes('mac');
+            const modKey = isMac ? 'Cmd' : 'Ctrl';
+            
+            if (e.code === 'KeyB') {
+                if (e.metaKey || e.ctrlKey) {
+                    e.preventDefault();
+                    addLog(`✓ ${modKey}+B detected! (prevented default)`);
+                    addLog(`  metaKey: ${e.metaKey}, ctrlKey: ${e.ctrlKey}`);
+                    
+                    if (featureFlag === 'true') {
+                        addLog('  Feature enabled - should toggle sidebar');
+                    } else {
+                        addLog('  ❌ Feature disabled - won\'t work');
+                    }
+                } else {
+                    addLog(`B key pressed (no modifier)`);
+                }
+            } else if (e.metaKey || e.ctrlKey) {
+                addLog(`${modKey}+${e.code} pressed`);
+            }
+        });
+        
+        addLog('Ready. Press Cmd+B or Ctrl+B to test...');
+    </script>
+</body>
+</html>
