@@ -44,8 +44,48 @@ export const CollapsibleBlock = Node.create({
     ]
   },
 
-  renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-collapsible-block': '' }), 0]
+  renderHTML({ node, HTMLAttributes }) {
+    const attributes = mergeAttributes(HTMLAttributes, {
+      'data-collapsible-block': '',
+    })
+
+    const { collapsed, title } = node.attrs
+
+    return [
+      'div',
+      attributes,
+      [
+        'div',
+        {
+          'data-collapsible-header': '',
+          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;',
+        },
+        [
+          'span',
+          {
+            'data-collapsible-arrow': '',
+            style: `display:inline-block;margin-right:8px;transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}`,
+          },
+          '▼',
+        ],
+        [
+          'span',
+          {
+            'data-collapsible-title': '',
+            style: 'font-weight:600;font-size:16px;',
+          },
+          title || '',
+        ],
+      ],
+      [
+        'div',
+        {
+          'data-collapsible-content': '',
+          style: 'padding-left:20px;margin-top:8px;',
+        },
+        0,
+      ],
+    ]
   },
 
   addNodeView() {
@@ -230,7 +270,13 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
 
       const serializer = DOMSerializer.fromSchema(schema)
       const container = document.createElement('div')
-      const fragment = serializer.serializeFragment(node.content, { document })
+      const docType = schema.topNodeType
+      const docNode = docType?.create(null, node)
+      if (!docNode) {
+        return ''
+      }
+
+      const fragment = serializer.serializeFragment(docNode.content, { document })
       container.appendChild(fragment)
       const html = container.innerHTML
       if (html) {
