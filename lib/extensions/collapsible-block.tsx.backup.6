@@ -4,8 +4,6 @@ import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 
-const DEFAULT_BLOCK_TITLE = 'Block title here...'
-
 type BlockStats = {
   directChildren: number
   totalBlocks: number
@@ -50,11 +48,6 @@ const formatBlockMeta = (stats: BlockStats): string => {
   return parts.join(' • ')
 }
 
-const getDisplayTitle = (title?: string | null) => {
-  const trimmed = (title || '').trim()
-  return trimmed || DEFAULT_BLOCK_TITLE
-}
-
 // Define the schema for the collapsible block
 export const CollapsibleBlock = Node.create({
   name: 'collapsibleBlock',
@@ -78,11 +71,10 @@ export const CollapsibleBlock = Node.create({
         },
       },
       title: {
-        default: DEFAULT_BLOCK_TITLE,
-        parseHTML: element => element.getAttribute('data-title') || DEFAULT_BLOCK_TITLE,
+        default: 'Section Title',
+        parseHTML: element => element.getAttribute('data-title'),
         renderHTML: attributes => {
-          const value = getDisplayTitle(attributes.title)
-          return { 'data-title': value }
+          return { 'data-title': attributes.title }
         },
       },
     }
@@ -102,7 +94,6 @@ export const CollapsibleBlock = Node.create({
     })
 
     const { collapsed, title } = node.attrs
-    const displayTitle = getDisplayTitle(title)
     const stats = computeBlockStats(node)
     const metaBase = formatBlockMeta(stats)
     const metaLabel = stats.directChildren ? `Inside this block · ${metaBase}` : metaBase
@@ -122,7 +113,7 @@ export const CollapsibleBlock = Node.create({
           'data-collapsible-title': '',
           style: 'font-weight:600;font-size:16px;',
         },
-        displayTitle,
+        title || '',
       ],
     ]
 
@@ -300,7 +291,7 @@ export const CollapsibleBlock = Node.create({
 // React component for the collapsible block
 function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: any) {
   const [isCollapsed, setIsCollapsed] = useState(node.attrs.collapsed)
-  const [title, setTitle] = useState(getDisplayTitle(node.attrs.title))
+  const [title, setTitle] = useState(node.attrs.title)
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
   const [showTooltip, setShowTooltip] = useState(false)
@@ -320,16 +311,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   const headerMetaLabel = stats.directChildren ? `Inside this block · ${metaBase}` : metaBase
 
   const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
-
-  useEffect(() => {
-    if (!node.attrs.title || !node.attrs.title.trim()) {
-      updateAttributes({ title: DEFAULT_BLOCK_TITLE })
-    }
-  }, [node.attrs.title, updateAttributes])
-
-  useEffect(() => {
-    setTitle(getDisplayTitle(node.attrs.title))
-  }, [node.attrs.title])
 
   const handleDuplicate = () => {
     const pos = resolvePos()
@@ -404,20 +385,8 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   }
 
   const handleTitleBlur = () => {
-    const trimmed = title.trim()
-    const nextTitle = trimmed || DEFAULT_BLOCK_TITLE
-    setTitle(nextTitle)
     setIsEditingTitle(false)
-    updateAttributes({ title: nextTitle })
-  }
-
-  const handleTitleFocus = () => {
-    setTimeout(() => {
-      const input = document.activeElement as HTMLInputElement | null
-      if (input && (input.value === DEFAULT_BLOCK_TITLE || !input.value.trim())) {
-        input.select()
-      }
-    }, 0)
+    updateAttributes({ title })
   }
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
@@ -609,8 +578,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             onBlur={handleTitleBlur}
             onKeyDown={handleTitleKeyDown}
             autoFocus
-            placeholder={DEFAULT_BLOCK_TITLE}
-            onFocus={handleTitleFocus}
             style={{
               fontSize: '16px',
               fontWeight: '600',
@@ -633,7 +600,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               cursor: 'text',
             }}
           >
-            {getDisplayTitle(node.attrs.title ?? title)}
+            {title}
           </span>
         )}
 

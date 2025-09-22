@@ -633,7 +633,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               cursor: 'text',
             }}
           >
-            {getDisplayTitle(node.attrs.title ?? title)}
+            {title && title.trim() ? title : DEFAULT_BLOCK_TITLE}
           </span>
         )}
 

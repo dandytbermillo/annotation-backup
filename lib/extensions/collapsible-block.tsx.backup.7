@@ -78,11 +78,10 @@ export const CollapsibleBlock = Node.create({
         },
       },
       title: {
-        default: DEFAULT_BLOCK_TITLE,
-        parseHTML: element => element.getAttribute('data-title') || DEFAULT_BLOCK_TITLE,
+        default: 'Section Title',
+        parseHTML: element => element.getAttribute('data-title'),
         renderHTML: attributes => {
-          const value = getDisplayTitle(attributes.title)
-          return { 'data-title': value }
+          return { 'data-title': attributes.title }
         },
       },
     }
@@ -325,7 +324,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     if (!node.attrs.title || !node.attrs.title.trim()) {
       updateAttributes({ title: DEFAULT_BLOCK_TITLE })
     }
-  }, [node.attrs.title, updateAttributes])
+  }, [])
 
   useEffect(() => {
     setTitle(getDisplayTitle(node.attrs.title))
@@ -409,15 +408,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     setTitle(nextTitle)
     setIsEditingTitle(false)
     updateAttributes({ title: nextTitle })
-  }
-
-  const handleTitleFocus = () => {
-    setTimeout(() => {
-      const input = document.activeElement as HTMLInputElement | null
-      if (input && (input.value === DEFAULT_BLOCK_TITLE || !input.value.trim())) {
-        input.select()
-      }
-    }, 0)
   }
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
@@ -610,7 +600,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             onKeyDown={handleTitleKeyDown}
             autoFocus
             placeholder={DEFAULT_BLOCK_TITLE}
-            onFocus={handleTitleFocus}
             style={{
               fontSize: '16px',
               fontWeight: '600',
@@ -633,7 +622,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               cursor: 'text',
             }}
           >
-            {getDisplayTitle(node.attrs.title ?? title)}
+            {title}
           </span>
         )}
 
