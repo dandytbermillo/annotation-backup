@@ -5,7 +5,9 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 169)
+Recent Activity (showing last 10 of 171)
+- note [2025-09-23 20:20Z]: Reviewed delete-warning request and inspected Tiptap editor setup.
+- commit [2025-09-23 18:36Z] c2e1772: missing block title after inserting template fixed
 - note: After template apply, reapply title attr via updateAttributes and emit debug logs.
 - note: Template apply preserves title via existing attrs.
 - note: Preserve block title via state when applying templates.
@@ -14,8 +16,6 @@ Recent Activity (showing last 10 of 169)
 - note: Made template chooser draggable and preview editable. — Header drag handle — Preview editor focus fix
 - note: Documented summarize.js behaviour in writer policy. — Added 2025-09-23 entry under Automation
 - note: Template preview popover now editable with apply/cancel/reset controls. — Added mini editor — Buttons gate insertion
-- note: Added undo support for collapsible block templates. — Capture pre-template snapshot — Undo chip and popover action
-- note: Prototyped collapsible block template picker with preview popover. — Added template specs — Wired header chip + portal
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

@@ -11,14 +11,12 @@ type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
 interface FormatToolbarProps {
   editorRef: React.RefObject<UnifiedEditorHandle | null>
   panelId: string
-  hoverDelayMs?: number
 }
 
-export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: FormatToolbarProps) {
+export function FormatToolbar({ editorRef, panelId }: FormatToolbarProps) {
   const [isVisible, setIsVisible] = useState(false) // Start hidden
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
   const timeoutRef = useRef<NodeJS.Timeout>()
-  const showTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
   const executeCommand = (command: string, value?: any) => {
@@ -55,40 +53,17 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: Format
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
     }
-    if (showTimeoutRef.current) {
-      clearTimeout(showTimeoutRef.current)
-      showTimeoutRef.current = null
+    updateDropdownPosition()
+    setIsVisible(true)
+    const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
+    if (dropdown) {
+      dropdown.style.display = "grid"
+      dropdown.style.opacity = "1"
+      dropdown.style.pointerEvents = "auto"
     }
-
-    if (isVisible) {
-      updateDropdownPosition()
-      const dropdownImmediate = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-      if (dropdownImmediate) {
-        dropdownImmediate.style.display = "grid"
-        dropdownImmediate.style.opacity = "1"
-        dropdownImmediate.style.pointerEvents = "auto"
-      }
-      return
-    }
-
-    showTimeoutRef.current = setTimeout(() => {
-      updateDropdownPosition()
-      setIsVisible(true)
-      const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-      if (dropdown) {
-        dropdown.style.display = "grid"
-        dropdown.style.opacity = "1"
-        dropdown.style.pointerEvents = "auto"
-      }
-      showTimeoutRef.current = null
-    }, hoverDelayMs)
   }
 
   const handleMouseLeave = () => {
-    if (showTimeoutRef.current) {
-      clearTimeout(showTimeoutRef.current)
-      showTimeoutRef.current = null
-    }
     timeoutRef.current = setTimeout(() => {
       const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
       // Only hide if not hovering over the dropdown
@@ -98,7 +73,7 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: Format
         dropdown.style.opacity = "0"
         dropdown.style.pointerEvents = "none"
       }
-    }, hoverDelayMs)
+    }, 300)
   }
 
   useEffect(() => {
@@ -108,9 +83,6 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: Format
     return () => {
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current)
-      }
-      if (showTimeoutRef.current) {
-        clearTimeout(showTimeoutRef.current)
       }
     }
   }, [])
@@ -127,12 +99,8 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: Format
         className="format-toolbar-trigger"
         onClick={(e) => {
           e.stopPropagation()
-          if (showTimeoutRef.current) {
-            clearTimeout(showTimeoutRef.current)
-            showTimeoutRef.current = null
-          }
           const dropdown = document.getElementById(`format-toolbar-dropdown-${panelId}`)
-
+          
           debugLog('FormatToolbar', 'buttonClick', {
             panelId,
             metadata: {

@@ -167,3 +167,5 @@
 {"ts":"2025-09-23T15:33:40.3NZ","type":"note","summary":"Preserve block title via state when applying templates."}
 {"ts":"2025-09-23T15:40:48.3NZ","type":"note","summary":"Template apply preserves title via existing attrs."}
 {"ts":"2025-09-23T15:54:26.3NZ","type":"note","summary":"After template apply, reapply title attr via updateAttributes and emit debug logs."}
+{"ts":"2025-09-23T18:36:34.596Z","type":"commit","sha":"c2e17724029348540e38b1e6a2395f5693ded863","files_changed":4,"message":"missing block title after inserting template fixed"}
+{"ts":"2025-09-23T20:20:34Z","type":"note","summary":"Reviewed delete-warning request and inspected Tiptap editor setup."}

@@ -30,8 +30,6 @@ const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr
 // Track which panel is currently being dragged globally
 let globalDraggingPanelId: string | null = null
 
-const HEADER_BUTTON_HOVER_DELAY_MS = 300
-
 interface CanvasPanelProps {
   panelId: string
   branch: Branch
@@ -57,18 +55,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [isSidebarVisible, setIsSidebarVisible] = useState(false)
   const [isSidebarHovering, setIsSidebarHovering] = useState(false)
   const sidebarTimeoutRef = useRef<NodeJS.Timeout>()
-  const sidebarShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
   const actionsTimeoutRef = useRef<NodeJS.Timeout>()
-  const actionsShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
   // Panel hover state for hiding/showing buttons
   const [isPanelHovered, setIsPanelHovered] = useState(false)
-  const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const panelHoverTimeoutRef = useRef<NodeJS.Timeout>()
   
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
@@ -117,24 +112,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (sidebarTimeoutRef.current) {
         clearTimeout(sidebarTimeoutRef.current)
       }
-      if (sidebarShowTimeoutRef.current) {
-        clearTimeout(sidebarShowTimeoutRef.current)
-        sidebarShowTimeoutRef.current = null
-      }
       if (actionsTimeoutRef.current) {
         clearTimeout(actionsTimeoutRef.current)
-      }
-      if (actionsShowTimeoutRef.current) {
-        clearTimeout(actionsShowTimeoutRef.current)
-        actionsShowTimeoutRef.current = null
-      }
-      if (panelHoverShowTimeoutRef.current) {
-        clearTimeout(panelHoverShowTimeoutRef.current)
-        panelHoverShowTimeoutRef.current = null
-      }
-      if (panelHoverHideTimeoutRef.current) {
-        clearTimeout(panelHoverHideTimeoutRef.current)
-        panelHoverHideTimeoutRef.current = null
       }
     }
   }, [])
@@ -1176,40 +1155,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       id={`panel-${panelId}`}
       data-panel-id={panelId}
       onMouseEnter={() => {
-        if (panelHoverHideTimeoutRef.current) {
-          clearTimeout(panelHoverHideTimeoutRef.current)
-          panelHoverHideTimeoutRef.current = null
+        if (panelHoverTimeoutRef.current) {
+          clearTimeout(panelHoverTimeoutRef.current)
         }
-        if (panelHoverShowTimeoutRef.current) {
-          clearTimeout(panelHoverShowTimeoutRef.current)
-        }
-
-        if (isPanelHovered) {
-          panelHoverShowTimeoutRef.current = null
-          return
-        }
-
-        panelHoverShowTimeoutRef.current = setTimeout(() => {
-          setIsPanelHovered(true)
-          panelHoverShowTimeoutRef.current = null
-        }, HEADER_BUTTON_HOVER_DELAY_MS)
+        setIsPanelHovered(true)
       }}
       onMouseLeave={() => {
-        if (panelHoverShowTimeoutRef.current) {
-          clearTimeout(panelHoverShowTimeoutRef.current)
-          panelHoverShowTimeoutRef.current = null
-        }
-        if (panelHoverHideTimeoutRef.current) {
-          clearTimeout(panelHoverHideTimeoutRef.current)
-        }
-
-        panelHoverHideTimeoutRef.current = setTimeout(() => {
+        panelHoverTimeoutRef.current = setTimeout(() => {
           // Only hide if no popups are visible
           if (!isSidebarVisible && !isActionsVisible && !isSidebarHovering && !isActionsHovering) {
             setIsPanelHovered(false)
           }
-          panelHoverHideTimeoutRef.current = null
-        }, HEADER_BUTTON_HOVER_DELAY_MS)
+        }, 300)
       }}
       style={{
         position: 'absolute',
@@ -1464,7 +1421,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           <FormatToolbar
             editorRef={editorRef}
             panelId={panelId}
-            hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
           />
           
           {/* Sidebar Toggle button */}
@@ -1472,10 +1428,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             id={`branches-button-${panelId}`}
             onClick={(e) => {
               e.stopPropagation()
-              if (sidebarShowTimeoutRef.current) {
-                clearTimeout(sidebarShowTimeoutRef.current)
-                sidebarShowTimeoutRef.current = null
-              }
               setIsSidebarVisible(!isSidebarVisible)
               // Clear any hover state when clicking
               if (sidebarTimeoutRef.current) {
@@ -1489,31 +1441,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               if (sidebarTimeoutRef.current) {
                 clearTimeout(sidebarTimeoutRef.current)
               }
-              if (sidebarShowTimeoutRef.current) {
-                clearTimeout(sidebarShowTimeoutRef.current)
-                sidebarShowTimeoutRef.current = null
-              }
-
-              if (isSidebarVisible || isSidebarHovering) {
-                setIsSidebarHovering(true)
-                return
-              }
-
-              sidebarShowTimeoutRef.current = setTimeout(() => {
-                setIsSidebarHovering(true)
-                sidebarShowTimeoutRef.current = null
-              }, HEADER_BUTTON_HOVER_DELAY_MS)
+              setIsSidebarHovering(true)
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "rgba(255,255,255,0.2)"
               // Hide sidebar after a delay when mouse leaves
-              if (sidebarShowTimeoutRef.current) {
-                clearTimeout(sidebarShowTimeoutRef.current)
-                sidebarShowTimeoutRef.current = null
-              }
               sidebarTimeoutRef.current = setTimeout(() => {
                 setIsSidebarHovering(false)
-              }, HEADER_BUTTON_HOVER_DELAY_MS)
+              }, 300)
             }}
             title={isSidebarVisible ? "Hide branches" : "Show branches"}
             style={{
@@ -1546,10 +1481,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             id={`actions-button-${panelId}`}
             onClick={(e) => {
               e.stopPropagation()
-              if (actionsShowTimeoutRef.current) {
-                clearTimeout(actionsShowTimeoutRef.current)
-                actionsShowTimeoutRef.current = null
-              }
               setIsActionsVisible(!isActionsVisible)
               // Clear any hover state when clicking
               if (actionsTimeoutRef.current) {
@@ -1581,46 +1512,23 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               if (actionsTimeoutRef.current) {
                 clearTimeout(actionsTimeoutRef.current)
               }
-              if (actionsShowTimeoutRef.current) {
-                clearTimeout(actionsShowTimeoutRef.current)
-                actionsShowTimeoutRef.current = null
+              setIsActionsHovering(true)
+              
+              // Position the annotation toolbar below the Actions button
+              const toolbar = document.getElementById("annotation-toolbar")
+              if (toolbar) {
+                const rect = e.currentTarget.getBoundingClientRect()
+                toolbar.style.position = "fixed"
+                toolbar.style.left = `${rect.left + rect.width / 2}px`
+                toolbar.style.top = `${rect.bottom + 8}px`
+                toolbar.style.opacity = "1"
+                toolbar.style.pointerEvents = "auto"
+                toolbar.classList.add("visible")
               }
-
-              const buttonEl = e.currentTarget as HTMLButtonElement
-
-              const showToolbar = (target: HTMLButtonElement) => {
-                setIsActionsHovering(true)
-
-                // Position the annotation toolbar below the Actions button
-                const toolbar = document.getElementById("annotation-toolbar")
-                if (toolbar) {
-                  const rect = target.getBoundingClientRect()
-                  toolbar.style.position = "fixed"
-                  toolbar.style.left = `${rect.left + rect.width / 2}px`
-                  toolbar.style.top = `${rect.bottom + 8}px`
-                  toolbar.style.opacity = "1"
-                  toolbar.style.pointerEvents = "auto"
-                  toolbar.classList.add("visible")
-                }
-              }
-
-              if (isActionsVisible || isActionsHovering) {
-                showToolbar(buttonEl)
-                return
-              }
-
-              actionsShowTimeoutRef.current = setTimeout(() => {
-                showToolbar(buttonEl)
-                actionsShowTimeoutRef.current = null
-              }, HEADER_BUTTON_HOVER_DELAY_MS)
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.background = "rgba(255,255,255,0.2)"
               // Hide annotation toolbar after a delay when mouse leaves
-              if (actionsShowTimeoutRef.current) {
-                clearTimeout(actionsShowTimeoutRef.current)
-                actionsShowTimeoutRef.current = null
-              }
               actionsTimeoutRef.current = setTimeout(() => {
                 setIsActionsHovering(false)
                 const toolbar = document.getElementById("annotation-toolbar")
@@ -1630,7 +1538,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   toolbar.style.pointerEvents = "none"
                   toolbar.classList.remove("visible")
                 }
-              }, HEADER_BUTTON_HOVER_DELAY_MS)
+              }, 300)
             }}
             title="Create annotation"
             style={{
@@ -1812,21 +1720,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             if (sidebarTimeoutRef.current) {
               clearTimeout(sidebarTimeoutRef.current)
             }
-            if (sidebarShowTimeoutRef.current) {
-              clearTimeout(sidebarShowTimeoutRef.current)
-              sidebarShowTimeoutRef.current = null
-            }
             setIsSidebarHovering(true)
           }}
           onMouseLeave={() => {
             // Hide sidebar after delay when leaving
-            if (sidebarShowTimeoutRef.current) {
-              clearTimeout(sidebarShowTimeoutRef.current)
-              sidebarShowTimeoutRef.current = null
-            }
             sidebarTimeoutRef.current = setTimeout(() => {
               setIsSidebarHovering(false)
-            }, HEADER_BUTTON_HOVER_DELAY_MS)
+            }, 300)
           }}
           style={{
           position: 'absolute',
