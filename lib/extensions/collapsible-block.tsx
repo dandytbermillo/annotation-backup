@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, Mark, mergeAttributes } from '@tiptap/core'
 import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer, useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
@@ -9,6 +9,58 @@ import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
 const DEFAULT_BLOCK_TITLE = 'Block title here...'
+
+const AnnotationMark = Mark.create({
+  name: 'annotation',
+  inclusive: true,
+
+  addOptions() {
+    return { HTMLAttributes: {} }
+  },
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-annotation-id'),
+        renderHTML: attrs => (attrs.id ? { 'data-annotation-id': attrs.id } : {}),
+      },
+      type: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-type'),
+        renderHTML: attrs => (attrs.type ? { 'data-type': attrs.type } : {}),
+      },
+      branchId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-branch'),
+        renderHTML: attrs => (attrs.branchId ? { 'data-branch': attrs.branchId } : {}),
+      },
+    }
+  },
+
+  parseHTML() {
+    return [
+      { tag: 'span[data-annotation-id]' },
+      { tag: 'span.annotation[data-branch]' },
+      { tag: 'span[data-branch]' },
+    ]
+  },
+
+  renderHTML({ HTMLAttributes, mark }) {
+    const type = mark.attrs.type || 'note'
+    const attrs: Record<string, any> = {
+      class: `annotation annotation-${type}`,
+      'data-type': type,
+    }
+
+    if (mark.attrs.branchId) {
+      attrs['data-branch'] = mark.attrs.branchId
+      attrs['data-branch-id'] = mark.attrs.branchId
+    }
+
+    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, attrs), 0]
+  },
+})
 
 type JSONNode = ReturnType<PMNode['toJSON']>
 
@@ -363,17 +415,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [inspectorPosition, setInspectorPosition] = useState({ top: 120, left: 120 })
   const [isDraggingInspector, setIsDraggingInspector] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
-  const inspectorExtensions = useMemo(() => createInspectorExtensions(), [])
-  const inspectorEditor = useEditor(
-    {
-      extensions: inspectorExtensions,
-      editable: false,
-      content: buildInspectorDoc(node),
-      immediatelyRender: false,
-    },
-    [inspectorExtensions]
-  )
-
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
   const headerMetaLabel = metaBase
@@ -389,39 +430,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   useEffect(() => {
     setTitle(getDisplayTitle(node.attrs.title))
   }, [node.attrs.title])
-
-  useEffect(() => {
-    if (!inspectorEditor || !showInspector) return
-    const snapshot = buildInspectorDoc(node)
-    const extensionOptions = inspectorEditor.extensionManager.extensions
-      .find(ext => ext.name === 'collapsibleBlock')?.options
-    const applied = inspectorEditor.commands.setContent(snapshot, false)
-    inspectorEditor.setEditable(false)
-    const htmlPreview = inspectorEditor.getHTML()?.slice(0, 200)
-    const jsonPreview = inspectorEditor.getJSON()
-    const domInner = inspectorRef.current
-      ? inspectorRef.current.querySelector('.ProseMirror')?.innerHTML ?? null
-      : null
-    const viewDom = inspectorEditor.view?.dom?.innerHTML ?? null
-    const viewParent = inspectorEditor.view?.dom?.parentElement?.className ?? null
-    const optionsElement = inspectorEditor.options.element
-    debugLog('CollapsibleBlockInspector', 'SYNC', {
-      contentPreview: createContentPreview(snapshot),
-      metadata: {
-        collapsedAttr: node.attrs?.collapsed,
-        title: node.attrs?.title,
-        childCount: node.childCount,
-        inspectorOptions: extensionOptions,
-        htmlPreview,
-        jsonPreview: createContentPreview(jsonPreview),
-        domInner: createContentPreview(domInner),
-        viewDom: createContentPreview(viewDom),
-        viewParent,
-        hasOptionsElement: Boolean(optionsElement),
-        applied,
-      },
-    })
-  }, [inspectorEditor, node, showInspector])
 
   useEffect(() => {
     if (!showInspector || typeof window === 'undefined') return
@@ -1049,10 +1057,10 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       document.body
     )}
 
-    {showInspector && inspectorEditor && typeof window !== 'undefined' && createPortal(
-      <div
-        ref={inspectorRef}
-        style={{
+    {showInspector && typeof window !== 'undefined' && createPortal(
+        <div
+          ref={inspectorRef}
+          style={{
           position: 'fixed',
           top: inspectorPosition.top,
           left: inspectorPosition.left,
@@ -1178,13 +1186,37 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             color: '#444',
           }}
         >
-          <EditorContent editor={inspectorEditor} />
+          <InspectorPreview node={node} />
         </div>
       </div>,
       document.body
     )}
     </>
   )
+}
+
+function InspectorPreview({ node }: { node: PMNode }) {
+  const extensions = useMemo(() => createInspectorExtensions(), [])
+  const inspectorEditor = useEditor(
+    {
+      extensions,
+      editable: false,
+      content: buildInspectorDoc(node),
+    },
+    [extensions, node]
+  )
+
+  useEffect(() => {
+    if (!inspectorEditor) return
+    inspectorEditor.commands.setContent(buildInspectorDoc(node), false)
+    inspectorEditor.setEditable(false)
+  }, [inspectorEditor, node])
+
+  if (!inspectorEditor) {
+    return null
+  }
+
+  return <EditorContent editor={inspectorEditor} />
 }
 
 function CollapsibleBlockPreview({ node }: any) {
@@ -1277,6 +1309,7 @@ function createInspectorExtensions() {
     StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
     Underline,
     Highlight,
+    AnnotationMark,
     CollapsibleBlock.configure({ inspectorPreview: true }),
   ]
 }

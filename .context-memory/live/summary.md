@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-23 01:33Z] 21711b1: fixing why the inspector is not displaying block body
 - commit [2025-09-22 21:19Z] 48fb296: making sure the the block base title will not be deleted
 - commit [2025-09-22 21:00Z] b7a0a9b: fix the issue of empty block base title
 - commit [2025-09-22 20:16Z] 07d295e: added Quick actions in the header
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-22 12:39Z] f28e447: testing the tooltip issue not displaying the rendered content
 - commit [2025-09-22 03:15Z] 701160f: added collapsible format (block based)
 - commit [2025-09-22 00:37Z] f3fb188: arrow past the annotated text solved
-- commit [2025-09-22 00:16Z] abeb4f7: refine the repositioning of the panels
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
