@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-23 05:25Z] ad232b5: fixed the block base element spacing
 - commit [2025-09-23 05:10Z] cfc9897: create a documentation on resolving flushsync warning in the block inspector
 - commit [2025-09-23 04:36Z] 2586359: fixing the block base (1)
 - commit [2025-09-23 03:52Z] 3175d22: fixed inspector issues
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-22 20:16Z] 07d295e: added Quick actions in the header
 - commit [2025-09-22 19:58Z] ece0ef6: added Collapsible hierarchy cues
 - commit [2025-09-22 18:40Z] 3465c73: block based format with tooltips preview works
-- commit [2025-09-22 12:55Z] 21c5278: tooltips can now display the rendered formatted texts even without expanding it
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
