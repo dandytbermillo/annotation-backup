@@ -5,17 +5,17 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 164)
+Recent Activity (showing last 10 of 169)
+- note: After template apply, reapply title attr via updateAttributes and emit debug logs.
+- note: Template apply preserves title via existing attrs.
+- note: Preserve block title via state when applying templates.
+- note: Preserve block title when applying template edits.
+- commit [2025-09-23 15:04Z] a886e06: add a draggable template viewer
 - note: Made template chooser draggable and preview editable. — Header drag handle — Preview editor focus fix
 - note: Documented summarize.js behaviour in writer policy. — Added 2025-09-23 entry under Automation
 - note: Template preview popover now editable with apply/cancel/reset controls. — Added mini editor — Buttons gate insertion
 - note: Added undo support for collapsible block templates. — Capture pre-template snapshot — Undo chip and popover action
 - note: Prototyped collapsible block template picker with preview popover. — Added template specs — Wired header chip + portal
-- commit [2025-09-23 12:29Z] fd8f7fd: adding insert template
-- commit [2025-09-23 05:25Z] ad232b5: fixed the block base element spacing
-- commit [2025-09-23 05:10Z] cfc9897: create a documentation on resolving flushsync warning in the block inspector
-- commit [2025-09-23 04:36Z] 2586359: fixing the block base (1)
-- commit [2025-09-23 03:52Z] 3175d22: fixed inspector issues
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
