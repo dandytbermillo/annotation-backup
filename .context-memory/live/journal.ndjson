@@ -153,3 +153,4 @@
 {"ts":"2025-09-22T21:19:57.747Z","type":"commit","sha":"48fb2968fdfe5b7b945b01db861dd648a4277c14","files_changed":6,"message":"making sure the the block base title will not be deleted"}
 {"ts":"2025-09-23T01:33:33.464Z","type":"commit","sha":"21711b12973e5ea3b10f164bdf942d8e0e88a2b5","files_changed":9,"message":"fixing why the inspector is not displaying block body"}
 {"ts":"2025-09-23T03:52:54.647Z","type":"commit","sha":"3175d220431a9f7b8a03377c18a17c49cde7174d","files_changed":5,"message":"fixed inspector issues"}
+{"ts":"2025-09-23T04:36:38.736Z","type":"commit","sha":"25863594f78d63c123397fa8d88a4996cb962f95","files_changed":4,"message":"fixing the block base (1)"}

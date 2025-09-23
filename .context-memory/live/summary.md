@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity
+- commit [2025-09-23 04:36Z] 2586359: fixing the block base (1)
 - commit [2025-09-23 03:52Z] 3175d22: fixed inspector issues
 - commit [2025-09-23 01:33Z] 21711b1: fixing why the inspector is not displaying block body
 - commit [2025-09-22 21:19Z] 48fb296: making sure the the block base title will not be deleted
@@ -15,7 +16,6 @@ Recent Activity
 - commit [2025-09-22 18:40Z] 3465c73: block based format with tooltips preview works
 - commit [2025-09-22 12:55Z] 21c5278: tooltips can now display the rendered formatted texts even without expanding it
 - commit [2025-09-22 12:39Z] f28e447: testing the tooltip issue not displaying the rendered content
-- commit [2025-09-22 03:15Z] 701160f: added collapsible format (block based)
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

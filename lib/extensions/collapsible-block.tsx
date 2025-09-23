@@ -206,7 +206,7 @@ export const CollapsibleBlock = Node.create({
         'span',
         {
           'data-collapsible-title': '',
-          style: 'font-weight:600;font-size:16px;',
+          style: 'font-weight:600;font-size:16px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
         },
         displayTitle,
       ],
@@ -217,7 +217,7 @@ export const CollapsibleBlock = Node.create({
         'span',
         {
           'data-collapsible-meta': '',
-          style: 'margin-left:auto;font-size:12px;color:#708090;letter-spacing:0.01em;',
+          style: 'margin-left:12px;font-size:12px;color:#708090;letter-spacing:0.01em;white-space:nowrap;flex-shrink:0;',
         },
         metaLabel,
       ])
@@ -278,7 +278,7 @@ export const CollapsibleBlock = Node.create({
         'div',
         {
           'data-collapsible-header': '',
-          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;',
+          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;min-width:0;',
         },
         ...headerChildren,
         actionStrip,
@@ -776,10 +776,12 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
         style={{
           display: 'flex',
           alignItems: 'center',
+          gap: '8px',
           marginBottom: isCollapsed ? '0' : '4px',
           cursor: 'pointer',
           userSelect: 'none',
           padding: '4px 0',
+          minWidth: 0,
         }}
         contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
@@ -817,6 +819,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               padding: '2px 6px',
               outline: 'none',
               background: 'white',
+              width: '100%',
             }}
           />
         ) : (
@@ -829,16 +832,22 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               fontSize: '16px',
               fontWeight: '600',
               cursor: 'text',
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
             {title}
           </span>
         )}
 
-        {headerMetaLabel && (
+        {headerMetaLabel && !showActions && (
           <span
             style={{
-              marginLeft: 'auto',
+              flexShrink: 0,
+              marginLeft: '12px',
               fontSize: '12px',
               color: '#708090',
               letterSpacing: '0.01em',
@@ -854,7 +863,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             display: showActions ? 'inline-flex' : 'none',
             alignItems: 'center',
             gap: '6px',
-            marginLeft: headerMetaLabel ? '12px' : 'auto',
+            marginLeft: 'auto',
           }}
           data-collapsible-actions
         >
