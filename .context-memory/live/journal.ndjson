@@ -152,3 +152,4 @@
 {"ts":"2025-09-22T21:00:33.716Z","type":"commit","sha":"b7a0a9b120934b776bb9c287408beb8cdff450dc","files_changed":6,"message":"fix the issue of empty block base title"}
 {"ts":"2025-09-22T21:19:57.747Z","type":"commit","sha":"48fb2968fdfe5b7b945b01db861dd648a4277c14","files_changed":6,"message":"making sure the the block base title will not be deleted"}
 {"ts":"2025-09-23T01:33:33.464Z","type":"commit","sha":"21711b12973e5ea3b10f164bdf942d8e0e88a2b5","files_changed":9,"message":"fixing why the inspector is not displaying block body"}
+{"ts":"2025-09-23T03:52:54.647Z","type":"commit","sha":"3175d220431a9f7b8a03377c18a17c49cde7174d","files_changed":5,"message":"fixed inspector issues"}

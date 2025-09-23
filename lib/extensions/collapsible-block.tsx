@@ -761,8 +761,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       style={{
         borderLeft: isCollapsed ? 'none' : `3px solid ${isHovered ? '#9b59b6' : '#e1e8ed'}`,
         borderRadius: '0',
-        padding: isCollapsed ? '4px 0' : '4px 0 4px 12px',
-        marginBottom: '12px',
+        padding: isCollapsed ? '0' : '0 0 0 12px',
+        margin: isCollapsed ? '2px 0' : '6px 0',
         background: isCollapsed 
           ? (isHovered ? 'rgba(248, 249, 250, 0.3)' : 'transparent')
           : 'transparent',
@@ -776,10 +776,10 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
         style={{
           display: 'flex',
           alignItems: 'center',
-          marginBottom: isCollapsed ? '0' : '12px',
+          marginBottom: isCollapsed ? '0' : '4px',
           cursor: 'pointer',
           userSelect: 'none',
-          padding: isCollapsed ? '2px 0' : '0',
+          padding: '4px 0',
         }}
         contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
@@ -991,7 +991,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           ref={contentRef}
           style={{
             paddingLeft: '20px',
-            marginTop: '8px',
+            marginTop: '4px',
           }}
         >
           <NodeViewContent className="content" />
@@ -1216,7 +1216,11 @@ function InspectorPreview({ node }: { node: PMNode }) {
     return null
   }
 
-  return <EditorContent editor={inspectorEditor} />
+  return (
+    <div className="inspector-editor">
+      <EditorContent editor={inspectorEditor} />
+    </div>
+  )
 }
 
 function CollapsibleBlockPreview({ node }: any) {
@@ -1245,8 +1249,8 @@ function CollapsibleBlockPreview({ node }: any) {
       className="collapsible-block preview"
       style={{
         borderLeft: 'none',
-        padding: '4px 0',
-        marginBottom: '12px',
+        padding: 0,
+        margin: '0 0 4px 0',
       }}
     >
       <div

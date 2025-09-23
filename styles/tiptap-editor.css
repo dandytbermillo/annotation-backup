@@ -80,6 +80,28 @@
   margin-bottom: 0;
 }
 
+.inspector-editor .ProseMirror p {
+  margin: 0 0 0.6em 0;
+  line-height: 1.5;
+}
+
+.inspector-editor .ProseMirror h1,
+.inspector-editor .ProseMirror h2,
+.inspector-editor .ProseMirror h3 {
+  margin: 0.8em 0 0.4em 0;
+}
+
+.inspector-editor .ProseMirror ul,
+.inspector-editor .ProseMirror ol {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+}
+
+.inspector-editor .ProseMirror li {
+  margin: 0.3em 0;
+  line-height: 1.5;
+}
+
 /* Headings with proper spacing */
 .ProseMirror h1 {
   font-size: 2.2em;
@@ -229,9 +251,15 @@
 }
 
 /* Collapsible blocks with proper indentation */
+
 .collapsible-block {
-  margin: 24px 0;
-  padding: 16px 0;
+  margin: 0;
+  padding: 0;
+}
+
+.inspector-editor .collapsible-block {
+  margin: 4px 0;
+  padding: 0;
 }
 
 /* Highlight extension */
@@ -321,4 +349,15 @@
   text-decoration-color: #667eea;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
+}
+
+.inspector-editor {
+  padding: 0;
+}
+
+/* Inspector preview uses a compact padding so it fits the panel */
+.inspector-editor .ProseMirror {
+  padding: 8px 12px;
+  min-height: auto;
+  background: transparent;
 }
