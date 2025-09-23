@@ -1,8 +1,68 @@
 import { Node, mergeAttributes } from '@tiptap/core'
-import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer } from '@tiptap/react'
-import { DOMSerializer } from 'prosemirror-model'
-import { useState, useRef, useEffect } from 'react'
+import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer, useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Highlight from '@tiptap/extension-highlight'
+import Underline from '@tiptap/extension-underline'
+import Placeholder from '@tiptap/extension-placeholder'
+import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+
+const DEFAULT_BLOCK_TITLE = 'Block title here...'
+
+const buildInspectorDoc = (pmNode: PMNode) => ({
+  type: 'doc',
+  content: [pmNode.toJSON()],
+})
+
+type BlockStats = {
+  directChildren: number
+  totalBlocks: number
+  nestedCollapsibleCount: number
+}
+
+const computeBlockStats = (pmNode?: PMNode | null): BlockStats => {
+  if (!pmNode) {
+    return { directChildren: 0, totalBlocks: 0, nestedCollapsibleCount: 0 }
+  }
+
+  let totalBlocks = 0
+  let nestedCollapsibleCount = 0
+
+  pmNode.descendants(child => {
+    if (child.isBlock) {
+      totalBlocks += 1
+    }
+    if (child.type.name === 'collapsibleBlock') {
+      nestedCollapsibleCount += 1
+    }
+  })
+
+  return {
+    directChildren: pmNode.childCount,
+    totalBlocks,
+    nestedCollapsibleCount,
+  }
+}
+
+const formatBlockMeta = (stats: BlockStats): string => {
+  if (!stats.directChildren) {
+    return 'No items yet'
+  }
+
+  const parts = [`${stats.directChildren} item${stats.directChildren === 1 ? '' : 's'}`]
+
+  if (stats.nestedCollapsibleCount > 0) {
+    parts.push(`${stats.nestedCollapsibleCount} nested block${stats.nestedCollapsibleCount === 1 ? '' : 's'}`)
+  }
+
+  return parts.join(' • ')
+}
+
+const getDisplayTitle = (title?: string | null) => {
+  const trimmed = (title || '').trim()
+  return trimmed || DEFAULT_BLOCK_TITLE
+}
 
 // Define the schema for the collapsible block
 export const CollapsibleBlock = Node.create({
@@ -14,6 +74,7 @@ export const CollapsibleBlock = Node.create({
   addOptions() {
     return {
       HTMLAttributes: {},
+      inspectorPreview: false,
     }
   },
 
@@ -27,10 +88,11 @@ export const CollapsibleBlock = Node.create({
         },
       },
       title: {
-        default: 'Section Title',
-        parseHTML: element => element.getAttribute('data-title'),
+        default: DEFAULT_BLOCK_TITLE,
+        parseHTML: element => element.getAttribute('data-title') || DEFAULT_BLOCK_TITLE,
         renderHTML: attributes => {
-          return { 'data-title': attributes.title }
+          const value = getDisplayTitle(attributes.title)
+          return { 'data-title': value }
         },
       },
     }
@@ -50,6 +112,88 @@ export const CollapsibleBlock = Node.create({
     })
 
     const { collapsed, title } = node.attrs
+    const displayTitle = getDisplayTitle(title)
+    const stats = computeBlockStats(node)
+    const metaBase = formatBlockMeta(stats)
+    const metaLabel = metaBase
+
+    const headerChildren: any[] = [
+      [
+        'span',
+        {
+          'data-collapsible-arrow': '',
+          style: `display:inline-block;margin-right:8px;transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}`,
+        },
+        '▼',
+      ],
+      [
+        'span',
+        {
+          'data-collapsible-title': '',
+          style: 'font-weight:600;font-size:16px;',
+        },
+        displayTitle,
+      ],
+    ]
+
+    if (metaLabel) {
+      headerChildren.push([
+        'span',
+        {
+          'data-collapsible-meta': '',
+          style: 'margin-left:auto;font-size:12px;color:#708090;letter-spacing:0.01em;',
+        },
+        metaLabel,
+      ])
+    }
+
+    const actionStrip = [
+      'span',
+      {
+        'data-collapsible-actions': '',
+        style: 'display:none;align-items:center;gap:6px;margin-left:12px;',
+      },
+      [
+        'button',
+        {
+          type: 'button',
+          'data-action': 'move-up',
+          'aria-label': 'Move block up',
+          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
+        },
+        '▲',
+      ],
+      [
+        'button',
+        {
+          type: 'button',
+          'data-action': 'move-down',
+          'aria-label': 'Move block down',
+          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
+        },
+        '▼',
+      ],
+      [
+        'button',
+        {
+          type: 'button',
+          'data-action': 'duplicate',
+          'aria-label': 'Duplicate block',
+          style: 'border:none;background:none;padding:0;cursor:pointer;color:#708090;font-size:14px;',
+        },
+        '⧉',
+      ],
+      [
+        'button',
+        {
+          type: 'button',
+          'data-action': 'delete',
+          'aria-label': 'Delete block',
+          style: 'border:none;background:none;padding:0;cursor:pointer;color:#cc4a4a;font-size:14px;',
+        },
+        '🗑',
+      ],
+    ]
 
     return [
       'div',
@@ -58,24 +202,10 @@ export const CollapsibleBlock = Node.create({
         'div',
         {
           'data-collapsible-header': '',
-          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;',
+          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;',
         },
-        [
-          'span',
-          {
-            'data-collapsible-arrow': '',
-            style: `display:inline-block;margin-right:8px;transition:transform 0.2s ease;transform:${collapsed ? 'rotate(-90deg)' : 'rotate(0deg)'}`,
-          },
-          '▼',
-        ],
-        [
-          'span',
-          {
-            'data-collapsible-title': '',
-            style: 'font-weight:600;font-size:16px;',
-          },
-          title || '',
-        ],
+        ...headerChildren,
+        actionStrip,
       ],
       [
         'div',
@@ -188,9 +318,9 @@ export const CollapsibleBlock = Node.create({
 })
 
 // React component for the collapsible block
-function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
+function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [isCollapsed, setIsCollapsed] = useState(node.attrs.collapsed)
-  const [title, setTitle] = useState(node.attrs.title)
+  const [title, setTitle] = useState(getDisplayTitle(node.attrs.title))
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
   const [showTooltip, setShowTooltip] = useState(false)
@@ -198,18 +328,179 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   const [showPreviewIcon, setShowPreviewIcon] = useState(false)
   const iconRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const [cachedContent, setCachedContent] = useState<string>('')
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
   const [cachedHtmlContent, setCachedHtmlContent] = useState<string>('')
   const [isTooltipHovered, setIsTooltipHovered] = useState(false)
+  const [showActions, setShowActions] = useState(false)
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const tooltipElementRef = useRef<HTMLDivElement | null>(null)
+  const inspectorRef = useRef<HTMLDivElement | null>(null)
+  const [showInspector, setShowInspector] = useState(false)
+  const [inspectorPosition, setInspectorPosition] = useState({ top: 120, left: 120 })
+  const [isDraggingInspector, setIsDraggingInspector] = useState(false)
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
+  const inspectorExtensions = useMemo(() => createInspectorExtensions(), [])
+  const inspectorEditor = useEditor(
+    {
+      extensions: inspectorExtensions,
+      editable: false,
+      content: buildInspectorDoc(node),
+      immediatelyRender: false,
+    },
+    [inspectorExtensions]
+  )
+
+  const stats = computeBlockStats(node)
+  const metaBase = formatBlockMeta(stats)
+  const headerMetaLabel = metaBase
+
+  const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
+
+  useEffect(() => {
+    if (!node.attrs.title || !node.attrs.title.trim()) {
+      updateAttributes({ title: DEFAULT_BLOCK_TITLE })
+    }
+  }, [node.attrs.title, updateAttributes])
+
+  useEffect(() => {
+    setTitle(getDisplayTitle(node.attrs.title))
+  }, [node.attrs.title])
+
+  useEffect(() => {
+    if (!inspectorEditor) return
+    inspectorEditor.commands.setContent(buildInspectorDoc(node), false)
+    inspectorEditor.setEditable(false)
+  }, [inspectorEditor, node])
+
+  useEffect(() => {
+    if (!showInspector || typeof window === 'undefined') return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowInspector(false)
+      }
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (!isDraggingInspector || !dragOffsetRef.current) return
+      event.preventDefault()
+      const { x, y } = dragOffsetRef.current
+      const nextLeft = event.clientX - x
+      const nextTop = event.clientY - y
+      const maxLeft = window.innerWidth - 380
+      const maxTop = window.innerHeight - 200
+      setInspectorPosition({
+        left: Math.min(Math.max(16, nextLeft), maxLeft),
+        top: Math.min(Math.max(16, nextTop), maxTop),
+      })
+    }
+
+    const onMouseUp = () => {
+      if (!isDraggingInspector) return
+      setIsDraggingInspector(false)
+      dragOffsetRef.current = null
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [showInspector, isDraggingInspector])
+
+  const handleDuplicate = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    const clone = node.copy(node.content)
+    const tr = editor.view.state.tr.insert(pos + node.nodeSize, clone)
+    editor.view.dispatch(tr)
+    editor.view.focus()
+  }
+
+  const handleDelete = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    const confirmed = window.confirm('Delete this block and all nested content?')
+    if (!confirmed) {
+      return
+    }
+    const tr = editor.view.state.tr.delete(pos, pos + node.nodeSize)
+    editor.view.dispatch(tr)
+    editor.view.focus()
+    setShowInspector(false)
+  }
+
+  const handleMove = (direction: 'up' | 'down') => {
+    const pos = resolvePos()
+    if (pos == null) return
+
+    const { state } = editor.view
+    const $pos = state.doc.resolve(pos)
+    const parent = $pos.parent
+    const index = $pos.index()
+    if (!parent) return
+
+    const targetIndex = direction === 'up' ? index - 1 : index + 1
+    if (targetIndex < 0 || targetIndex >= parent.childCount) {
+      return
+    }
+
+    const sibling = parent.child(targetIndex)
+    const tr = state.tr
+    const from = pos
+    const to = pos + node.nodeSize
+    tr.delete(from, to)
+
+    const mappedSiblingPos = direction === 'up'
+      ? tr.mapping.map(pos - sibling.nodeSize)
+      : tr.mapping.map(pos)
+
+    const insertPos = direction === 'up'
+      ? mappedSiblingPos
+      : mappedSiblingPos + sibling.nodeSize
+
+    tr.insert(insertPos, node.copy(node.content))
+    editor.view.dispatch(tr)
+    editor.view.focus()
+  }
+
+  const handleInspectorMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDraggingInspector(true)
+    dragOffsetRef.current = {
+      x: event.clientX - inspectorPosition.left,
+      y: event.clientY - inspectorPosition.top,
+    }
+  }
+
+  const handleOpenInspector = (event: React.MouseEvent) => {
+    event.stopPropagation()
+    if (wrapperRef.current && typeof window !== 'undefined') {
+      const rect = wrapperRef.current.getBoundingClientRect()
+      const left = Math.min(Math.max(16, rect.right + 16), window.innerWidth - 380)
+      const top = Math.min(Math.max(16, rect.top), window.innerHeight - 200)
+      setInspectorPosition({ top, left })
+    }
+    setShowInspector(true)
+  }
+
+  const handleCloseInspector = () => {
+    setShowInspector(false)
+    setIsDraggingInspector(false)
+    dragOffsetRef.current = null
+  }
 
   const toggleCollapse = () => {
     const newCollapsed = !isCollapsed
     
     // Cache content before collapsing
     if (!newCollapsed && contentRef.current) {
-      const text = contentRef.current.textContent || ''
-      setCachedContent(text.trim())
       const html = contentRef.current.innerHTML || ''
       setCachedHtmlContent(html)
     }
@@ -221,8 +512,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   // Update cached content when expanded
   useEffect(() => {
     if (!isCollapsed && contentRef.current) {
-      const text = contentRef.current.textContent || ''
-      setCachedContent(text.trim())
       const html = contentRef.current.innerHTML || ''
       setCachedHtmlContent(html)
     }
@@ -233,8 +522,20 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   }
 
   const handleTitleBlur = () => {
+    const trimmed = title.trim()
+    const nextTitle = trimmed || DEFAULT_BLOCK_TITLE
+    setTitle(nextTitle)
     setIsEditingTitle(false)
-    updateAttributes({ title })
+    updateAttributes({ title: nextTitle })
+  }
+
+  const handleTitleFocus = () => {
+    setTimeout(() => {
+      const input = document.activeElement as HTMLInputElement | null
+      if (input && (input.value === DEFAULT_BLOCK_TITLE || !input.value.trim())) {
+        input.select()
+      }
+    }, 0)
   }
 
   const handleTitleKeyDown = (e: React.KeyboardEvent) => {
@@ -290,19 +591,54 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     return '<p style="color: #999; font-style: italic;">No content preview available</p>'
   }
 
+  const scheduleTooltipHide = (relatedTarget?: EventTarget | null) => {
+    if (tooltipTimeoutRef.current) {
+      clearTimeout(tooltipTimeoutRef.current)
+      tooltipTimeoutRef.current = null
+    }
+
+    const movingTowardTooltip = relatedTarget instanceof HTMLElement && relatedTarget.closest?.('.annotation-tooltip')
+
+    tooltipTimeoutRef.current = setTimeout(() => {
+      const tooltipHovered = tooltipElementRef.current?.matches(':hover') || false
+      if (!tooltipHovered && !movingTowardTooltip) {
+        setShowTooltip(false)
+      }
+    }, 500) // Allow extra time to move between icon and tooltip
+  }
+
+  const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (target.closest('[data-collapsible-arrow]')) {
+      return
+    }
+    if (target.closest('[data-collapsible-actions]')) {
+      return
+    }
+    if (target.closest('[data-preview-icon]')) {
+      return
+    }
+
+    e.preventDefault()
+    e.stopPropagation()
+    setIsEditingTitle(true)
+  }
+
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
+    setShowActions(true)
     if (isCollapsed) {
       setShowPreviewIcon(true)
     }
   }
 
   // Handle container mouse leave
-  const handleMouseLeave = () => {
+  const handleMouseLeave = (e: React.MouseEvent) => {
     setIsHovered(false)
     setShowPreviewIcon(false)
-    setShowTooltip(false)
+    scheduleTooltipHide(e.relatedTarget)
+    setShowActions(false)
   }
 
   // Handle icon hover
@@ -311,6 +647,10 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     const rect = iconRef.current?.getBoundingClientRect()
     console.log('Icon hover - rect:', rect) // Debug log
     if (rect) {
+      if (tooltipTimeoutRef.current) {
+        clearTimeout(tooltipTimeoutRef.current)
+        tooltipTimeoutRef.current = null
+      }
       setTooltipPosition({
         x: rect.left + rect.width / 2,
         y: rect.bottom + 8
@@ -325,13 +665,9 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     e.stopPropagation()
     
     // Set a timeout to hide tooltip, giving user time to move to it
-    tooltipTimeoutRef.current = setTimeout(() => {
-      if (!isTooltipHovered) {
-        setShowTooltip(false)
-      }
-    }, 300) // 300ms delay to move to tooltip
+    scheduleTooltipHide(e.relatedTarget)
   }
-  
+
   // Handle tooltip mouse enter
   const handleTooltipMouseEnter = () => {
     setIsTooltipHovered(true)
@@ -343,10 +679,10 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   }
   
   // Handle tooltip mouse leave
-  const handleTooltipMouseLeave = () => {
-    console.log('Tooltip mouse leave - hiding tooltip') // Debug log
+  const handleTooltipMouseLeave = (e: React.MouseEvent) => {
+    console.log('Tooltip mouse leave - scheduling hide') // Debug log
     setIsTooltipHovered(false)
-    setShowTooltip(false)
+    scheduleTooltipHide(e.relatedTarget)
   }
   
   // Cleanup on unmount
@@ -361,6 +697,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
   return (
     <>
     <NodeViewWrapper 
+      ref={wrapperRef}
       className="collapsible-block"
       style={{
         borderLeft: isCollapsed ? 'none' : `3px solid ${isHovered ? '#9b59b6' : '#e1e8ed'}`,
@@ -385,9 +722,14 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
           userSelect: 'none',
           padding: isCollapsed ? '2px 0' : '0',
         }}
+        contentEditable={false}
+        onMouseEnter={() => setShowActions(true)}
+        onMouseLeave={() => setShowActions(false)}
+        onClick={handleHeaderClick}
       >
         <span 
           onClick={toggleCollapse}
+          data-collapsible-arrow
           style={{
             fontSize: '16px',
             marginRight: '8px',
@@ -406,6 +748,8 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
             onBlur={handleTitleBlur}
             onKeyDown={handleTitleKeyDown}
             autoFocus
+            placeholder={DEFAULT_BLOCK_TITLE}
+            onFocus={handleTitleFocus}
             style={{
               fontSize: '16px',
               fontWeight: '600',
@@ -431,7 +775,121 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
             {title}
           </span>
         )}
-        
+
+        {headerMetaLabel && (
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: '12px',
+              color: '#708090',
+              letterSpacing: '0.01em',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {headerMetaLabel}
+          </span>
+        )}
+
+        <div
+          style={{
+            display: showActions ? 'inline-flex' : 'none',
+            alignItems: 'center',
+            gap: '6px',
+            marginLeft: headerMetaLabel ? '12px' : 'auto',
+          }}
+          data-collapsible-actions
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleMove('up')
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#708090',
+              fontSize: '14px',
+            }}
+            aria-label="Move block up"
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleMove('down')
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#708090',
+              fontSize: '14px',
+            }}
+            aria-label="Move block down"
+          >
+            ▼
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              handleOpenInspector(e)
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#708090',
+              fontSize: '14px',
+            }}
+            aria-label="Open block inspector"
+          >
+            🗔
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleDuplicate()
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#708090',
+              fontSize: '14px',
+            }}
+            aria-label="Duplicate block"
+          >
+            ⧉
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleDelete()
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#cc4a4a',
+              fontSize: '14px',
+            }}
+            aria-label="Delete block"
+          >
+            🗑
+          </button>
+        </div>
+
         {/* Preview Icon - shows when collapsed and hovered */}
         {isCollapsed && showPreviewIcon && (
           <div
@@ -450,6 +908,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
               background: 'rgba(155, 89, 182, 0.1)',
               transition: 'all 0.2s ease',
             }}
+            data-preview-icon
             onMouseOver={(e) => {
               e.currentTarget.style.background = 'rgba(155, 89, 182, 0.2)'
               e.currentTarget.style.transform = 'scale(1.1)'
@@ -484,6 +943,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
     {/* Tooltip - render with Portal to ensure it appears above everything */}
     {showTooltip && isCollapsed && typeof window !== 'undefined' && createPortal(
       <div
+        ref={tooltipElementRef}
         className="annotation-tooltip visible"
         onMouseEnter={handleTooltipMouseEnter}
         onMouseLeave={handleTooltipMouseLeave}
@@ -537,6 +997,219 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor }: any) {
       </div>,
       document.body
     )}
+
+    {showInspector && inspectorEditor && typeof window !== 'undefined' && createPortal(
+      <div
+        ref={inspectorRef}
+        style={{
+          position: 'fixed',
+          top: inspectorPosition.top,
+          left: inspectorPosition.left,
+          width: '360px',
+          maxWidth: '95vw',
+          maxHeight: '70vh',
+          background: '#fff',
+          boxShadow: '0 18px 40px rgba(15, 23, 42, 0.22)',
+          borderRadius: '12px',
+          zIndex: 999999,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div
+          onMouseDown={handleInspectorMouseDown}
+          style={{
+            padding: '10px 16px',
+            borderBottom: '1px solid #e1e8ed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            cursor: isDraggingInspector ? 'grabbing' : 'grab',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(129,140,248,0.08))',
+            borderTopLeftRadius: '12px',
+            borderTopRightRadius: '12px',
+          }}
+        >
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Block Inspector</span>
+          <button
+            type="button"
+            onClick={handleCloseInspector}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#475569',
+              fontSize: '16px',
+            }}
+            aria-label="Close block inspector"
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          style={{
+            padding: '16px',
+            borderBottom: '1px solid #e1e8ed',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div>
+            <label style={{ fontSize: '12px', color: '#8492a6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Block title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={handleTitleChange}
+              onBlur={handleTitleBlur}
+              onKeyDown={handleTitleKeyDown}
+              placeholder={DEFAULT_BLOCK_TITLE}
+              style={{
+                width: '100%',
+                marginTop: '6px',
+                padding: '8px 10px',
+                fontSize: '16px',
+                fontWeight: 600,
+                border: '1px solid #d5dfe9',
+                borderRadius: '6px',
+                outline: 'none',
+              }}
+            />
+          </div>
+          {headerMetaLabel && (
+            <div style={{ fontSize: '12px', color: '#708090' }}>{headerMetaLabel}</div>
+          )}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                handleCloseInspector()
+              }}
+              style={{
+                border: 'none',
+                background: 'rgba(99, 102, 241, 0.12)',
+                color: '#6366f1',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+            >
+              Reveal in document
+            </button>
+            <button
+              type="button"
+              onClick={handleCloseInspector}
+              style={{
+                border: 'none',
+                background: 'rgba(148, 163, 184, 0.14)',
+                color: '#475569',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            padding: '16px',
+            overflowY: 'auto',
+            color: '#444',
+          }}
+        >
+          <EditorContent editor={inspectorEditor} />
+        </div>
+      </div>,
+      document.body
+    )}
     </>
   )
+}
+
+function CollapsibleBlockPreview({ node }: any) {
+  const [collapsed, setCollapsed] = useState<boolean>(node.attrs.collapsed ?? false)
+
+  useEffect(() => {
+    setCollapsed(node.attrs.collapsed ?? false)
+  }, [node.attrs.collapsed])
+
+  const title = getDisplayTitle(node.attrs.title)
+  const stats = formatBlockMeta(computeBlockStats(node))
+
+  return (
+    <NodeViewWrapper
+      className="collapsible-block preview"
+      style={{
+        borderLeft: 'none',
+        padding: '4px 0',
+        marginBottom: '12px',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+        onClick={() => setCollapsed(prev => !prev)}
+      >
+        <span
+          style={{
+            fontSize: '16px',
+            transition: 'transform 0.2s ease',
+            transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+            display: 'inline-block',
+            color: '#475569',
+          }}
+        >
+          ▼
+        </span>
+        <span style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937' }}>{title}</span>
+        {stats && (
+          <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#708090' }}>{stats}</span>
+        )}
+      </div>
+
+      {!collapsed && (
+        <div
+          style={{
+            paddingLeft: '20px',
+            marginTop: '8px',
+          }}
+        >
+          <NodeViewContent className="content" />
+        </div>
+      )}
+    </NodeViewWrapper>
+  )
+}
+
+function CollapsibleBlockComponent(props: any) {
+  const isPreview = props.extension?.options?.inspectorPreview ?? false
+  if (isPreview) {
+    return <CollapsibleBlockPreview {...props} />
+  }
+  return <CollapsibleBlockFull {...props} />
+}
+
+function createInspectorExtensions() {
+  return [
+    StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
+    Underline,
+    Highlight,
+    Placeholder.configure({ placeholder: '', showOnlyWhenEditable: false, showOnlyCurrent: false }),
+    CollapsibleBlock.configure({ inspectorPreview: true }),
+  ]
 }

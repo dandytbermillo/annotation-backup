@@ -150,3 +150,4 @@
 {"ts":"2025-09-22T19:58:01.970Z","type":"commit","sha":"ece0ef642dcd045cef02811b427a2830a2403f23","files_changed":11,"message":"added Collapsible hierarchy cues"}
 {"ts":"2025-09-22T20:16:44.570Z","type":"commit","sha":"07d295ef9c01c5a029fa8bc3f210e46e16488d85","files_changed":4,"message":"added Quick actions in the header"}
 {"ts":"2025-09-22T21:00:33.716Z","type":"commit","sha":"b7a0a9b120934b776bb9c287408beb8cdff450dc","files_changed":6,"message":"fix the issue of empty block base title"}
+{"ts":"2025-09-22T21:19:57.747Z","type":"commit","sha":"48fb2968fdfe5b7b945b01db861dd648a4277c14","files_changed":6,"message":"making sure the the block base title will not be deleted"}

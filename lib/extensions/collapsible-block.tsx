@@ -1,10 +1,43 @@
 import { Node, mergeAttributes } from '@tiptap/core'
-import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer } from '@tiptap/react'
+import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer, useEditor, EditorContent } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
+import Highlight from '@tiptap/extension-highlight'
+import Underline from '@tiptap/extension-underline'
 import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
+import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
 const DEFAULT_BLOCK_TITLE = 'Block title here...'
+
+type JSONNode = ReturnType<PMNode['toJSON']>
+
+const expandCollapsibleNodes = (jsonNode: JSONNode): JSONNode => {
+  if (!jsonNode) return jsonNode
+
+  const next: JSONNode = Array.isArray(jsonNode)
+    ? jsonNode.map(child => expandCollapsibleNodes(child))
+    : { ...jsonNode }
+
+  if (Array.isArray(next)) {
+    return next
+  }
+
+  if (next.type === 'collapsibleBlock') {
+    next.attrs = { ...next.attrs, collapsed: false }
+  }
+
+  if (next.content) {
+    next.content = next.content.map(child => expandCollapsibleNodes(child))
+  }
+
+  return next
+}
+
+const buildInspectorDoc = (pmNode: PMNode) => ({
+  type: 'doc',
+  content: [expandCollapsibleNodes(pmNode.toJSON())],
+})
 
 type BlockStats = {
   directChildren: number
@@ -65,6 +98,7 @@ export const CollapsibleBlock = Node.create({
   addOptions() {
     return {
       HTMLAttributes: {},
+      inspectorPreview: false,
     }
   },
 
@@ -105,7 +139,7 @@ export const CollapsibleBlock = Node.create({
     const displayTitle = getDisplayTitle(title)
     const stats = computeBlockStats(node)
     const metaBase = formatBlockMeta(stats)
-    const metaLabel = stats.directChildren ? `Inside this block · ${metaBase}` : metaBase
+    const metaLabel = metaBase
 
     const headerChildren: any[] = [
       [
@@ -308,7 +342,7 @@ export const CollapsibleBlock = Node.create({
 })
 
 // React component for the collapsible block
-function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: any) {
+function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [isCollapsed, setIsCollapsed] = useState(node.attrs.collapsed)
   const [title, setTitle] = useState(getDisplayTitle(node.attrs.title))
   const [isEditingTitle, setIsEditingTitle] = useState(false)
@@ -318,16 +352,31 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   const [showPreviewIcon, setShowPreviewIcon] = useState(false)
   const iconRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const [cachedContent, setCachedContent] = useState<string>('')
+  const wrapperRef = useRef<HTMLDivElement | null>(null)
   const [cachedHtmlContent, setCachedHtmlContent] = useState<string>('')
   const [isTooltipHovered, setIsTooltipHovered] = useState(false)
   const [showActions, setShowActions] = useState(false)
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const tooltipElementRef = useRef<HTMLDivElement | null>(null)
+  const inspectorRef = useRef<HTMLDivElement | null>(null)
+  const [showInspector, setShowInspector] = useState(false)
+  const [inspectorPosition, setInspectorPosition] = useState({ top: 120, left: 120 })
+  const [isDraggingInspector, setIsDraggingInspector] = useState(false)
+  const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
+  const inspectorExtensions = useMemo(() => createInspectorExtensions(), [])
+  const inspectorEditor = useEditor(
+    {
+      extensions: inspectorExtensions,
+      editable: false,
+      content: buildInspectorDoc(node),
+      immediatelyRender: false,
+    },
+    [inspectorExtensions]
+  )
 
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
-  const headerMetaLabel = stats.directChildren ? `Inside this block · ${metaBase}` : metaBase
+  const headerMetaLabel = metaBase
 
   const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
 
@@ -340,6 +389,79 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   useEffect(() => {
     setTitle(getDisplayTitle(node.attrs.title))
   }, [node.attrs.title])
+
+  useEffect(() => {
+    if (!inspectorEditor || !showInspector) return
+    const snapshot = buildInspectorDoc(node)
+    const extensionOptions = inspectorEditor.extensionManager.extensions
+      .find(ext => ext.name === 'collapsibleBlock')?.options
+    const applied = inspectorEditor.commands.setContent(snapshot, false)
+    inspectorEditor.setEditable(false)
+    const htmlPreview = inspectorEditor.getHTML()?.slice(0, 200)
+    const jsonPreview = inspectorEditor.getJSON()
+    const domInner = inspectorRef.current
+      ? inspectorRef.current.querySelector('.ProseMirror')?.innerHTML ?? null
+      : null
+    const viewDom = inspectorEditor.view?.dom?.innerHTML ?? null
+    const viewParent = inspectorEditor.view?.dom?.parentElement?.className ?? null
+    const optionsElement = inspectorEditor.options.element
+    debugLog('CollapsibleBlockInspector', 'SYNC', {
+      contentPreview: createContentPreview(snapshot),
+      metadata: {
+        collapsedAttr: node.attrs?.collapsed,
+        title: node.attrs?.title,
+        childCount: node.childCount,
+        inspectorOptions: extensionOptions,
+        htmlPreview,
+        jsonPreview: createContentPreview(jsonPreview),
+        domInner: createContentPreview(domInner),
+        viewDom: createContentPreview(viewDom),
+        viewParent,
+        hasOptionsElement: Boolean(optionsElement),
+        applied,
+      },
+    })
+  }, [inspectorEditor, node, showInspector])
+
+  useEffect(() => {
+    if (!showInspector || typeof window === 'undefined') return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowInspector(false)
+      }
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (!isDraggingInspector || !dragOffsetRef.current) return
+      event.preventDefault()
+      const { x, y } = dragOffsetRef.current
+      const nextLeft = event.clientX - x
+      const nextTop = event.clientY - y
+      const maxLeft = window.innerWidth - 380
+      const maxTop = window.innerHeight - 200
+      setInspectorPosition({
+        left: Math.min(Math.max(16, nextLeft), maxLeft),
+        top: Math.min(Math.max(16, nextTop), maxTop),
+      })
+    }
+
+    const onMouseUp = () => {
+      if (!isDraggingInspector) return
+      setIsDraggingInspector(false)
+      dragOffsetRef.current = null
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [showInspector, isDraggingInspector])
 
   const handleDuplicate = () => {
     const pos = resolvePos()
@@ -360,6 +482,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     const tr = editor.view.state.tr.delete(pos, pos + node.nodeSize)
     editor.view.dispatch(tr)
     editor.view.focus()
+    setShowInspector(false)
   }
 
   const handleMove = (direction: 'up' | 'down') => {
@@ -396,13 +519,39 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
     editor.view.focus()
   }
 
+  const handleInspectorMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    setIsDraggingInspector(true)
+    dragOffsetRef.current = {
+      x: event.clientX - inspectorPosition.left,
+      y: event.clientY - inspectorPosition.top,
+    }
+  }
+
+  const handleOpenInspector = (event: React.MouseEvent) => {
+    event.stopPropagation()
+    if (wrapperRef.current && typeof window !== 'undefined') {
+      const rect = wrapperRef.current.getBoundingClientRect()
+      const left = Math.min(Math.max(16, rect.right + 16), window.innerWidth - 380)
+      const top = Math.min(Math.max(16, rect.top), window.innerHeight - 200)
+      setInspectorPosition({ top, left })
+    }
+    setShowInspector(true)
+  }
+
+  const handleCloseInspector = () => {
+    setShowInspector(false)
+    setIsDraggingInspector(false)
+    dragOffsetRef.current = null
+  }
+
   const toggleCollapse = () => {
     const newCollapsed = !isCollapsed
     
     // Cache content before collapsing
     if (!newCollapsed && contentRef.current) {
-      const text = contentRef.current.textContent || ''
-      setCachedContent(text.trim())
       const html = contentRef.current.innerHTML || ''
       setCachedHtmlContent(html)
     }
@@ -414,8 +563,6 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   // Update cached content when expanded
   useEffect(() => {
     if (!isCollapsed && contentRef.current) {
-      const text = contentRef.current.textContent || ''
-      setCachedContent(text.trim())
       const html = contentRef.current.innerHTML || ''
       setCachedHtmlContent(html)
     }
@@ -601,6 +748,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
   return (
     <>
     <NodeViewWrapper 
+      ref={wrapperRef}
       className="collapsible-block"
       style={{
         borderLeft: isCollapsed ? 'none' : `3px solid ${isHovered ? '#9b59b6' : '#e1e8ed'}`,
@@ -675,7 +823,7 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
               cursor: 'text',
             }}
           >
-            {getDisplayTitle(node.attrs.title ?? title)}
+            {title}
           </span>
         )}
 
@@ -737,6 +885,23 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
             aria-label="Move block down"
           >
             ▼
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              handleOpenInspector(e)
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#708090',
+              fontSize: '14px',
+            }}
+            aria-label="Open block inspector"
+          >
+            🗔
           </button>
           <button
             type="button"
@@ -883,6 +1048,235 @@ function CollapsibleBlockComponent({ node, updateAttributes, editor, getPos }: a
       </div>,
       document.body
     )}
+
+    {showInspector && inspectorEditor && typeof window !== 'undefined' && createPortal(
+      <div
+        ref={inspectorRef}
+        style={{
+          position: 'fixed',
+          top: inspectorPosition.top,
+          left: inspectorPosition.left,
+          width: '360px',
+          maxWidth: '95vw',
+          maxHeight: '70vh',
+          background: '#fff',
+          boxShadow: '0 18px 40px rgba(15, 23, 42, 0.22)',
+          borderRadius: '12px',
+          zIndex: 999999,
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <div
+          onMouseDown={handleInspectorMouseDown}
+          style={{
+            padding: '10px 16px',
+            borderBottom: '1px solid #e1e8ed',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            cursor: isDraggingInspector ? 'grabbing' : 'grab',
+            background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(129,140,248,0.08))',
+            borderTopLeftRadius: '12px',
+            borderTopRightRadius: '12px',
+          }}
+        >
+          <span style={{ fontSize: '13px', fontWeight: 600, color: '#475569', letterSpacing: '0.04em', textTransform: 'uppercase' }}>Block Inspector</span>
+          <button
+            type="button"
+            onClick={handleCloseInspector}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#475569',
+              fontSize: '16px',
+            }}
+            aria-label="Close block inspector"
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          style={{
+            padding: '16px',
+            borderBottom: '1px solid #e1e8ed',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div>
+            <label style={{ fontSize: '12px', color: '#8492a6', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Block title</label>
+            <input
+              type="text"
+              value={title}
+              onChange={handleTitleChange}
+              onBlur={handleTitleBlur}
+              onKeyDown={handleTitleKeyDown}
+              placeholder={DEFAULT_BLOCK_TITLE}
+              style={{
+                width: '100%',
+                marginTop: '6px',
+                padding: '8px 10px',
+                fontSize: '16px',
+                fontWeight: 600,
+                border: '1px solid #d5dfe9',
+                borderRadius: '6px',
+                outline: 'none',
+              }}
+            />
+          </div>
+          {headerMetaLabel && (
+            <div style={{ fontSize: '12px', color: '#708090' }}>{headerMetaLabel}</div>
+          )}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                handleCloseInspector()
+              }}
+              style={{
+                border: 'none',
+                background: 'rgba(99, 102, 241, 0.12)',
+                color: '#6366f1',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+            >
+              Reveal in document
+            </button>
+            <button
+              type="button"
+              onClick={handleCloseInspector}
+              style={{
+                border: 'none',
+                background: 'rgba(148, 163, 184, 0.14)',
+                color: '#475569',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            padding: '16px',
+            overflowY: 'auto',
+            color: '#444',
+          }}
+        >
+          <EditorContent editor={inspectorEditor} />
+        </div>
+      </div>,
+      document.body
+    )}
     </>
   )
+}
+
+function CollapsibleBlockPreview({ node }: any) {
+  const [collapsed, setCollapsed] = useState<boolean>(node.attrs.collapsed ?? false)
+
+  useEffect(() => {
+    setCollapsed(node.attrs.collapsed ?? false)
+  }, [node.attrs.collapsed])
+
+  useEffect(() => {
+    debugLog('CollapsibleBlockPreview', 'RENDER', {
+      metadata: {
+        collapsed: node.attrs.collapsed,
+        childCount: node.childCount,
+        hasContent: !!node.content?.size,
+        jsonPreview: createContentPreview(node.toJSON?.() ?? null),
+      },
+    })
+  })
+
+  const title = getDisplayTitle(node.attrs.title)
+  const stats = formatBlockMeta(computeBlockStats(node))
+
+  return (
+    <NodeViewWrapper
+      className="collapsible-block preview"
+      style={{
+        borderLeft: 'none',
+        padding: '4px 0',
+        marginBottom: '12px',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}
+        onClick={() => setCollapsed(prev => !prev)}
+      >
+        <span
+          style={{
+            fontSize: '16px',
+            transition: 'transform 0.2s ease',
+            transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+            display: 'inline-block',
+            color: '#475569',
+          }}
+        >
+          ▼
+        </span>
+        <span style={{ fontSize: '16px', fontWeight: 600, color: '#1f2937' }}>{title}</span>
+        {stats && (
+          <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#708090' }}>{stats}</span>
+        )}
+      </div>
+
+      {!collapsed && (
+        <div
+          style={{
+            paddingLeft: '20px',
+            marginTop: '8px',
+          }}
+        >
+          <NodeViewContent className="content" />
+        </div>
+      )}
+    </NodeViewWrapper>
+  )
+}
+
+function CollapsibleBlockComponent(props: any) {
+  debugLog('CollapsibleBlockComponent', 'NODE_VIEW_RENDER', {
+    metadata: {
+      inspectorPreview: props.extension?.options?.inspectorPreview ?? false,
+      hasEditor: !!props.editor,
+    },
+  })
+  const isPreview = props.extension?.options?.inspectorPreview ?? false
+  if (isPreview) {
+    return <CollapsibleBlockPreview {...props} />
+  }
+  return <CollapsibleBlockFull {...props} />
+}
+
+function createInspectorExtensions() {
+  return [
+    StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
+    Underline,
+    Highlight,
+    CollapsibleBlock.configure({ inspectorPreview: true }),
+  ]
 }
