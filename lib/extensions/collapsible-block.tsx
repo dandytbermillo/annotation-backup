@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
 import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
+import { TextSelection } from 'prosemirror-state'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
@@ -722,7 +723,7 @@ export const CollapsibleBlock = Node.create({
 
   addCommands() {
     return {
-      insertCollapsibleBlock: () => ({ commands }) => {
+      insertCollapsibleBlock: () => ({ tr, state, dispatch }) => {
         const template = getTemplateById(DEFAULT_TEMPLATE_ID)
         const content = template?.buildContent() ?? [
           {
@@ -731,15 +732,49 @@ export const CollapsibleBlock = Node.create({
           },
         ]
 
-        return commands.insertContent({
-          type: 'collapsibleBlock',
-          attrs: {
-            collapsed: false,
-            title: 'Section Title',
-            templateId: null,
-          },
-          content,
-        })
+        const { schema } = state
+        const paragraphType = schema.nodes.paragraph
+        const collapsibleType = schema.nodes.collapsibleBlock
+        if (!paragraphType || !collapsibleType) {
+          return false
+        }
+
+        const blockContent = content.map(node => schema.nodeFromJSON(node))
+        const blockNode = collapsibleType.create({
+          collapsed: false,
+          title: 'Section Title',
+          templateId: null,
+        }, blockContent)
+        const trailingParagraph = paragraphType.create()
+
+        const insertPos = tr.selection.from
+        tr = tr.replaceSelectionWith(blockNode, false)
+        const blockStart = tr.mapping.map(insertPos, -1)
+
+        let afterBlock = blockStart + blockNode.nodeSize
+        if (afterBlock > tr.doc.content.size) {
+          afterBlock = tr.doc.content.size
+        }
+
+        const existingNodeAfter = afterBlock < tr.doc.content.size ? tr.doc.resolve(afterBlock).nodeAfter : null
+        let trailingStart = afterBlock
+        if (!existingNodeAfter || existingNodeAfter.type !== paragraphType) {
+          tr = tr.insert(afterBlock, trailingParagraph)
+          trailingStart = afterBlock
+          afterBlock = trailingStart + trailingParagraph.nodeSize
+        }
+
+        const blockInDoc = tr.doc.nodeAt(blockStart)
+        let targetPos = blockStart + 1
+        if (!(blockInDoc && blockInDoc.firstChild && blockInDoc.firstChild.isTextblock)) {
+          targetPos = Math.min(trailingStart + 1, tr.doc.content.size)
+        }
+
+        targetPos = Math.min(targetPos, tr.doc.content.size)
+        tr = tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos)))
+        dispatch(tr.scrollIntoView())
+
+        return true
       },
     }
   },

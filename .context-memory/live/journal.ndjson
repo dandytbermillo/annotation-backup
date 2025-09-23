@@ -169,3 +169,6 @@
 {"ts":"2025-09-23T15:54:26.3NZ","type":"note","summary":"After template apply, reapply title attr via updateAttributes and emit debug logs."}
 {"ts":"2025-09-23T18:36:34.596Z","type":"commit","sha":"c2e17724029348540e38b1e6a2395f5693ded863","files_changed":4,"message":"missing block title after inserting template fixed"}
 {"ts":"2025-09-23T20:20:34Z","type":"note","summary":"Reviewed delete-warning request and inspected Tiptap editor setup."}
+{"ts":"2025-09-23T20:53:50.106Z","type":"commit","sha":"8f244e6b45148584ee4ba3fd3cc457a9d31e773c","files_changed":8,"message":"added hover delay time for buttons(panel header)"}
+{"ts":"2025-09-23T21:54:29.160Z","type":"commit","sha":"4449814c6b5d2f4507dda255c0fc64cb3306e267","files_changed":1,"message":"docs: add block insertion research plan"}
+{"ts":"2025-09-23T22:35:32.110Z","type":"commit","sha":"6ee2d3ae0c7641147a138f83da4ffd57bbfa18a8","files_changed":1,"message":"docs: record collapsible block trailing paragraph fix"}
