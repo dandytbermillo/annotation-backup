@@ -20,7 +20,11 @@ function redact(s) {
 function parseLines(lines) {
   const out = []
   for (const l of lines) {
-    try { out.push(JSON.parse(l)) } catch {}
+    try {
+      out.push(JSON.parse(l))
+    } catch {
+      // ignore malformed JSON entries without crashing summary generation
+    }
   }
   return out
 }
@@ -35,6 +39,39 @@ function fmtTs(ts) {
   } catch {
     return ''
   }
+}
+
+function coerceArray(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value
+  return [value]
+}
+
+function formatNoteEvent(event) {
+  const basePieces = []
+  if (event.summary) {
+    basePieces.push(event.summary)
+  }
+
+  const details = coerceArray(event.details)
+  if (details.length) {
+    basePieces.push(...details)
+  }
+
+  if (event.text) {
+    basePieces.unshift(event.text)
+  }
+
+  const combined = basePieces
+    .map(piece => String(piece).trim())
+    .filter(Boolean)
+
+  if (!combined.length) {
+    return '(no details)'
+  }
+
+  // Compact multi-line notes by joining with separator
+  return combined.map(redact).join(' — ')
 }
 
 function render(state, events) {
@@ -52,7 +89,7 @@ function render(state, events) {
     else if (e.type === 'issue') bullets.push(`- issue${ts} (${e.area||'general'}): ${redact(e.desc||'')}`)
     else if (e.type === 'fix') bullets.push(`- fix${ts} (${e.area||'general'}): ${redact(e.desc||'')}`)
     else if (e.type === 'test') bullets.push(`- test${ts}: ${e.result} (${e.count||0})`)
-    else if (e.type === 'note') bullets.push(`- note${ts}: ${redact(e.text||'')}`)
+    else if (e.type === 'note') bullets.push(`- note${ts}: ${formatNoteEvent(e)}`)
   }
 
   // Recent chat messages (last 6)
@@ -71,6 +108,9 @@ function render(state, events) {
     healthLines.push(`- Tests: ${latestTest.result} (${latestTest.count||0})`)
   }
 
+  const totalEvents = events.length
+  const recentLabel = `Recent Activity (showing last ${recent.length || 0} of ${totalEvents})`
+
   const lines = [
     '# Context-OS — Live Context Summary',
     '',
@@ -79,7 +119,7 @@ function render(state, events) {
     `- Branch: ${current.branch}`,
     `- Status: ${current.status}`,
     '',
-    'Recent Activity',
+    recentLabel,
     ...(bullets.length ? bullets : ['- (none)']),
     '',
     'Recent Chat',

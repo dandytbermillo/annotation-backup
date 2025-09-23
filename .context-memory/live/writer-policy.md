@@ -10,6 +10,7 @@ This policy records the user-approved change allowing assistant writes within `.
 Automation
 - Auto Chat Logging: Enabled. User and assistant messages are recorded as `chat` events in `journal.ndjson` with timestamps.
 - Auto Refresh: Enabled. `summary.md` is refreshed after notable updates and chat events.
+- Summarizer Notes (2025-09-23): `summarize.js` now renders note events using their `text`, `summary`, and `details` fields and labels the activity section with the total journal count. Keep this behaviour intact so the next session reuses the richer summary.
 
 Output Styling Preferences (User-Requested)
 - Emphasis: Use underlined text for important notices in CLI/terminal outputs (ANSI underline `\x1b[4m...\x1b[0m`). Avoid background colors.

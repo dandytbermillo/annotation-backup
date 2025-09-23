@@ -156,3 +156,9 @@
 {"ts":"2025-09-23T04:36:38.736Z","type":"commit","sha":"25863594f78d63c123397fa8d88a4996cb962f95","files_changed":4,"message":"fixing the block base (1)"}
 {"ts":"2025-09-23T05:10:10.221Z","type":"commit","sha":"cfc98974b27fa161435f16448a0a996e1713947f","files_changed":5,"message":"create a documentation on resolving flushsync warning in the block inspector"}
 {"ts":"2025-09-23T05:25:45.344Z","type":"commit","sha":"ad232b573400cb51cbde55cbc2196ad77180253c","files_changed":6,"message":"fixed the block base element spacing"}
+{"ts":"2025-09-23T12:29:50.889Z","type":"commit","sha":"fd8f7fd1005c8b45bb491a986cdb3f629be972e4","files_changed":2,"message":"adding insert template"}
+{"ts":"2025-09-23T12:49:15.3NZ","type":"note","summary":"Prototyped collapsible block template picker with preview popover.","details":["Added template specs","Wired header chip + portal"]}
+{"ts":"2025-09-23T13:15:15.3NZ","type":"note","summary":"Added undo support for collapsible block templates.","details":["Capture pre-template snapshot","Undo chip and popover action"]}
+{"ts":"2025-09-23T13:44:54.3NZ","type":"note","summary":"Template preview popover now editable with apply/cancel/reset controls.","details":["Added mini editor","Buttons gate insertion"]}
+{"ts":"2025-09-23T14:48:15.3NZ","type":"note","summary":"Documented summarize.js behaviour in writer policy.","details":["Added 2025-09-23 entry under Automation"]}
+{"ts":"2025-09-23T14:59:00.3NZ","type":"note","summary":"Made template chooser draggable and preview editable.","details":["Header drag handle","Preview editor focus fix"]}

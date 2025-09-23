@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
 import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
@@ -33,15 +33,6 @@ type CollapsibleTemplate = {
 }
 
 const DEFAULT_TEMPLATE_ID = 'outline'
-
-type TemplateSnapshot = {
-  nodeJSON: JSONNode
-}
-
-const buildTemplateDoc = (template: CollapsibleTemplate): JSONNode => ({
-  type: 'doc',
-  content: template.buildContent(),
-})
 
 const COLLAPSIBLE_TEMPLATES: CollapsibleTemplate[] = [
   {
@@ -771,145 +762,18 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [templateMenuPosition, setTemplateMenuPosition] = useState({ top: 0, left: 0 })
   const templateButtonRef = useRef<HTMLButtonElement | null>(null)
   const templateMenuRef = useRef<HTMLDivElement | null>(null)
-  const templateEditorSuppressRef = useRef(false)
-  const [isTemplateMenuDragging, setIsTemplateMenuDragging] = useState(false)
-  const templateMenuDragOffsetRef = useRef<{ x: number; y: number } | null>(null)
-  const [templateUndoSnapshot, setTemplateUndoSnapshot] = useState<TemplateSnapshot | null>(null)
+  const [hoveredTemplateId, setHoveredTemplateId] = useState<string | null>(null)
   const defaultTemplate = getTemplateById(DEFAULT_TEMPLATE_ID)!
   const storedTemplate = getTemplateById(node.attrs.templateId)
   const appliedTemplate = storedTemplate ?? defaultTemplate
   const hasExplicitTemplate = Boolean(node.attrs.templateId)
   const templateButtonLabel = hasExplicitTemplate ? 'Change template' : 'Insert template'
-  const [hoveredTemplateId, setHoveredTemplateId] = useState<string | null>(null)
-  const [draftTemplateId, setDraftTemplateId] = useState<string>(appliedTemplate.id)
-  const draftTemplate = getTemplateById(draftTemplateId) ?? defaultTemplate
-  const [isDraftDirty, setIsDraftDirty] = useState(false)
+  const previewTemplate = hoveredTemplateId
+    ? getTemplateById(hoveredTemplateId) ?? appliedTemplate
+    : appliedTemplate
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
   const headerMetaLabel = metaBase
-
-  const templatePreviewEditor = useEditor(
-    {
-      extensions: createTemplatePreviewExtensions(),
-      editable: true,
-      content: buildTemplateDoc(appliedTemplate),
-      editorProps: {
-        attributes: {
-          class: 'template-preview-editor',
-          style:
-            'min-height:180px;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:13px;line-height:1.55;overflow:auto;background-color:#ffffff;',
-        },
-      },
-    },
-    []
-  )
-
-  const setTemplateEditorContent = useCallback(
-    (doc: JSONNode, dirty = false) => {
-      if (!templatePreviewEditor) {
-        setIsDraftDirty(dirty)
-        return
-      }
-
-      try {
-        templateEditorSuppressRef.current = true
-        templatePreviewEditor.commands.setContent(doc, false)
-        templatePreviewEditor.setEditable(true)
-        setIsDraftDirty(dirty)
-      } catch (error) {
-        console.error('Failed to load template preview', error)
-      } finally {
-        const release = () => {
-          templateEditorSuppressRef.current = false
-        }
-
-        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-          window.requestAnimationFrame(release)
-        } else {
-          setTimeout(release, 0)
-        }
-      }
-    },
-    [templatePreviewEditor]
-  )
-
-  useEffect(() => {
-    if (!templatePreviewEditor) {
-      return
-    }
-
-    const handleUpdate = () => {
-      if (templateEditorSuppressRef.current) {
-        return
-      }
-      setIsDraftDirty(true)
-    }
-
-    templatePreviewEditor.on('update', handleUpdate)
-
-    return () => {
-      templatePreviewEditor.off('update', handleUpdate)
-    }
-  }, [templatePreviewEditor])
-
-  useEffect(() => {
-    if (!isTemplateMenuDragging) {
-      return
-    }
-
-    const handleMouseMove = (event: MouseEvent) => {
-      if (!templateMenuDragOffsetRef.current || !templateMenuRef.current) {
-        return
-      }
-      event.preventDefault()
-
-      const { x, y } = templateMenuDragOffsetRef.current
-      const menuRect = templateMenuRef.current.getBoundingClientRect()
-      const menuWidth = menuRect.width
-      const menuHeight = menuRect.height
-
-      const nextLeftRaw = event.clientX - x
-      const nextTopRaw = event.clientY - y
-
-      const maxLeft = Math.max(16, window.innerWidth - menuWidth - 16)
-      const maxTop = Math.max(16, window.innerHeight - menuHeight - 16)
-
-      const nextLeft = Math.min(Math.max(16, nextLeftRaw), maxLeft)
-      const nextTop = Math.min(Math.max(16, nextTopRaw), maxTop)
-
-      setTemplateMenuPosition({ top: nextTop, left: nextLeft })
-    }
-
-    const handleMouseUp = () => {
-      setIsTemplateMenuDragging(false)
-      templateMenuDragOffsetRef.current = null
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [isTemplateMenuDragging])
-
-  useEffect(() => {
-    if (!templatePreviewEditor || !isTemplateMenuOpen) {
-      return
-    }
-
-    setTemplateEditorContent(buildTemplateDoc(draftTemplate), false)
-  }, [templatePreviewEditor, draftTemplateId, draftTemplate, isTemplateMenuOpen, setTemplateEditorContent])
-
-  useEffect(() => {
-    if (isTemplateMenuOpen) {
-      return
-    }
-
-    setDraftTemplateId(prev => (prev === appliedTemplate.id ? prev : appliedTemplate.id))
-    setIsDraftDirty(false)
-  }, [isTemplateMenuOpen, appliedTemplate.id])
 
   const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
 
@@ -1055,8 +919,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const closeTemplateMenu = () => {
     setIsTemplateMenuOpen(false)
     setHoveredTemplateId(null)
-    setIsTemplateMenuDragging(false)
-    templateMenuDragOffsetRef.current = null
   }
 
   const handleTemplateButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -1074,9 +936,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       } else {
         setTemplateMenuPosition({ top: 120, left: 120 })
       }
-      setHoveredTemplateId(null)
-      setDraftTemplateId(appliedTemplate.id)
-      setTemplateEditorContent(buildTemplateDoc(appliedTemplate), false)
       setIsTemplateMenuOpen(true)
       return
     }
@@ -1084,36 +943,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     closeTemplateMenu()
   }
 
-  const handleTemplateSelection = (template: CollapsibleTemplate) => {
-    setDraftTemplateId(template.id)
-    setHoveredTemplateId(null)
-    setTemplateEditorContent(buildTemplateDoc(template), false)
-    setIsDraftDirty(false)
-  }
-
-  const handleTemplateMenuDragStart = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) {
-      return
-    }
-    if (!templateMenuRef.current) {
-      return
-    }
-
-    event.preventDefault()
-    event.stopPropagation()
-    const rect = templateMenuRef.current.getBoundingClientRect()
-    templateMenuDragOffsetRef.current = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    }
-    setIsTemplateMenuDragging(true)
-  }
-
-  const handleResetTemplatePreview = () => {
-    setTemplateEditorContent(buildTemplateDoc(draftTemplate), false)
-  }
-
-  const applyTemplateToBlock = (template: CollapsibleTemplate, docJSON?: JSONNode | null) => {
+  const handleApplyTemplate = (template: CollapsibleTemplate) => {
     const pos = resolvePos()
     if (pos == null) {
       return
@@ -1132,18 +962,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
         return
       }
 
-      setTemplateUndoSnapshot(current => {
-        if (current) {
-          return current
-        }
-        return { nodeJSON: node.toJSON() }
-      })
-
-      const templateDoc = docJSON ?? buildTemplateDoc(template)
-      const rawContent = Array.isArray((templateDoc as any)?.content)
-        ? (templateDoc as any).content
-        : []
-      const contentNodes = rawContent.map((spec: any) => schema.nodeFromJSON(spec))
+      const contentNodes = template.buildContent().map(spec => schema.nodeFromJSON(spec))
       const nextAttrs: Record<string, any> = {
         ...node.attrs,
         collapsed: false,
@@ -1166,63 +985,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       view.focus()
       setIsCollapsed(false)
       setCachedHtmlContent('')
-      setIsDraftDirty(false)
       closeTemplateMenu()
     } catch (error) {
       console.error('Failed to apply template', error)
-    }
-  }
-
-  const handleApplyDraftTemplate = () => {
-    const templateToApply = draftTemplate
-    const editorDoc = templatePreviewEditor?.getJSON?.() ?? null
-    applyTemplateToBlock(templateToApply, editorDoc)
-  }
-
-  const handleCancelTemplateSelection = () => {
-    closeTemplateMenu()
-    setTemplateEditorContent(buildTemplateDoc(appliedTemplate), false)
-  }
-
-  const handleUndoTemplate = () => {
-    if (!templateUndoSnapshot) {
-      return
-    }
-
-    const pos = resolvePos()
-    if (pos == null) {
-      return
-    }
-
-    const view = editor?.view
-    if (!view) {
-      return
-    }
-
-    const snapshot = templateUndoSnapshot
-
-    try {
-      const { state, dispatch } = view
-      const restoredBlock = state.schema.nodeFromJSON(snapshot.nodeJSON as any)
-      if (!restoredBlock) {
-        return
-      }
-
-      const tr = state.tr.replaceWith(pos, pos + node.nodeSize, restoredBlock)
-      dispatch(tr)
-      view.focus()
-
-      const snapshotAttrs = (snapshot.nodeJSON as any)?.attrs ?? {}
-      const restoredCollapsed = Boolean(snapshotAttrs.collapsed)
-      const restoredTitle = getDisplayTitle(snapshotAttrs.title)
-      setIsCollapsed(restoredCollapsed)
-      setTitle(restoredTitle)
-      setIsEditingTitle(false)
-      setCachedHtmlContent('')
-      setTemplateUndoSnapshot(null)
-      closeTemplateMenu()
-    } catch (error) {
-      console.error('Failed to restore template snapshot', error)
     }
   }
 
@@ -1576,30 +1341,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               {appliedTemplate.label}
             </span>
           )}
-          {templateUndoSnapshot && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                handleUndoTemplate()
-              }}
-              style={{
-                border: '1px solid #f1c4c4',
-                background: 'rgba(252, 231, 243, 0.65)',
-                color: '#b91c1c',
-                padding: '2px 10px',
-                borderRadius: '9999px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 600,
-                lineHeight: 1.4,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Undo template
-            </button>
-          )}
           <button
             type="button"
             ref={templateButtonRef}
@@ -1781,10 +1522,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               letterSpacing: '0.08em',
               textTransform: 'uppercase',
               color: '#475569',
-              cursor: isTemplateMenuDragging ? 'grabbing' : 'grab',
-              userSelect: 'none',
             }}
-            onMouseDown={handleTemplateMenuDragStart}
           >
             Choose template
           </div>
@@ -1804,8 +1542,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               }}
             >
               {COLLAPSIBLE_TEMPLATES.map(template => {
-                const isEditing = template.id === draftTemplateId
-                const isCurrent = template.id === appliedTemplate.id
+                const isActive = template.id === appliedTemplate.id
                 const isHovered = hoveredTemplateId === template.id
 
                 return (
@@ -1815,7 +1552,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                     onClick={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
-                      handleTemplateSelection(template)
+                      handleApplyTemplate(template)
                     }}
                     onMouseEnter={() => setHoveredTemplateId(template.id)}
                     onMouseLeave={() => setHoveredTemplateId(null)}
@@ -1824,9 +1561,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                     style={{
                       textAlign: 'left',
                       border: 'none',
-                      background: isEditing
-                        ? 'rgba(99, 102, 241, 0.18)'
-                        : isHovered
+                      background: isHovered
+                        ? 'rgba(99, 102, 241, 0.15)'
+                        : isActive
                           ? 'rgba(99, 102, 241, 0.08)'
                           : 'transparent',
                       padding: '8px 10px',
@@ -1851,7 +1588,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                       >
                         {template.label}
                       </span>
-                      {template.id === DEFAULT_TEMPLATE_ID && !hasExplicitTemplate && !isEditing && !isCurrent && (
+                      {template.id === DEFAULT_TEMPLATE_ID && !hasExplicitTemplate && (
                         <span
                           style={{
                             fontSize: '11px',
@@ -1861,18 +1598,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                           Default
                         </span>
                       )}
-                      {isEditing && (
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            color: '#1d4ed8',
-                            fontWeight: 600,
-                          }}
-                        >
-                          Editing
-                        </span>
-                      )}
-                      {!isEditing && isCurrent && (
+                      {template.id === appliedTemplate.id && hasExplicitTemplate && (
                         <span
                           style={{
                             fontSize: '11px',
@@ -1880,7 +1606,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                             fontWeight: 600,
                           }}
                         >
-                          Current
+                          Selected
                         </span>
                       )}
                     </div>
@@ -1900,186 +1626,48 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             </div>
             <div
               style={{
-                width: '240px',
+                width: '150px',
                 borderLeft: '1px solid #e2e8f0',
                 paddingLeft: '12px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: '10px',
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <span
-                  style={{
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    color: '#1f2937',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  Preview & edit
-                </span>
-                <span
-                  style={{
-                    fontSize: '11px',
-                    color: '#64748b',
-                  }}
-                >
-                  {draftTemplate.description}
-                </span>
-              </div>
-              <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {templatePreviewEditor ? (
-                  <div
-                    onMouseDown={(event) => {
-                      event.stopPropagation()
-                      templatePreviewEditor.commands.focus()
-                    }}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <EditorContent editor={templatePreviewEditor} />
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      border: '1px dashed #cbd5f5',
-                      borderRadius: '8px',
-                      padding: '16px',
-                      fontSize: '12px',
-                      color: '#64748b',
-                    }}
-                  >
-                    Loading template editor…
-                  </div>
-                )}
-              </div>
-              <div
-                style={{
-                  fontSize: '11px',
-                  color: '#64748b',
-                }}
-              >
-                Changes appear in the block only after you press Apply.
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: '8px',
-                  marginTop: '4px',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    handleResetTemplatePreview()
-                  }}
-                  disabled={!isDraftDirty}
-                  style={{
-                    border: '1px solid rgba(99, 102, 241, 0.25)',
-                    background: 'transparent',
-                    color: isDraftDirty ? '#4c51bf' : '#94a3b8',
-                    padding: '4px 12px',
-                    borderRadius: '8px',
-                    cursor: isDraftDirty ? 'pointer' : 'not-allowed',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    handleCancelTemplateSelection()
-                  }}
-                  style={{
-                    border: '1px solid #e2e8f0',
-                    background: 'rgba(248, 250, 252, 0.8)',
-                    color: '#475569',
-                    padding: '4px 12px',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    handleApplyDraftTemplate()
-                  }}
-                  style={{
-                    border: 'none',
-                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                    color: '#ffffff',
-                    padding: '4px 14px',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    boxShadow: '0 8px 16px rgba(99, 102, 241, 0.25)',
-                  }}
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          </div>
-          {templateUndoSnapshot && (
-            <div
-              style={{
-                borderTop: '1px solid #e2e8f0',
-                padding: '12px 16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                background: 'rgba(248, 250, 252, 0.85)',
+                gap: '6px',
               }}
             >
               <span
                 style={{
                   fontSize: '12px',
-                  color: '#475569',
-                  flex: '1 1 auto',
+                  fontWeight: 700,
+                  color: '#1f2937',
                 }}
               >
-                Reverts to your original block content.
+                Preview
               </span>
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  handleUndoTemplate()
-                }}
+              <span
                 style={{
-                  border: '1px solid #f1c4c4',
-                  background: 'rgba(252, 231, 243, 0.85)',
-                  color: '#b91c1c',
-                  padding: '4px 12px',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
+                  fontSize: '11px',
+                  color: '#64748b',
                 }}
               >
-                Undo template swap
-              </button>
+                {previewTemplate.description}
+              </span>
+              <div
+                style={{
+                  marginTop: '8px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  color: '#0f172a',
+                }}
+              >
+                {previewTemplate.previewLines.map((line, index) => (
+                  <span key={`${previewTemplate.id}-line-${index}`} style={{ fontSize: '12px' }}>
+                    {line}
+                  </span>
+                ))}
+              </div>
             </div>
-          )}
+          </div>
         </div>,
         document.body
       )}
@@ -2404,15 +1992,6 @@ function CollapsibleBlockComponent(props: any) {
     return <CollapsibleBlockPreview {...props} />
   }
   return <CollapsibleBlockFull {...props} />
-}
-
-function createTemplatePreviewExtensions() {
-  return [
-    StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
-    Underline,
-    Highlight,
-    AnnotationMark,
-  ]
 }
 
 function createInspectorExtensions() {
