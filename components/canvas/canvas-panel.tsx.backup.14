@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
+import { useRef, useState, useEffect, useReducer, useCallback } from "react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import dynamic from 'next/dynamic'
@@ -49,7 +49,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Layer management integration
   const layerManager = useLayerManager()
-  const layerBandInfo = layerManager.getLayerBandInfo(panelId)
   const { node: canvasNode } = useCanvasNode(panelId, 'panel', position)
   
   // State to track render position and prevent snap-back during drag
@@ -83,265 +82,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
     setCollapsibleSelection(snapshot)
   }, [])
-
-  // Header action overflow management
-  const ACTION_GAP = 8
-  const actionsContainerRef = useRef<HTMLDivElement | null>(null)
-  const formatActionRef = useRef<HTMLDivElement | null>(null)
-  const overflowButtonRef = useRef<HTMLButtonElement | null>(null)
-  const actionRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const actionWidthsRef = useRef<Record<string, number>>({})
-  const [hiddenActionIds, setHiddenActionIds] = useState<string[]>([])
-  const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false)
-
-  const registerActionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
-    actionRefs.current[id] = el
-  }, [])
-
-  const closeOverflowMenu = useCallback(() => {
-    setIsOverflowMenuOpen(false)
-  }, [])
-
-  const handleBranchesButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
-    event?.stopPropagation()
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-
-    if (isSidebarVisible) {
-      setIsSidebarVisible(false)
-      setIsSidebarHovering(false)
-    } else {
-      setIsSidebarVisible(true)
-      setIsSidebarHovering(true)
-    }
-
-    closeOverflowMenu()
-  }, [closeOverflowMenu, isSidebarVisible])
-
-  const handleBranchesButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-    if (sidebarTimeoutRef.current) {
-      clearTimeout(sidebarTimeoutRef.current)
-    }
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-    sidebarShowTimeoutRef.current = setTimeout(() => {
-      setIsSidebarHovering(true)
-      setIsSidebarVisible(true)
-      sidebarShowTimeoutRef.current = null
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [])
-
-  const handleBranchesButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-    sidebarTimeoutRef.current = setTimeout(() => {
-      setIsSidebarHovering(false)
-      setIsSidebarVisible(false)
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [])
-
-  const positionAnnotationToolbar = useCallback((target: HTMLElement) => {
-    const toolbar = document.getElementById("annotation-toolbar")
-    if (!toolbar) return
-
-    const rect = target.getBoundingClientRect()
-    toolbar.style.position = "fixed"
-    toolbar.style.left = `${rect.left + rect.width / 2}px`
-    toolbar.style.top = `${rect.bottom + 8}px`
-    toolbar.style.opacity = "1"
-    toolbar.style.pointerEvents = "auto"
-    toolbar.classList.add("visible")
-  }, [])
-
-  const hideAnnotationToolbar = useCallback(() => {
-    const toolbar = document.getElementById("annotation-toolbar")
-    if (!toolbar) return
-    toolbar.style.opacity = "0"
-    toolbar.style.pointerEvents = "none"
-    toolbar.classList.remove("visible")
-  }, [])
-
-  const handleActionsButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
-    event?.stopPropagation()
-
-    if (actionsShowTimeoutRef.current) {
-      clearTimeout(actionsShowTimeoutRef.current)
-      actionsShowTimeoutRef.current = null
-    }
-
-    const target = (event?.currentTarget as HTMLElement) ?? overflowButtonRef.current ?? null
-
-    const nextVisible = !isActionsVisible
-    setIsActionsVisible(nextVisible)
-    setIsActionsHovering(false)
-
-    if (nextVisible && target) {
-      positionAnnotationToolbar(target)
-    } else if (!nextVisible) {
-      hideAnnotationToolbar()
-    }
-
-    closeOverflowMenu()
-  }, [closeOverflowMenu, hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
-
-  const handleActionsButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = "rgba(255,255,255,0.3)"
-    if (actionsTimeoutRef.current) {
-      clearTimeout(actionsTimeoutRef.current)
-    }
-    if (actionsShowTimeoutRef.current) {
-      clearTimeout(actionsShowTimeoutRef.current)
-      actionsShowTimeoutRef.current = null
-    }
-
-    const buttonEl = event.currentTarget
-
-    const showToolbar = (target: HTMLButtonElement) => {
-      setIsActionsHovering(true)
-      positionAnnotationToolbar(target)
-    }
-
-    if (isActionsVisible || isActionsHovering) {
-      showToolbar(buttonEl)
-      return
-    }
-
-    actionsShowTimeoutRef.current = setTimeout(() => {
-      showToolbar(buttonEl)
-      actionsShowTimeoutRef.current = null
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [isActionsHovering, isActionsVisible, positionAnnotationToolbar])
-
-  const handleActionsButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = "rgba(255,255,255,0.2)"
-    if (actionsShowTimeoutRef.current) {
-      clearTimeout(actionsShowTimeoutRef.current)
-      actionsShowTimeoutRef.current = null
-    }
-    actionsTimeoutRef.current = setTimeout(() => {
-      setIsActionsHovering(false)
-      const toolbar = document.getElementById("annotation-toolbar")
-      if (toolbar && !toolbar.matches(':hover')) {
-        hideAnnotationToolbar()
-      }
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [hideAnnotationToolbar])
-
-  const recalcOverflow = useCallback(() => {
-    const container = actionsContainerRef.current
-    if (!container) {
-      return
-    }
-
-    const containerWidth = container.getBoundingClientRect().width
-    if (!containerWidth) {
-      if (hiddenActionIds.length > 0) {
-        setHiddenActionIds([])
-      }
-      return
-    }
-
-    const overflowWidth = overflowButtonRef.current?.getBoundingClientRect().width ?? 36
-    const measuredFormatWidth = formatActionRef.current?.getBoundingClientRect().width ?? 0
-    const storedFormatWidth = actionWidthsRef.current.format ?? 0
-    const formatWidth = measuredFormatWidth > 0 ? measuredFormatWidth : storedFormatWidth
-    if (measuredFormatWidth > 0) {
-      actionWidthsRef.current.format = measuredFormatWidth
-    }
-
-    const order = layerManager.isEnabled
-      ? ['bringToFront', 'sendToBack', 'branches', 'actions']
-      : ['branches', 'actions']
-
-    const widthMap: Record<string, number> = {}
-    order.forEach((id) => {
-      const element = actionRefs.current[id]
-      const measured = element?.getBoundingClientRect().width ?? 0
-      const stored = actionWidthsRef.current[id] ?? 0
-      const width = measured > 0 ? measured : stored
-      if (width > 0) {
-        widthMap[id] = width
-        if (measured > 0) {
-          actionWidthsRef.current[id] = measured
-        }
-      }
-    })
-
-    const availableIds = order.filter((id) => widthMap[id] !== undefined)
-    let visibleIds: string[] = []
-    let hiddenIds: string[] = []
-    let usedWidth = formatWidth
-    let visibleCount = formatWidth > 0 ? 1 : 0
-
-    availableIds.forEach((id) => {
-      const width = widthMap[id] ?? 0
-      if (width === 0) {
-        return
-      }
-      const gapBefore = visibleCount > 0 ? ACTION_GAP : 0
-      if (usedWidth + gapBefore + width <= containerWidth) {
-        visibleIds.push(id)
-        usedWidth += gapBefore + width
-        visibleCount += 1
-      } else {
-        hiddenIds.push(id)
-      }
-    })
-
-    if (hiddenIds.length > 0) {
-      const computeUsage = (ids: string[]) => {
-        let width = formatWidth
-        let count = formatWidth > 0 ? 1 : 0
-        ids.forEach((id) => {
-          const w = widthMap[id] ?? 0
-          if (w === 0) {
-            return
-          }
-          width += (count > 0 ? ACTION_GAP : 0) + w
-          count += 1
-        })
-        return { width, count }
-      }
-
-      let { width: recomputedWidth, count } = computeUsage(visibleIds)
-      while (
-        visibleIds.length > 0 &&
-        recomputedWidth + (count > 0 ? ACTION_GAP : 0) + overflowWidth > containerWidth
-      ) {
-        const removed = visibleIds.pop()
-        if (!removed) {
-          break
-        }
-        hiddenIds.unshift(removed)
-        const recalculated = computeUsage(visibleIds)
-        recomputedWidth = recalculated.width
-        count = recalculated.count
-      }
-    }
-
-    const arraysEqual = (a: string[], b: string[]) => {
-      if (a.length !== b.length) {
-        return false
-      }
-      return a.every((value, index) => value === b[index])
-    }
-
-    if (!arraysEqual(hiddenActionIds, hiddenIds)) {
-      setHiddenActionIds(hiddenIds)
-    }
-
-    if (hiddenIds.length === 0 && isOverflowMenuOpen) {
-      setIsOverflowMenuOpen(false)
-    }
-  }, [ACTION_GAP, hiddenActionIds, isOverflowMenuOpen, layerManager.isEnabled])
   
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
@@ -448,53 +188,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [isSidebarHovering, isSidebarVisible, isActionsHovering, isActionsVisible, panelId])
   
-  useLayoutEffect(() => {
-    recalcOverflow()
-  }, [recalcOverflow])
-
-  useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') {
-      return
-    }
-    const container = actionsContainerRef.current
-    if (!container) {
-      return
-    }
-    const observer = new ResizeObserver(() => {
-      recalcOverflow()
-    })
-    observer.observe(container)
-    return () => {
-      observer.disconnect()
-    }
-  }, [recalcOverflow])
-
-  useEffect(() => {
-    if (!isOverflowMenuOpen) {
-      return
-    }
-
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (!actionsContainerRef.current?.contains(target)) {
-        setIsOverflowMenuOpen(false)
-      }
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOverflowMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isOverflowMenuOpen])
-
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
   
@@ -1714,295 +1407,281 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         </div>
         
         {/* Right side buttons */}
-        <div
-          ref={actionsContainerRef}
-          style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: `${ACTION_GAP}px`,
-            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
-            transition: 'opacity 0.2s ease',
-            pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none',
-            position: 'relative'
-          }}
-        >
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '8px',
+          opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
+          transition: 'opacity 0.2s ease',
+          pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none'
+        }}>
+          {/* Layer action buttons - only show when LayerManager is enabled */}
           {layerManager.isEnabled && (
             <>
-              <div
-                ref={registerActionRef('bringToFront')}
-                style={{
-                  display: hiddenActionIds.includes('bringToFront') ? 'none' : 'flex',
+              {/* Bring to Front button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.bringToFront(panelId)
                 }}
-              >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    layerManager.bringToFront(panelId)
-                  }}
-                  disabled={layerBandInfo?.isAtTop}
-                  style={{
-                    background: 'rgba(255,255,255,0.2)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    color: 'white',
-                    fontSize: '12px',
-                    opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!layerBandInfo?.isAtTop) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                  }}
-                  title="Bring to front"
-                >
-                  ↑
-                </button>
-              </div>
-
-              <div
-                ref={registerActionRef('sendToBack')}
+                disabled={layerManager.getLayerBandInfo(panelId)?.isAtTop}
                 style={{
-                  display: hiddenActionIds.includes('sendToBack') ? 'none' : 'flex',
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 0.5 : 1,
                 }}
+                onMouseEnter={(e) => {
+                  if (!layerManager.getLayerBandInfo(panelId)?.isAtTop) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Bring to front"
               >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    layerManager.sendToBack(panelId)
-                  }}
-                  disabled={layerBandInfo?.isAtBottom}
-                  style={{
-                    background: 'rgba(255,255,255,0.2)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    color: 'white',
-                    fontSize: '12px',
-                    opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!layerBandInfo?.isAtBottom) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                  }}
-                  title="Send to back"
-                >
-                  ↓
-                </button>
-              </div>
+                ↑
+              </button>
+              
+              {/* Send to Back button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  layerManager.sendToBack(panelId)
+                }}
+                disabled={layerManager.getLayerBandInfo(panelId)?.isAtBottom}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!layerManager.getLayerBandInfo(panelId)?.isAtBottom) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Send to back"
+              >
+                ↓
+              </button>
             </>
           )}
-
-          <div
-            ref={formatActionRef}
-            style={{
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
-            <FormatToolbar
-              editorRef={editorRef}
-              panelId={panelId}
-              hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
-              collapsibleSelection={collapsibleSelection}
-            />
-          </div>
-
-          <div
-            ref={registerActionRef('branches')}
-            style={{
-              display: hiddenActionIds.includes('branches') ? 'none' : 'flex'
-            }}
-          >
-            <button
-              id={`branches-button-${panelId}`}
-              onClick={handleBranchesButtonClick}
-              onMouseEnter={handleBranchesButtonMouseEnter}
-              onMouseLeave={handleBranchesButtonMouseLeave}
-              title={isSidebarVisible ? "Hide branches" : "Show branches"}
-              style={{
-                background: "rgba(255,255,255,0.2)",
-                border: "none",
-                borderRadius: "4px",
-                padding: "4px 8px",
-                cursor: "pointer",
-                fontSize: "11px",
-                color: "white",
-                transition: "all 0.2s ease",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                height: "24px",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-                <line x1="14" y1="8" x2="18" y2="8" />
-                <line x1="14" y1="12" x2="18" y2="12" />
-                <line x1="14" y1="16" x2="18" y2="16" />
-              </svg>
-              <span>Branches</span>
-            </button>
-          </div>
-
-          <div
-            ref={registerActionRef('actions')}
-            style={{
-              display: hiddenActionIds.includes('actions') ? 'none' : 'flex'
-            }}
-          >
-            <button
-              id={`actions-button-${panelId}`}
-              onClick={handleActionsButtonClick}
-              onMouseEnter={handleActionsButtonMouseEnter}
-              onMouseLeave={handleActionsButtonMouseLeave}
-              title="Create annotation"
-              style={{
-                background: "rgba(255,255,255,0.2)",
-                border: "none",
-                borderRadius: "4px",
-                padding: "4px 8px",
-                cursor: "pointer",
-                fontSize: "11px",
-                color: "white",
-                transition: "all 0.2s ease",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                height: "24px",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              <span>Actions</span>
-            </button>
-          </div>
-
+          
+          {/* Format Toolbar */}
+          <FormatToolbar
+            editorRef={editorRef}
+            panelId={panelId}
+            hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
+            collapsibleSelection={collapsibleSelection}
+          />
+          
+          {/* Sidebar Toggle button */}
           <button
-            ref={overflowButtonRef}
-            onClick={(event) => {
-              event.stopPropagation()
-              setIsOverflowMenuOpen((prev) => !prev)
+            id={`branches-button-${panelId}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (sidebarShowTimeoutRef.current) {
+                clearTimeout(sidebarShowTimeoutRef.current)
+                sidebarShowTimeoutRef.current = null
+              }
+              setIsSidebarVisible(!isSidebarVisible)
+              // Clear any hover state when clicking
+              if (sidebarTimeoutRef.current) {
+                clearTimeout(sidebarTimeoutRef.current)
+              }
+              setIsSidebarHovering(false)
             }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
+              // Show sidebar on hover
+              if (sidebarTimeoutRef.current) {
+                clearTimeout(sidebarTimeoutRef.current)
+              }
+              if (sidebarShowTimeoutRef.current) {
+                clearTimeout(sidebarShowTimeoutRef.current)
+                sidebarShowTimeoutRef.current = null
+              }
+
+              if (isSidebarVisible || isSidebarHovering) {
+                setIsSidebarHovering(true)
+                return
+              }
+
+              sidebarShowTimeoutRef.current = setTimeout(() => {
+                setIsSidebarHovering(true)
+                sidebarShowTimeoutRef.current = null
+              }, HEADER_BUTTON_HOVER_DELAY_MS)
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
+              // Hide sidebar after a delay when mouse leaves
+              if (sidebarShowTimeoutRef.current) {
+                clearTimeout(sidebarShowTimeoutRef.current)
+                sidebarShowTimeoutRef.current = null
+              }
+              sidebarTimeoutRef.current = setTimeout(() => {
+                setIsSidebarHovering(false)
+              }, HEADER_BUTTON_HOVER_DELAY_MS)
+            }}
+            title={isSidebarVisible ? "Hide branches" : "Show branches"}
             style={{
-              display: hiddenActionIds.length > 0 ? 'flex' : 'none',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(255,255,255,0.15)',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '4px 6px',
-              color: 'white',
-              cursor: 'pointer',
-              fontSize: '14px',
-              height: '24px',
+              background: "rgba(255,255,255,0.2)",
+              border: "none",
+              borderRadius: "4px",
+              padding: "4px 8px",
+              cursor: "pointer",
+              fontSize: "11px",
+              color: "white",
+              transition: "all 0.2s ease",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              height: "24px",
             }}
-            title="More actions"
           >
-            »
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+              <line x1="14" y1="8" x2="18" y2="8" />
+              <line x1="14" y1="12" x2="18" y2="12" />
+              <line x1="14" y1="16" x2="18" y2="16" />
+            </svg>
+            <span>Branches</span>
           </button>
+          
+          {/* Actions button (Note/Explore/Promote) */}
+          <button
+            id={`actions-button-${panelId}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (actionsShowTimeoutRef.current) {
+                clearTimeout(actionsShowTimeoutRef.current)
+                actionsShowTimeoutRef.current = null
+              }
+              setIsActionsVisible(!isActionsVisible)
+              // Clear any hover state when clicking
+              if (actionsTimeoutRef.current) {
+                clearTimeout(actionsTimeoutRef.current)
+              }
+              setIsActionsHovering(false)
+              
+              // Toggle the annotation toolbar
+              const toolbar = document.getElementById("annotation-toolbar")
+              if (toolbar) {
+                if (!isActionsVisible) {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  toolbar.style.position = "fixed"
+                  toolbar.style.left = `${rect.left + rect.width / 2}px`
+                  toolbar.style.top = `${rect.bottom + 8}px`
+                  toolbar.style.opacity = "1"
+                  toolbar.style.pointerEvents = "auto"
+                  toolbar.classList.add("visible")
+                } else {
+                  toolbar.style.opacity = "0"
+                  toolbar.style.pointerEvents = "none"
+                  toolbar.classList.remove("visible")
+                }
+              }
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
+              // Show annotation toolbar on hover
+              if (actionsTimeoutRef.current) {
+                clearTimeout(actionsTimeoutRef.current)
+              }
+              if (actionsShowTimeoutRef.current) {
+                clearTimeout(actionsShowTimeoutRef.current)
+                actionsShowTimeoutRef.current = null
+              }
 
-          {isOverflowMenuOpen && hiddenActionIds.length > 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                right: 0,
-                background: 'rgba(22,22,22,0.95)',
-                color: 'white',
-                borderRadius: '8px',
-                padding: '8px 0',
-                boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
-                minWidth: '160px',
-                zIndex: Z_INDEX.DROPDOWN,
-              }}
-            >
-              {hiddenActionIds.map((actionId) => {
-                const isDisabled =
-                  (actionId === 'bringToFront' && layerBandInfo?.isAtTop) ||
-                  (actionId === 'sendToBack' && layerBandInfo?.isAtBottom)
+              const buttonEl = e.currentTarget as HTMLButtonElement
 
-                return (
-                  <button
-                    key={actionId}
-                    onClick={(event) => {
-                      if (isDisabled) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        return
-                      }
+              const showToolbar = (target: HTMLButtonElement) => {
+                setIsActionsHovering(true)
 
-                      if (actionId === 'bringToFront') {
-                        event.stopPropagation()
-                        layerManager.bringToFront(panelId)
-                        closeOverflowMenu()
-                        return
-                      }
-                      if (actionId === 'sendToBack') {
-                        event.stopPropagation()
-                        layerManager.sendToBack(panelId)
-                        closeOverflowMenu()
-                        return
-                      }
-                      if (actionId === 'branches') {
-                        handleBranchesButtonClick(event)
-                        return
-                      }
-                      if (actionId === 'actions') {
-                        handleActionsButtonClick(event)
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      width: '100%',
-                      padding: '8px 16px',
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'white',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      cursor: isDisabled ? 'not-allowed' : 'pointer',
-                      fontSize: '13px',
-                      textAlign: 'left',
-                      opacity: isDisabled ? 0.6 : 1,
-                    }}
-                  >
-                    <span>
-                      {actionId === 'bringToFront' && 'Bring to Front'}
-                      {actionId === 'sendToBack' && 'Send to Back'}
-                      {actionId === 'branches' && 'Branches'}
-                      {actionId === 'actions' && 'Actions'}
-                    </span>
-                    {(actionId === 'bringToFront' && layerBandInfo?.isAtTop) && (
-                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
-                    )}
-                    {(actionId === 'sendToBack' && layerBandInfo?.isAtBottom) && (
-                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          )}
+                // Position the annotation toolbar below the Actions button
+                const toolbar = document.getElementById("annotation-toolbar")
+                if (toolbar) {
+                  const rect = target.getBoundingClientRect()
+                  toolbar.style.position = "fixed"
+                  toolbar.style.left = `${rect.left + rect.width / 2}px`
+                  toolbar.style.top = `${rect.bottom + 8}px`
+                  toolbar.style.opacity = "1"
+                  toolbar.style.pointerEvents = "auto"
+                  toolbar.classList.add("visible")
+                }
+              }
+
+              if (isActionsVisible || isActionsHovering) {
+                showToolbar(buttonEl)
+                return
+              }
+
+              actionsShowTimeoutRef.current = setTimeout(() => {
+                showToolbar(buttonEl)
+                actionsShowTimeoutRef.current = null
+              }, HEADER_BUTTON_HOVER_DELAY_MS)
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
+              // Hide annotation toolbar after a delay when mouse leaves
+              if (actionsShowTimeoutRef.current) {
+                clearTimeout(actionsShowTimeoutRef.current)
+                actionsShowTimeoutRef.current = null
+              }
+              actionsTimeoutRef.current = setTimeout(() => {
+                setIsActionsHovering(false)
+                const toolbar = document.getElementById("annotation-toolbar")
+                // Only hide if not hovering over the toolbar
+                if (toolbar && !toolbar.matches(':hover')) {
+                  toolbar.style.opacity = "0"
+                  toolbar.style.pointerEvents = "none"
+                  toolbar.classList.remove("visible")
+                }
+              }, HEADER_BUTTON_HOVER_DELAY_MS)
+            }}
+            title="Create annotation"
+            style={{
+              background: "rgba(255,255,255,0.2)",
+              border: "none",
+              borderRadius: "4px",
+              padding: "4px 8px",
+              cursor: "pointer",
+              fontSize: "11px",
+              color: "white",
+              transition: "all 0.2s ease",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              height: "24px",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>Actions</span>
+          </button>
         </div>
         
       </div>

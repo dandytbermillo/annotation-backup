@@ -5,7 +5,9 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 189)
+Recent Activity (showing last 10 of 191)
+- note: Instrumented collapsible selection with debugLog gating via NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION.
+- commit [2025-09-24 20:26Z] 4d32fa4: added dotted draggble button on the title bar
 - note: Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit.
 - note: Header modifier clicks now resolve block position via posAtCoords so range selection uses same positions as plugin.
 - commit [2025-09-24 19:31Z] 8ec0a89: shift+click can now highlight the block
@@ -14,8 +16,6 @@ Recent Activity (showing last 10 of 189)
 - note: Ran .context-[REDACTED].js at user request.
 - note: Intercepted header events in capture phase and stopped plain arrow clicks from hitting selection plugin to match research behavior.
 - note: Added modifier-aware header mousedown guard so plain clicks stay in edit mode while Shift/Cmd propagate to selection.
-- note: Updated collapsible block header handling so modifier clicks reach selection plugin; guarded arrow toggle.
-- commit [2025-09-24 12:25Z] bddde5d: multi-select block implemented not tested
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

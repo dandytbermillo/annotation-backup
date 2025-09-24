@@ -9,6 +9,19 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 
+const isCollapsibleSelectionDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION === 'true'
+
+const logCollapsibleSelectionDebug = (action: string, metadata: Record<string, unknown>) => {
+  if (!isCollapsibleSelectionDebugEnabled) {
+    return
+  }
+  void debugLog('CollapsibleBlockSelection', action, {
+    metadata: {
+      ...metadata,
+    },
+  })
+}
+
 const DEFAULT_BLOCK_TITLE = 'Block title here...'
 
 type TemplateMarkSpec = {
@@ -1691,8 +1704,23 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     const selectionPos = typeof nodePos === 'number' ? nodePos + 1 : null
 
     if (event.shiftKey) {
+      const selectionSnapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+      logCollapsibleSelectionDebug('NODEVIEW_SHIFT_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+        selectionAnchor: editor?.view?.state.selection?.anchor ?? null,
+        selectionHead: editor?.view?.state.selection?.head ?? null,
+        selectionType: editor?.view?.state.selection?.constructor?.name ?? null,
+        snapshot: selectionSnapshot,
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
+      editor?.view?.focus()
       if (selectionPos != null) {
-        editor?.view?.focus()
         editor?.commands.setCollapsibleBlockRange(selectionPos)
       }
       event.preventDefault()
@@ -1701,8 +1729,23 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }
 
     if (event.metaKey || event.ctrlKey) {
+      const selectionSnapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+      logCollapsibleSelectionDebug('NODEVIEW_META_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+        selectionAnchor: editor?.view?.state.selection?.anchor ?? null,
+        selectionHead: editor?.view?.state.selection?.head ?? null,
+        selectionType: editor?.view?.state.selection?.constructor?.name ?? null,
+        snapshot: selectionSnapshot,
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
+      editor?.view?.focus()
       if (selectionPos != null) {
-        editor?.view?.focus()
         editor?.commands.toggleCollapsibleBlockSelection(selectionPos)
       }
       event.preventDefault()
@@ -1711,12 +1754,20 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }
 
     if (event.altKey) {
+      logCollapsibleSelectionDebug('NODEVIEW_ALT_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+      })
       return
     }
 
     shouldEditTitleOnClickRef.current = true
     event.preventDefault()
     event.stopPropagation()
+    logCollapsibleSelectionDebug('NODEVIEW_PLAIN_MOUSEDOWN', {
+      nodePos,
+      selectionPos,
+    })
   }
 
   const handleHeaderClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1733,6 +1784,16 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
     if (hasModifierKey(event)) {
       shouldEditTitleOnClickRef.current = false
+      event.preventDefault()
+      event.stopPropagation()
+      logCollapsibleSelectionDebug('NODEVIEW_MOD_CLICK_CAPTURE', {
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
       return
     }
 
@@ -1742,6 +1803,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       setIsEditingTitle(true)
     }
     shouldEditTitleOnClickRef.current = false
+    logCollapsibleSelectionDebug('NODEVIEW_PLAIN_CLICK_CAPTURE', {})
   }
 
   const handleArrowClick = (event: React.MouseEvent<HTMLSpanElement>) => {
