@@ -2251,6 +2251,44 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           <NodeViewContent className="content" />
         </div>
       )}
+      {!isCollapsed && (
+        <div
+          onMouseEnter={() => setShowActions(true)}
+          onMouseLeave={() => setShowActions(false)}
+          style={{
+            display: showActions ? 'flex' : 'none',
+            justifyContent: 'flex-end',
+            gap: '6px',
+            marginTop: '12px',
+            paddingRight: '18px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleInsertAfter()
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#64748b',
+              fontSize: '12px',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+            aria-label="Insert paragraph after block"
+            title="Insert line after"
+          >
+            <span style={{ fontSize: '14px' }}>+</span>
+            <span style={{ fontSize: '14px' }}>↓</span>
+          </button>
+        </div>
+      )}
     </NodeViewWrapper>
     
     {/* Tooltip - render with Portal to ensure it appears above everything */}
