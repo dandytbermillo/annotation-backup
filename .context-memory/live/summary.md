@@ -5,7 +5,8 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 175)
+Recent Activity (showing last 10 of 176)
+- commit [2025-09-24 01:13Z] ac9066c: fixing not exiting from the block using enter key
 - commit [2025-09-24 01:04Z] 6a26da9: docs: add research plan for exiting collapsible block
 - commit [2025-09-23 22:35Z] 6ee2d3a: docs: record collapsible block trailing paragraph fix
 - commit [2025-09-23 21:54Z] 4449814: docs: add block insertion research plan
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 175)
 - note: After template apply, reapply title attr via updateAttributes and emit debug logs.
 - note: Template apply preserves title via existing attrs.
 - note: Preserve block title via state when applying templates.
-- note: Preserve block title when applying template edits.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

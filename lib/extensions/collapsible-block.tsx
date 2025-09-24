@@ -765,80 +765,10 @@ export const CollapsibleBlock = Node.create({
           afterBlock = trailingStart + trailingParagraph.nodeSize
         }
 
-        const blockInDoc = tr.doc.nodeAt(blockStart)
-        let targetPos = blockStart + 1
-        if (!(blockInDoc && blockInDoc.firstChild && blockInDoc.firstChild.isTextblock)) {
-          targetPos = Math.min(trailingStart + 1, tr.doc.content.size)
-        }
-
-        targetPos = Math.min(targetPos, tr.doc.content.size)
+        const targetPos = Math.min(trailingStart + 1, tr.doc.content.size)
         tr = tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos)))
         dispatch(tr.scrollIntoView())
 
-        return true
-      },
-    }
-  },
-
-  addKeyboardShortcuts() {
-    return {
-      Enter: () => {
-        const editor = this.editor
-        if (!editor) {
-          return false
-        }
-        const { state } = editor
-        const dispatch = editor.view.dispatch
-        const paragraphType = state.schema.nodes.paragraph
-        if (!paragraphType) {
-          return false
-        }
-
-        const { selection } = state
-        const { $from, $to } = selection
-
-        let blockDepth: number | null = null
-        for (let depth = $from.depth; depth >= 0; depth -= 1) {
-          if ($from.node(depth).type === this.type) {
-            blockDepth = depth
-            break
-          }
-        }
-
-        if (blockDepth === null) {
-          return false
-        }
-
-        const blockNode = $from.node(blockDepth)
-        const childDepth = blockDepth + 1
-        const childNode = $from.depth >= childDepth ? $from.node(childDepth) : null
-        const isLastChild = $from.index(blockDepth) === blockNode.childCount - 1
-        const atEndOfChild =
-          $to.parentOffset === $to.parent.content.size &&
-          $from.parentOffset === 0
-
-        const emptyParagraph =
-          childNode &&
-          childNode.type === paragraphType &&
-          childNode.content.size === 0
-
-        if (!isLastChild || !atEndOfChild || !emptyParagraph) {
-          return false
-        }
-
-        const blockEnd = $to.end(blockDepth)
-        let tr = state.tr
-
-        const childStart = $to.start(childDepth)
-        const childEnd = $to.end(childDepth)
-        tr = tr.delete(childStart, childEnd)
-        const mappedBlockEnd = tr.mapping.map(blockEnd, -1)
-
-        const newParagraph = paragraphType.create()
-        tr = tr.insert(mappedBlockEnd, newParagraph)
-        const selectionPos = Math.min(mappedBlockEnd + 1, tr.doc.content.size)
-        tr = tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
-        dispatch(tr.scrollIntoView())
         return true
       },
     }
@@ -1156,6 +1086,40 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     tr.insert(insertPos, node.copy(node.content))
     editor.view.dispatch(tr)
     editor.view.focus()
+  }
+
+  const insertParagraphOutside = useCallback(
+    (position: number) => {
+      const view = editor?.view
+      if (!view) {
+        return
+      }
+      const { state } = view
+      const paragraphType = state.schema.nodes.paragraph
+      if (!paragraphType) {
+        return
+      }
+
+      const clampedPos = Math.max(0, Math.min(position, state.doc.content.size))
+      let tr = state.tr.insert(clampedPos, paragraphType.create())
+      const selectionPos = Math.min(clampedPos + 1, tr.doc.content.size)
+      tr = tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+    },
+    [editor]
+  )
+
+  const handleInsertBefore = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    insertParagraphOutside(pos)
+  }
+
+  const handleInsertAfter = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    insertParagraphOutside(pos + node.nodeSize)
   }
 
   const closeTemplateMenu = () => {
@@ -1779,6 +1743,46 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             }}
             data-collapsible-actions
           >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleInsertBefore()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+              aria-label="Insert paragraph before block"
+              title="Insert line before"
+            >
+              +↑
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleInsertAfter()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+              aria-label="Insert paragraph after block"
+              title="Insert line after"
+            >
+              +↓
+            </button>
             <button
               type="button"
               onClick={(e) => {
