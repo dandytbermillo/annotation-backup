@@ -5,7 +5,10 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 186)
+Recent Activity (showing last 10 of 189)
+- note: Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit.
+- note: Header modifier clicks now resolve block position via posAtCoords so range selection uses same positions as plugin.
+- commit [2025-09-24 19:31Z] 8ec0a89: shift+click can now highlight the block
 - note: Shift/cmd header clicks now run selection commands directly (select anchor + set range / toggle multi) using NodeView position lookup.
 - note: Hooked shift/meta header mousedown to trigger selection commands and refocused editor so Shift+Click/Shift+Arrow flows engage plugin state.
 - note: Ran .context-[REDACTED].js at user request.
@@ -13,9 +16,6 @@ Recent Activity (showing last 10 of 186)
 - note: Added modifier-aware header mousedown guard so plain clicks stay in edit mode while Shift/Cmd propagate to selection.
 - note: Updated collapsible block header handling so modifier clicks reach selection plugin; guarded arrow toggle.
 - commit [2025-09-24 12:25Z] bddde5d: multi-select block implemented not tested
-- commit [2025-09-24 05:11Z] 7d91194: making sure that every note has empty paragraph at the end of it
-- commit [2025-09-24 04:58Z] 233938c: added remove spacer button to remove the extra space(btw blocks)
-- commit [2025-09-24 04:25Z] d2f5570: delete automatically delete blocks about it fixed
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

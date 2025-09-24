@@ -1675,34 +1675,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
   const shouldEditTitleOnClickRef = useRef(false)
 
-  const findCollapsibleBlockPos = useCallback(
-    (doc: PMNode, schemaName: string | undefined, pos: number | null | undefined) => {
-      if (!schemaName) {
-        return null
-      }
-      if (typeof pos !== 'number') {
-        return null
-      }
-      if (pos < 0 || pos > doc.content.size) {
-        return null
-      }
-      let resolved
-      try {
-        resolved = doc.resolve(pos)
-      } catch {
-        return null
-      }
-      for (let depth = resolved.depth; depth >= 0; depth -= 1) {
-        const nodeAtDepth = resolved.node(depth)
-        if (nodeAtDepth.type.name === schemaName) {
-          return depth === 0 ? 0 : resolved.before(depth)
-        }
-      }
-      return null
-    },
-    [],
-  )
-
   const handleHeaderMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
     shouldEditTitleOnClickRef.current = false
 
@@ -1715,30 +1687,13 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       return
     }
 
-    const targetPos = typeof getPos === 'function' ? getPos() : null
-    const schemaName = editor?.view?.state.schema.nodes.collapsibleBlock?.name ?? editor?.schema?.nodes?.collapsibleBlock?.name
+    const nodePos = typeof getPos === 'function' ? getPos() : null
+    const selectionPos = typeof nodePos === 'number' ? nodePos + 1 : null
 
     if (event.shiftKey) {
-      if (typeof targetPos === 'number' && schemaName && editor?.view) {
-        const { state } = editor.view
-        const doc = state.doc
-        const anchorCandidates = [state.selection.anchor, state.selection.head, state.selection.from]
-        let anchorPos: number | null = null
-        for (const candidate of anchorCandidates) {
-          const found = findCollapsibleBlockPos(doc, schemaName, candidate)
-          if (found != null) {
-            anchorPos = found
-            break
-          }
-        }
-
-        editor.view.focus()
-        if (anchorPos != null) {
-          editor.commands.selectCollapsibleBlock(anchorPos)
-        } else {
-          editor.commands.selectCollapsibleBlock(targetPos)
-        }
-        editor.commands.setCollapsibleBlockRange(targetPos)
+      if (selectionPos != null) {
+        editor?.view?.focus()
+        editor?.commands.setCollapsibleBlockRange(selectionPos)
       }
       event.preventDefault()
       event.stopPropagation()
@@ -1746,9 +1701,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }
 
     if (event.metaKey || event.ctrlKey) {
-      if (typeof targetPos === 'number') {
+      if (selectionPos != null) {
         editor?.view?.focus()
-        editor?.commands.toggleCollapsibleBlockSelection(targetPos)
+        editor?.commands.toggleCollapsibleBlockSelection(selectionPos)
       }
       event.preventDefault()
       event.stopPropagation()

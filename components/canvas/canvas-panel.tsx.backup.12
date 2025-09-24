@@ -1277,7 +1277,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
-            gap: '6px',
+            gap: '4px',
             opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
             transition: 'opacity 0.2s ease',
             pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none'
@@ -1353,25 +1353,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 ×
               </button>
             )}
-
-            {/* Drag Handle */}
-            <div
-              className="drag-indicator"
-              title="Drag to move panel"
-              style={{
-                width: '56px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '6px',
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1px)',
-                backgroundSize: '6px 6px',
-                backgroundPosition: '0 0',
-                cursor: 'move',
-              }}
-            />
           </div>
           
           {/* Panel Title */}
@@ -1684,6 +1665,47 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </button>
         </div>
         
+        {/* Spacer between buttons and drag icon - explicit for all panels */}
+        <div style={{ 
+          width: '12px',
+          minWidth: '12px',
+          height: '24px',
+          display: 'inline-block',
+          flexShrink: 0,
+        }} />
+        
+        {/* Drag Handle Indicator - Shows with buttons, or alone as a hint */}
+        <div
+          className="drag-indicator"
+          style={{
+            background: 'rgba(255,255,255,0.2)',
+            border: 'none',
+            borderRadius: '4px',
+            width: '32px',
+            height: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'move',
+            transition: 'opacity 0.2s ease',
+            color: 'white',
+            // Show when buttons are visible, or show faintly when nothing is hovered
+            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) 
+              ? 1  // Full opacity when buttons are visible
+              : 0.5, // Half opacity as a hint when idle
+            pointerEvents: 'none', // Allow clicks to pass through to the draggable title bar
+          }}
+          title="Drag to move panel"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="9" cy="8" r="1" fill="currentColor" />
+            <circle cx="15" cy="8" r="1" fill="currentColor" />
+            <circle cx="9" cy="12" r="1" fill="currentColor" />
+            <circle cx="15" cy="12" r="1" fill="currentColor" />
+            <circle cx="9" cy="16" r="1" fill="currentColor" />
+            <circle cx="15" cy="16" r="1" fill="currentColor" />
+          </svg>
+        </div>
       </div>
 
       {/* Check if isolated and show placeholder */}

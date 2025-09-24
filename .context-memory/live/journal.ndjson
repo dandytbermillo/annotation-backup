@@ -184,3 +184,6 @@
 {"type":"note","timestamp":"2025-09-24T19:08:19Z","summary":"Ran .context-memory/scripts/summarize.js at user request."}
 {"type":"note","timestamp":"2025-09-24T19:20:54Z","summary":"Hooked shift/meta header mousedown to trigger selection commands and refocused editor so Shift+Click/Shift+Arrow flows engage plugin state."}
 {"type":"note","timestamp":"2025-09-24T19:28:12Z","summary":"Shift/cmd header clicks now run selection commands directly (select anchor + set range / toggle multi) using NodeView position lookup."}
+{"ts":"2025-09-24T19:31:28.261Z","type":"commit","sha":"8ec0a89b47fb902368949ea6124f40964d7e8364","files_changed":6,"message":"shift+click can now highlight the block"}
+{"type":"note","timestamp":"2025-09-24T19:39:02Z","summary":"Header modifier clicks now resolve block position via posAtCoords so range selection uses same positions as plugin."}
+{"type":"note","timestamp":"2025-09-24T20:10:07Z","summary":"Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit."}
