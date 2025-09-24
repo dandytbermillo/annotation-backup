@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
 import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
-import { TextSelection } from 'prosemirror-state'
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
@@ -715,6 +715,157 @@ export const CollapsibleBlock = Node.create({
         },
         0,
       ],
+    ]
+  },
+
+  addProseMirrorPlugins() {
+    const spacerKey = new PluginKey('collapsibleBlockSpacerActions')
+
+    const computeContext = (state: any) => {
+      if (!state || !state.selection || !state.schema) {
+        return null
+      }
+      const { selection, schema } = state
+      const paragraphType = schema.nodes?.paragraph
+      const collapsibleType = schema.nodes?.collapsibleBlock
+      if (!paragraphType || !collapsibleType) {
+        return null
+      }
+      if (!selection.empty) {
+        return null
+      }
+
+      const $from = selection.$from
+      if ($from.parent.type !== paragraphType) {
+        return null
+      }
+      if ($from.parent.content.size > 0 || $from.parentOffset !== 0) {
+        return null
+      }
+      if ($from.depth === 0) {
+        return null
+      }
+
+      const beforePos = $from.before()
+      const afterPos = $from.after()
+      if (typeof beforePos !== 'number' || typeof afterPos !== 'number') {
+        return null
+      }
+
+      const prevNode = state.doc.resolve(beforePos).nodeBefore
+      const nextNode = afterPos <= state.doc.content.size ? state.doc.resolve(afterPos).nodeAfter : null
+      if (!prevNode || prevNode.type !== collapsibleType) {
+        return null
+      }
+      if (!nextNode || nextNode.type !== collapsibleType) {
+        return null
+      }
+
+      const paragraphNode = state.doc.nodeAt(beforePos)
+      if (!paragraphNode) {
+        return null
+      }
+
+      return {
+        selectionPos: $from.pos,
+        paragraphFrom: beforePos,
+        paragraphTo: beforePos + paragraphNode.nodeSize,
+      }
+    }
+
+    return [
+      new Plugin({
+        key: spacerKey,
+        view: editorView => {
+          if (typeof document === 'undefined') {
+            return {}
+          }
+
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = 'Delete spacer'
+          button.setAttribute('aria-label', 'Delete spacer between collapsible blocks')
+          button.style.position = 'absolute'
+          button.style.zIndex = '1100'
+          button.style.display = 'none'
+          button.style.padding = '4px 8px'
+          button.style.fontSize = '12px'
+          button.style.fontWeight = '500'
+          button.style.borderRadius = '6px'
+          button.style.border = '1px solid rgba(99, 102, 241, 0.4)'
+          button.style.background = '#FFFFFF'
+          button.style.boxShadow = '0 4px 12px rgba(15, 23, 42, 0.12)'
+          button.style.color = '#1E293B'
+          button.style.cursor = 'pointer'
+          button.style.userSelect = 'none'
+
+          const hide = () => {
+            button.style.display = 'none'
+          }
+
+          const updateButton = (viewInstance: any) => {
+            const context = computeContext(viewInstance.state)
+            if (!context) {
+              hide()
+              return
+            }
+
+            try {
+              const coords = viewInstance.coordsAtPos(context.selectionPos)
+              const offsetY = -28
+              const offsetX = 12
+              button.style.left = `${window.scrollX + coords.right + offsetX}px`
+              button.style.top = `${window.scrollY + coords.top + offsetY}px`
+              button.style.display = 'block'
+            } catch (error) {
+              hide()
+            }
+          }
+
+          const handleClick = (event: MouseEvent) => {
+            event.preventDefault()
+            const context = computeContext(editorView.state)
+            if (!context) {
+              hide()
+              return
+            }
+
+            const { paragraphFrom, paragraphTo } = context
+            const tr = editorView.state.tr.delete(paragraphFrom, paragraphTo)
+            const docSize = tr.doc.content.size
+            const safePos = Math.max(0, Math.min(paragraphFrom, docSize))
+            const resolved = tr.doc.resolve(safePos)
+            tr.setSelection(TextSelection.near(resolved))
+            editorView.dispatch(tr.scrollIntoView())
+            editorView.focus()
+            hide()
+          }
+
+          const handleMouseDown = (event: MouseEvent) => {
+            event.preventDefault()
+          }
+
+          button.addEventListener('mousedown', handleMouseDown)
+          button.addEventListener('click', handleClick)
+
+          document.body.appendChild(button)
+
+          updateButton(editorView)
+
+          return {
+            update: viewInstance => {
+              updateButton(viewInstance)
+            },
+            destroy() {
+              button.removeEventListener('mousedown', handleMouseDown)
+              button.removeEventListener('click', handleClick)
+              if (button.parentNode) {
+                button.parentNode.removeChild(button)
+              }
+            },
+          }
+        },
+      }),
     ]
   },
 

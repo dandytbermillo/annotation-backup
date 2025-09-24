@@ -5,7 +5,8 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 176)
+Recent Activity (showing last 10 of 177)
+- commit [2025-09-24 04:25Z] d2f5570: delete automatically delete blocks about it fixed
 - commit [2025-09-24 01:13Z] ac9066c: fixing not exiting from the block using enter key
 - commit [2025-09-24 01:04Z] 6a26da9: docs: add research plan for exiting collapsible block
 - commit [2025-09-23 22:35Z] 6ee2d3a: docs: record collapsible block trailing paragraph fix
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 176)
 - commit [2025-09-23 18:36Z] c2e1772: missing block title after inserting template fixed
 - note: After template apply, reapply title attr via updateAttributes and emit debug logs.
 - note: Template apply preserves title via existing attrs.
-- note: Preserve block title via state when applying templates.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
