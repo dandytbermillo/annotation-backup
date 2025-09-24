@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react"
 import { createPortal } from "react-dom"
 import type { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import type { TiptapEditorHandle } from "./tiptap-editor-collab"
+import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { debugLog } from "@/lib/debug-logger"
 
 type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
@@ -12,14 +13,20 @@ interface FormatToolbarProps {
   editorRef: React.RefObject<UnifiedEditorHandle | null>
   panelId: string
   hoverDelayMs?: number
+  collapsibleSelection?: CollapsibleSelectionSnapshot | null
 }
 
-export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: FormatToolbarProps) {
+export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsibleSelection }: FormatToolbarProps) {
   const [isVisible, setIsVisible] = useState(false) // Start hidden
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
   const timeoutRef = useRef<NodeJS.Timeout>()
   const showTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const blockSelection = collapsibleSelection?.blocks ?? []
+  const selectedBlockCount = blockSelection.length
+  const hasBlockSelection = selectedBlockCount > 0
+  const allCollapsed = hasBlockSelection && blockSelection.every(block => Boolean(block.attrs?.collapsed))
+  const allExpanded = hasBlockSelection && blockSelection.every(block => !block.attrs?.collapsed)
 
   const executeCommand = (command: string, value?: any) => {
     if (!editorRef.current) return
@@ -545,6 +552,142 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300 }: Format
           >
             ✕
           </button>
+
+          {hasBlockSelection && (
+            <>
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  marginTop: "6px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#5f6368",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  letterSpacing: "0.01em",
+                }}
+              >
+                <span>Block actions</span>
+                <span style={{ fontWeight: 500 }}>{selectedBlockCount} selected</span>
+              </div>
+
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  gap: "6px",
+                }}
+              >
+                <button
+                  onClick={() => { executeCommand("collapsible:collapse"); setIsVisible(false) }}
+                  disabled={allCollapsed}
+                  style={{
+                    flex: 1,
+                    background: allCollapsed ? "#f1f3f4" : "white",
+                    border: "1px solid #dadce0",
+                    borderRadius: "8px",
+                    height: "36px",
+                    cursor: allCollapsed ? "not-allowed" : "pointer",
+                    transition: "all 0.15s ease",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: allCollapsed ? "#9aa0a6" : "#202124",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (allCollapsed) return
+                    e.currentTarget.style.background = "#f1f3f4"
+                    e.currentTarget.style.borderColor = "#5f6368"
+                  }}
+                  onMouseLeave={(e) => {
+                    if (allCollapsed) return
+                    e.currentTarget.style.background = "white"
+                    e.currentTarget.style.borderColor = "#dadce0"
+                  }}
+                >
+                  Collapse
+                </button>
+
+                <button
+                  onClick={() => { executeCommand("collapsible:expand"); setIsVisible(false) }}
+                  disabled={allExpanded}
+                  style={{
+                    flex: 1,
+                    background: allExpanded ? "#f1f3f4" : "white",
+                    border: "1px solid #dadce0",
+                    borderRadius: "8px",
+                    height: "36px",
+                    cursor: allExpanded ? "not-allowed" : "pointer",
+                    transition: "all 0.15s ease",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: allExpanded ? "#9aa0a6" : "#202124",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (allExpanded) return
+                    e.currentTarget.style.background = "#f1f3f4"
+                    e.currentTarget.style.borderColor = "#5f6368"
+                  }}
+                  onMouseLeave={(e) => {
+                    if (allExpanded) return
+                    e.currentTarget.style.background = "white"
+                    e.currentTarget.style.borderColor = "#dadce0"
+                  }}
+                >
+                  Expand
+                </button>
+
+                <button
+                  onClick={() => { executeCommand("collapsible:delete"); setIsVisible(false) }}
+                  style={{
+                    flex: 1,
+                    background: "#ffecec",
+                    border: "1px solid #f28b82",
+                    borderRadius: "8px",
+                    height: "36px",
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    color: "#b00020",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "#fce8e6"
+                    e.currentTarget.style.borderColor = "#d93025"
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "#ffecec"
+                    e.currentTarget.style.borderColor = "#f28b82"
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+
+              <button
+                onClick={() => { executeCommand("collapsible:clearSelection"); setIsVisible(false) }}
+                style={{
+                  gridColumn: "1 / -1",
+                  background: "transparent",
+                  border: "none",
+                  color: "#5f6368",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  textAlign: "right",
+                  padding: "4px 2px 2px",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "#1a73e8"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "#5f6368"
+                }}
+              >
+                Clear selection
+              </button>
+            </>
+          )}
         </div>,
         document.body
       )}

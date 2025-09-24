@@ -17,6 +17,11 @@ import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
 import Placeholder from '@tiptap/extension-placeholder'
 import { CollapsibleBlock } from '@/lib/extensions/collapsible-block'
+import {
+  CollapsibleBlockSelection,
+  type CollapsibleBlockSelectionStorage,
+  type CollapsibleSelectionSnapshot,
+} from '@/lib/extensions/collapsible-block-selection'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
@@ -44,6 +49,13 @@ import { debugLog, createContentPreview } from '@/lib/debug-logger'
 import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
 
 const JSON_START_RE = /^\s*[\[{]/
+
+const EMPTY_COLLAPSIBLE_SELECTION: CollapsibleSelectionSnapshot = {
+  mode: 'none',
+  anchor: null,
+  head: null,
+  blocks: [],
+}
 
 const trailingParagraphPluginKey = new PluginKey('plainTrailingParagraph')
 
@@ -281,6 +293,7 @@ interface TiptapEditorPlainProps {
   panelId: string
   onUpdate?: (content: ProseMirrorJSON) => void
   onSelectionChange?: (text: string, range: Range | null) => void
+  onCollapsibleSelectionChange?: (snapshot: CollapsibleSelectionSnapshot) => void
   placeholder?: string
   provider?: PlainOfflineProvider
   onCreateAnnotation?: (type: string, selectedText: string) => { id: string; branchId: string } | null
@@ -293,12 +306,14 @@ export interface TiptapEditorPlainHandle {
   focus: () => void
   setEditable: (editable: boolean) => void
   executeCommand: (command: string, value?: any) => void
+  getCollapsibleSelection: () => CollapsibleSelectionSnapshot
+  clearCollapsibleSelection: () => void
   insertAnnotation: (type: string, annotationId: string, branchId: string) => void
   setPerformanceMode?: (enabled: boolean) => void
 }
 
 const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainProps>(
-  ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, placeholder, provider, onCreateAnnotation, onContentLoaded }, ref) => {
+  ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, onCollapsibleSelectionChange, placeholder, provider, onCreateAnnotation, onContentLoaded }, ref) => {
     // Fix #3: Track loading state
     const [isContentLoading, setIsContentLoading] = useState(true)
     
@@ -310,6 +325,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const hasHydratedRef = useRef(false)
     const fallbackSourceRef = useRef<'preview' | 'content' | null>(null)
     const previewFallbackContentRef = useRef<ProseMirrorJSON | string | null>(null)
+    const collapsibleSelectionRef = useRef<CollapsibleSelectionSnapshot>(EMPTY_COLLAPSIBLE_SELECTION)
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -685,6 +701,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         Underline,
         Annotation,
         CollapsibleBlock,
+        CollapsibleBlockSelection,
         Placeholder.configure({
           placeholder: placeholder || 'Start typing...',
         }),
@@ -985,7 +1002,29 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         // },
       },
     })
-    
+
+    useEffect(() => {
+      if (!editor) {
+        return
+      }
+
+      const storage = editor.storage?.collapsibleBlockSelection as CollapsibleBlockSelectionStorage | undefined
+      const initialSnapshot = storage?.snapshot ?? EMPTY_COLLAPSIBLE_SELECTION
+      collapsibleSelectionRef.current = initialSnapshot
+      onCollapsibleSelectionChange?.(initialSnapshot)
+
+      const handleSelectionChange = (snapshot: CollapsibleSelectionSnapshot) => {
+        collapsibleSelectionRef.current = snapshot
+        onCollapsibleSelectionChange?.(snapshot)
+      }
+
+      editor.on('collapsible-selection-change', handleSelectionChange)
+
+      return () => {
+        editor.off('collapsible-selection-change', handleSelectionChange)
+      }
+    }, [editor, onCollapsibleSelectionChange])
+
     // Save content before browser unload or visibility change
     useEffect(() => {
       const saveCurrentContent = async (isSync = false) => {
@@ -1566,6 +1605,17 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
         }
 
+        div[data-collapsible-block][data-collapsible-selected="true"] {
+          outline: 2px solid rgba(99, 102, 241, 0.55);
+          outline-offset: 2px;
+          border-radius: 12px;
+          background: rgba(99, 102, 241, 0.08);
+        }
+
+        div[data-collapsible-block][data-collapsible-selected="true"] [data-collapsible-header] {
+          background: rgba(99, 102, 241, 0.12);
+        }
+
         /* Collapsible block animations */
         @keyframes collapsibleFadeIn {
           from {
@@ -1657,7 +1707,24 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           case 'redo':
             editor.chain().focus().redo().run()
             break
+          case 'collapsible:collapse':
+            editor.chain().focus().collapseSelectedCollapsibleBlocks().run()
+            break
+          case 'collapsible:expand':
+            editor.chain().focus().expandSelectedCollapsibleBlocks().run()
+            break
+          case 'collapsible:delete':
+            editor.chain().focus().deleteSelectedCollapsibleBlocks().run()
+            break
+          case 'collapsible:clearSelection':
+            editor.chain().focus().clearCollapsibleBlockSelection().run()
+            break
         }
+      },
+      getCollapsibleSelection: () => collapsibleSelectionRef.current,
+      clearCollapsibleSelection: () => {
+        if (!editor) return
+        editor.commands.clearCollapsibleBlockSelection()
       },
       insertAnnotation: (type: string, annotationId: string, branchId: string) => {
         if (!editor) {

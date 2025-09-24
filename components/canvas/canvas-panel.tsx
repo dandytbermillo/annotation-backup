@@ -15,6 +15,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
+import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { useAutoScroll } from "./use-auto-scroll"
@@ -73,6 +74,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
   const previewTimeoutRef = useRef<NodeJS.Timeout>()
+  const [collapsibleSelection, setCollapsibleSelection] = useState<CollapsibleSelectionSnapshot | null>(null)
+  const handleCollapsibleSelectionChange = useCallback((snapshot: CollapsibleSelectionSnapshot) => {
+    if (snapshot.mode === 'none') {
+      setCollapsibleSelection(null)
+      return
+    }
+    setCollapsibleSelection(snapshot)
+  }, [])
   
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
@@ -1465,6 +1474,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             editorRef={editorRef}
             panelId={panelId}
             hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
+            collapsibleSelection={collapsibleSelection}
           />
           
           {/* Sidebar Toggle button */}
@@ -1757,6 +1767,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     panelId={panelId}
                     onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
                     onSelectionChange={handleSelectionChange}
+                    onCollapsibleSelectionChange={handleCollapsibleSelectionChange}
                     placeholder={`Start writing your ${currentBranch.type || 'note'}...`}
                     provider={plainProvider}
                     onContentLoaded={handleEditorContentLoaded}

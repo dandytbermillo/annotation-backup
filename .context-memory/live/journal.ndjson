@@ -176,3 +176,4 @@
 {"ts":"2025-09-24T01:13:37.269Z","type":"commit","sha":"ac9066c09a5f40a4fc8df45a9e7a9a40c9400c85","files_changed":3,"message":"fixing not exiting from the block using enter key"}
 {"ts":"2025-09-24T04:25:40.246Z","type":"commit","sha":"d2f5570d8154ea8db8cf48461d101643d54f7bfc","files_changed":2,"message":"delete automatically delete blocks about it fixed"}
 {"ts":"2025-09-24T04:58:00.184Z","type":"commit","sha":"233938c7a8e625bf27e2e0f8dde0aa3377b597f5","files_changed":4,"message":"added remove spacer button to remove the extra space(btw blocks)"}
+{"ts":"2025-09-24T05:11:46.096Z","type":"commit","sha":"7d91194ece0471560109621a35390fba663a21a6","files_changed":4,"message":"making sure that every note has empty paragraph at the end of it"}
