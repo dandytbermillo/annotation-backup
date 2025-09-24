@@ -71,6 +71,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [isPanelHovered, setIsPanelHovered] = useState(false)
   const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const headerControlsActive = isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering
   
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
@@ -1578,16 +1580,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           display: 'flex', 
           alignItems: 'center', 
           gap: '8px',
-          flex: 1,
+          flex: currentBranch.type !== 'main' ? (headerControlsActive ? '0 1 auto' : 1) : '0 1 auto',
         }}>
           {/* Lock and Close buttons - moved to left side before title */}
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
             gap: '6px',
-            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
+            opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
-            pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none'
+            pointerEvents: headerControlsActive ? 'auto' : 'none'
           }}>
             {/* Lock/Unlock button */}
             <button
@@ -1682,35 +1684,40 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </div>
           
           {/* Panel Title */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '10px',
-            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 0 : 1,
-            transition: 'opacity 0.2s ease',
-            overflow: 'hidden',
-            flex: 1,
-          }}>
-            <span style={{
-              whiteSpace: 'nowrap',
+          {currentBranch.type !== 'main' && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '10px',
+              opacity: headerControlsActive ? 0 : 1,
+              transition: 'opacity 0.2s ease, max-width 0.2s ease',
               overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              maxWidth: '300px',
-            }}>{getPanelTitle()}</span>
-            {isIsolated && (
+              flex: headerControlsActive ? '0 0 auto' : 1,
+              maxWidth: headerControlsActive ? 0 : '100%',
+              width: headerControlsActive ? 0 : 'auto',
+              pointerEvents: headerControlsActive ? 'none' : 'auto',
+            }}>
               <span style={{
-                background: '#ef4444',
-                color: 'white',
-                fontSize: '10px',
-                padding: '2px 8px',
-                borderRadius: '12px',
-                fontWeight: 'bold',
-                textTransform: 'uppercase',
-              }}>
-                ISOLATED
-              </span>
-            )}
-          </div>
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '300px',
+              }}>{getPanelTitle()}</span>
+              {isIsolated && (
+                <span style={{
+                  background: '#ef4444',
+                  color: 'white',
+                  fontSize: '10px',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontWeight: 'bold',
+                  textTransform: 'uppercase',
+                }}>
+                  ISOLATED
+                </span>
+              )}
+            </div>
+          )}
         </div>
         
         {/* Right side buttons */}
@@ -1720,10 +1727,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             display: 'flex', 
             alignItems: 'center', 
             gap: `${ACTION_GAP}px`,
-            opacity: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 1 : 0,
+            opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
-            pointerEvents: (isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering) ? 'auto' : 'none',
-            position: 'relative'
+            pointerEvents: headerControlsActive ? 'auto' : 'none',
+            position: 'relative',
+            justifyContent: 'flex-end',
+            flex: (currentBranch.type === 'main' || headerControlsActive) ? '1 1 auto' : '0 1 auto',
+            marginLeft: 'auto'
           }}
         >
           {layerManager.isEnabled && (

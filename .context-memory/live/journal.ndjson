@@ -189,3 +189,4 @@
 {"type":"note","timestamp":"2025-09-24T20:10:07Z","summary":"Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit."}
 {"ts":"2025-09-24T20:26:43.530Z","type":"commit","sha":"4d32fa45beb3dd349bd3589cdfc03ac736f853da","files_changed":10,"message":"added dotted draggble button on the title bar"}
 {"type":"note","timestamp":"2025-09-24T20:47:56Z","summary":"Instrumented collapsible selection with debugLog gating via NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION."}
+{"ts":"2025-09-24T21:59:54.512Z","type":"commit","sha":"26296859049a01217b7c820ce6e8410ed544a6c6","files_changed":9,"message":"adding >> button in the title bar"}

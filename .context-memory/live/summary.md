@@ -5,7 +5,8 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 191)
+Recent Activity (showing last 10 of 192)
+- commit [2025-09-24 21:59Z] 2629685: adding >> button in the title bar
 - note: Instrumented collapsible selection with debugLog gating via NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION.
 - commit [2025-09-24 20:26Z] 4d32fa4: added dotted draggble button on the title bar
 - note: Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit.
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 191)
 - note: Hooked shift/meta header mousedown to trigger selection commands and refocused editor so Shift+Click/Shift+Arrow flows engage plugin state.
 - note: Ran .context-[REDACTED].js at user request.
 - note: Intercepted header events in capture phase and stopped plain arrow clicks from hitting selection plugin to match research behavior.
-- note: Added modifier-aware header mousedown guard so plain clicks stay in edit mode while Shift/Cmd propagate to selection.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
