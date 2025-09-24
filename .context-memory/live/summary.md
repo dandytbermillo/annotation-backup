@@ -5,7 +5,8 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 174)
+Recent Activity (showing last 10 of 175)
+- commit [2025-09-24 01:04Z] 6a26da9: docs: add research plan for exiting collapsible block
 - commit [2025-09-23 22:35Z] 6ee2d3a: docs: record collapsible block trailing paragraph fix
 - commit [2025-09-23 21:54Z] 4449814: docs: add block insertion research plan
 - commit [2025-09-23 20:53Z] 8f244e6: added hover delay time for buttons(panel header)
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 174)
 - note: Template apply preserves title via existing attrs.
 - note: Preserve block title via state when applying templates.
 - note: Preserve block title when applying template edits.
-- commit [2025-09-23 15:04Z] a886e06: add a draggable template viewer
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

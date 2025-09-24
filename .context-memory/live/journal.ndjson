@@ -172,3 +172,4 @@
 {"ts":"2025-09-23T20:53:50.106Z","type":"commit","sha":"8f244e6b45148584ee4ba3fd3cc457a9d31e773c","files_changed":8,"message":"added hover delay time for buttons(panel header)"}
 {"ts":"2025-09-23T21:54:29.160Z","type":"commit","sha":"4449814c6b5d2f4507dda255c0fc64cb3306e267","files_changed":1,"message":"docs: add block insertion research plan"}
 {"ts":"2025-09-23T22:35:32.110Z","type":"commit","sha":"6ee2d3ae0c7641147a138f83da4ffd57bbfa18a8","files_changed":1,"message":"docs: record collapsible block trailing paragraph fix"}
+{"ts":"2025-09-24T01:04:33.218Z","type":"commit","sha":"6a26da989041999b608e2ac4364c489bbaf61f41","files_changed":1,"message":"docs: add research plan for exiting collapsible block"}

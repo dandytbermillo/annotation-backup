@@ -563,6 +563,7 @@ export const CollapsibleBlock = Node.create({
   group: 'block',
   content: 'block+',
   defining: true,
+  isolating: true,
   
   addOptions() {
     return {
@@ -778,6 +779,71 @@ export const CollapsibleBlock = Node.create({
       },
     }
   },
+
+  addKeyboardShortcuts() {
+    return {
+      Enter: () => {
+        const editor = this.editor
+        if (!editor) {
+          return false
+        }
+        const { state } = editor
+        const dispatch = editor.view.dispatch
+        const paragraphType = state.schema.nodes.paragraph
+        if (!paragraphType) {
+          return false
+        }
+
+        const { selection } = state
+        const { $from, $to } = selection
+
+        let blockDepth: number | null = null
+        for (let depth = $from.depth; depth >= 0; depth -= 1) {
+          if ($from.node(depth).type === this.type) {
+            blockDepth = depth
+            break
+          }
+        }
+
+        if (blockDepth === null) {
+          return false
+        }
+
+        const blockNode = $from.node(blockDepth)
+        const childDepth = blockDepth + 1
+        const childNode = $from.depth >= childDepth ? $from.node(childDepth) : null
+        const isLastChild = $from.index(blockDepth) === blockNode.childCount - 1
+        const atEndOfChild =
+          $to.parentOffset === $to.parent.content.size &&
+          $from.parentOffset === 0
+
+        const emptyParagraph =
+          childNode &&
+          childNode.type === paragraphType &&
+          childNode.content.size === 0
+
+        if (!isLastChild || !atEndOfChild || !emptyParagraph) {
+          return false
+        }
+
+        const blockEnd = $to.end(blockDepth)
+        let tr = state.tr
+
+        const childStart = $to.start(childDepth)
+        const childEnd = $to.end(childDepth)
+        tr = tr.delete(childStart, childEnd)
+        const mappedBlockEnd = tr.mapping.map(blockEnd, -1)
+
+        const newParagraph = paragraphType.create()
+        tr = tr.insert(mappedBlockEnd, newParagraph)
+        const selectionPos = Math.min(mappedBlockEnd + 1, tr.doc.content.size)
+        tr = tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
+        dispatch(tr.scrollIntoView())
+        return true
+      },
+    }
+  },
+
 })
 
 // React component for the collapsible block
