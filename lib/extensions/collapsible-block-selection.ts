@@ -323,10 +323,20 @@ const extension = Extension.create({
           const existing = pluginKey.getState(state) ?? emptyState
           let anchor = existing.anchor
           if (anchor == null) {
-            anchor = findCollapsibleBlockPos(state.doc, schemaName, state.selection.from)
+            const anchorPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.anchor)
+            if (anchorPos != null) {
+              anchor = anchorPos
+            } else {
+              const headPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.head)
+              if (headPos != null) {
+                anchor = headPos
+              } else {
+                anchor = findCollapsibleBlockPos(state.doc, schemaName, state.selection.from)
+              }
+            }
           }
           if (anchor == null) {
-            return false
+            anchor = blockPos
           }
           const blocks = gatherCollapsibleBlocks(state.doc, schemaName)
           const positions = collectRangeBetween(blocks, anchor, blockPos)
@@ -356,7 +366,17 @@ const extension = Extension.create({
           const existing = pluginKey.getState(state) ?? emptyState
           let anchor = existing.anchor
           if (anchor == null) {
-            anchor = findCollapsibleBlockPos(state.doc, schemaName, state.selection.from)
+            const anchorPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.anchor)
+            if (anchorPos != null) {
+              anchor = anchorPos
+            } else {
+              const headPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.head)
+              if (headPos != null) {
+                anchor = headPos
+              } else {
+                anchor = findCollapsibleBlockPos(state.doc, schemaName, state.selection.from)
+              }
+            }
           }
           if (anchor == null) {
             return false
@@ -596,8 +616,35 @@ const extension = Extension.create({
                 return true
               }
 
-              return false
+              event.preventDefault()
+              event.stopPropagation()
+              const tr = view.state.tr
+              tr.setSelection(TextSelection.create(view.state.doc, resolved.pos))
+              tr.setMeta('addToHistory', false)
+              view.dispatch(tr)
+              self.editor?.commands.selectCollapsibleBlock(blockPos)
+              return true
             },
+          },
+          handleClick(view, pos, event) {
+            const target = event.target as HTMLElement | null
+            if (!target) return false
+            const headerEl = target.closest('[data-collapsible-header]')
+            if (!headerEl) return false
+
+            const coords = { left: event.clientX, top: event.clientY }
+            const resolved = view.posAtCoords(coords)
+            if (!resolved) return false
+
+            const blockPos = findCollapsibleBlockPos(view.state.doc, schemaName, resolved.pos)
+            if (blockPos == null) {
+              return false
+            }
+
+            event.preventDefault()
+            view.focus()
+            self.editor?.commands.selectCollapsibleBlock(blockPos)
+            return true
           },
         },
         view() {

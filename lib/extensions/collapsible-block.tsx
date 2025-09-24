@@ -1653,21 +1653,150 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }, 500) // Allow extra time to move between icon and tooltip
   }
 
-  const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement
+  const hasModifierKey = (event: React.MouseEvent<Element>) => {
+    return event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+  }
+
+  const isInteractiveHeaderTarget = (target: HTMLElement | null) => {
+    if (!target) {
+      return false
+    }
     if (target.closest('[data-collapsible-arrow]')) {
-      return
+      return true
     }
     if (target.closest('[data-collapsible-actions]')) {
-      return
+      return true
     }
     if (target.closest('[data-preview-icon]')) {
+      return true
+    }
+    return false
+  }
+
+  const shouldEditTitleOnClickRef = useRef(false)
+
+  const findCollapsibleBlockPos = useCallback(
+    (doc: PMNode, schemaName: string | undefined, pos: number | null | undefined) => {
+      if (!schemaName) {
+        return null
+      }
+      if (typeof pos !== 'number') {
+        return null
+      }
+      if (pos < 0 || pos > doc.content.size) {
+        return null
+      }
+      let resolved
+      try {
+        resolved = doc.resolve(pos)
+      } catch {
+        return null
+      }
+      for (let depth = resolved.depth; depth >= 0; depth -= 1) {
+        const nodeAtDepth = resolved.node(depth)
+        if (nodeAtDepth.type.name === schemaName) {
+          return depth === 0 ? 0 : resolved.before(depth)
+        }
+      }
+      return null
+    },
+    [],
+  )
+
+  const handleHeaderMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    shouldEditTitleOnClickRef.current = false
+
+    if (event.button !== 0) {
       return
     }
 
-    e.preventDefault()
-    e.stopPropagation()
-    setIsEditingTitle(true)
+    const target = event.target as HTMLElement | null
+    if (isInteractiveHeaderTarget(target)) {
+      return
+    }
+
+    const targetPos = typeof getPos === 'function' ? getPos() : null
+    const schemaName = editor?.view?.state.schema.nodes.collapsibleBlock?.name ?? editor?.schema?.nodes?.collapsibleBlock?.name
+
+    if (event.shiftKey) {
+      if (typeof targetPos === 'number' && schemaName && editor?.view) {
+        const { state } = editor.view
+        const doc = state.doc
+        const anchorCandidates = [state.selection.anchor, state.selection.head, state.selection.from]
+        let anchorPos: number | null = null
+        for (const candidate of anchorCandidates) {
+          const found = findCollapsibleBlockPos(doc, schemaName, candidate)
+          if (found != null) {
+            anchorPos = found
+            break
+          }
+        }
+
+        editor.view.focus()
+        if (anchorPos != null) {
+          editor.commands.selectCollapsibleBlock(anchorPos)
+        } else {
+          editor.commands.selectCollapsibleBlock(targetPos)
+        }
+        editor.commands.setCollapsibleBlockRange(targetPos)
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+      if (typeof targetPos === 'number') {
+        editor?.view?.focus()
+        editor?.commands.toggleCollapsibleBlockSelection(targetPos)
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+
+    if (event.altKey) {
+      return
+    }
+
+    shouldEditTitleOnClickRef.current = true
+    event.preventDefault()
+    event.stopPropagation()
+  }
+
+  const handleHeaderClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    const target = event.target as HTMLElement | null
+    if (isInteractiveHeaderTarget(target)) {
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    if (hasModifierKey(event)) {
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    if (shouldEditTitleOnClickRef.current) {
+      setIsEditingTitle(true)
+    }
+    shouldEditTitleOnClickRef.current = false
+  }
+
+  const handleArrowClick = (event: React.MouseEvent<HTMLSpanElement>) => {
+    if (hasModifierKey(event)) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    toggleCollapse()
   }
 
   // Handle container hover
@@ -1743,6 +1872,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   return (
     <>
     <NodeViewWrapper 
+      data-collapsible-block
       ref={wrapperRef}
       className="collapsible-block"
       style={{
@@ -1760,6 +1890,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       onMouseLeave={handleMouseLeave}
     >
       <div 
+        data-collapsible-header
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -1773,10 +1904,11 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
         contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
-        onClick={handleHeaderClick}
+        onMouseDownCapture={handleHeaderMouseDownCapture}
+        onClickCapture={handleHeaderClickCapture}
       >
         <span 
-          onClick={toggleCollapse}
+          onClick={handleArrowClick}
           data-collapsible-arrow
           style={{
             fontSize: '16px',
@@ -1811,8 +1943,14 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           />
         ) : (
           <span 
-            onClick={(e) => {
-              e.stopPropagation()
+            onClick={(event) => {
+              if (event.button !== 0) {
+                return
+              }
+              if (hasModifierKey(event)) {
+                return
+              }
+              event.stopPropagation()
               setIsEditingTitle(true)
             }}
             style={{
@@ -1845,6 +1983,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           </span>
         )}
         <div
+          data-collapsible-actions
           style={{
             display: 'flex',
             alignItems: 'center',
