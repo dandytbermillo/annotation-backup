@@ -36,3 +36,7 @@
 - Added an inline “Delete spacer” action that appears whenever the caret is in an empty paragraph sandwiched between two collapsible blocks.
 - Implemented as a ProseMirror plugin via `addProseMirrorPlugins()` (see `lib/extensions/collapsible-block.tsx:721`) to render a lightweight floating button; clicking it deletes the spacer paragraph and repositions the caret safely without touching the blocks themselves.
 - Keeps the guard behavior intact while giving users an explicit, low-risk way to clear accidental blank lines between blocks.
+
+## Trailing Paragraph Guarantee
+- Added a plain-mode ProseMirror plugin that enforces a trailing empty paragraph whenever a note contains content, ensuring users always have a landing zone below the last block or paragraph (`components/canvas/tiptap-editor-plain.tsx:45`).
+- The helper runs on every document-changing transaction and after content hydration so Option A mirrors editors like Notion/Docs where the caret can always move below the last block without adding temporary content.

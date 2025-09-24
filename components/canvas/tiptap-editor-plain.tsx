@@ -19,6 +19,8 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { CollapsibleBlock } from '@/lib/extensions/collapsible-block'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
 import { Mark, mergeAttributes } from '@tiptap/core'
+import { Plugin, PluginKey } from 'prosemirror-state'
+import { EditorView } from 'prosemirror-view'
 // import { AnnotationDecorations } from './annotation-decorations'
 // import { AnnotationDecorationsHoverOnly } from './annotation-decorations-hover-only' // Replaced with hover-icon.ts
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
@@ -42,6 +44,70 @@ import { debugLog, createContentPreview } from '@/lib/debug-logger'
 import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
 
 const JSON_START_RE = /^\s*[\[{]/
+
+const trailingParagraphPluginKey = new PluginKey('plainTrailingParagraph')
+
+const ensureTrailingParagraph = (view: EditorView) => {
+  const state = view?.state
+  if (!state) {
+    return
+  }
+
+  const { doc, schema } = state
+  const paragraphType = schema.nodes?.paragraph
+  if (!paragraphType) {
+    return
+  }
+
+  if (!doc || doc.childCount === 0) {
+    return
+  }
+
+  const lastNode = doc.lastChild
+  if (!lastNode) {
+    return
+  }
+
+  if (lastNode.type === paragraphType && lastNode.content.size === 0) {
+    return
+  }
+
+  const tr = state.tr.insert(doc.content.size, paragraphType.create())
+  tr.setMeta('addToHistory', false)
+  view.dispatch(tr)
+}
+
+const createTrailingParagraphPlugin = () =>
+  new Plugin({
+    key: trailingParagraphPluginKey,
+    appendTransaction(transactions, oldState, newState) {
+      if (!transactions.some(tr => tr.docChanged)) {
+        return null
+      }
+
+      const { doc, schema } = newState
+      const paragraphType = schema.nodes?.paragraph
+      if (!paragraphType) {
+        return null
+      }
+      if (!doc || doc.childCount === 0) {
+        return null
+      }
+
+      const lastNode = doc.lastChild
+      if (!lastNode) {
+        return null
+      }
+
+      if (lastNode.type === paragraphType && lastNode.content.size === 0) {
+        return null
+      }
+
+      const tr = newState.tr.insert(doc.content.size, paragraphType.create())
+      tr.setMeta('addToHistory', false)
+      return tr
+    },
+  })
 
 function providerContentIsEmpty(provider: PlainOfflineProvider | undefined, value: any): boolean {
   if (!value) return true
@@ -745,6 +811,10 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         editor.registerPlugin(AnnotationStartBoundaryFix())
         editor.registerPlugin(AnnotationArrowNavigationFix())
         editor.registerPlugin(ReadOnlyGuard(isEditableRef))
+
+        const trailingParagraphPlugin = createTrailingParagraphPlugin()
+        editor.registerPlugin(trailingParagraphPlugin)
+        ensureTrailingParagraph(editor.view)
         // Note: ClearStoredMarksAtBoundary not needed since we're using default inclusive behavior
         
         // DISABLED: Do not clear content in onCreate as it interferes with async loading
@@ -1024,6 +1094,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.commands.setContent(loadedContent, false)
             // Force a view update
             editor.view.updateState(editor.view.state)
+            ensureTrailingParagraph(editor.view)
             
             const afterContent = editor.getJSON()
 
@@ -1074,6 +1145,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         if (!isEmpty && JSON.stringify(currentJSON) !== JSON.stringify(newContent)) {
           // Set fallback content (no provider mode)
           editor.commands.setContent(newContent)
+          ensureTrailingParagraph(editor.view)
         }
       }
     }, [editor, content, isContentLoading, loadedContent, provider, panelId])
