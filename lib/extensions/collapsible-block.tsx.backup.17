@@ -722,52 +722,6 @@ export const CollapsibleBlock = Node.create({
     return ReactNodeViewRenderer(CollapsibleBlockComponent)
   },
 
-  addKeyboardShortcuts() {
-    const guardBackspace = ({ editor }: { editor: any }) => {
-      const state = editor?.state
-      const view = editor?.view
-      if (!state || !view) {
-        return false
-      }
-
-      const { selection, schema } = state
-      const paragraphType = schema.nodes.paragraph
-      const collapsibleType = schema.nodes.collapsibleBlock
-      if (!selection.empty || !paragraphType || !collapsibleType) {
-        return false
-      }
-
-      const $from = selection.$from
-      if ($from.parent.type !== paragraphType) {
-        return false
-      }
-      if ($from.parent.content.size > 0 || $from.parentOffset !== 0) {
-        return false
-      }
-      if ($from.depth === 0) {
-        return false
-      }
-
-      const resolvedParent = state.doc.resolve($from.before())
-      const prevNode = resolvedParent.nodeBefore
-      if (!prevNode || prevNode.type !== collapsibleType) {
-        return false
-      }
-
-      const anchorPos = $from.pos
-      const tr = state.tr.setSelection(TextSelection.near(state.doc.resolve(anchorPos)))
-      tr.setMeta('addToHistory', false)
-      view.dispatch(tr.scrollIntoView())
-      view.focus()
-      return true
-    }
-
-    return {
-      Backspace: guardBackspace,
-      'Shift-Backspace': guardBackspace,
-    }
-  },
-
   addCommands() {
     return {
       insertCollapsibleBlock: () => ({ tr, state, dispatch }) => {
