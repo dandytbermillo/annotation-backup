@@ -5,17 +5,17 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 192)
+Recent Activity (showing last 10 of 199)
+- note: Intercepted shift/meta header & arrow clicks in NodeView to call selection commands and log via debug API for multi-select diagnostics.
+- note: Modifiers now bubble through click capture so plugin can run CMD_SET_RANGE.
+- note: Plain header clicks no longer stop propagation; plugin now seeds selection. Modifiers still short-circuit title edit.
+- note: Plain header clicks now bubble to plugin (no preventDefault); modifiers still short-circuit.
+- note: Plain header clicks now invoke plugin selectCollapsibleBlock; modifier paths blocked in NodeView capture.
+- note: Let plugin own modifier click: NodeView stops issuing selection commands, plugin click handler skips modifiers.
+- commit [2025-09-24 22:14Z] 1de5f58: fixing title header
 - commit [2025-09-24 21:59Z] 2629685: adding >> button in the title bar
 - note: Instrumented collapsible selection with debugLog gating via NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION.
 - commit [2025-09-24 20:26Z] 4d32fa4: added dotted draggble button on the title bar
-- note: Let modifier clicks on collapsible headers bubble to selection plugin; plain clicks still enter title edit.
-- note: Header modifier clicks now resolve block position via posAtCoords so range selection uses same positions as plugin.
-- commit [2025-09-24 19:31Z] 8ec0a89: shift+click can now highlight the block
-- note: Shift/cmd header clicks now run selection commands directly (select anchor + set range / toggle multi) using NodeView position lookup.
-- note: Hooked shift/meta header mousedown to trigger selection commands and refocused editor so Shift+Click/Shift+Arrow flows engage plugin state.
-- note: Ran .context-[REDACTED].js at user request.
-- note: Intercepted header events in capture phase and stopped plain arrow clicks from hitting selection plugin to match research behavior.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

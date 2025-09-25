@@ -1,18 +1,524 @@
-import { Node, mergeAttributes } from '@tiptap/core'
+import { Node, Mark, mergeAttributes } from '@tiptap/core'
 import { NodeViewWrapper, NodeViewContent, ReactNodeViewRenderer, useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
 import Underline from '@tiptap/extension-underline'
-import Placeholder from '@tiptap/extension-placeholder'
 import { DOMSerializer, Node as PMNode } from 'prosemirror-model'
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { debugLog, createContentPreview } from '@/lib/debug-logger'
+
+const isCollapsibleSelectionDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION === 'true'
+
+const logCollapsibleSelectionDebug = (action: string, metadata: Record<string, unknown>) => {
+  if (!isCollapsibleSelectionDebugEnabled) {
+    return
+  }
+  void debugLog('CollapsibleBlockSelection', action, {
+    metadata: {
+      ...metadata,
+    },
+  })
+}
 
 const DEFAULT_BLOCK_TITLE = 'Block title here...'
 
+type TemplateMarkSpec = {
+  type: string
+  attrs?: Record<string, any>
+}
+
+type TemplateNodeSpec = {
+  type: string
+  attrs?: Record<string, any>
+  content?: TemplateNodeSpec[]
+  text?: string
+  marks?: TemplateMarkSpec[]
+}
+
+type CollapsibleTemplate = {
+  id: string
+  label: string
+  description: string
+  title?: string
+  buildContent: () => TemplateNodeSpec[]
+  previewLines: string[]
+}
+
+const DEFAULT_TEMPLATE_ID = 'outline'
+
+type TemplateSnapshot = {
+  nodeJSON: JSONNode
+}
+
+const buildTemplateDoc = (template: CollapsibleTemplate): JSONNode => ({
+  type: 'doc',
+  content: template.buildContent(),
+})
+
+const COLLAPSIBLE_TEMPLATES: CollapsibleTemplate[] = [
+  {
+    id: 'outline',
+    label: 'Outline',
+    description: 'Generic outline with summary and nested bullet points.',
+    previewLines: [
+      'Summary paragraph placeholder',
+      '- Main point 1',
+      '- Main point 2 (with sub-points)',
+    ],
+    buildContent: () => [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Description paragraph here...' },
+        ],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Main point 1' }],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Main point 2' }],
+              },
+              {
+                type: 'bulletList',
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'text', text: 'Sub-point 2.1' }],
+                      },
+                    ],
+                  },
+                  {
+                    type: 'listItem',
+                    content: [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'text', text: 'Sub-point 2.2' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Main point 3' }],
+              },
+              {
+                type: 'bulletList',
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'text', text: 'Sub-point 3.1' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'checklist',
+    label: 'Checklist',
+    description: 'Tasks with owner and status reminders.',
+    title: 'Checklist',
+    previewLines: [
+      '[ ] Task - Owner (Status)',
+      '[ ] Task - Owner (Status)',
+      'Add notes under each item',
+    ],
+    buildContent: () => [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Track tasks, owners, and current status.' },
+        ],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: '[ ] Task 1 - Owner (Status)' }],
+              },
+              {
+                type: 'bulletList',
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'text', text: 'Notes or next steps' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: '[ ] Task 2 - Owner (Status)' }],
+              },
+              {
+                type: 'bulletList',
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [
+                      {
+                        type: 'paragraph',
+                        content: [{ type: 'text', text: 'Notes or blockers' }],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'decision-log',
+    label: 'Decision Log',
+    description: 'Record context, options, outcome, and follow-ups.',
+    title: 'Decision Log',
+    previewLines: [
+      'Context, options, decision, follow-up',
+      'Bullet list of options with notes',
+      'Next review reminder',
+    ],
+    buildContent: () => [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Context: ', marks: [{ type: 'bold' }] },
+          { type: 'text', text: 'What decision are we making and why now?' },
+        ],
+      },
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Options', marks: [{ type: 'bold' }] },
+        ],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  { type: 'text', text: 'Option A - key trade-offs' },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [
+                  { type: 'text', text: 'Option B - key trade-offs' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Decision: ', marks: [{ type: 'bold' }] },
+          { type: 'text', text: 'Chosen option and rationale.' },
+        ],
+      },
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Follow-up: ', marks: [{ type: 'bold' }] },
+          { type: 'text', text: 'Next review date or success criteria.' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'retro',
+    label: 'Retro',
+    description: 'Start, stop, continue prompts for retrospectives.',
+    title: 'Retro',
+    previewLines: [
+      'Start doing',
+      'Stop doing',
+      'Continue doing',
+    ],
+    buildContent: () => [
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: 'Start doing' }],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Idea to try next' }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: 'Stop doing' }],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Pain point or anti-pattern' }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: 'Continue doing' }],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Practice that worked well' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'meeting-notes',
+    label: 'Meeting Notes',
+    description: 'Agenda outline plus attendees and action items.',
+    title: 'Meeting Notes',
+    previewLines: [
+      'Agenda with discussion bullets',
+      'Attendees section',
+      'Action items list',
+    ],
+    buildContent: () => [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Date: ' },
+          { type: 'text', text: 'Add meeting date here' },
+        ],
+      },
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'Attendees: ' },
+          { type: 'text', text: 'List participants' },
+        ],
+      },
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: 'Agenda' }],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Topic 1 - goal or owner' }],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Topic 2 - goal or owner' }],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: 'heading',
+        attrs: { level: 3 },
+        content: [{ type: 'text', text: 'Action items' }],
+      },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: '[ ] Action - owner and due date' }],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: '[ ] Action - owner and due date' }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  },
+]
+
+const getTemplateById = (id?: string | null) =>
+  COLLAPSIBLE_TEMPLATES.find(template => template.id === id) ?? null
+
+const AnnotationMark = Mark.create({
+  name: 'annotation',
+  inclusive: true,
+
+  addOptions() {
+    return { HTMLAttributes: {} }
+  },
+
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-annotation-id'),
+        renderHTML: attrs => (attrs.id ? { 'data-annotation-id': attrs.id } : {}),
+      },
+      type: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-type'),
+        renderHTML: attrs => (attrs.type ? { 'data-type': attrs.type } : {}),
+      },
+      branchId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-branch'),
+        renderHTML: attrs => (attrs.branchId ? { 'data-branch': attrs.branchId } : {}),
+      },
+    }
+  },
+
+  parseHTML() {
+    return [
+      { tag: 'span[data-annotation-id]' },
+      { tag: 'span.annotation[data-branch]' },
+      { tag: 'span[data-branch]' },
+    ]
+  },
+
+  renderHTML({ HTMLAttributes, mark }) {
+    const type = mark.attrs.type || 'note'
+    const attrs: Record<string, any> = {
+      class: `annotation annotation-${type}`,
+      'data-type': type,
+    }
+
+    if (mark.attrs.branchId) {
+      attrs['data-branch'] = mark.attrs.branchId
+      attrs['data-branch-id'] = mark.attrs.branchId
+    }
+
+    return ['span', mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, attrs), 0]
+  },
+})
+
+type JSONNode = ReturnType<PMNode['toJSON']>
+
+const expandCollapsibleNodes = (jsonNode: JSONNode): JSONNode => {
+  if (!jsonNode) return jsonNode
+
+  const next: JSONNode = Array.isArray(jsonNode)
+    ? jsonNode.map(child => expandCollapsibleNodes(child))
+    : { ...jsonNode }
+
+  if (Array.isArray(next)) {
+    return next
+  }
+
+  if (next.type === 'collapsibleBlock') {
+    next.attrs = { ...next.attrs, collapsed: false }
+  }
+
+  if (next.content) {
+    next.content = next.content.map(child => expandCollapsibleNodes(child))
+  }
+
+  return next
+}
+
 const buildInspectorDoc = (pmNode: PMNode) => ({
   type: 'doc',
-  content: [pmNode.toJSON()],
+  content: [expandCollapsibleNodes(pmNode.toJSON())],
 })
 
 type BlockStats = {
@@ -70,6 +576,7 @@ export const CollapsibleBlock = Node.create({
   group: 'block',
   content: 'block+',
   defining: true,
+  isolating: true,
   
   addOptions() {
     return {
@@ -95,6 +602,11 @@ export const CollapsibleBlock = Node.create({
           return { 'data-title': value }
         },
       },
+      templateId: {
+        default: null,
+        parseHTML: element => element.getAttribute('data-template'),
+        renderHTML: attributes => (attributes.templateId ? { 'data-template': attributes.templateId } : {}),
+      },
     }
   },
 
@@ -109,6 +621,7 @@ export const CollapsibleBlock = Node.create({
   renderHTML({ node, HTMLAttributes }) {
     const attributes = mergeAttributes(HTMLAttributes, {
       'data-collapsible-block': '',
+      ...(node.attrs.templateId ? { 'data-template': node.attrs.templateId } : {}),
     })
 
     const { collapsed, title } = node.attrs
@@ -130,7 +643,7 @@ export const CollapsibleBlock = Node.create({
         'span',
         {
           'data-collapsible-title': '',
-          style: 'font-weight:600;font-size:16px;',
+          style: 'font-weight:600;font-size:16px;flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;',
         },
         displayTitle,
       ],
@@ -141,7 +654,7 @@ export const CollapsibleBlock = Node.create({
         'span',
         {
           'data-collapsible-meta': '',
-          style: 'margin-left:auto;font-size:12px;color:#708090;letter-spacing:0.01em;',
+          style: 'margin-left:12px;font-size:12px;color:#708090;letter-spacing:0.01em;white-space:nowrap;flex-shrink:0;',
         },
         metaLabel,
       ])
@@ -202,7 +715,7 @@ export const CollapsibleBlock = Node.create({
         'div',
         {
           'data-collapsible-header': '',
-          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;',
+          style: 'display:flex;align-items:center;gap:8px;padding:2px 0;position:relative;min-width:0;',
         },
         ...headerChildren,
         actionStrip,
@@ -218,103 +731,259 @@ export const CollapsibleBlock = Node.create({
     ]
   },
 
+  addProseMirrorPlugins() {
+    const spacerKey = new PluginKey('collapsibleBlockSpacerActions')
+
+    const computeContext = (state: any) => {
+      if (!state || !state.selection || !state.schema) {
+        return null
+      }
+      const { selection, schema } = state
+      const paragraphType = schema.nodes?.paragraph
+      const collapsibleType = schema.nodes?.collapsibleBlock
+      if (!paragraphType || !collapsibleType) {
+        return null
+      }
+      if (!selection.empty) {
+        return null
+      }
+
+      const $from = selection.$from
+      if ($from.parent.type !== paragraphType) {
+        return null
+      }
+      if ($from.parent.content.size > 0 || $from.parentOffset !== 0) {
+        return null
+      }
+      if ($from.depth === 0) {
+        return null
+      }
+
+      const beforePos = $from.before()
+      const afterPos = $from.after()
+      if (typeof beforePos !== 'number' || typeof afterPos !== 'number') {
+        return null
+      }
+
+      const prevNode = state.doc.resolve(beforePos).nodeBefore
+      const nextNode = afterPos <= state.doc.content.size ? state.doc.resolve(afterPos).nodeAfter : null
+      if (!prevNode || prevNode.type !== collapsibleType) {
+        return null
+      }
+      if (!nextNode || nextNode.type !== collapsibleType) {
+        return null
+      }
+
+      const paragraphNode = state.doc.nodeAt(beforePos)
+      if (!paragraphNode) {
+        return null
+      }
+
+      return {
+        selectionPos: $from.pos,
+        paragraphFrom: beforePos,
+        paragraphTo: beforePos + paragraphNode.nodeSize,
+      }
+    }
+
+    return [
+      new Plugin({
+        key: spacerKey,
+        view: editorView => {
+          if (typeof document === 'undefined') {
+            return {}
+          }
+
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = 'Delete spacer'
+          button.setAttribute('aria-label', 'Delete spacer between collapsible blocks')
+          button.style.position = 'absolute'
+          button.style.zIndex = '1100'
+          button.style.display = 'none'
+          button.style.padding = '4px 8px'
+          button.style.fontSize = '12px'
+          button.style.fontWeight = '500'
+          button.style.borderRadius = '6px'
+          button.style.border = '1px solid rgba(99, 102, 241, 0.4)'
+          button.style.background = '#FFFFFF'
+          button.style.boxShadow = '0 4px 12px rgba(15, 23, 42, 0.12)'
+          button.style.color = '#1E293B'
+          button.style.cursor = 'pointer'
+          button.style.userSelect = 'none'
+
+          const hide = () => {
+            button.style.display = 'none'
+          }
+
+          const updateButton = (viewInstance: any) => {
+            const context = computeContext(viewInstance.state)
+            if (!context) {
+              hide()
+              return
+            }
+
+            try {
+              const coords = viewInstance.coordsAtPos(context.selectionPos)
+              const offsetY = -28
+              const offsetX = 12
+              button.style.left = `${window.scrollX + coords.right + offsetX}px`
+              button.style.top = `${window.scrollY + coords.top + offsetY}px`
+              button.style.display = 'block'
+            } catch (error) {
+              hide()
+            }
+          }
+
+          const handleClick = (event: MouseEvent) => {
+            event.preventDefault()
+            const context = computeContext(editorView.state)
+            if (!context) {
+              hide()
+              return
+            }
+
+            const { paragraphFrom, paragraphTo } = context
+            const tr = editorView.state.tr.delete(paragraphFrom, paragraphTo)
+            const docSize = tr.doc.content.size
+            const safePos = Math.max(0, Math.min(paragraphFrom, docSize))
+            const resolved = tr.doc.resolve(safePos)
+            tr.setSelection(TextSelection.near(resolved))
+            editorView.dispatch(tr.scrollIntoView())
+            editorView.focus()
+            hide()
+          }
+
+          const handleMouseDown = (event: MouseEvent) => {
+            event.preventDefault()
+          }
+
+          button.addEventListener('mousedown', handleMouseDown)
+          button.addEventListener('click', handleClick)
+
+          document.body.appendChild(button)
+
+          updateButton(editorView)
+
+          return {
+            update: viewInstance => {
+              updateButton(viewInstance)
+            },
+            destroy() {
+              button.removeEventListener('mousedown', handleMouseDown)
+              button.removeEventListener('click', handleClick)
+              if (button.parentNode) {
+                button.parentNode.removeChild(button)
+              }
+            },
+          }
+        },
+      }),
+    ]
+  },
+
   addNodeView() {
     return ReactNodeViewRenderer(CollapsibleBlockComponent)
   },
 
+  addKeyboardShortcuts() {
+    const guardBackspace = ({ editor }: { editor: any }) => {
+      const state = editor?.state
+      const view = editor?.view
+      if (!state || !view) {
+        return false
+      }
+
+      const { selection, schema } = state
+      const paragraphType = schema.nodes.paragraph
+      const collapsibleType = schema.nodes.collapsibleBlock
+      if (!selection.empty || !paragraphType || !collapsibleType) {
+        return false
+      }
+
+      const $from = selection.$from
+      if ($from.parent.type !== paragraphType) {
+        return false
+      }
+      if ($from.parent.content.size > 0 || $from.parentOffset !== 0) {
+        return false
+      }
+      if ($from.depth === 0) {
+        return false
+      }
+
+      const resolvedParent = state.doc.resolve($from.before())
+      const prevNode = resolvedParent.nodeBefore
+      if (!prevNode || prevNode.type !== collapsibleType) {
+        return false
+      }
+
+      const anchorPos = $from.pos
+      const tr = state.tr.setSelection(TextSelection.near(state.doc.resolve(anchorPos)))
+      tr.setMeta('addToHistory', false)
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+      return true
+    }
+
+    return {
+      Backspace: guardBackspace,
+      'Shift-Backspace': guardBackspace,
+    }
+  },
+
   addCommands() {
     return {
-      insertCollapsibleBlock: () => ({ commands }) => {
-        // Create the pre-filled content structure
-        const content = {
-          type: 'collapsibleBlock',
-          attrs: {
-            collapsed: false,
-            title: 'Section Title'
+      insertCollapsibleBlock: () => ({ tr, state, dispatch }) => {
+        const template = getTemplateById(DEFAULT_TEMPLATE_ID)
+        const content = template?.buildContent() ?? [
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: '' }],
           },
-          content: [
-            {
-              type: 'paragraph',
-              content: [
-                { type: 'text', text: 'Description paragraph here...' }
-              ]
-            },
-            {
-              type: 'bulletList',
-              content: [
-                {
-                  type: 'listItem',
-                  content: [
-                    {
-                      type: 'paragraph',
-                      content: [{ type: 'text', text: 'Main point 1' }]
-                    }
-                  ]
-                },
-                {
-                  type: 'listItem',
-                  content: [
-                    {
-                      type: 'paragraph',
-                      content: [{ type: 'text', text: 'Main point 2' }]
-                    },
-                    {
-                      type: 'bulletList',
-                      content: [
-                        {
-                          type: 'listItem',
-                          content: [
-                            {
-                              type: 'paragraph',
-                              content: [{ type: 'text', text: 'Sub-point 2.1' }]
-                            }
-                          ]
-                        },
-                        {
-                          type: 'listItem',
-                          content: [
-                            {
-                              type: 'paragraph',
-                              content: [{ type: 'text', text: 'Sub-point 2.2' }]
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                },
-                {
-                  type: 'listItem',
-                  content: [
-                    {
-                      type: 'paragraph',
-                      content: [{ type: 'text', text: 'Main point 3' }]
-                    },
-                    {
-                      type: 'bulletList',
-                      content: [
-                        {
-                          type: 'listItem',
-                          content: [
-                            {
-                              type: 'paragraph',
-                              content: [{ type: 'text', text: 'Sub-point 3.1' }]
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  ]
-                }
-              ]
-            }
-          ]
+        ]
+
+        const { schema } = state
+        const paragraphType = schema.nodes.paragraph
+        const collapsibleType = schema.nodes.collapsibleBlock
+        if (!paragraphType || !collapsibleType) {
+          return false
         }
-        
-        return commands.insertContent(content)
+
+        const blockContent = content.map(node => schema.nodeFromJSON(node))
+        const blockNode = collapsibleType.create({
+          collapsed: false,
+          title: 'Section Title',
+          templateId: null,
+        }, blockContent)
+        const trailingParagraph = paragraphType.create()
+
+        const insertPos = tr.selection.from
+        tr = tr.replaceSelectionWith(blockNode, false)
+        const blockStart = tr.mapping.map(insertPos, -1)
+
+        let afterBlock = blockStart + blockNode.nodeSize
+        if (afterBlock > tr.doc.content.size) {
+          afterBlock = tr.doc.content.size
+        }
+
+        const existingNodeAfter = afterBlock < tr.doc.content.size ? tr.doc.resolve(afterBlock).nodeAfter : null
+        let trailingStart = afterBlock
+        if (!existingNodeAfter || existingNodeAfter.type !== paragraphType) {
+          tr = tr.insert(afterBlock, trailingParagraph)
+          trailingStart = afterBlock
+          afterBlock = trailingStart + trailingParagraph.nodeSize
+        }
+
+        const targetPos = Math.min(trailingStart + 1, tr.doc.content.size)
+        tr = tr.setSelection(TextSelection.near(tr.doc.resolve(targetPos)))
+        dispatch(tr.scrollIntoView())
+
+        return true
       },
     }
   },
+
 })
 
 // React component for the collapsible block
@@ -339,20 +1008,149 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [inspectorPosition, setInspectorPosition] = useState({ top: 120, left: 120 })
   const [isDraggingInspector, setIsDraggingInspector] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number } | null>(null)
-  const inspectorExtensions = useMemo(() => createInspectorExtensions(), [])
-  const inspectorEditor = useEditor(
-    {
-      extensions: inspectorExtensions,
-      editable: false,
-      content: buildInspectorDoc(node),
-      immediatelyRender: false,
-    },
-    [inspectorExtensions]
-  )
-
+  const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false)
+  const [templateMenuPosition, setTemplateMenuPosition] = useState({ top: 0, left: 0 })
+  const templateButtonRef = useRef<HTMLButtonElement | null>(null)
+  const templateMenuRef = useRef<HTMLDivElement | null>(null)
+  const templateEditorSuppressRef = useRef(false)
+  const [isTemplateMenuDragging, setIsTemplateMenuDragging] = useState(false)
+  const templateMenuDragOffsetRef = useRef<{ x: number; y: number } | null>(null)
+  const [templateUndoSnapshot, setTemplateUndoSnapshot] = useState<TemplateSnapshot | null>(null)
+  const defaultTemplate = getTemplateById(DEFAULT_TEMPLATE_ID)!
+  const storedTemplate = getTemplateById(node.attrs.templateId)
+  const appliedTemplate = storedTemplate ?? defaultTemplate
+  const hasExplicitTemplate = Boolean(node.attrs.templateId)
+  const templateButtonLabel = hasExplicitTemplate ? 'Change template' : 'Insert template'
+  const [hoveredTemplateId, setHoveredTemplateId] = useState<string | null>(null)
+  const [draftTemplateId, setDraftTemplateId] = useState<string>(appliedTemplate.id)
+  const draftTemplate = getTemplateById(draftTemplateId) ?? defaultTemplate
+  const [isDraftDirty, setIsDraftDirty] = useState(false)
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
   const headerMetaLabel = metaBase
+
+  const templatePreviewEditor = useEditor(
+    {
+      extensions: createTemplatePreviewExtensions(),
+      editable: true,
+      content: buildTemplateDoc(appliedTemplate),
+      editorProps: {
+        attributes: {
+          class: 'template-preview-editor',
+          style:
+            'min-height:180px;border:1px solid #e2e8f0;border-radius:8px;padding:12px;font-size:13px;line-height:1.55;overflow:auto;background-color:#ffffff;',
+        },
+      },
+    },
+    []
+  )
+
+  const setTemplateEditorContent = useCallback(
+    (doc: JSONNode, dirty = false) => {
+      if (!templatePreviewEditor) {
+        setIsDraftDirty(dirty)
+        return
+      }
+
+      try {
+        templateEditorSuppressRef.current = true
+        templatePreviewEditor.commands.setContent(doc, false)
+        templatePreviewEditor.setEditable(true)
+        setIsDraftDirty(dirty)
+      } catch (error) {
+        console.error('Failed to load template preview', error)
+      } finally {
+        const release = () => {
+          templateEditorSuppressRef.current = false
+        }
+
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+          window.requestAnimationFrame(release)
+        } else {
+          setTimeout(release, 0)
+        }
+      }
+    },
+    [templatePreviewEditor]
+  )
+
+  useEffect(() => {
+    if (!templatePreviewEditor) {
+      return
+    }
+
+    const handleUpdate = () => {
+      if (templateEditorSuppressRef.current) {
+        return
+      }
+      setIsDraftDirty(true)
+    }
+
+    templatePreviewEditor.on('update', handleUpdate)
+
+    return () => {
+      templatePreviewEditor.off('update', handleUpdate)
+    }
+  }, [templatePreviewEditor])
+
+  useEffect(() => {
+    if (!isTemplateMenuDragging) {
+      return
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!templateMenuDragOffsetRef.current || !templateMenuRef.current) {
+        return
+      }
+      event.preventDefault()
+
+      const { x, y } = templateMenuDragOffsetRef.current
+      const menuRect = templateMenuRef.current.getBoundingClientRect()
+      const menuWidth = menuRect.width
+      const menuHeight = menuRect.height
+
+      const nextLeftRaw = event.clientX - x
+      const nextTopRaw = event.clientY - y
+
+      const maxLeft = Math.max(16, window.innerWidth - menuWidth - 16)
+      const maxTop = Math.max(16, window.innerHeight - menuHeight - 16)
+
+      const nextLeft = Math.min(Math.max(16, nextLeftRaw), maxLeft)
+      const nextTop = Math.min(Math.max(16, nextTopRaw), maxTop)
+
+      setTemplateMenuPosition({ top: nextTop, left: nextLeft })
+    }
+
+    const handleMouseUp = () => {
+      setIsTemplateMenuDragging(false)
+      templateMenuDragOffsetRef.current = null
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isTemplateMenuDragging])
+
+  useEffect(() => {
+    if (!templatePreviewEditor || !isTemplateMenuOpen) {
+      return
+    }
+
+    setTemplateEditorContent(buildTemplateDoc(draftTemplate), false)
+  }, [templatePreviewEditor, draftTemplateId, draftTemplate, isTemplateMenuOpen, setTemplateEditorContent])
+
+  useEffect(() => {
+    if (isTemplateMenuOpen) {
+      return
+    }
+
+    setDraftTemplateId(prev => (prev === appliedTemplate.id ? prev : appliedTemplate.id))
+    setIsDraftDirty(false)
+  }, [isTemplateMenuOpen, appliedTemplate.id])
 
   const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
 
@@ -363,14 +1161,13 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   }, [node.attrs.title, updateAttributes])
 
   useEffect(() => {
+    debugLog('CollapsibleBlock', 'TITLE_ATTR_EFFECT', {
+      metadata: {
+        attrTitle: node.attrs.title,
+      },
+    })
     setTitle(getDisplayTitle(node.attrs.title))
   }, [node.attrs.title])
-
-  useEffect(() => {
-    if (!inspectorEditor) return
-    inspectorEditor.commands.setContent(buildInspectorDoc(node), false)
-    inspectorEditor.setEditable(false)
-  }, [inspectorEditor, node])
 
   useEffect(() => {
     if (!showInspector || typeof window === 'undefined') return
@@ -411,6 +1208,39 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       window.removeEventListener('mouseup', onMouseUp)
     }
   }, [showInspector, isDraggingInspector])
+
+  useEffect(() => {
+    if (!isTemplateMenuOpen) {
+      return
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (
+        templateMenuRef.current &&
+        !templateMenuRef.current.contains(target) &&
+        !templateButtonRef.current?.contains(target)
+      ) {
+        setIsTemplateMenuOpen(false)
+        setHoveredTemplateId(null)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsTemplateMenuOpen(false)
+        setHoveredTemplateId(null)
+      }
+    }
+
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isTemplateMenuOpen])
 
   const handleDuplicate = () => {
     const pos = resolvePos()
@@ -466,6 +1296,235 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     tr.insert(insertPos, node.copy(node.content))
     editor.view.dispatch(tr)
     editor.view.focus()
+  }
+
+  const insertParagraphOutside = useCallback(
+    (position: number) => {
+      const view = editor?.view
+      if (!view) {
+        return
+      }
+      const { state } = view
+      const paragraphType = state.schema.nodes.paragraph
+      if (!paragraphType) {
+        return
+      }
+
+      const clampedPos = Math.max(0, Math.min(position, state.doc.content.size))
+      let tr = state.tr.insert(clampedPos, paragraphType.create())
+      const selectionPos = Math.min(clampedPos + 1, tr.doc.content.size)
+      tr = tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
+      view.dispatch(tr.scrollIntoView())
+      view.focus()
+    },
+    [editor]
+  )
+
+  const handleInsertBefore = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    insertParagraphOutside(pos)
+  }
+
+  const handleInsertAfter = () => {
+    const pos = resolvePos()
+    if (pos == null) return
+    insertParagraphOutside(pos + node.nodeSize)
+  }
+
+  const closeTemplateMenu = () => {
+    setIsTemplateMenuOpen(false)
+    setHoveredTemplateId(null)
+    setIsTemplateMenuDragging(false)
+    templateMenuDragOffsetRef.current = null
+  }
+
+  const handleTemplateButtonClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!isTemplateMenuOpen) {
+      if (templateButtonRef.current && typeof window !== 'undefined') {
+        const rect = templateButtonRef.current.getBoundingClientRect()
+        const menuWidth = 320
+        const maxLeft = Math.max(16, window.innerWidth - menuWidth - 16)
+        const left = Math.min(Math.max(16, rect.left), maxLeft)
+        const top = rect.bottom + 8
+        setTemplateMenuPosition({ top, left })
+      } else {
+        setTemplateMenuPosition({ top: 120, left: 120 })
+      }
+      setHoveredTemplateId(null)
+      setDraftTemplateId(appliedTemplate.id)
+      setTemplateEditorContent(buildTemplateDoc(appliedTemplate), false)
+      setIsTemplateMenuOpen(true)
+      return
+    }
+
+    closeTemplateMenu()
+  }
+
+  const handleTemplateSelection = (template: CollapsibleTemplate) => {
+    setDraftTemplateId(template.id)
+    setHoveredTemplateId(null)
+    setTemplateEditorContent(buildTemplateDoc(template), false)
+    setIsDraftDirty(false)
+  }
+
+  const handleTemplateMenuDragStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+    if (!templateMenuRef.current) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = templateMenuRef.current.getBoundingClientRect()
+    templateMenuDragOffsetRef.current = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    }
+    setIsTemplateMenuDragging(true)
+  }
+
+  const handleResetTemplatePreview = () => {
+    setTemplateEditorContent(buildTemplateDoc(draftTemplate), false)
+  }
+
+  const applyTemplateToBlock = (template: CollapsibleTemplate, docJSON?: JSONNode | null) => {
+    const pos = resolvePos()
+    if (pos == null) {
+      return
+    }
+
+    const view = editor?.view
+    if (!view) {
+      return
+    }
+
+    try {
+      const { state, dispatch } = view
+      const { schema } = state
+      const blockType = schema.nodes.collapsibleBlock
+      if (!blockType) {
+        return
+      }
+
+      debugLog('CollapsibleBlock', 'APPLY_TEMPLATE_START', {
+        metadata: {
+          templateId: template.id,
+          stateTitle: title,
+          nodeTitle: node.attrs.title,
+          hasDocJSON: Boolean(docJSON),
+        },
+      })
+
+      setTemplateUndoSnapshot(current => {
+        if (current) {
+          return current
+        }
+        return { nodeJSON: node.toJSON() }
+      })
+
+      const templateDoc = docJSON ?? buildTemplateDoc(template)
+      const rawContent = Array.isArray((templateDoc as any)?.content)
+        ? (templateDoc as any).content
+        : []
+      const contentNodes = rawContent.map((spec: any) => schema.nodeFromJSON(spec))
+      const existingTitle = node.attrs.title
+      const nextAttrs: Record<string, any> = {
+        ...node.attrs,
+        collapsed: false,
+        templateId: template.id,
+        title: existingTitle,
+      }
+
+      const newBlock = blockType.create(nextAttrs, contentNodes)
+      if (!newBlock) {
+        return
+      }
+
+       debugLog('CollapsibleBlock', 'APPLY_TEMPLATE_NODE', {
+        metadata: {
+          existingTitle,
+          nextAttrs,
+        },
+      })
+
+      const tr = state.tr.replaceWith(pos, pos + node.nodeSize, newBlock)
+      dispatch(tr)
+
+      debugLog('CollapsibleBlock', 'APPLY_TEMPLATE_DISPATCHED', {
+        metadata: {
+          titleAfterDispatch: existingTitle,
+        },
+      })
+      view.focus()
+      updateAttributes({ title: existingTitle })
+      setIsCollapsed(false)
+      setIsEditingTitle(false)
+      setTitle(getDisplayTitle(existingTitle))
+      setCachedHtmlContent('')
+      setIsDraftDirty(false)
+      closeTemplateMenu()
+    } catch (error) {
+      console.error('Failed to apply template', error)
+    }
+  }
+
+  const handleApplyDraftTemplate = () => {
+    const templateToApply = draftTemplate
+    const editorDoc = templatePreviewEditor?.getJSON?.() ?? null
+    applyTemplateToBlock(templateToApply, editorDoc)
+  }
+
+  const handleCancelTemplateSelection = () => {
+    closeTemplateMenu()
+    setTemplateEditorContent(buildTemplateDoc(appliedTemplate), false)
+  }
+
+  const handleUndoTemplate = () => {
+    if (!templateUndoSnapshot) {
+      return
+    }
+
+    const pos = resolvePos()
+    if (pos == null) {
+      return
+    }
+
+    const view = editor?.view
+    if (!view) {
+      return
+    }
+
+    const snapshot = templateUndoSnapshot
+
+    try {
+      const { state, dispatch } = view
+      const restoredBlock = state.schema.nodeFromJSON(snapshot.nodeJSON as any)
+      if (!restoredBlock) {
+        return
+      }
+
+      const tr = state.tr.replaceWith(pos, pos + node.nodeSize, restoredBlock)
+      dispatch(tr)
+      view.focus()
+
+      const snapshotAttrs = (snapshot.nodeJSON as any)?.attrs ?? {}
+      const restoredCollapsed = Boolean(snapshotAttrs.collapsed)
+      const restoredTitle = getDisplayTitle(snapshotAttrs.title)
+      setIsCollapsed(restoredCollapsed)
+      setTitle(restoredTitle)
+      setIsEditingTitle(false)
+      setCachedHtmlContent('')
+      setTemplateUndoSnapshot(null)
+      closeTemplateMenu()
+    } catch (error) {
+      console.error('Failed to restore template snapshot', error)
+    }
   }
 
   const handleInspectorMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -607,21 +1666,145 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }, 500) // Allow extra time to move between icon and tooltip
   }
 
-  const handleHeaderClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement
+  const hasModifierKey = (event: React.MouseEvent<Element>) => {
+    return event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+  }
+
+  const isInteractiveHeaderTarget = (target: HTMLElement | null) => {
+    if (!target) {
+      return false
+    }
     if (target.closest('[data-collapsible-arrow]')) {
-      return
+      return true
     }
     if (target.closest('[data-collapsible-actions]')) {
-      return
+      return true
     }
     if (target.closest('[data-preview-icon]')) {
+      return true
+    }
+    return false
+  }
+
+  const shouldEditTitleOnClickRef = useRef(false)
+
+  const handleHeaderMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    shouldEditTitleOnClickRef.current = false
+
+    if (event.button !== 0) {
       return
     }
 
-    e.preventDefault()
-    e.stopPropagation()
-    setIsEditingTitle(true)
+    const target = event.target as HTMLElement | null
+    if (isInteractiveHeaderTarget(target)) {
+      return
+    }
+
+    const nodePos = typeof getPos === 'function' ? getPos() : null
+    const selectionPos = typeof nodePos === 'number' ? nodePos + 1 : null
+
+    if (event.shiftKey) {
+      const selectionSnapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+      logCollapsibleSelectionDebug('NODEVIEW_SHIFT_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+        selectionAnchor: editor?.view?.state.selection?.anchor ?? null,
+        selectionHead: editor?.view?.state.selection?.head ?? null,
+        selectionType: editor?.view?.state.selection?.constructor?.name ?? null,
+        snapshot: selectionSnapshot,
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
+      editor?.view?.focus()
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+      const selectionSnapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+      logCollapsibleSelectionDebug('NODEVIEW_META_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+        selectionAnchor: editor?.view?.state.selection?.anchor ?? null,
+        selectionHead: editor?.view?.state.selection?.head ?? null,
+        selectionType: editor?.view?.state.selection?.constructor?.name ?? null,
+        snapshot: selectionSnapshot,
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
+      editor?.view?.focus()
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    if (event.altKey) {
+      logCollapsibleSelectionDebug('NODEVIEW_ALT_MOUSEDOWN', {
+        nodePos,
+        selectionPos,
+      })
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    shouldEditTitleOnClickRef.current = true
+    event.preventDefault()
+    event.stopPropagation()
+    logCollapsibleSelectionDebug('NODEVIEW_PLAIN_MOUSEDOWN', {
+      nodePos,
+      selectionPos,
+    })
+  }
+
+  const handleHeaderClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    const target = event.target as HTMLElement | null
+    if (isInteractiveHeaderTarget(target)) {
+      shouldEditTitleOnClickRef.current = false
+      return
+    }
+
+    if (hasModifierKey(event)) {
+      shouldEditTitleOnClickRef.current = false
+      logCollapsibleSelectionDebug('NODEVIEW_MOD_CLICK_CAPTURE', {
+        modifiers: {
+          shift: event.shiftKey,
+          meta: event.metaKey,
+          ctrl: event.ctrlKey,
+          alt: event.altKey,
+        },
+      })
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    if (shouldEditTitleOnClickRef.current) {
+      setIsEditingTitle(true)
+    }
+    shouldEditTitleOnClickRef.current = false
+    logCollapsibleSelectionDebug('NODEVIEW_PLAIN_CLICK_CAPTURE', {})
+  }
+
+  const handleArrowClick = (event: React.MouseEvent<HTMLSpanElement>) => {
+    if (hasModifierKey(event)) {
+      return
+    }
+
+    event.preventDefault()
+    event.stopPropagation()
+    toggleCollapse()
   }
 
   // Handle container hover
@@ -697,13 +1880,14 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   return (
     <>
     <NodeViewWrapper 
+      data-collapsible-block
       ref={wrapperRef}
       className="collapsible-block"
       style={{
         borderLeft: isCollapsed ? 'none' : `3px solid ${isHovered ? '#9b59b6' : '#e1e8ed'}`,
         borderRadius: '0',
-        padding: isCollapsed ? '4px 0' : '4px 0 4px 12px',
-        marginBottom: '12px',
+        padding: isCollapsed ? '0' : '0 0 0 12px',
+        margin: isCollapsed ? '2px 0' : '6px 0',
         background: isCollapsed 
           ? (isHovered ? 'rgba(248, 249, 250, 0.3)' : 'transparent')
           : 'transparent',
@@ -714,21 +1898,25 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       onMouseLeave={handleMouseLeave}
     >
       <div 
+        data-collapsible-header
         style={{
           display: 'flex',
           alignItems: 'center',
-          marginBottom: isCollapsed ? '0' : '12px',
+          gap: '8px',
+          marginBottom: isCollapsed ? '0' : '4px',
           cursor: 'pointer',
           userSelect: 'none',
-          padding: isCollapsed ? '2px 0' : '0',
+          padding: '4px 0',
+          minWidth: 0,
         }}
         contentEditable={false}
         onMouseEnter={() => setShowActions(true)}
         onMouseLeave={() => setShowActions(false)}
-        onClick={handleHeaderClick}
+        onMouseDownCapture={handleHeaderMouseDownCapture}
+        onClickCapture={handleHeaderClickCapture}
       >
         <span 
-          onClick={toggleCollapse}
+          onClick={handleArrowClick}
           data-collapsible-arrow
           style={{
             fontSize: '16px',
@@ -758,28 +1946,41 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               padding: '2px 6px',
               outline: 'none',
               background: 'white',
+              width: '100%',
             }}
           />
         ) : (
           <span 
-            onClick={(e) => {
-              e.stopPropagation()
+            onClick={(event) => {
+              if (event.button !== 0) {
+                return
+              }
+              if (hasModifierKey(event)) {
+                return
+              }
+              event.stopPropagation()
               setIsEditingTitle(true)
             }}
             style={{
               fontSize: '16px',
               fontWeight: '600',
               cursor: 'text',
+              flex: '1 1 auto',
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
             {title}
           </span>
         )}
 
-        {headerMetaLabel && (
+        {headerMetaLabel && !showActions && (
           <span
             style={{
-              marginLeft: 'auto',
+              flexShrink: 0,
+              marginLeft: '12px',
               fontSize: '12px',
               color: '#708090',
               letterSpacing: '0.01em',
@@ -789,105 +1990,233 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             {headerMetaLabel}
           </span>
         )}
-
         <div
-          style={{
-            display: showActions ? 'inline-flex' : 'none',
-            alignItems: 'center',
-            gap: '6px',
-            marginLeft: headerMetaLabel ? '12px' : 'auto',
-          }}
           data-collapsible-actions
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            marginLeft: 'auto',
+            flexShrink: 0,
+          }}
         >
+          {hasExplicitTemplate && appliedTemplate && (
+            <span
+              style={{
+                fontSize: '12px',
+                color: '#64748b',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {appliedTemplate.label}
+            </span>
+          )}
+          {templateUndoSnapshot && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                handleUndoTemplate()
+              }}
+              style={{
+                border: '1px solid #f1c4c4',
+                background: 'rgba(252, 231, 243, 0.65)',
+                color: '#b91c1c',
+                padding: '2px 10px',
+                borderRadius: '9999px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                fontWeight: 600,
+                lineHeight: 1.4,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Undo template
+            </button>
+          )}
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleMove('up')
-            }}
+            ref={templateButtonRef}
+            onClick={handleTemplateButtonClick}
+            aria-label={templateButtonLabel}
+            title={templateButtonLabel}
             style={{
-              border: 'none',
-              background: 'none',
+              border: '1px solid #d5dfe9',
+              background: isTemplateMenuOpen ? 'rgba(99, 102, 241, 0.16)' : 'rgba(241, 245, 249, 0.9)',
+              color: '#475569',
               padding: 0,
+              width: '28px',
+              height: '28px',
+              borderRadius: '9999px',
               cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background 0.15s ease',
             }}
-            aria-label="Move block up"
           >
-            ▲
+            <span
+              aria-hidden="true"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '16px',
+                height: '16px',
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 14 14"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect x="1.5" y="2" width="11" height="2" rx="1" fill="currentColor" />
+                <rect x="1.5" y="6" width="11" height="2" rx="1" fill="currentColor" />
+                <rect x="1.5" y="10" width="7" height="2" rx="1" fill="currentColor" />
+              </svg>
+            </span>
           </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleMove('down')
-            }}
+          <div
             style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
+              display: showActions ? 'inline-flex' : 'none',
+              alignItems: 'center',
+              gap: '6px',
             }}
-            aria-label="Move block down"
+            data-collapsible-actions
           >
-            ▼
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              handleOpenInspector(e)
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
-            }}
-            aria-label="Open block inspector"
-          >
-            🗔
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDuplicate()
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#708090',
-              fontSize: '14px',
-            }}
-            aria-label="Duplicate block"
-          >
-            ⧉
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleDelete()
-            }}
-            style={{
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: '#cc4a4a',
-              fontSize: '14px',
-            }}
-            aria-label="Delete block"
-          >
-            🗑
-          </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleInsertBefore()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+              aria-label="Insert paragraph before block"
+              title="Insert line before"
+            >
+              +↑
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleInsertAfter()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '12px',
+                fontWeight: 600,
+              }}
+              aria-label="Insert paragraph after block"
+              title="Insert line after"
+            >
+              +↓
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleMove('up')
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '14px',
+              }}
+              aria-label="Move block up"
+            >
+              ▲
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleMove('down')
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '14px',
+              }}
+              aria-label="Move block down"
+            >
+              ▼
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                handleOpenInspector(e)
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '14px',
+              }}
+              aria-label="Open block inspector"
+            >
+              🗔
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDuplicate()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#708090',
+                fontSize: '14px',
+              }}
+              aria-label="Duplicate block"
+            >
+              ⧉
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDelete()
+              }}
+              style={{
+                border: 'none',
+                background: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                color: '#cc4a4a',
+                fontSize: '14px',
+              }}
+              aria-label="Delete block"
+            >
+              🗑
+            </button>
+          </div>
         </div>
 
         {/* Preview Icon - shows when collapsed and hovered */}
@@ -926,16 +2255,382 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           </div>
         )}
       </div>
-      
+
+      {isTemplateMenuOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={templateMenuRef}
+          style={{
+            position: 'fixed',
+            top: templateMenuPosition.top,
+            left: templateMenuPosition.left,
+            width: '360px',
+            maxWidth: 'calc(100vw - 32px)',
+            background: '#ffffff',
+            border: '1px solid #d6e0f0',
+            borderRadius: '10px',
+            boxShadow: '0 18px 36px rgba(15, 23, 42, 0.16)',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              padding: '12px 16px',
+              borderBottom: '1px solid #e2e8f0',
+              fontSize: '11px',
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              textTransform: 'uppercase',
+              color: '#475569',
+              cursor: isTemplateMenuDragging ? 'grabbing' : 'grab',
+              userSelect: 'none',
+            }}
+            onMouseDown={handleTemplateMenuDragStart}
+          >
+            Choose template
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: '12px',
+              padding: '12px 16px 16px 16px',
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              {COLLAPSIBLE_TEMPLATES.map(template => {
+                const isEditing = template.id === draftTemplateId
+                const isCurrent = template.id === appliedTemplate.id
+                const isHovered = hoveredTemplateId === template.id
+
+                return (
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      handleTemplateSelection(template)
+                    }}
+                    onMouseEnter={() => setHoveredTemplateId(template.id)}
+                    onMouseLeave={() => setHoveredTemplateId(null)}
+                    onFocus={() => setHoveredTemplateId(template.id)}
+                    onBlur={() => setHoveredTemplateId(null)}
+                    style={{
+                      textAlign: 'left',
+                      border: 'none',
+                      background: isEditing
+                        ? 'rgba(99, 102, 241, 0.18)'
+                        : isHovered
+                          ? 'rgba(99, 102, 241, 0.08)'
+                          : 'transparent',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '8px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          color: '#1f2937',
+                        }}
+                      >
+                        {template.label}
+                      </span>
+                      {template.id === DEFAULT_TEMPLATE_ID && !hasExplicitTemplate && !isEditing && !isCurrent && (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            color: '#64748b',
+                          }}
+                        >
+                          Default
+                        </span>
+                      )}
+                      {isEditing && (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            color: '#1d4ed8',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Editing
+                        </span>
+                      )}
+                      {!isEditing && isCurrent && (
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            color: '#6366f1',
+                            fontWeight: 600,
+                          }}
+                        >
+                          Current
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      style={{
+                        display: 'block',
+                        marginTop: '2px',
+                        fontSize: '12px',
+                        color: '#64748b',
+                      }}
+                    >
+                      {template.description}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <div
+              style={{
+                width: '240px',
+                borderLeft: '1px solid #e2e8f0',
+                paddingLeft: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span
+                  style={{
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: '#1f2937',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  Preview & edit
+                </span>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    color: '#64748b',
+                  }}
+                >
+                  {draftTemplate.description}
+                </span>
+              </div>
+              <div style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {templatePreviewEditor ? (
+                  <div
+                    onMouseDown={(event) => {
+                      event.stopPropagation()
+                      templatePreviewEditor.commands.focus()
+                    }}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <EditorContent editor={templatePreviewEditor} />
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      border: '1px dashed #cbd5f5',
+                      borderRadius: '8px',
+                      padding: '16px',
+                      fontSize: '12px',
+                      color: '#64748b',
+                    }}
+                  >
+                    Loading template editor…
+                  </div>
+                )}
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: '#64748b',
+                }}
+              >
+                Changes appear in the block only after you press Apply.
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: '8px',
+                  marginTop: '4px',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    handleResetTemplatePreview()
+                  }}
+                  disabled={!isDraftDirty}
+                  style={{
+                    border: '1px solid rgba(99, 102, 241, 0.25)',
+                    background: 'transparent',
+                    color: isDraftDirty ? '#4c51bf' : '#94a3b8',
+                    padding: '4px 12px',
+                    borderRadius: '8px',
+                    cursor: isDraftDirty ? 'pointer' : 'not-allowed',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    handleCancelTemplateSelection()
+                  }}
+                  style={{
+                    border: '1px solid #e2e8f0',
+                    background: 'rgba(248, 250, 252, 0.8)',
+                    color: '#475569',
+                    padding: '4px 12px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    handleApplyDraftTemplate()
+                  }}
+                  style={{
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                    color: '#ffffff',
+                    padding: '4px 14px',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    boxShadow: '0 8px 16px rgba(99, 102, 241, 0.25)',
+                  }}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+          {templateUndoSnapshot && (
+            <div
+              style={{
+                borderTop: '1px solid #e2e8f0',
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                background: 'rgba(248, 250, 252, 0.85)',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '12px',
+                  color: '#475569',
+                  flex: '1 1 auto',
+                }}
+              >
+                Reverts to your original block content.
+              </span>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  handleUndoTemplate()
+                }}
+                style={{
+                  border: '1px solid #f1c4c4',
+                  background: 'rgba(252, 231, 243, 0.85)',
+                  color: '#b91c1c',
+                  padding: '4px 12px',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Undo template swap
+              </button>
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+
       {!isCollapsed && (
         <div 
           ref={contentRef}
           style={{
             paddingLeft: '20px',
-            marginTop: '8px',
+            marginTop: '4px',
           }}
         >
           <NodeViewContent className="content" />
+        </div>
+      )}
+      {!isCollapsed && (
+        <div
+          onMouseEnter={() => setShowActions(true)}
+          onMouseLeave={() => setShowActions(false)}
+          style={{
+            display: showActions ? 'flex' : 'none',
+            justifyContent: 'flex-end',
+            gap: '6px',
+            marginTop: '12px',
+            paddingRight: '18px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleInsertAfter()
+            }}
+            style={{
+              border: 'none',
+              background: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              color: '#64748b',
+              fontSize: '12px',
+              fontWeight: 600,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+            aria-label="Insert paragraph after block"
+            title="Insert line after"
+          >
+            <span style={{ fontSize: '14px' }}>+</span>
+            <span style={{ fontSize: '14px' }}>↓</span>
+          </button>
         </div>
       )}
     </NodeViewWrapper>
@@ -998,10 +2693,10 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       document.body
     )}
 
-    {showInspector && inspectorEditor && typeof window !== 'undefined' && createPortal(
-      <div
-        ref={inspectorRef}
-        style={{
+    {showInspector && typeof window !== 'undefined' && createPortal(
+        <div
+          ref={inspectorRef}
+          style={{
           position: 'fixed',
           top: inspectorPosition.top,
           left: inspectorPosition.left,
@@ -1127,12 +2822,40 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             color: '#444',
           }}
         >
-          <EditorContent editor={inspectorEditor} />
+          <InspectorPreview node={node} />
         </div>
       </div>,
       document.body
     )}
     </>
+  )
+}
+
+function InspectorPreview({ node }: { node: PMNode }) {
+  const extensions = useMemo(() => createInspectorExtensions(), [])
+  const inspectorEditor = useEditor(
+    {
+      extensions,
+      editable: false,
+      content: buildInspectorDoc(node),
+    },
+    [extensions, node]
+  )
+
+  useEffect(() => {
+    if (!inspectorEditor) return
+    inspectorEditor.commands.setContent(buildInspectorDoc(node), false)
+    inspectorEditor.setEditable(false)
+  }, [inspectorEditor, node])
+
+  if (!inspectorEditor) {
+    return null
+  }
+
+  return (
+    <div className="inspector-editor">
+      <EditorContent editor={inspectorEditor} />
+    </div>
   )
 }
 
@@ -1143,6 +2866,17 @@ function CollapsibleBlockPreview({ node }: any) {
     setCollapsed(node.attrs.collapsed ?? false)
   }, [node.attrs.collapsed])
 
+  useEffect(() => {
+    debugLog('CollapsibleBlockPreview', 'RENDER', {
+      metadata: {
+        collapsed: node.attrs.collapsed,
+        childCount: node.childCount,
+        hasContent: !!node.content?.size,
+        jsonPreview: createContentPreview(node.toJSON?.() ?? null),
+      },
+    })
+  })
+
   const title = getDisplayTitle(node.attrs.title)
   const stats = formatBlockMeta(computeBlockStats(node))
 
@@ -1151,8 +2885,8 @@ function CollapsibleBlockPreview({ node }: any) {
       className="collapsible-block preview"
       style={{
         borderLeft: 'none',
-        padding: '4px 0',
-        marginBottom: '12px',
+        padding: 0,
+        margin: '0 0 4px 0',
       }}
     >
       <div
@@ -1197,6 +2931,12 @@ function CollapsibleBlockPreview({ node }: any) {
 }
 
 function CollapsibleBlockComponent(props: any) {
+  debugLog('CollapsibleBlockComponent', 'NODE_VIEW_RENDER', {
+    metadata: {
+      inspectorPreview: props.extension?.options?.inspectorPreview ?? false,
+      hasEditor: !!props.editor,
+    },
+  })
   const isPreview = props.extension?.options?.inspectorPreview ?? false
   if (isPreview) {
     return <CollapsibleBlockPreview {...props} />
@@ -1204,12 +2944,21 @@ function CollapsibleBlockComponent(props: any) {
   return <CollapsibleBlockFull {...props} />
 }
 
+function createTemplatePreviewExtensions() {
+  return [
+    StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
+    Underline,
+    Highlight,
+    AnnotationMark,
+  ]
+}
+
 function createInspectorExtensions() {
   return [
     StarterKit.configure({ history: false, dropcursor: false, gapcursor: false }),
     Underline,
     Highlight,
-    Placeholder.configure({ placeholder: '', showOnlyWhenEditable: false, showOnlyCurrent: false }),
+    AnnotationMark,
     CollapsibleBlock.configure({ inspectorPreview: true }),
   ]
 }

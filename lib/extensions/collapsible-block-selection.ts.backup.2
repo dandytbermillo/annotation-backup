@@ -363,21 +363,9 @@ const extension = Extension.create({
           const schemaName = getSchemaName()
           const blockPos = findCollapsibleBlockPos(state.doc, schemaName, pos)
           if (blockPos == null) {
-            logSelectionDebug('CMD_SET_RANGE_EARLY_NO_BLOCK', {
-              pos,
-              schemaName,
-            })
             return false
           }
           const existing = pluginKey.getState(state) ?? emptyState
-          logSelectionDebug('CMD_SET_RANGE_ENTRY', {
-            blockPos,
-            existingSnapshot: summarizeSnapshot(existing),
-            selectionAnchor: state.selection.anchor,
-            selectionHead: state.selection.head,
-            selectionFrom: state.selection.from,
-            selectionType: state.selection.constructor?.name ?? null,
-          })
           let anchor = existing.anchor
           if (anchor == null) {
             const anchorPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.anchor)
@@ -393,19 +381,11 @@ const extension = Extension.create({
             }
           }
           if (anchor == null) {
-            logSelectionDebug('CMD_SET_RANGE_FALLBACK_ANCHOR', {
-              blockPos,
-            })
             anchor = blockPos
           }
           const blocks = gatherCollapsibleBlocks(state.doc, schemaName)
           const positions = collectRangeBetween(blocks, anchor, blockPos)
           if (!positions.length) {
-            logSelectionDebug('CMD_SET_RANGE_EMPTY_POSITIONS', {
-              blockPos,
-              anchor,
-              blocks: blocks.map(item => ({ pos: item.pos, size: item.node.nodeSize })),
-            })
             return false
           }
           const items = buildItems(state.doc, schemaName, positions)
@@ -701,7 +681,6 @@ const extension = Extension.create({
               logSelectionDebug('PLUGIN_MOUSEDOWN', {
                 blockPos,
                 resolvedPos: resolved.pos,
-                headerDataset: headerEl ? { branchId: headerEl.getAttribute('data-branch-id') } : null,
                 modifiers: {
                   shift: event.shiftKey,
                   meta: event.metaKey,
@@ -774,7 +753,6 @@ const extension = Extension.create({
             logSelectionDebug('PLUGIN_HANDLE_CLICK', {
               blockPos,
               resolvedPos: resolved.pos,
-              headerDataset: headerEl ? { branchId: headerEl.getAttribute('data-branch-id') } : null,
             })
             self.editor?.commands.selectCollapsibleBlock(blockPos)
             return true

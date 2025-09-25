@@ -903,6 +903,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return panelId
   }
 
+  const panelTitle = getPanelTitle()
+  const showPanelTitle = Boolean(panelTitle)
+
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
 
@@ -1580,7 +1583,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           display: 'flex', 
           alignItems: 'center', 
           gap: '8px',
-          flex: currentBranch.type !== 'main' ? (headerControlsActive ? '0 1 auto' : 1) : '0 1 auto',
+          flex: '0 0 auto',
         }}>
           {/* Lock and Close buttons - moved to left side before title */}
           <div style={{ 
@@ -1684,7 +1687,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </div>
           
           {/* Panel Title */}
-          {currentBranch.type !== 'main' && (
+          {showPanelTitle && (
             <div style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -1702,8 +1705,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 maxWidth: '300px',
-              }}>{getPanelTitle()}</span>
-              {isIsolated && (
+              }}>{panelTitle}</span>
+              {isIsolated && currentBranch.type !== 'main' && (
                 <span style={{
                   background: '#ef4444',
                   color: 'white',

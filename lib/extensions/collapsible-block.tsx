@@ -1719,12 +1719,26 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           alt: event.altKey,
         },
       })
-      editor?.view?.focus()
-      if (selectionPos != null) {
-        editor?.commands.setCollapsibleBlockRange(selectionPos)
+      if (selectionPos != null || typeof nodePos === 'number') {
+        event.preventDefault()
+        event.stopPropagation()
+        editor?.view?.focus()
+        const commandPos = selectionPos ?? nodePos
+        const applied = commandPos != null ? editor?.commands.setCollapsibleBlockRange(commandPos) ?? false : false
+        void debugLog('CollapsibleBlockNodeView', applied ? 'shift_set_range' : 'shift_set_range_failed', {
+          metadata: {
+            nodePos,
+            selectionPos,
+            commandPos,
+            applied,
+          },
+        })
+      } else {
+        void debugLog('CollapsibleBlockNodeView', 'shift_set_range_missing_pos', {
+          metadata: { nodePos, selectionPos },
+        })
       }
-      event.preventDefault()
-      event.stopPropagation()
+      shouldEditTitleOnClickRef.current = false
       return
     }
 
@@ -1744,12 +1758,26 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           alt: event.altKey,
         },
       })
-      editor?.view?.focus()
-      if (selectionPos != null) {
-        editor?.commands.toggleCollapsibleBlockSelection(selectionPos)
+      if (selectionPos != null || typeof nodePos === 'number') {
+        event.preventDefault()
+        event.stopPropagation()
+        editor?.view?.focus()
+        const commandPos = selectionPos ?? nodePos
+        const applied = commandPos != null ? editor?.commands.toggleCollapsibleBlockSelection(commandPos) ?? false : false
+        void debugLog('CollapsibleBlockNodeView', applied ? 'meta_toggle_selection' : 'meta_toggle_selection_failed', {
+          metadata: {
+            nodePos,
+            selectionPos,
+            commandPos,
+            applied,
+          },
+        })
+      } else {
+        void debugLog('CollapsibleBlockNodeView', 'meta_toggle_selection_missing_pos', {
+          metadata: { nodePos, selectionPos },
+        })
       }
-      event.preventDefault()
-      event.stopPropagation()
+      shouldEditTitleOnClickRef.current = false
       return
     }
 
@@ -1758,6 +1786,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
         nodePos,
         selectionPos,
       })
+      shouldEditTitleOnClickRef.current = false
       return
     }
 
@@ -1807,7 +1836,68 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   }
 
   const handleArrowClick = (event: React.MouseEvent<HTMLSpanElement>) => {
-    if (hasModifierKey(event)) {
+    const nodePos = typeof getPos === 'function' ? getPos() : null
+    const selectionPos = typeof nodePos === 'number' ? nodePos + 1 : null
+
+    if (event.shiftKey) {
+      logCollapsibleSelectionDebug('NODEVIEW_ARROW_SHIFT_CLICK', {
+        nodePos,
+        selectionPos,
+      })
+      if (selectionPos != null || typeof nodePos === 'number') {
+        event.preventDefault()
+        event.stopPropagation()
+        editor?.view?.focus()
+        const commandPos = selectionPos ?? nodePos
+        const applied = commandPos != null ? editor?.commands.setCollapsibleBlockRange(commandPos) ?? false : false
+        void debugLog('CollapsibleBlockNodeView', applied ? 'arrow_shift_set_range' : 'arrow_shift_set_range_failed', {
+          metadata: {
+            nodePos,
+            selectionPos,
+            commandPos,
+            applied,
+          },
+        })
+      } else {
+        void debugLog('CollapsibleBlockNodeView', 'arrow_shift_set_range_missing_pos', {
+          metadata: { nodePos, selectionPos },
+        })
+      }
+      return
+    }
+
+    if (event.metaKey || event.ctrlKey) {
+      logCollapsibleSelectionDebug('NODEVIEW_ARROW_META_CLICK', {
+        nodePos,
+        selectionPos,
+      })
+      if (selectionPos != null || typeof nodePos === 'number') {
+        event.preventDefault()
+        event.stopPropagation()
+        editor?.view?.focus()
+        const commandPos = selectionPos ?? nodePos
+        const applied = commandPos != null ? editor?.commands.toggleCollapsibleBlockSelection(commandPos) ?? false : false
+        void debugLog('CollapsibleBlockNodeView', applied ? 'arrow_meta_toggle_selection' : 'arrow_meta_toggle_selection_failed', {
+          metadata: {
+            nodePos,
+            selectionPos,
+            commandPos,
+            applied,
+          },
+        })
+      } else {
+        void debugLog('CollapsibleBlockNodeView', 'arrow_meta_toggle_selection_missing_pos', {
+          metadata: { nodePos, selectionPos },
+        })
+      }
+      return
+    }
+
+    if (event.altKey) {
+      logCollapsibleSelectionDebug('NODEVIEW_ARROW_ALT_CLICK', {
+        nodePos,
+        selectionPos,
+      })
       return
     }
 
