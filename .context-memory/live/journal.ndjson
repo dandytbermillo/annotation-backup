@@ -205,3 +205,4 @@
 {"ts":"2025-09-25T19:39:06.762Z","type":"commit","sha":"9fa8de92afeb6b64daf0fd1f2d57bbe7324b769c","files_changed":8,"message":"fixing with response (GN)"}
 {"ts":"2025-09-25T19:50:57.008Z","type":"commit","sha":"f46d350f71169c3271cc78a537a63e9f43c030c5","files_changed":3,"message":"first time it highlights"}
 {"ts":"2025-09-25T20:07:35.787Z","type":"commit","sha":"ecab76598b5da6d7f4d16f9a6422145d4493b85f","files_changed":3,"message":"finally the issue as shift + clicking (ctrl/cmd) worked"}
+{"ts":"2025-09-25T20:25:18.815Z","type":"commit","sha":"ac5710398e8d5ec1349747a95d74d9e5722b7008","files_changed":5,"message":"implement unhighlight the block"}
