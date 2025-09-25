@@ -633,6 +633,7 @@ const extension = Extension.create({
   addProseMirrorPlugins() {
     const self = this
     const schemaName = self.editor?.schema.nodes.collapsibleBlock?.name ?? 'collapsibleBlock'
+    let suppressClickInfo: { reason: 'range' | 'multi'; blockPos: number } | null = null
 
     return [
       new Plugin<CollapsibleSelectionState>({
@@ -712,6 +713,7 @@ const extension = Extension.create({
               })
 
               if (event.shiftKey) {
+                suppressClickInfo = { reason: 'range', blockPos }
                 logSelectionDebug('PLUGIN_MOUSEDOWN_SHIFT_BRANCH', {
                   blockPos,
                 })
@@ -722,6 +724,7 @@ const extension = Extension.create({
               }
 
               if (isModKey(event)) {
+                suppressClickInfo = { reason: 'multi', blockPos }
                 logSelectionDebug('PLUGIN_MOUSEDOWN_MOD_BRANCH', {
                   blockPos,
                 })
@@ -731,6 +734,7 @@ const extension = Extension.create({
                 return true
               }
 
+              suppressClickInfo = null
               logSelectionDebug('PLUGIN_MOUSEDOWN_DEFAULT_BRANCH', {
                 blockPos,
               })
@@ -767,6 +771,42 @@ const extension = Extension.create({
             const blockPos = findCollapsibleBlockPos(view.state.doc, schemaName, resolved.pos)
             if (blockPos == null) {
               return false
+            }
+
+            if (suppressClickInfo && suppressClickInfo.blockPos === blockPos) {
+              const info = suppressClickInfo
+              suppressClickInfo = null
+              event.preventDefault()
+              event.stopPropagation()
+              view.focus()
+              logSelectionDebug('PLUGIN_HANDLE_CLICK_SUPPRESSED', {
+                blockPos,
+                suppressReason: info.reason,
+                modifiers: {
+                  shift: event.shiftKey,
+                  meta: event.metaKey,
+                  ctrl: event.ctrlKey,
+                  alt: event.altKey,
+                },
+              })
+              return true
+            }
+
+            suppressClickInfo = null
+
+            const existingState = pluginKey.getState(view.state) ?? emptyState
+            const isRangeLike = existingState.mode === 'range' || existingState.mode === 'multi'
+            const isAlreadySelected = existingState.blocks.some(block => block.pos === blockPos)
+            if (isRangeLike && isAlreadySelected) {
+              event.preventDefault()
+              event.stopPropagation()
+              view.focus()
+              logSelectionDebug('PLUGIN_HANDLE_CLICK_RANGE_GUARD', {
+                blockPos,
+                mode: existingState.mode,
+                existingSnapshot: summarizeSnapshot(existingState),
+              })
+              return true
             }
 
             event.preventDefault()

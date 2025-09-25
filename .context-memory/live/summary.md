@@ -5,8 +5,7 @@ Current Work
 - Branch: (unset)
 - Status: in_progress
 
-Recent Activity (showing last 10 of 200)
-- note: Drafted research-plan_v3 for Shift+Click regression under docs/proposal/blocks_multiselect/click_arrow_with_shift.
+Recent Activity (showing last 10 of 199)
 - note: Modifier mousedown now preventDefault but keep bubbling so plugin handles range; no NodeView selection commands.
 - note: Adjusted collapsible NodeView modifier handlers to pass through to selection plugin (no more duplicate commands).
 - note: Added shift+click regression research plan (plan_v2) under docs/proposal/blocks_multiselect/click_arrow_with_shift.
@@ -16,6 +15,7 @@ Recent Activity (showing last 10 of 200)
 - note: Plain header clicks now bubble to plugin (no preventDefault); modifiers still short-circuit.
 - note: Plain header clicks now invoke plugin selectCollapsibleBlock; modifier paths blocked in NodeView capture.
 - note: Let plugin own modifier click: NodeView stops issuing selection commands, plugin click handler skips modifiers.
+- commit [2025-09-24 22:14Z] 1de5f58: fixing title header
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

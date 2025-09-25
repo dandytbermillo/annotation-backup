@@ -2,6 +2,35 @@ import { Extension, type CommandProps } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseMirrorNode, ResolvedPos } from 'prosemirror-model'
 import { Decoration, DecorationSet } from 'prosemirror-view'
+import { debugLog } from '@/lib/debug-logger'
+
+const isSelectionDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION === 'true'
+
+const logSelectionDebug = (action: string, metadata: Record<string, unknown>) => {
+  if (!isSelectionDebugEnabled || typeof window === 'undefined') {
+    return
+  }
+  void debugLog('CollapsibleBlockSelection', action, {
+    metadata: {
+      ...metadata,
+    },
+  })
+}
+
+const summarizeBlocks = (blocks: CollapsibleSelectionItem[] | null | undefined) =>
+  Array.isArray(blocks)
+    ? blocks.map(block => ({ pos: block.pos, size: block.size }))
+    : []
+
+const summarizeSnapshot = (snapshot: CollapsibleSelectionSnapshot | null | undefined) =>
+  snapshot
+    ? {
+        mode: snapshot.mode,
+        anchor: snapshot.anchor,
+        head: snapshot.head,
+        blocks: summarizeBlocks(snapshot.blocks),
+      }
+    : null
 
 export type CollapsibleSelectionMode = 'none' | 'single' | 'range' | 'multi'
 
@@ -233,6 +262,11 @@ const ensureSingleSelection = (props: CommandProps, pos: number): boolean => {
   }
 
   const tr = state.tr
+  logSelectionDebug('CMD_ENSURE_SINGLE', {
+    pos,
+    items: summarizeBlocks(items),
+    previousSnapshot: summarizeSnapshot(pluginKey.getState(state) ?? null),
+  })
   tr.setMeta(pluginKey, { type: 'set', payload: { mode: 'single', anchor: pos, head: pos, blocks: items } } satisfies SelectionMeta)
   tr.setSelection(NodeSelection.create(state.doc, pos))
   tr.setMeta('addToHistory', false)
@@ -288,6 +322,10 @@ const extension = Extension.create({
 
           if (!nextPositions.length) {
             const tr = state.tr
+            logSelectionDebug('CMD_TOGGLE_CLEAR', {
+              blockPos,
+              previousSnapshot: summarizeSnapshot(existing),
+            })
             tr.setMeta(pluginKey, { type: 'clear' } satisfies SelectionMeta)
             tr.setSelection(TextSelection.create(state.doc, blockPos))
             tr.setMeta('addToHistory', false)
@@ -305,6 +343,13 @@ const extension = Extension.create({
             decorations: createDecorations(state.doc, schemaName, items),
           }
           const tr = state.tr
+          logSelectionDebug('CMD_TOGGLE_MULTI', {
+            blockPos,
+            alreadySelected,
+            nextPositions,
+            nextMode: nextState.mode,
+            previousSnapshot: summarizeSnapshot(existing),
+          })
           tr.setMeta(pluginKey, { type: 'set', payload: toSnapshot(nextState) } satisfies SelectionMeta)
           tr.setSelection(NodeSelection.create(state.doc, blockPos))
           tr.setMeta('addToHistory', false)
@@ -318,9 +363,21 @@ const extension = Extension.create({
           const schemaName = getSchemaName()
           const blockPos = findCollapsibleBlockPos(state.doc, schemaName, pos)
           if (blockPos == null) {
+            logSelectionDebug('CMD_SET_RANGE_EARLY_NO_BLOCK', {
+              pos,
+              schemaName,
+            })
             return false
           }
           const existing = pluginKey.getState(state) ?? emptyState
+          logSelectionDebug('CMD_SET_RANGE_ENTRY', {
+            blockPos,
+            existingSnapshot: summarizeSnapshot(existing),
+            selectionAnchor: state.selection.anchor,
+            selectionHead: state.selection.head,
+            selectionFrom: state.selection.from,
+            selectionType: state.selection.constructor?.name ?? null,
+          })
           let anchor = existing.anchor
           if (anchor == null) {
             const anchorPos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.anchor)
@@ -336,11 +393,19 @@ const extension = Extension.create({
             }
           }
           if (anchor == null) {
+            logSelectionDebug('CMD_SET_RANGE_FALLBACK_ANCHOR', {
+              blockPos,
+            })
             anchor = blockPos
           }
           const blocks = gatherCollapsibleBlocks(state.doc, schemaName)
           const positions = collectRangeBetween(blocks, anchor, blockPos)
           if (!positions.length) {
+            logSelectionDebug('CMD_SET_RANGE_EMPTY_POSITIONS', {
+              blockPos,
+              anchor,
+              blocks: blocks.map(item => ({ pos: item.pos, size: item.node.nodeSize })),
+            })
             return false
           }
           const items = buildItems(state.doc, schemaName, positions)
@@ -352,6 +417,13 @@ const extension = Extension.create({
             decorations: createDecorations(state.doc, schemaName, items),
           }
           const tr = state.tr
+          logSelectionDebug('CMD_SET_RANGE', {
+            blockPos,
+            anchor,
+            positions,
+            nextMode: nextState.mode,
+            previousSnapshot: summarizeSnapshot(existing),
+          })
           tr.setMeta(pluginKey, { type: 'set', payload: toSnapshot(nextState) } satisfies SelectionMeta)
           tr.setSelection(NodeSelection.create(state.doc, blockPos))
           tr.setMeta('addToHistory', false)
@@ -400,6 +472,16 @@ const extension = Extension.create({
             decorations: createDecorations(state.doc, schemaName, items),
           }
           const tr = state.tr
+          logSelectionDebug('CMD_EXTEND_RANGE', {
+            direction,
+            anchor,
+            referencePos,
+            nextBlockPos: nextBlock.pos,
+            positions,
+            prevHead: existing.head,
+            previousSnapshot: summarizeSnapshot(existing),
+            nextMode: nextState.mode,
+          })
           tr.setMeta(pluginKey, { type: 'set', payload: toSnapshot(nextState) } satisfies SelectionMeta)
           tr.setSelection(NodeSelection.create(state.doc, nextBlock.pos))
           tr.setMeta('addToHistory', false)
@@ -414,6 +496,9 @@ const extension = Extension.create({
           return false
         }
         const tr = state.tr
+        logSelectionDebug('CMD_CLEAR_SELECTION', {
+          previousSnapshot: summarizeSnapshot(existing),
+        })
         tr.setMeta(pluginKey, { type: 'clear' } satisfies SelectionMeta)
         tr.setSelection(TextSelection.create(state.doc, tr.selection.from))
         tr.setMeta('addToHistory', false)
@@ -560,29 +645,39 @@ const extension = Extension.create({
               state = remapStateAfterDocChange(state, tr, newState.doc, schemaName)
             }
 
+            const prevSnapshot = toSnapshot(state)
             const meta = tr.getMeta(pluginKey) as SelectionMeta | undefined
-          if (meta?.type === 'clear') {
-            state = { ...emptyState }
-          } else if (meta?.type === 'set') {
-            const items = buildItems(newState.doc, schemaName, meta.payload.blocks.map(block => block.pos))
-            state = {
-              mode: meta.payload.mode,
-              anchor: meta.payload.anchor,
-              head: meta.payload.head,
-              blocks: items,
-              decorations: createDecorations(newState.doc, schemaName, items),
+            if (meta?.type === 'clear') {
+              state = { ...emptyState }
+            } else if (meta?.type === 'set') {
+              const items = buildItems(newState.doc, schemaName, meta.payload.blocks.map(block => block.pos))
+              state = {
+                mode: meta.payload.mode,
+                anchor: meta.payload.anchor,
+                head: meta.payload.head,
+                blocks: items,
+                decorations: createDecorations(newState.doc, schemaName, items),
+              }
             }
-          }
 
-          const nextSnapshot = toSnapshot(state)
-          const changed = !snapshotEquals(self.storage.snapshot, nextSnapshot)
-          self.storage.snapshot = nextSnapshot
-          if (changed) {
-            self.editor?.emit('collapsible-selection-change', nextSnapshot)
-          }
+            const nextSnapshot = toSnapshot(state)
+            if (meta) {
+              logSelectionDebug('STATE_APPLY', {
+                metaType: meta.type,
+                docChanged: tr.docChanged,
+                prevSnapshot,
+                nextSnapshot,
+              })
+            }
 
-          return state
-        },
+            const changed = !snapshotEquals(self.storage.snapshot, nextSnapshot)
+            self.storage.snapshot = nextSnapshot
+            if (changed) {
+              self.editor?.emit('collapsible-selection-change', nextSnapshot)
+            }
+
+            return state
+          },
         },
         props: {
           decorations: state => state ? state.decorations : emptyDecorations,
@@ -602,7 +697,24 @@ const extension = Extension.create({
                 return false
               }
 
+              const existingState = pluginKey.getState(view.state) ?? emptyState
+              logSelectionDebug('PLUGIN_MOUSEDOWN', {
+                blockPos,
+                resolvedPos: resolved.pos,
+                headerDataset: headerEl ? { branchId: headerEl.getAttribute('data-branch-id') } : null,
+                modifiers: {
+                  shift: event.shiftKey,
+                  meta: event.metaKey,
+                  ctrl: event.ctrlKey,
+                  alt: event.altKey,
+                },
+                existingSnapshot: summarizeSnapshot(existingState),
+              })
+
               if (event.shiftKey) {
+                logSelectionDebug('PLUGIN_MOUSEDOWN_SHIFT_BRANCH', {
+                  blockPos,
+                })
                 event.preventDefault()
                 event.stopPropagation()
                 self.editor?.commands.setCollapsibleBlockRange(blockPos)
@@ -610,12 +722,18 @@ const extension = Extension.create({
               }
 
               if (isModKey(event)) {
+                logSelectionDebug('PLUGIN_MOUSEDOWN_MOD_BRANCH', {
+                  blockPos,
+                })
                 event.preventDefault()
                 event.stopPropagation()
                 self.editor?.commands.toggleCollapsibleBlockSelection(blockPos)
                 return true
               }
 
+              logSelectionDebug('PLUGIN_MOUSEDOWN_DEFAULT_BRANCH', {
+                blockPos,
+              })
               event.preventDefault()
               event.stopPropagation()
               const tr = view.state.tr
@@ -632,6 +750,16 @@ const extension = Extension.create({
             const headerEl = target.closest('[data-collapsible-header]')
             if (!headerEl) return false
 
+            if (event.shiftKey || isModKey(event) || event.altKey) {
+              logSelectionDebug('PLUGIN_HANDLE_CLICK_IGNORED_FOR_MODIFIER', {
+                shift: event.shiftKey,
+                meta: event.metaKey,
+                ctrl: event.ctrlKey,
+                alt: event.altKey,
+              })
+              return false
+            }
+
             const coords = { left: event.clientX, top: event.clientY }
             const resolved = view.posAtCoords(coords)
             if (!resolved) return false
@@ -643,6 +771,11 @@ const extension = Extension.create({
 
             event.preventDefault()
             view.focus()
+            logSelectionDebug('PLUGIN_HANDLE_CLICK', {
+              blockPos,
+              resolvedPos: resolved.pos,
+              headerDataset: headerEl ? { branchId: headerEl.getAttribute('data-branch-id') } : null,
+            })
             self.editor?.commands.selectCollapsibleBlock(blockPos)
             return true
           },

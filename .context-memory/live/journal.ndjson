@@ -201,4 +201,4 @@
 {"type":"note","timestamp":"2025-09-25T01:01:21.297Z","summary":"Added shift+click regression research plan (plan_v2) under docs/proposal/blocks_multiselect/click_arrow_with_shift."}
 {"type":"note","timestamp":"2025-09-25T01:52:16.633Z","summary":"Adjusted collapsible NodeView modifier handlers to pass through to selection plugin (no more duplicate commands)."}
 {"type":"note","timestamp":"2025-09-25T01:59:06.135Z","summary":"Modifier mousedown now preventDefault but keep bubbling so plugin handles range; no NodeView selection commands."}
-{"type":"note","timestamp":"2025-09-25T02:10:56.314Z","summary":"Drafted research-plan_v3 for Shift+Click regression under docs/proposal/blocks_multiselect/click_arrow_with_shift."}
+{"type":"note","timestamp":"2025-09-25T02:10:56.314Z","summary":"Drafted research-plan_v3 for Shift+Click regression under docs/proposal/blocks_multiselect/click_arrow_with_shift."}{"ts":"2025-09-25T04:06:08.806Z","type":"commit","sha":"6d95fcbbf67e1aa97fd87e8811c39dd199738105","files_changed":10,"message":"before draft a guard"}
