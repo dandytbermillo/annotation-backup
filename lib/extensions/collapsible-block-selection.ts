@@ -686,12 +686,24 @@ const extension = Extension.create({
             mousedown(view, event) {
               const target = event.target as HTMLElement | null
               if (!target) return false
-              const headerEl = target.closest('[data-collapsible-header]')
-              if (!headerEl) return false
+            const headerEl = target.closest('[data-collapsible-header]')
+            if (!headerEl) return false
+            const arrowEl = target.closest('[data-collapsible-arrow]')
+            if (arrowEl && !event.shiftKey && !isModKey(event) && !event.altKey) {
+              logSelectionDebug('PLUGIN_MOUSEDOWN_ARROW_NO_SELECT', {
+                modifiers: {
+                  shift: event.shiftKey,
+                  meta: event.metaKey,
+                  ctrl: event.ctrlKey,
+                  alt: event.altKey,
+                },
+              })
+              return false
+            }
 
-              const coords = { left: event.clientX, top: event.clientY }
-              const resolved = view.posAtCoords(coords)
-              if (!resolved) return false
+            const coords = { left: event.clientX, top: event.clientY }
+            const resolved = view.posAtCoords(coords)
+            if (!resolved) return false
 
               const blockPos = findCollapsibleBlockPos(view.state.doc, schemaName, resolved.pos)
               if (blockPos == null) {
@@ -735,17 +747,10 @@ const extension = Extension.create({
               }
 
               suppressClickInfo = null
-              logSelectionDebug('PLUGIN_MOUSEDOWN_DEFAULT_BRANCH', {
+              logSelectionDebug('PLUGIN_MOUSEDOWN_DEFAULT_BRANCH_IGNORED', {
                 blockPos,
               })
-              event.preventDefault()
-              event.stopPropagation()
-              const tr = view.state.tr
-              tr.setSelection(TextSelection.create(view.state.doc, resolved.pos))
-              tr.setMeta('addToHistory', false)
-              view.dispatch(tr)
-              self.editor?.commands.selectCollapsibleBlock(blockPos)
-              return true
+              return false
             },
           },
           handleClick(view, pos, event) {
@@ -753,6 +758,11 @@ const extension = Extension.create({
             if (!target) return false
             const headerEl = target.closest('[data-collapsible-header]')
             if (!headerEl) return false
+            const arrowEl = target.closest('[data-collapsible-arrow]')
+            if (arrowEl && !event.shiftKey && !isModKey(event) && !event.altKey) {
+              logSelectionDebug('PLUGIN_HANDLE_CLICK_ARROW_NO_SELECT', {})
+              return false
+            }
 
             if (event.shiftKey || isModKey(event) || event.altKey) {
               logSelectionDebug('PLUGIN_HANDLE_CLICK_IGNORED_FOR_MODIFIER', {

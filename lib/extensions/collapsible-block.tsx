@@ -1843,36 +1843,10 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }
 
     shouldEditTitleOnClickRef.current = true
-    const commandPos = selectionPos ?? nodePos
     logCollapsibleSelectionDebug('NODEVIEW_PLAIN_MOUSEDOWN', {
       nodePos,
       selectionPos,
-      commandPos,
     })
-
-    let applied = false
-    if (commandPos != null) {
-      editor?.view?.focus()
-      applied = editor?.commands.selectCollapsibleBlock(commandPos) ?? false
-      void debugLog('CollapsibleBlockNodeView', applied ? 'plain_select_block' : 'plain_select_block_failed', {
-        metadata: {
-          nodePos,
-          selectionPos,
-          commandPos,
-          applied,
-        },
-      })
-    }
-
-    const snapshotAfter = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
-    logCollapsibleSelectionDebug('NODEVIEW_PLAIN_MOUSEDOWN_RESULT', {
-      nodePos,
-      selectionPos,
-      commandPos,
-      commandApplied: applied,
-      snapshotAfter,
-    })
-
     event.preventDefault()
     event.stopPropagation()
   }
