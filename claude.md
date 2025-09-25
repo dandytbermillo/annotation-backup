@@ -283,7 +283,8 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ---
 
-## ERROR LOGGING & `INITIAL.md` USAGE
+## ERROR LOGGING OR ANY `INITIAL.md` USAGE
+- **Required debug log reference**: Before any debugging or testing activity, agents must consult and follow `codex/how_to/debug_logs.md`, recording debug output exactly as instructed every time logs are needed.
 - `INITIAL.md` is the single living request + error log for a feature. Agents must:
   - Append concise `ERRORS` entries after each failed attempt (root cause, reproduction, hint, artifacts).
   - Append `ATTEMPT HISTORY` entries on each PR/attempt.
