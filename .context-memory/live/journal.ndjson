@@ -202,3 +202,4 @@
 {"type":"note","timestamp":"2025-09-25T01:52:16.633Z","summary":"Adjusted collapsible NodeView modifier handlers to pass through to selection plugin (no more duplicate commands)."}
 {"type":"note","timestamp":"2025-09-25T01:59:06.135Z","summary":"Modifier mousedown now preventDefault but keep bubbling so plugin handles range; no NodeView selection commands."}
 {"type":"note","timestamp":"2025-09-25T02:10:56.314Z","summary":"Drafted research-plan_v3 for Shift+Click regression under docs/proposal/blocks_multiselect/click_arrow_with_shift."}{"ts":"2025-09-25T04:06:08.806Z","type":"commit","sha":"6d95fcbbf67e1aa97fd87e8811c39dd199738105","files_changed":10,"message":"before draft a guard"}
+{"ts":"2025-09-25T19:39:06.762Z","type":"commit","sha":"9fa8de92afeb6b64daf0fd1f2d57bbe7324b769c","files_changed":8,"message":"fixing with response (GN)"}

@@ -8,6 +8,7 @@ import { Plugin, PluginKey, TextSelection } from 'prosemirror-state'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
+import type { CollapsibleSelectionSnapshot } from './collapsible-block-selection'
 
 const isCollapsibleSelectionDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION === 'true'
 
@@ -1028,6 +1029,37 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const stats = computeBlockStats(node)
   const metaBase = formatBlockMeta(stats)
   const headerMetaLabel = metaBase
+  const [isBlockSelected, setIsBlockSelected] = useState(false)
+  const [isSelectionHead, setIsSelectionHead] = useState(false)
+
+  const updateBlockSelectionState = useCallback(
+    (snapshot?: CollapsibleSelectionSnapshot | null) => {
+      let currentPos: number | null = null
+      try {
+        currentPos = typeof getPos === 'function' ? getPos() : null
+      } catch {
+        currentPos = null
+      }
+
+      if (typeof currentPos !== 'number') {
+        setIsBlockSelected(false)
+        setIsSelectionHead(false)
+        return
+      }
+
+      const nextSnapshot = snapshot ?? ((editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null)
+      if (!nextSnapshot) {
+        setIsBlockSelected(false)
+        setIsSelectionHead(false)
+        return
+      }
+
+      const blocks = Array.isArray(nextSnapshot.blocks) ? nextSnapshot.blocks : []
+      setIsBlockSelected(blocks.some(block => block?.pos === currentPos))
+      setIsSelectionHead(nextSnapshot.head === currentPos)
+    },
+    [editor, getPos]
+  )
 
   const templatePreviewEditor = useEditor(
     {
@@ -1073,6 +1105,26 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     },
     [templatePreviewEditor]
   )
+
+  useEffect(() => {
+    if (!editor) {
+      setIsBlockSelected(false)
+      setIsSelectionHead(false)
+      return
+    }
+
+    updateBlockSelectionState()
+
+    const handleSelectionChange = (snapshot: CollapsibleSelectionSnapshot) => {
+      updateBlockSelectionState(snapshot)
+    }
+
+    editor.on('collapsible-selection-change', handleSelectionChange)
+
+    return () => {
+      editor.off('collapsible-selection-change', handleSelectionChange)
+    }
+  }, [editor, updateBlockSelectionState])
 
   useEffect(() => {
     if (!templatePreviewEditor) {
@@ -2023,6 +2075,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     <>
     <NodeViewWrapper 
       data-collapsible-block
+      data-collapsible-selected={isBlockSelected ? 'true' : undefined}
+      data-collapsible-selection-head={isSelectionHead ? 'true' : undefined}
       ref={wrapperRef}
       className="collapsible-block"
       style={{
