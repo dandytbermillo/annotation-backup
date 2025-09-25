@@ -1814,20 +1814,6 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           alt: event.altKey,
         },
       })
-      const snapshot: any = selectionSnapshot
-      const alreadySelected = snapshot?.blocks?.some?.((block: any) => block?.pos === nodePos) ?? false
-      if (snapshot && alreadySelected && (snapshot.mode === 'range' || snapshot.mode === 'multi')) {
-        logCollapsibleSelectionDebug('NODEVIEW_META_MOUSEDOWN_SKIP_EXISTING', {
-          nodePos,
-          selectionPos,
-          snapshot,
-        })
-        event.preventDefault()
-        event.stopPropagation()
-        shouldEditTitleOnClickRef.current = false
-        return
-      }
-
       const commandPos = selectionPos
       if (commandPos != null) {
         event.preventDefault()
