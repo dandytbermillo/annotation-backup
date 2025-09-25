@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-25 20:07Z] ecab765: finally the issue as shift + clicking (ctrl/cmd) worked
 - commit [2025-09-25 19:50Z] f46d350: first time it highlights
 - commit [2025-09-25 19:39Z] 9fa8de9: fixing with response (GN)
 - note: Modifier mousedown now preventDefault but keep bubbling so plugin handles range; no NodeView selection commands.
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 199)
 - note: Modifiers now bubble through click capture so plugin can run CMD_SET_RANGE.
 - note: Plain header clicks no longer stop propagation; plugin now seeds selection. Modifiers still short-circuit title edit.
 - note: Plain header clicks now bubble to plugin (no preventDefault); modifiers still short-circuit.
-- note: Plain header clicks now invoke plugin selectCollapsibleBlock; modifier paths blocked in NodeView capture.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
