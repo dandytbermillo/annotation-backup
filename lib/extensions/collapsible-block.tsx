@@ -1755,6 +1755,17 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     const nodePos = typeof getPos === 'function' ? getPos() : null
     const selectionPos = typeof nodePos === 'number' ? nodePos + 1 : null
 
+    if (!event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const snapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+      if (snapshot?.blocks?.length) {
+        editor?.commands.clearCollapsibleBlockSelection()
+        logCollapsibleSelectionDebug('NODEVIEW_PLAIN_MOUSEDOWN_CLEAR', {
+          nodePos,
+          selectionPos,
+        })
+      }
+    }
+
     if (event.shiftKey) {
       const selectionSnapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
       logCollapsibleSelectionDebug('NODEVIEW_SHIFT_MOUSEDOWN_DEFER', {
@@ -1888,6 +1899,29 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     logCollapsibleSelectionDebug('NODEVIEW_PLAIN_CLICK_CAPTURE', {
       editingTitle: shouldEditTitle,
     })
+  }
+
+  const handleWrapperMouseDownCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return
+    }
+
+    if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+      return
+    }
+
+    const target = event.target as HTMLElement | null
+    if (target?.closest('[data-collapsible-header]')) {
+      return
+    }
+
+    const snapshot = (editor?.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+    if (snapshot?.blocks?.length) {
+      editor?.commands.clearCollapsibleBlockSelection()
+      logCollapsibleSelectionDebug('NODEVIEW_WRAPPER_CLEAR_ON_CLICK', {
+        nodePos: typeof getPos === 'function' ? getPos() : null,
+      })
+    }
   }
 
   const handleArrowClick = (event: React.MouseEvent<HTMLSpanElement>) => {
@@ -2052,6 +2086,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onMouseDownCapture={handleWrapperMouseDownCapture}
     >
       <div 
         data-collapsible-header

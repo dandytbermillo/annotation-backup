@@ -1782,10 +1782,54 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       }
     }), [editor, onUpdate, provider, noteId, panelId])
 
+    const editorWrapperRef = useRef<HTMLDivElement | null>(null)
+
+    useEffect(() => {
+      if (!editor || !editorWrapperRef.current) {
+        return
+      }
+
+      const wrapper = editorWrapperRef.current
+
+      const handlePointerDown = (event: MouseEvent) => {
+        if (event.button !== 0) return
+        if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return
+
+        const target = event.target as HTMLElement | null
+        if (!target) return
+
+        if (
+          target.closest('[data-collapsible-header]') ||
+          target.closest('[data-collapsible-actions]') ||
+          target.closest('[data-preview-icon]') ||
+          target.closest('[data-collapsible-arrow]')
+        ) {
+          return
+        }
+
+        const snapshot = (editor.storage as any)?.collapsibleBlockSelection?.snapshot ?? null
+        if (snapshot?.blocks?.length) {
+          editor.commands.clearCollapsibleBlockSelection()
+          debugLog('CollapsibleBlockSelection', 'EDITOR_POINTER_CLEAR', {
+            metadata: { targetTag: target.tagName },
+          })
+        }
+      }
+
+      wrapper.addEventListener('pointerdown', handlePointerDown, true)
+      return () => {
+        wrapper.removeEventListener('pointerdown', handlePointerDown, true)
+      }
+    }, [editor])
+
     // Show loading state
     if (isContentLoading && provider) {
       return (
-        <div className="tiptap-editor-document" style={{ height: '100%' }}>
+        <div
+          className="tiptap-editor-document"
+          style={{ height: '100%' }}
+          ref={editorWrapperRef}
+        >
           <div className="tiptap-editor-loading">
             Loading content...
           </div>
@@ -1794,7 +1838,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     }
 
     return (
-      <div className="tiptap-editor-document" style={{ height: '100%' }}>
+      <div
+        className="tiptap-editor-document"
+        style={{ height: '100%' }}
+        ref={editorWrapperRef}
+      >
         <div 
           className="tiptap-editor-content"
           style={{ flex: 1 }}
