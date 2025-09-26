@@ -72,6 +72,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  const [panelHeight, setPanelHeight] = useState<number>(500)
+  const previousPanelHeightRef = useRef<number>(500)
+  const [isPanelHeightExpanded, setIsPanelHeightExpanded] = useState(false)
+  const cameraZoomRef = useRef<number>(1)
+
   const headerControlsActive = isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering
   
   // Branch preview state
@@ -85,6 +90,26 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
     setCollapsibleSelection(snapshot)
   }, [])
+
+  const getViewportFillHeight = useCallback((top: number) => {
+    if (typeof window === 'undefined') {
+      return previousPanelHeightRef.current
+    }
+    const viewportHeight = window.innerHeight
+    const marginBottom = 8
+    const screenAvailable = viewportHeight - Math.max(top, 0) - marginBottom
+    const safeZoom = cameraZoomRef.current || 1
+    const worldHeight = screenAvailable / safeZoom
+    return Math.max(worldHeight, 320)
+  }, [])
+
+  const getCurrentPanelTop = useCallback(() => {
+    if (panelRef.current) {
+      const rect = panelRef.current.getBoundingClientRect()
+      return rect.top
+    }
+    return renderPosition.y
+  }, [renderPosition.y])
 
   // Header action overflow management
   const ACTION_GAP = 8
@@ -237,6 +262,20 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }, HEADER_BUTTON_HOVER_DELAY_MS)
   }, [hideAnnotationToolbar])
 
+  const handleTogglePanelHeight = useCallback(() => {
+    if (isPanelHeightExpanded) {
+      setPanelHeight(previousPanelHeightRef.current)
+      setIsPanelHeightExpanded(false)
+      return
+    }
+
+    previousPanelHeightRef.current = panelHeight
+    const panelTop = getCurrentPanelTop()
+    const expandedHeight = getViewportFillHeight(panelTop)
+    setPanelHeight(expandedHeight)
+    setIsPanelHeightExpanded(true)
+  }, [getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded, panelHeight])
+
   const recalcOverflow = useCallback(() => {
     const container = actionsContainerRef.current
     if (!container) {
@@ -260,8 +299,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
 
     const order = layerManager.isEnabled
-      ? ['bringToFront', 'sendToBack', 'branches', 'actions']
-      : ['branches', 'actions']
+      ? ['bringToFront', 'sendToBack', 'resizeToggle', 'branches', 'actions']
+      : ['resizeToggle', 'branches', 'actions']
 
     const widthMap: Record<string, number> = {}
     order.forEach((id) => {
@@ -356,12 +395,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   }, [position, canvasNode?.position])
   
   // Camera-based panning
-  const { 
-    panCameraBy, 
-    resetPanAccumulation, 
-    getPanAccumulation, 
-    isCameraEnabled 
+  const {
+    panCameraBy,
+    resetPanAccumulation,
+    getPanAccumulation,
+    isCameraEnabled,
+    getCameraState,
   } = useCanvasCamera()
+
+  cameraZoomRef.current = getCameraState().zoom || 1
   
   // Isolation system integration
   const { isIsolated, level, placeholder } = useIsolation(panelId)
@@ -721,6 +763,37 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       panelRef.current.style.top = position.y + 'px'
     }
   }, [])
+
+  const cameraZoom = state.canvasState?.zoom || 1
+
+  useEffect(() => {
+    if (!isPanelHeightExpanded) {
+      return
+    }
+    if (dragStateRef.current?.isDragging) {
+      return
+    }
+    cameraZoomRef.current = cameraZoom
+    const panelTop = getCurrentPanelTop()
+    setPanelHeight(getViewportFillHeight(panelTop))
+  }, [cameraZoom, getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded])
+
+  useEffect(() => {
+    if (!isPanelHeightExpanded) {
+      return
+    }
+    if (dragStateRef.current?.isDragging) {
+      return
+    }
+    const handleResize = () => {
+      const panelTop = getCurrentPanelTop()
+      setPanelHeight(getViewportFillHeight(panelTop))
+    }
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [cameraZoom, getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded])
   
   // Auto-focus editor when panel mounts if content is empty or it's the main panel
   useEffect(() => {
@@ -1537,8 +1610,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         left: renderPosition.x + 'px',
         top: renderPosition.y + 'px',
         width: '500px',
-        height: '500px',
-        maxHeight: '80vh',
+        height: `${panelHeight}px`,
+        maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
         boxShadow: isIsolated 
@@ -1839,6 +1912,48 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           </div>
 
           <div
+            ref={registerActionRef('resizeToggle')}
+            style={{
+              display: hiddenActionIds.includes('resizeToggle') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              onClick={(event) => {
+                event.stopPropagation()
+                handleTogglePanelHeight()
+              }}
+              title={isPanelHeightExpanded ? 'Restore panel height' : 'Expand panel height'}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                color: 'white',
+                transition: 'all 0.2s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                height: '24px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14" />
+                <path d="M9 8l3-3 3 3" />
+                <path d="M9 16l3 3 3-3" />
+              </svg>
+              <span>{isPanelHeightExpanded ? 'Restore' : 'Resize'}</span>
+            </button>
+          </div>
+
+          <div
             ref={registerActionRef('branches')}
             style={{
               display: hiddenActionIds.includes('branches') ? 'none' : 'flex'
@@ -1982,6 +2097,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                       }
                       if (actionId === 'actions') {
                         handleActionsButtonClick(event)
+                        return
+                      }
+                      if (actionId === 'resizeToggle') {
+                        handleTogglePanelHeight()
+                        closeOverflowMenu()
                       }
                     }}
                     style={{
@@ -2002,6 +2122,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     <span>
                       {actionId === 'bringToFront' && 'Bring to Front'}
                       {actionId === 'sendToBack' && 'Send to Back'}
+                      {actionId === 'resizeToggle' && (isPanelHeightExpanded ? 'Restore Height' : 'Expand Height')}
                       {actionId === 'branches' && 'Branches'}
                       {actionId === 'actions' && 'Actions'}
                     </span>
