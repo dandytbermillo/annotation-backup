@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-26 21:15Z] 171f861: Removed the timeout shim by reworking how the canvas editor
 - commit [2025-09-26 20:43Z] ae14413: the Internal Multi-Layer Canvas Flag is set to not feature flag
 - note [2025-09-26 20:41Z]: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 - note [2025-09-26 20:24Z]: Removed multi-layer canvas gating; layer manager + overlays now always on and legacy flags scrubbed.
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - note: Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height.
 - note: Added panel height toggle button; clicking resize now expands panel to viewport height and restores previous size on second click.
 - commit [2025-09-26 01:57Z] 72cf4a9: hover delay block header & expanded and preview circle changed
-- commit [2025-09-26 01:40Z] 50ee4cb: refine the inline button in the block
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-26 20:43Z] ae14413: the Internal Multi-Layer Canvas Flag is set to not feature flag
+- commit [2025-09-26 21:15Z] 171f861: Removed the timeout shim by reworking how the canvas editor
