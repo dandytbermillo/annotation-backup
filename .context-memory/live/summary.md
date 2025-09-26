@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-26 18:47Z] 5e68274: multi-layer just implemented
 - commit [2025-09-26 03:52Z] be045aa: added resize button in the title border to resize the current panel to the hieght of the visible viewport
 - note: Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height.
 - note: Added panel height toggle button; clicking resize now expands panel to viewport height and restores previous size on second click.
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - note: Updated collapsible block header so hover shows only metadata plus expand control; added timed action tray reveal and new move commands remain accessible inside expanded controls.
 - note: Test note for summary refresh check.
 - note: Implemented multi-select move up/down commands and wired toolbar buttons to them; added NodeView sync effect for collapsed state earlier.
-- note: Synced NodeView collapsed state with node attrs so multi-select collapse/expand updates reflect immediately.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
@@ -50,4 +50,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-26 03:52Z] be045aa: added resize button in the title border to resize the current panel to the hieght of the visible viewport
+- commit [2025-09-26 18:47Z] 5e68274: multi-layer just implemented

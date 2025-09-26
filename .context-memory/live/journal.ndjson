@@ -222,3 +222,4 @@
 {"ts":"2025-09-26T02:19:24.3NZ","type":"note","text":"Added panel height toggle button; clicking resize now expands panel to viewport height and restores previous size on second click."}
 {"ts":"2025-09-26T02:27:58.3NZ","type":"note","text":"Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height."}
 {"ts":"2025-09-26T03:52:33.390Z","type":"commit","sha":"be045aacd312ce882e265b8ad0622e0bf7ba86a4","files_changed":3,"message":"added resize button in the title border to resize the current panel to the hieght of the visible viewport"}
+{"ts":"2025-09-26T18:47:41.343Z","type":"commit","sha":"5e682742989081c01ba7e92ce374bb7d3f31fde9","files_changed":17,"message":"multi-layer just implemented"}

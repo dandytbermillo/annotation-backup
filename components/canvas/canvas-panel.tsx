@@ -603,20 +603,32 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Blur editor when switching to popup layer
   useEffect(() => {
-    if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'popups') {
-      // Blur any focused editor to prevent keyboard input
-      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
-        editorRef.current.setEditable(false)
-        // Also blur the DOM element
-        const activeElement = document.activeElement as HTMLElement
-        if (activeElement && activeElement.closest('.ProseMirror')) {
-          activeElement.blur()
+    if (!multiLayerEnabled || !layerContext) return
+    const editorHandle = editorRef.current
+    if (!editorHandle || typeof editorHandle.setEditable !== 'function') return
+
+    let timeoutId: number | undefined
+
+    const run = () => {
+      const activeLayer = layerContext.activeLayer
+      if (activeLayer === 'popups') {
+        editorHandle.setEditable(false)
+        if (typeof window !== 'undefined') {
+          const activeElement = document.activeElement as HTMLElement | null
+          if (activeElement?.closest('.ProseMirror')) {
+            activeElement.blur()
+          }
         }
+      } else if (activeLayer === 'notes') {
+        editorHandle.setEditable(isEditing)
       }
-    } else if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'notes') {
-      // Re-enable editing when returning to notes layer
-      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
-        editorRef.current.setEditable(isEditing)
+    }
+
+    timeoutId = window.setTimeout(run, 0)
+
+    return () => {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId)
       }
     }
   }, [layerContext?.activeLayer, multiLayerEnabled, isEditing])
