@@ -352,5 +352,8 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 - **annotation-backup/fixes_doc/**  
   Contains documentation of previous fixes and troubleshooting notes.  
   Agents must review this folder first before implementing new fixes to avoid repeating work or reintroducing solved issues.
+- **docs/proposal/<feature>/fixed/**  
+  Stores canonical postmortems for resolved issues (e.g., inspector flushSync fix).  
+  Check any relevant `fixed/` note before debugging similar symptoms so you reuse the established solution.
 
  

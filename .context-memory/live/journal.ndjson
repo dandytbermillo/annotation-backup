@@ -223,3 +223,6 @@
 {"ts":"2025-09-26T02:27:58.3NZ","type":"note","text":"Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height."}
 {"ts":"2025-09-26T03:52:33.390Z","type":"commit","sha":"be045aacd312ce882e265b8ad0622e0bf7ba86a4","files_changed":3,"message":"added resize button in the title border to resize the current panel to the hieght of the visible viewport"}
 {"ts":"2025-09-26T18:47:41.343Z","type":"commit","sha":"5e682742989081c01ba7e92ce374bb7d3f31fde9","files_changed":17,"message":"multi-layer just implemented"}
+{"ts":"2025-09-26T19:12:26.866Z","type":"commit","sha":"b5dd5dc576b2b61837e4336bce9339a268340827","files_changed":3,"message":"fixed the flush persisting error on the popup overly"}
+{"ts":"2025-09-26T20:24:58Z","type":"note","text":"Removed multi-layer canvas gating; layer manager + overlays now always on and legacy flags scrubbed."}
+{"ts":"2025-09-26T20:41:24Z","type":"note","text":"Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback."}

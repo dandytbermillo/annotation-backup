@@ -182,35 +182,19 @@
         };
 
         function enableFeature() {
-            try {
-                const frameWindow = frame.contentWindow;
-                frameWindow.localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': true }));
-                
-                document.getElementById('feature-result').innerHTML = `
-                    <span class="test-passed">✅ Feature flag enabled!</span><br>
-                    <code>localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': true }))</code><br>
-                    <br>
-                    <strong>Next step:</strong> Click "Refresh Application" to apply changes.
-                `;
-            } catch (e) {
-                document.getElementById('feature-result').innerHTML = `
-                    <span class="test-failed">❌ Error: ${e.message}</span>
-                `;
-            }
+            document.getElementById('feature-result').innerHTML = `
+                <span class="test-passed">✅ Multi-layer canvas now ships permanently enabled.</span><br>
+                No feature flag toggles are required.
+            `;
         }
 
         function checkFeatureStatus() {
             try {
                 const frameWindow = frame.contentWindow;
-                const flags = JSON.parse(frameWindow.localStorage.getItem('offlineFeatureFlags') || '{}');
-                const isEnabled = flags['ui.multiLayerCanvas'] === true;
-                
                 document.getElementById('feature-result').innerHTML = `
-                    Feature Status: <span class="${isEnabled ? 'test-passed' : 'test-pending'}">
-                        ${isEnabled ? '✅ ENABLED' : '⚠️ DISABLED'}
-                    </span><br>
+                    Feature Status: <span class="test-passed">✅ PERMANENTLY ENABLED</span><br>
                     <br>
-                    Current flags: <code>${JSON.stringify(flags, null, 2)}</code>
+                    Stored flags (legacy): <code>${frameWindow.localStorage.getItem('offlineFeatureFlags') || '{}'}</code>
                 `;
             } catch (e) {
                 document.getElementById('feature-result').innerHTML = `
@@ -220,18 +204,9 @@
         }
 
         function disableFeature() {
-            try {
-                const frameWindow = frame.contentWindow;
-                frameWindow.localStorage.setItem('offlineFeatureFlags', JSON.stringify({ 'ui.multiLayerCanvas': false }));
-                
-                document.getElementById('feature-result').innerHTML = `
-                    <span class="test-pending">⚠️ Feature flag disabled. Refresh to apply.</span>
-                `;
-            } catch (e) {
-                document.getElementById('feature-result').innerHTML = `
-                    <span class="test-failed">❌ Error: ${e.message}</span>
-                `;
-            }
+            document.getElementById('feature-result').innerHTML = `
+                <span class="test-pending">ℹ️ The rollback flag has been removed; multi-layer mode cannot be disabled.</span>
+            `;
         }
 
         function refreshFrame() {

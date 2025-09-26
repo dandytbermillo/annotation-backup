@@ -7,7 +7,6 @@ import {
   FileText, FolderOpen
 } from 'lucide-react';
 import { useLayer } from '@/components/canvas/layer-provider';
-import { useFeatureFlag } from '@/lib/offline/feature-flags';
 import { getShortcutDisplay } from '@/lib/hooks/use-layer-keyboard-shortcuts';
 
 interface LayerControlsProps {
@@ -23,14 +22,11 @@ export const LayerControls: React.FC<LayerControlsProps> = ({
   className = '',
   position = 'bottom-right' 
 }) => {
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas');
-  const layerModelEnabled = useFeatureFlag('ui.layerModel');
-  const isLayerModelEnabled = multiLayerEnabled && layerModelEnabled;
   const layerContext = useLayer();
   const [isExpanded, setIsExpanded] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
   
-  if (!isLayerModelEnabled || !layerContext) {
+  if (!layerContext) {
     return null;
   }
   

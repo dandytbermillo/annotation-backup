@@ -76,7 +76,7 @@
 
 ## 6. Safety / Rollback
 
-- LayerManager is enabled by default. Set `NEXT_PUBLIC_LAYER_MODEL=0` only if you need a temporary rollback to the legacy z-index handling.
+- LayerManager is permanently enabled; reverting to legacy ordering now requires rolling back the LayerManager integration.
 - Ensure panel/component drag handlers still guard `getNode` so we fail gracefully if the shared model encounters an unexpected state.
 
 ---
@@ -87,7 +87,7 @@
 2. Build LayerManager helpers and ordering rules (including multi-select and renumbering behavior).
 3. Migrate panels/components to read/write through LayerManager.
 4. Extend plain-mode persistence to cover node metadata.
-5. Verify behavior (focus order, persistence, pinned layers, undo/redo) in both camera modes; expose debug helper. LayerManager remains enabled unless the rollback env var is explicitly set.
+5. Verify behavior (focus order, persistence, pinned layers, undo/redo) in both camera modes; expose debug helper. LayerManager remains enabled across all environments.
 
 ## 7. Undo / Redo (optional)
 

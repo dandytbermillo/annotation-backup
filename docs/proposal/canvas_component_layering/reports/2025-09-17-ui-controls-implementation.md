@@ -75,17 +75,17 @@ className={`${
 **Files Modified:**
 - `lib/canvas/canvas-storage.ts` (Lines 135, 182)
 
-Changed from checking `=== '1'` to checking `!== '0'` to align with default-enabled behavior:
+Changed persistence so layer nodes are always serialized; the env toggle check was removed:
 ```typescript
-// Before: if (process.env.NEXT_PUBLIC_LAYER_MODEL === '1')
-// After:  if (process.env.NEXT_PUBLIC_LAYER_MODEL !== '0')
+// Before: gated on NEXT_PUBLIC_LAYER_MODEL
+// After: LayerManager is permanently enabled and always saves layer nodes
 ```
 
 ## Configuration
 
-LayerManager is now enabled by default as per the recent patches:
-- **Default behavior:** LayerManager is active
-- **Rollback:** Set `NEXT_PUBLIC_LAYER_MODEL=0` to temporarily disable
+LayerManager now runs unconditionally:
+- **Default behavior:** LayerManager is always active
+- **Rollback:** Requires reverting the rollout; no environment flag is available
 
 ## Testing & Verification
 

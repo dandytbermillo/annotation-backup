@@ -9,7 +9,6 @@ import {
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortcuts"
-import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
@@ -117,7 +116,7 @@ function NotesExplorerContent({
   onAddComponent,
   enableTreeView = true,
   usePhase1API = false,
-  multiLayerEnabled = false
+  multiLayerEnabled = true
 }: NotesExplorerProps & { multiLayerEnabled: boolean }) {
   const [notes, setNotes] = useState<Note[]>([])
   const [searchTerm, setSearchTerm] = useState("")
@@ -3219,10 +3218,6 @@ function NotesExplorerContent({
 
 // Main export component that wraps with LayerProvider if needed
 export function NotesExplorerPhase1(props: NotesExplorerProps) {
-  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
-  const layerModelEnabled = useFeatureFlag('ui.layerModel')
-  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled
-
   // LayerProvider is provided at the app level (annotation-app.tsx)
-  return <NotesExplorerContent {...props} multiLayerEnabled={multiLayerEnabled} />
+  return <NotesExplorerContent {...props} multiLayerEnabled={true} />
 }

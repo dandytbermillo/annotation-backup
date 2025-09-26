@@ -141,13 +141,10 @@ This ensures that if panel A was above panel B before the operation, it remains 
 ## Testing Instructions
 
 ### Enable and Test
-LayerManager is active by default.
+LayerManager now ships permanently enabled. Launch the app normally:
 ```bash
-# Run the app normally
+# Run the app normally (multi-layer canvas is always on)
 npm run dev
-
-# To compare with the legacy path, start with NEXT_PUBLIC_LAYER_MODEL=0
-NEXT_PUBLIC_LAYER_MODEL=0 npm run dev
 ```
 
 ### Browser Console Tests
@@ -187,7 +184,7 @@ for (let i = 0; i < 1000; i++) {
 2. **Empty State** - Graceful handling when no nodes exist
 3. **Duplicate IDs** - Prevented in multi-select
 4. **Memory Leaks** - Cleanup on unmount
-5. **Feature Flag Opt-Out** - `NEXT_PUBLIC_LAYER_MODEL=0` temporarily restores legacy behavior
+5. **Legacy Path** - Legacy single-layer mode has been retired; LayerManager always drives canvas ordering
 
 ## Known Limitations
 
@@ -198,7 +195,7 @@ for (let i = 0; i < 1000; i++) {
 
 ## Rollback Plan
 
-To temporarily disable LayerManager and revert to legacy behavior, start the dev server with `NEXT_PUBLIC_LAYER_MODEL=0`. Resetting or unsetting the variable will re-enable the shared model.
+No environment toggle exists anymore. Rolling back requires reverting the LayerManager integration commit or restoring an older build artifact.
 
 ## Conclusion
 

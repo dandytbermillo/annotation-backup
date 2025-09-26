@@ -6,7 +6,6 @@ import dynamic from 'next/dynamic'
 import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
-import { useFeatureFlag } from "@/lib/offline/feature-flags"
 
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
@@ -44,10 +43,8 @@ function AnnotationAppContent() {
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
   
-  // Multi-layer canvas feature
-  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
-  const layerModelEnabled = useFeatureFlag('ui.layerModel')
-  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled
+  // Multi-layer canvas is always enabled
+  const multiLayerEnabled = true
   const layerContext = useLayer()
   
   // Handle note selection with force re-center support

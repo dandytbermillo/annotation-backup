@@ -66,8 +66,8 @@ After thorough double-checking, the Canvas Component Layering implementation **f
 
 | Requirement | Status | Evidence |
 |-------------|--------|----------|
-| LayerManager enabled by default | ✅ | `use-layer-manager.ts:59` - checks `!== '0'` |
-| NEXT_PUBLIC_LAYER_MODEL=0 rollback | ✅ | Setting to '0' disables LayerManager |
+| LayerManager permanently enabled | ✅ | `use-layer-manager.ts:60-156` – hook always returns `isEnabled: true` |
+| Legacy env rollback (NEXT_PUBLIC_LAYER_MODEL=0) | 🚫 | Env toggle removed; rollback requires reverting the rollout |
 | Graceful failure guards | ✅ | All hook methods check `if (!manager \|\| !isEnabled)` |
 | Safe error handling | ✅ | Try-catch blocks in persistence operations |
 

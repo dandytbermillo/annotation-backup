@@ -157,18 +157,18 @@ checkFile('components/canvas/component-panel.tsx', [
 console.log('\n=== Section 4: Persistence ===\n');
 checkFile('lib/canvas/canvas-storage.ts', [
   {
-    name: 'Saves layer nodes (default enabled)',
-    pattern: /if\s*\(process\.env\.NEXT_PUBLIC_LAYER_MODEL\s*!==\s*'0'\)[\s\S]*?serializeNodes/,
+    name: 'Saves layer nodes unconditionally',
+    pattern: /layerNodes\s*=\s*layerManager\.serializeNodes\(\)/,
     shouldExist: true
   },
   {
-    name: 'Loads layer nodes (default enabled)',
-    pattern: /if\s*\(parsed\.layerNodes\s*&&\s*process\.env\.NEXT_PUBLIC_LAYER_MODEL\s*!==\s*'0'\)[\s\S]*?deserializeNodes/,
+    name: 'Loads layer nodes when present',
+    pattern: /if\s*\(parsed\.layerNodes\)/,
     shouldExist: true
   },
   {
-    name: 'No check for === "1" (old pattern)',
-    pattern: /NEXT_PUBLIC_LAYER_MODEL\s*===\s*['"]1['"]/,
+    name: 'Env toggle removed from persistence',
+    pattern: /NEXT_PUBLIC_LAYER_MODEL/,
     shouldExist: false
   }
 ]);
@@ -176,9 +176,9 @@ checkFile('lib/canvas/canvas-storage.ts', [
 console.log('\n=== Section 5: Safety/Rollback ===\n');
 checkFile('lib/hooks/use-layer-manager.ts', [
   {
-    name: 'Default enabled (checks !== "0")',
-    pattern: /process\.env\.NEXT_PUBLIC_LAYER_MODEL\s*!==\s*'0'/,
-    shouldExist: true
+    name: 'Env toggle removed from hook',
+    pattern: /process\.env\.NEXT_PUBLIC_LAYER_MODEL/,
+    shouldExist: false
   },
   {
     name: 'Graceful null checks',

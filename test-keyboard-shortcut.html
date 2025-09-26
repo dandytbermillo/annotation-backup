@@ -39,7 +39,6 @@
         <h2>Issue Analysis:</h2>
         <p>The Cmd+B (Mac) or Ctrl+B (Windows/Linux) shortcut is not working. Possible reasons:</p>
         <ol>
-            <li class="issue">Multi-layer Canvas feature flag is disabled</li>
             <li>Keyboard event is being intercepted by another handler</li>
             <li>The sidebar toggle function is not properly connected</li>
         </ol>
@@ -47,11 +46,7 @@
 
     <div class="status">
         <h2>How to Enable the Feature:</h2>
-        <p>Run this in your browser console:</p>
-        <code style="display: block; padding: 10px; background: #333; color: #0f0; border-radius: 4px;">
-localStorage.setItem('feature:ui.multiLayerCanvas', 'true');<br>
-// Then refresh the page
-        </code>
+        <p>The multi-layer canvas is now always enabled; no console tweaks are required.</p>
     </div>
 
     <div class="status">
@@ -95,14 +90,7 @@ const toggleSidebar = useCallback(() => {
             logEl.textContent = log.join('\n');
         }
         
-        // Check feature flag
-        const featureFlag = localStorage.getItem('feature:ui.multiLayerCanvas');
-        addLog(`Feature flag 'ui.multiLayerCanvas': ${featureFlag || 'not set (disabled)'}`);
-        
-        if (!featureFlag || featureFlag !== 'true') {
-            addLog('⚠️ Feature is DISABLED - shortcut won't work!');
-            addLog('Run the command above to enable it.');
-        }
+        addLog('Feature status: multi-layer canvas is permanently enabled.');
         
         // Monitor keyboard events
         document.addEventListener('keydown', (e) => {
@@ -115,11 +103,7 @@ const toggleSidebar = useCallback(() => {
                     addLog(`✓ ${modKey}+B detected! (prevented default)`);
                     addLog(`  metaKey: ${e.metaKey}, ctrlKey: ${e.ctrlKey}`);
                     
-                    if (featureFlag === 'true') {
-                        addLog('  Feature enabled - should toggle sidebar');
-                    } else {
-                        addLog('  ❌ Feature disabled - won\'t work');
-                    }
+                    addLog('  Shortcut should toggle sidebar (feature always on).');
                 } else {
                     addLog(`B key pressed (no modifier)`);
                 }

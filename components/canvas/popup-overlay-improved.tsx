@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useFeatureFlag } from '@/lib/offline/feature-flags';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { debugLog } from '@/lib/utils/debug-logger';
@@ -32,93 +31,6 @@ interface PopupOverlayProps {
   onLeaveFolder?: () => void;
 }
 
-const renderInlinePopups = ({
-  popups,
-  draggingPopup,
-  onClosePopup,
-  onDragStart,
-  onHoverFolder,
-  onLeaveFolder,
-}: PopupOverlayProps) => {
-  const inlinePopups = Array.from(popups.values());
-
-  return (
-    <div className="relative" data-layer="popups" style={{ position: 'absolute', inset: 0 }}>
-      {inlinePopups.map((popup) => {
-        const position = popup.canvasPosition || popup.position;
-        if (!position) return null;
-        const zIndex = getPopupZIndex(popup.level, popup.isDragging || popup.id === draggingPopup, true);
-        return (
-          <div
-            key={popup.id}
-            className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
-            style={{
-              left: `${position.x}px`,
-              top: `${position.y}px`,
-              width: '300px',
-              maxHeight: '400px',
-              zIndex,
-            }}
-            data-popup-id={popup.id}
-          >
-            <div
-              className="px-3 py-2 border-b border-gray-700 flex items-center justify-between"
-              onMouseDown={(e) => onDragStart?.(popup.id, e)}
-            >
-              <div className="flex items-center gap-2">
-                <Folder className="w-4 h-4 text-blue-400" />
-                <span className="text-sm font-medium text-white truncate">
-                  {popup.folder?.name || 'Loading...'}
-                </span>
-              </div>
-              <button
-                onClick={() => onClosePopup(popup.id)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="p-0.5 hover:bg-gray-700 rounded"
-                aria-label="Close popup"
-              >
-                <X className="w-4 h-4 text-gray-400" />
-              </button>
-            </div>
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)' }}>
-                {popup.folder?.children && popup.folder.children.length > 0 ? (
-                  <div className="py-1">
-                    {popup.folder.children.map((child: any) => (
-                      <div key={child.id} className="px-3 py-2 flex items-center justify-between text-sm">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          {child.type === 'folder' ? (
-                            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                          ) : (
-                            <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                          )}
-                          <span className="text-gray-200 truncate">{child.name}</span>
-                        </div>
-                        {child.type === 'folder' && (
-                          <div
-                            onMouseEnter={(e) => onHoverFolder?.(child, e, popup.id)}
-                            onMouseLeave={() => onLeaveFolder?.()}
-                            className="p-1 -m-1"
-                          >
-                            <Eye className="w-4 h-4 text-gray-500" />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
-              )}
-            </div>
-            <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
-              Level {popup.level} • {popup.folder?.children?.length || 0} items
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
 /**
  * PopupOverlay - Improved with infinite-canvas patterns
  * Uses container transform with translate3d for GPU acceleration
@@ -131,17 +43,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onHoverFolder,
   onLeaveFolder,
 }) => {
-  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas');
-  const layerModelFlag = useFeatureFlag('ui.layerModel');
-  const multiLayerEnabled = multiLayerCanvasFlag && layerModelFlag;
+  const multiLayerEnabled = true;
 
   useEffect(() => {
     debugLog('PopupOverlay', 'improved_state', {
       multiLayerEnabled,
-      layerModelEnabled: layerModelFlag,
       popupCount: popups.size,
     });
-  }, [multiLayerEnabled, layerModelFlag, popups.size]);
+  }, [multiLayerEnabled, popups.size]);
 
   // Local transform state - manages its own pan/zoom
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
@@ -310,17 +219,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     transformOrigin: '0 0',
     willChange: isPanning ? 'transform' : 'auto',
   };
-
-  if (!multiLayerEnabled) {
-    return renderInlinePopups({
-      popups,
-      draggingPopup,
-      onClosePopup,
-      onDragStart,
-      onHoverFolder,
-      onLeaveFolder,
-    });
-  }
 
   return (
     <div

@@ -157,7 +157,7 @@ Result: 4(P:1600) → 2(P:1500) → 3(N:200) → 1(N:100)
 ## Testing Instructions
 
 ### Enable LayerManager
-LayerManager is active by default. To test legacy behavior, run with `NEXT_PUBLIC_LAYER_MODEL=0`.
+LayerManager is permanently active. Legacy single-layer mode is no longer exposed via environment flags.
 
 ### Test Memory Cleanup
 1. Open browser console

@@ -17,7 +17,6 @@ import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
 import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
-import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
 import { Z_INDEX } from "@/lib/constants/z-index"
@@ -411,9 +410,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'critical' : 'normal', 'panel')
   
   // Multi-layer canvas context
-  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
-  const layerModelEnabledFlag = useFeatureFlag('ui.layerModel')
-  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabledFlag
+  const multiLayerEnabled = true
   const layerContext = useLayer()
   
   // Use refs to avoid stale closures in event handlers

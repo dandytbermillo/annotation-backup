@@ -4,7 +4,6 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Transform } from '@/lib/utils/coordinate-bridge';
 import { UILayerState, LayerId, LayerState as UILayerState_Type } from '@/lib/state/ui-layer-state';
 import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
-import { useFeatureFlag } from '@/lib/offline/feature-flags';
 import { debugLog } from '@/lib/utils/debug-logger';
 
 // Types
@@ -54,37 +53,6 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
   children,
   initialPopupCount = 0,
 }) => {
-  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas');
-  const layerModelEnabled = useFeatureFlag('ui.layerModel');
-  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled;
-  
-  // If feature is disabled, provide minimal stub context
-  if (!multiLayerEnabled) {
-    return (
-      <LayerContext.Provider value={{
-        activeLayer: 'notes',
-        layers: new Map(),
-        transforms: {},
-        syncPan: false,
-        syncZoom: false,
-        setActiveLayer: () => {},
-        updateTransform: () => {},
-        updateTransformByDelta: () => {},
-        updateLayerOpacity: () => {},
-        updateLayerVisibility: () => {},
-        toggleSyncPan: () => {},
-        toggleSyncZoom: () => {},
-        resetView: () => {},
-        toggleSidebar: () => {},
-        isSidebarVisible: true,
-        currentGesture: null,
-        setGesture: () => {},
-      }}>
-        {children}
-      </LayerContext.Provider>
-    );
-  }
-  
   // Initialize state from UILayerState singleton
   const [activeLayer, setActiveLayerState] = useState<'notes' | 'popups'>('notes');
   const [syncPan, setSyncPan] = useState(true);
@@ -379,11 +347,6 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
       }
     };
   }, []);
-  
-  // Only provide context if multi-layer is enabled
-  if (!multiLayerEnabled) {
-    return <>{children}</>;
-  }
   
   return (
     <LayerContext.Provider value={value}>

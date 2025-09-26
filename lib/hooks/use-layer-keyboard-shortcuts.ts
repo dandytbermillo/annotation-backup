@@ -1,5 +1,4 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { useFeatureFlag } from '@/lib/offline/feature-flags';
 
 interface ShortcutCallbacks {
   toggleLayer?: () => void;
@@ -31,9 +30,6 @@ const getPlatformModifier = (): string => {
  * Provides cross-platform keyboard navigation for the multi-layer canvas
  */
 export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
-  const multiLayerFlag = useFeatureFlag('ui.multiLayerCanvas');
-  const layerModelEnabled = useFeatureFlag('ui.layerModel');
-  const multiLayerEnabled = multiLayerFlag && layerModelEnabled;
   const modifierKey = getPlatformModifier();
   const keysPressed = useRef(new Set<string>());
   
@@ -42,8 +38,6 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
   const isSpacePressed = useRef(false);
   
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    if (!multiLayerEnabled) return;
-    
     // Do not intercept Space when typing in editors or inputs
     const isEditableTarget = (el: EventTarget | null): boolean => {
       const t = el as HTMLElement | null;
@@ -117,11 +111,9 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
       callbacks.resetView?.();
       return;
     }
-  }, [multiLayerEnabled, callbacks]);
+  }, [callbacks]);
   
   const handleKeyUp = useCallback((event: KeyboardEvent) => {
-    if (!multiLayerEnabled) return;
-    
     // Remove key from pressed set
     keysPressed.current.delete(event.code);
     
@@ -137,12 +129,10 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
       delete document.body.dataset.dragMode;
       callbacks.onSpaceDrag?.(false);
     }
-  }, [multiLayerEnabled, callbacks]);
+  }, [callbacks]);
   
   // Setup event listeners
   useEffect(() => {
-    if (!multiLayerEnabled) return;
-    
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     
@@ -157,7 +147,7 @@ export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
       delete document.body.dataset.dragMode;
       keysPressed.current.clear();
     };
-  }, [multiLayerEnabled, handleKeyDown, handleKeyUp]);
+  }, [handleKeyDown, handleKeyUp]);
   
   // Return current modifier states for UI display
   return {
