@@ -1,1 +1,0 @@
-{"timestamp":"2025-09-07T13:21:02.844Z","sessionId":"mf9q13zn","command":"/analyze \"test_telemetry\"","route":"claude-only","claudeTools":["Task"],"contextOSExecuted":false,"tokenEstimate":2100,"duration":263,"exitStatus":"success","artifacts":[]}

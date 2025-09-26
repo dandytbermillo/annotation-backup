@@ -1002,7 +1002,10 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [cachedHtmlContent, setCachedHtmlContent] = useState<string>('')
   const [isTooltipHovered, setIsTooltipHovered] = useState(false)
   const [showActions, setShowActions] = useState(false)
+  const [isActionTrayVisible, setIsActionTrayVisible] = useState(false)
   const tooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const showControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const previewIconTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const tooltipElementRef = useRef<HTMLDivElement | null>(null)
   const inspectorRef = useRef<HTMLDivElement | null>(null)
   const [showInspector, setShowInspector] = useState(false)
@@ -1032,6 +1035,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [isBlockSelected, setIsBlockSelected] = useState(false)
   const [isSelectionHead, setIsSelectionHead] = useState(false)
   const [selectionBlockCount, setSelectionBlockCount] = useState(0)
+  const hasMultiSelection = selectionBlockCount > 1
+  const actionTrayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const updateBlockSelectionState = useCallback(
     (snapshot?: CollapsibleSelectionSnapshot | null) => {
@@ -1213,11 +1218,79 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
   const resolvePos = () => (typeof getPos === 'function' ? getPos() : null)
 
+  const clearActionTrayTimeout = () => {
+    if (actionTrayTimeoutRef.current) {
+      clearTimeout(actionTrayTimeoutRef.current)
+      actionTrayTimeoutRef.current = null
+    }
+  }
+
+  const clearShowControlsTimeout = () => {
+    if (showControlsTimeoutRef.current) {
+      clearTimeout(showControlsTimeoutRef.current)
+      showControlsTimeoutRef.current = null
+    }
+  }
+
+  const clearPreviewIconTimeout = () => {
+    if (previewIconTimeoutRef.current) {
+      clearTimeout(previewIconTimeoutRef.current)
+      previewIconTimeoutRef.current = null
+    }
+  }
+
+  const revealActionTray = () => {
+    clearActionTrayTimeout()
+    clearShowControlsTimeout()
+    setIsActionTrayVisible(true)
+    setShowActions(true)
+  }
+
+  const scheduleHideActionTray = (delay = 450) => {
+    clearActionTrayTimeout()
+    actionTrayTimeoutRef.current = setTimeout(() => {
+      setIsActionTrayVisible(false)
+    }, delay)
+  }
+
+  const scheduleShowActions = () => {
+    if (hasMultiSelection) {
+      return
+    }
+    clearShowControlsTimeout()
+    if (isActionTrayVisible) {
+      setShowActions(true)
+      return
+    }
+    showControlsTimeoutRef.current = setTimeout(() => {
+      setShowActions(true)
+    }, 450)
+  }
+
+  const hideActionsImmediate = () => {
+    clearShowControlsTimeout()
+    if (hasMultiSelection || isActionTrayVisible) {
+      return
+    }
+    setShowActions(false)
+  }
+
   useEffect(() => {
     if (!node.attrs.title || !node.attrs.title.trim()) {
       updateAttributes({ title: DEFAULT_BLOCK_TITLE })
     }
   }, [node.attrs.title, updateAttributes])
+
+  useEffect(() => {
+    if (hasMultiSelection) {
+      clearActionTrayTimeout()
+      setIsActionTrayVisible(false)
+      clearShowControlsTimeout()
+      clearPreviewIconTimeout()
+      setShowActions(false)
+      setShowPreviewIcon(false)
+    }
+  }, [hasMultiSelection])
 
   useEffect(() => {
     debugLog('CollapsibleBlock', 'TITLE_ATTR_EFFECT', {
@@ -1310,14 +1383,20 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     editor.view.focus()
   }
 
-  const handleMultiCollapse = () => {
+  const handleMultiMoveUp = () => {
     if (!editor) return
-    editor.chain().focus().collapseSelectedCollapsibleBlocks().run()
+    const chain = editor.chain().focus() as any
+    if (typeof chain.moveSelectedCollapsibleBlocksUp === 'function') {
+      chain.moveSelectedCollapsibleBlocksUp().run()
+    }
   }
 
-  const handleMultiExpand = () => {
+  const handleMultiMoveDown = () => {
     if (!editor) return
-    editor.chain().focus().expandSelectedCollapsibleBlocks().run()
+    const chain = editor.chain().focus() as any
+    if (typeof chain.moveSelectedCollapsibleBlocksDown === 'function') {
+      chain.moveSelectedCollapsibleBlocksDown().run()
+    }
   }
 
   const handleMultiDuplicate = () => {
@@ -1638,9 +1717,13 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     dragOffsetRef.current = null
   }
 
+  useEffect(() => {
+    setIsCollapsed(Boolean(node.attrs.collapsed))
+  }, [node.attrs.collapsed])
+
   const toggleCollapse = () => {
     const newCollapsed = !isCollapsed
-    
+
     // Cache content before collapsing
     if (!newCollapsed && contentRef.current) {
       const html = contentRef.current.innerHTML || ''
@@ -1761,6 +1844,12 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       return true
     }
     if (target.closest('[data-collapsible-actions]')) {
+      return true
+    }
+    if (target.closest('[data-collapsible-expand-control]')) {
+      return true
+    }
+    if (target.closest('[data-collapsible-controls]')) {
       return true
     }
     if (target.closest('[data-multi-selection-actions]')) {
@@ -2038,21 +2127,27 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     if (hasMultiSelection) {
       return
     }
-    setShowActions(true)
+    scheduleShowActions()
     if (isCollapsed) {
-      setShowPreviewIcon(true)
+      clearPreviewIconTimeout()
+      previewIconTimeoutRef.current = setTimeout(() => {
+        setShowPreviewIcon(true)
+      }, 450)
     }
   }
 
   // Handle container mouse leave
   const handleMouseLeave = (e: React.MouseEvent) => {
     setIsHovered(false)
+    clearShowControlsTimeout()
+    clearPreviewIconTimeout()
     setShowPreviewIcon(false)
     scheduleTooltipHide(e.relatedTarget)
     if (hasMultiSelection) {
       return
     }
-    setShowActions(false)
+    hideActionsImmediate()
+    scheduleHideActionTray(450)
   }
 
   // Handle icon hover
@@ -2098,9 +2193,48 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     setIsTooltipHovered(false)
     scheduleTooltipHide(e.relatedTarget)
   }
-  
-  const hasMultiSelection = selectionBlockCount > 1
+
+  const handleExpandControlMouseEnter = () => {
+    revealActionTray()
+  }
+
+  const handleExpandControlMouseLeave = () => {
+    scheduleHideActionTray(450)
+  }
+
+  const handleExpandControlClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    revealActionTray()
+    scheduleHideActionTray(800)
+  }
+
+  const handleActionTrayMouseEnter = () => {
+    revealActionTray()
+  }
+
+  const handleActionTrayMouseLeave = () => {
+    scheduleHideActionTray(450)
+  }
+
+  const handleHeaderInnerMouseEnter = () => {
+    scheduleShowActions()
+  }
+
+  const handleHeaderInnerMouseLeave = () => {
+    hideActionsImmediate()
+  }
+
+  const handleContentControlsMouseEnter = () => {
+    scheduleShowActions()
+  }
+
+  const handleContentControlsMouseLeave = () => {
+    hideActionsImmediate()
+  }
+
   const showMultiSelectionActions = isSelectionHead && hasMultiSelection
+  const shouldShowHoverControls = !hasMultiSelection && (showActions || isActionTrayVisible)
 
   // Cleanup on unmount
   useEffect(() => {
@@ -2108,6 +2242,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       if (tooltipTimeoutRef.current) {
         clearTimeout(tooltipTimeoutRef.current)
       }
+      clearActionTrayTimeout()
+      clearShowControlsTimeout()
+      clearPreviewIconTimeout()
     }
   }, [])
 
@@ -2147,8 +2284,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           minWidth: 0,
         }}
         contentEditable={false}
-        onMouseEnter={() => { if (!hasMultiSelection) setShowActions(true) }}
-        onMouseLeave={() => { if (!hasMultiSelection) setShowActions(false) }}
+        onMouseEnter={handleHeaderInnerMouseEnter}
+        onMouseLeave={handleHeaderInnerMouseLeave}
         onMouseDownCapture={handleHeaderMouseDownCapture}
         onClickCapture={handleHeaderClickCapture}
       >
@@ -2215,7 +2352,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
         {!hasMultiSelection && (
           <>
-            {headerMetaLabel && !showActions && (
+            {headerMetaLabel && (
               <span
                 style={{
                   flexShrink: 0,
@@ -2230,59 +2367,26 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               </span>
             )}
             <div
-              data-collapsible-actions
+              data-collapsible-controls
               style={{
-                display: 'flex',
+                display: shouldShowHoverControls ? 'flex' : 'none',
                 alignItems: 'center',
                 gap: '8px',
                 marginLeft: 'auto',
                 flexShrink: 0,
               }}
             >
-              {hasExplicitTemplate && appliedTemplate && (
-                <span
-                  style={{
-                    fontSize: '12px',
-                    color: '#64748b',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {appliedTemplate.label}
-                </span>
-              )}
-              {templateUndoSnapshot && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    handleUndoTemplate()
-                  }}
-                  style={{
-                    border: '1px solid #f1c4c4',
-                    background: 'rgba(252, 231, 243, 0.65)',
-                    color: '#b91c1c',
-                    padding: '2px 10px',
-                    borderRadius: '9999px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    lineHeight: 1.4,
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Undo template
-                </button>
-              )}
               <button
                 type="button"
-                ref={templateButtonRef}
-                onClick={handleTemplateButtonClick}
-                aria-label={templateButtonLabel}
-                title={templateButtonLabel}
+                aria-label="Show block actions"
+                title="Show block actions"
+                data-collapsible-expand-control
+                onMouseEnter={handleExpandControlMouseEnter}
+                onMouseLeave={handleExpandControlMouseLeave}
+                onClick={handleExpandControlClick}
                 style={{
                   border: '1px solid #d5dfe9',
-                  background: isTemplateMenuOpen ? 'rgba(99, 102, 241, 0.16)' : 'rgba(241, 245, 249, 0.9)',
+                  background: isActionTrayVisible ? 'rgba(148, 163, 184, 0.24)' : 'rgba(241, 245, 249, 0.9)',
                   color: '#475569',
                   padding: 0,
                   width: '28px',
@@ -2298,34 +2402,105 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                 <span
                   aria-hidden="true"
                   style={{
+                    fontSize: '18px',
+                    lineHeight: 1,
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    width: '16px',
-                    height: '16px',
                   }}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <rect x="1.5" y="2" width="11" height="2" rx="1" fill="currentColor" />
-                    <rect x="1.5" y="6" width="11" height="2" rx="1" fill="currentColor" />
-                    <rect x="1.5" y="10" width="7" height="2" rx="1" fill="currentColor" />
-                  </svg>
+                  ⋯
                 </span>
               </button>
               <div
                 style={{
-                  display: showActions ? 'inline-flex' : 'none',
+                  display: isActionTrayVisible ? 'inline-flex' : 'none',
                   alignItems: 'center',
                   gap: '6px',
                 }}
                 data-collapsible-actions
+                onMouseEnter={handleActionTrayMouseEnter}
+                onMouseLeave={handleActionTrayMouseLeave}
               >
+                {hasExplicitTemplate && appliedTemplate && (
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      color: '#64748b',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {appliedTemplate.label}
+                  </span>
+                )}
+                {templateUndoSnapshot && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      handleUndoTemplate()
+                    }}
+                    style={{
+                      border: '1px solid #f1c4c4',
+                      background: 'rgba(252, 231, 243, 0.65)',
+                      color: '#b91c1c',
+                      padding: '2px 10px',
+                      borderRadius: '9999px',
+                      cursor: 'pointer',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      lineHeight: 1.4,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Undo template
+                  </button>
+                )}
+                <button
+                  type="button"
+                  ref={templateButtonRef}
+                  onClick={handleTemplateButtonClick}
+                  aria-label={templateButtonLabel}
+                  title={templateButtonLabel}
+                  style={{
+                    border: '1px solid #d5dfe9',
+                    background: isTemplateMenuOpen ? 'rgba(99, 102, 241, 0.16)' : 'rgba(241, 245, 249, 0.9)',
+                    color: '#475569',
+                    padding: 0,
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'background 0.15s ease',
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '16px',
+                      height: '16px',
+                    }}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 14 14"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <rect x="1.5" y="2" width="11" height="2" rx="1" fill="currentColor" />
+                      <rect x="1.5" y="6" width="11" height="2" rx="1" fill="currentColor" />
+                      <rect x="1.5" y="10" width="7" height="2" rx="1" fill="currentColor" />
+                    </svg>
+                  </span>
+                </button>
                 <button type="button" onClick={(e) => { e.stopPropagation(); handleInsertBefore() }} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#708090', fontSize: '12px', fontWeight: 600 }} aria-label="Insert paragraph before block" title="Insert line before">+↑</button>
                 <button type="button" onClick={(e) => { e.stopPropagation(); handleInsertAfter() }} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#708090', fontSize: '12px', fontWeight: 600 }} aria-label="Insert paragraph after block" title="Insert line after">+↓</button>
                 <button type="button" onClick={(e) => { e.stopPropagation(); handleMove('up') }} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#708090', fontSize: '14px' }} aria-label="Move block up">▲</button>
@@ -2354,8 +2529,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               type="button"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
-                e.stopPropagation();
-                handleMultiCollapse();
+                e.stopPropagation()
+                handleMultiMoveUp()
               }}
               style={{
                 border: 'none',
@@ -2365,8 +2540,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                 color: '#475569',
                 fontSize: '14px',
               }}
-              aria-label="Collapse selected blocks"
-              title="Collapse selected blocks"
+              aria-label="Move selected blocks up"
+              title="Move selected blocks up"
             >
               ▲
             </button>
@@ -2374,8 +2549,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
               type="button"
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
-                e.stopPropagation();
-                handleMultiExpand();
+                e.stopPropagation()
+                handleMultiMoveDown()
               }}
               style={{
                 border: 'none',
@@ -2385,8 +2560,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                 color: '#475569',
                 fontSize: '14px',
               }}
-              aria-label="Expand selected blocks"
-              title="Expand selected blocks"
+              aria-label="Move selected blocks down"
+              title="Move selected blocks down"
             >
               ▼
             </button>
@@ -2811,8 +2986,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       )}
       {!isCollapsed && (
         <div
-          onMouseEnter={() => setShowActions(true)}
-          onMouseLeave={() => setShowActions(false)}
+          onMouseEnter={handleContentControlsMouseEnter}
+          onMouseLeave={handleContentControlsMouseLeave}
           style={{
             display: showActions ? 'flex' : 'none',
             justifyContent: 'flex-end',

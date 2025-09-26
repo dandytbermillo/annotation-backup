@@ -1,6 +1,0 @@
-{
-  "feature": "adding_batch_save",
-  "issue": "Visual test - Button rendering issues [Visual Analysis Detected] - Button extends 20px beyond container at 375px viewport - Text contrast ratio 1.3:1 (WCAG AA failure) [Attached Images] - Image 1: ./screenshots/mobile-issue.png",
-  "dryRun": true,
-  "autoConfirm": true
-}

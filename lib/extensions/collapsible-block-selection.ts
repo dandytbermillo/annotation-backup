@@ -274,6 +274,171 @@ const ensureSingleSelection = (props: CommandProps, pos: number): boolean => {
   return true
 }
 
+const moveSelectedBlocks = (direction: 'up' | 'down', props: CommandProps): boolean => {
+  const { state } = props
+  const type = state.schema.nodes.collapsibleBlock
+  if (!type) {
+    return false
+  }
+
+  const schemaName = type.name
+  const selectionState = pluginKey.getState(state) ?? emptyState
+  const selectionBlocks = selectionState.blocks.length
+    ? selectionState.blocks
+    : (() => {
+        const pos = findCollapsibleBlockPos(state.doc, schemaName, state.selection.from)
+        if (pos == null) {
+          return []
+        }
+        return buildItems(state.doc, schemaName, [pos])
+      })()
+
+  if (!selectionBlocks.length) {
+    return false
+  }
+
+  const sortedTargets = [...selectionBlocks].sort((a, b) => a.pos - b.pos)
+  const allBlocks = gatherCollapsibleBlocks(state.doc, schemaName)
+  if (!allBlocks.length) {
+    return false
+  }
+
+  const indexMap = new Map<number, number>()
+  allBlocks.forEach((block, index) => {
+    indexMap.set(block.pos, index)
+  })
+
+  const firstIndex = indexMap.get(sortedTargets[0].pos)
+  const lastIndex = indexMap.get(sortedTargets[sortedTargets.length - 1].pos)
+  if (firstIndex == null || lastIndex == null) {
+    return false
+  }
+
+  const selectedSet = new Set(sortedTargets.map(block => block.pos))
+  let isContiguous = true
+  for (let i = firstIndex; i <= lastIndex; i += 1) {
+    if (!selectedSet.has(allBlocks[i].pos)) {
+      isContiguous = false
+      break
+    }
+  }
+
+  if (!isContiguous) {
+    logSelectionDebug('CMD_MOVE_ABORT_NON_CONTIGUOUS', {
+      direction,
+      selected: Array.from(selectedSet.values()),
+      firstIndex,
+      lastIndex,
+    })
+    return false
+  }
+
+  if (direction === 'up' && firstIndex === 0) {
+    logSelectionDebug('CMD_MOVE_EDGE', { direction, reason: 'at_top' })
+    return false
+  }
+
+  if (direction === 'down' && lastIndex === allBlocks.length - 1) {
+    logSelectionDebug('CMD_MOVE_EDGE', { direction, reason: 'at_bottom' })
+    return false
+  }
+
+  const firstPos = sortedTargets[0].pos
+  const lastTarget = sortedTargets[sortedTargets.length - 1]
+  const lastNode = state.doc.nodeAt(lastTarget.pos)
+  if (!lastNode || lastNode.type.name !== schemaName) {
+    return false
+  }
+  const groupEnd = lastTarget.pos + lastNode.nodeSize
+  const slice = state.doc.slice(firstPos, groupEnd)
+
+  const tr = state.tr
+  tr.delete(firstPos, groupEnd)
+
+  let insertPos: number
+  if (direction === 'up') {
+    const prevBlock = allBlocks[firstIndex - 1]
+    insertPos = tr.mapping.map(prevBlock.pos, -1)
+  } else {
+    const nextBlock = allBlocks[lastIndex + 1]
+    const mappedNextPos = tr.mapping.map(nextBlock.pos, -1)
+    const nextNode = tr.doc.nodeAt(mappedNextPos)
+    insertPos = nextNode ? mappedNextPos + nextNode.nodeSize : mappedNextPos
+  }
+
+  tr.insert(insertPos, slice.content)
+
+  const newPositions: number[] = []
+  let cursor = insertPos
+  slice.content.forEach(node => {
+    if (node.type === type) {
+      newPositions.push(cursor)
+    }
+    cursor += node.nodeSize
+  })
+
+  if (!newPositions.length) {
+    return false
+  }
+
+  const newItems = buildItems(tr.doc, schemaName, newPositions)
+  if (!newItems.length) {
+    return false
+  }
+
+  const positionMap = new Map<number, number>()
+  for (let i = 0; i < sortedTargets.length; i += 1) {
+    const nextItem = newItems[i]
+    if (nextItem) {
+      positionMap.set(sortedTargets[i].pos, nextItem.pos)
+    }
+  }
+
+  const resolveMappedPos = (pos: number | null) => (pos != null && positionMap.has(pos) ? positionMap.get(pos)! : pos)
+
+  const nextAnchor = selectionState.blocks.length
+    ? resolveMappedPos(selectionState.anchor)
+    : resolveMappedPos(sortedTargets[0]?.pos ?? null)
+
+  const nextHead = selectionState.blocks.length
+    ? resolveMappedPos(selectionState.head)
+    : resolveMappedPos(sortedTargets[sortedTargets.length - 1]?.pos ?? null)
+
+  const nextMode = selectionState.blocks.length && selectionState.mode !== 'none'
+    ? selectionState.mode
+    : newItems.length === 1
+        ? 'single'
+        : 'range'
+
+  const snapshotPayload: CollapsibleSelectionSnapshot = {
+    mode: nextMode,
+    anchor: nextAnchor,
+    head: nextHead,
+    blocks: newItems,
+  }
+
+  logSelectionDebug('CMD_MOVE_MULTI', {
+    direction,
+    previousSnapshot: summarizeSnapshot(selectionState),
+    newPositions,
+  })
+
+  tr.setMeta(pluginKey, { type: 'set', payload: snapshotPayload } satisfies SelectionMeta)
+  tr.setMeta('addToHistory', true)
+
+  const selectionPos = snapshotPayload.head ?? snapshotPayload.anchor ?? newItems[newItems.length - 1]?.pos ?? newItems[0]?.pos ?? null
+  if (selectionPos != null) {
+    try {
+      tr.setSelection(NodeSelection.create(tr.doc, selectionPos))
+    } catch {
+      tr.setSelection(TextSelection.near(tr.doc.resolve(selectionPos)))
+    }
+  }
+
+  props.dispatch?.(tr.scrollIntoView())
+  return true
+}
+
 const extension = Extension.create({
   name: 'collapsibleBlockSelection',
 
@@ -669,6 +834,10 @@ const extension = Extension.create({
         props.dispatch?.(tr.scrollIntoView())
         return true
       },
+
+      moveSelectedCollapsibleBlocksUp: () => props => moveSelectedBlocks('up', props),
+
+      moveSelectedCollapsibleBlocksDown: () => props => moveSelectedBlocks('down', props),
     }
   },
 

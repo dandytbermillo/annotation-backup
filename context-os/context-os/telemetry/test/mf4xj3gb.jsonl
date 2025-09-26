@@ -1,4 +1,0 @@
-{"timestamp":"2025-09-04T04:52:08.147Z","sessionId":"mf4xj3gb","command":"/execute \"Test Feature\"","route":"context-only","claudeTools":[],"contextOSExecuted":true,"tokenEstimate":0,"duration":23,"exitStatus":"failure","artifacts":[]}
-{"timestamp":"2025-09-04T04:52:08.636Z","sessionId":"mf4xj3gb","command":"/analyze dark_mode","route":"claude-only","claudeTools":["Task"],"contextOSExecuted":false,"tokenEstimate":2100,"duration":487,"exitStatus":"success","artifacts":[]}
-{"timestamp":"2025-09-04T04:52:08.685Z","sessionId":"mf4xj3gb","command":"/validate dark_mode","route":"context-only","claudeTools":[],"contextOSExecuted":true,"tokenEstimate":2100,"duration":47,"exitStatus":"success","artifacts":[]}
-{"timestamp":"2025-09-04T04:52:08.890Z","sessionId":"mf4xj3gb","command":"/analyze test_telemetry","route":"claude-only","claudeTools":["Task"],"contextOSExecuted":false,"tokenEstimate":4200,"duration":204,"exitStatus":"success","artifacts":[]}

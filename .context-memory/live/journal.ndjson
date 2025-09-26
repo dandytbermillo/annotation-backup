@@ -211,3 +211,9 @@
 {"ts":"2025-09-26T00:07:24.141Z","type":"commit","sha":"16e7d198de215770d736ae447a7db725fe5a8085","files_changed":6,"message":"the persisting error gone"}
 {"ts":"2025-09-26T00:36:12.3NZ","type":"note","text":"Reviewed CollapsibleBlock multi-select toolbar logs; saw NODEVIEW_PLAIN_MOUSEDOWN_CLEAR firing when buttons clicked. Planning patch to mark multi-selection buttons as interactive targets so header capture stops clearing selection."}
 {"ts":"2025-09-26T00:38:52.3NZ","type":"note","text":"Added multi-selection toolbar to interactive whitelist in collapsible-block node view so header capture no longer clears selection when pressing multi-select actions."}
+{"ts":"2025-09-26T00:41:52.324Z","type":"commit","sha":"14392dfede6cfcb92ff5f44ad1ddf4ef0b22e001","files_changed":4,"message":"delete worked"}
+{"ts":"2025-09-26T00:45:01.3NZ","type":"note","text":"Synced NodeView collapsed state with node attrs so multi-select collapse/expand updates reflect immediately."}
+{"ts":"2025-09-26T00:54:29.3NZ","type":"note","text":"Implemented multi-select move up/down commands and wired toolbar buttons to them; added NodeView sync effect for collapsed state earlier."}
+{"ts":"2025-09-26T01:01:47.3NZ","type":"note","text":"Test note for summary refresh check."}
+{"ts":"2025-09-26T01:22:23.3NZ","type":"note","text":"Updated collapsible block header so hover shows only metadata plus expand control; added timed action tray reveal and new move commands remain accessible inside expanded controls."}
+{"ts":"2025-09-26T01:39:48.3NZ","type":"note","text":"Added delayed hover timers for header controls so expand bubble and action tray only show after sustained hover; quick passes no longer flash buttons."}
