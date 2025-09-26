@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-26 20:43Z] ae14413: the Internal Multi-Layer Canvas Flag is set to not feature flag
 - note [2025-09-26 20:41Z]: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 - note [2025-09-26 20:24Z]: Removed multi-layer canvas gating; layer manager + overlays now always on and legacy flags scrubbed.
 - commit [2025-09-26 19:12Z] b5dd5dc: fixed the flush persisting error on the popup overly
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - note: Added panel height toggle button; clicking resize now expands panel to viewport height and restores previous size on second click.
 - commit [2025-09-26 01:57Z] 72cf4a9: hover delay block header & expanded and preview circle changed
 - commit [2025-09-26 01:40Z] 50ee4cb: refine the inline button in the block
-- note: Added delayed hover timers for header controls so expand bubble and action tray only show after sustained hover; quick passes no longer flash buttons.
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-26 19:12Z] b5dd5dc: fixed the flush persisting error on the popup overly
+- commit [2025-09-26 20:43Z] ae14413: the Internal Multi-Layer Canvas Flag is set to not feature flag

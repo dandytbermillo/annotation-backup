@@ -587,7 +587,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Compute whether the editor should be editable based on layer state
   const isLayerInteractive = !multiLayerEnabled || !layerContext || layerContext.activeLayer === 'notes'
-  const actuallyEditable = isEditing && isLayerInteractive
+  const isLayerInteractiveRef = useRef(isLayerInteractive)
+  useEffect(() => {
+    isLayerInteractiveRef.current = isLayerInteractive
+    if (!isLayerInteractive && typeof window !== 'undefined') {
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement?.closest('.ProseMirror')) {
+        activeElement.blur()
+      }
+    }
+  }, [isLayerInteractive])
+
+  const actuallyEditable = isEditing
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
@@ -599,37 +610,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const currentNoteId = noteId || contextNoteId
   
   // Blur editor when switching to popup layer
-  useEffect(() => {
-    if (!multiLayerEnabled || !layerContext) return
-    const editorHandle = editorRef.current
-    if (!editorHandle || typeof editorHandle.setEditable !== 'function') return
-
-    let timeoutId: number | undefined
-
-    const run = () => {
-      const activeLayer = layerContext.activeLayer
-      if (activeLayer === 'popups') {
-        editorHandle.setEditable(false)
-        if (typeof window !== 'undefined') {
-          const activeElement = document.activeElement as HTMLElement | null
-          if (activeElement?.closest('.ProseMirror')) {
-            activeElement.blur()
-          }
-        }
-      } else if (activeLayer === 'notes') {
-        editorHandle.setEditable(isEditing)
-      }
-    }
-
-    timeoutId = window.setTimeout(run, 0)
-
-    return () => {
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId)
-      }
-    }
-  }, [layerContext?.activeLayer, multiLayerEnabled, isEditing])
-  
   // Simplified drag state - no RAF accumulation
   const dragState = useRef({
     isDragging: false,
@@ -817,7 +797,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const focusAttempts = [100, 300, 500, 800]
       focusAttempts.forEach(delay => {
         setTimeout(() => {
-          if (editorRef.current && isEditing && isLayerInteractive) {
+          if (editorRef.current && isEditing && isLayerInteractiveRef.current) {
             editorRef.current.focus()
           }
         }, delay)
@@ -825,7 +805,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     } else if (isEditing && isEmpty && editorRef.current) {
       // For non-main panels, single focus attempt
       setTimeout(() => {
-        if (editorRef.current && isLayerInteractive) {
+        if (editorRef.current && isLayerInteractiveRef.current) {
           editorRef.current.focus()
         }
       }, 300)
@@ -898,14 +878,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (empty) {
         setIsEditing(true)
         setTimeout(() => {
-          if (editorRef.current && isLayerInteractive) {
-            editorRef.current.setEditable(true as any)
+          if (editorRef.current && isLayerInteractiveRef.current) {
             editorRef.current.focus()
           }
         }, 120)
       }
     },
-    [isPlainMode, panelId, branch.originalText, dataStore, isLayerInteractive]
+    [isPlainMode, panelId, branch.originalText, dataStore]
   )
   
   // Update edit mode when branch content changes (Option A only)
@@ -927,8 +906,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       
       // Also trigger focus
       setTimeout(() => {
-        if (editorRef.current) {
-          editorRef.current.setEditable(true)
+        if (editorRef.current && isLayerInteractiveRef.current) {
           editorRef.current.focus()
         }
       }, 100)
@@ -1062,8 +1040,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const handleToggleEditing = () => {
     const newEditableState = !isEditing
     setIsEditing(newEditableState)
-    editorRef.current?.setEditable(newEditableState)
-    
+
     const toggleBtn = document.querySelector(`#toolbar-${panelId} .toolbar-btn.special`) as HTMLButtonElement
     if (toggleBtn) {
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
