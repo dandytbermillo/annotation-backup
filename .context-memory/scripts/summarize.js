@@ -47,7 +47,7 @@ function coerceArray(value) {
   return [value]
 }
 
-function formatNoteEvent(event) {
+function collectNotePieces(event) {
   const basePieces = []
   if (event.summary) {
     basePieces.push(event.summary)
@@ -62,9 +62,13 @@ function formatNoteEvent(event) {
     basePieces.unshift(event.text)
   }
 
-  const combined = basePieces
+  return basePieces
     .map(piece => String(piece).trim())
     .filter(Boolean)
+}
+
+function formatNoteEvent(event) {
+  const combined = collectNotePieces(event)
 
   if (!combined.length) {
     return '(no details)'
@@ -72,6 +76,28 @@ function formatNoteEvent(event) {
 
   // Compact multi-line notes by joining with separator
   return combined.map(redact).join(' — ')
+}
+
+function extractTodoLines(note) {
+  const combined = collectNotePieces(note)
+  if (!combined.length) return []
+  const lines = combined
+    .map(piece => String(piece).trim())
+    .filter(Boolean)
+
+  const out = []
+  for (const line of lines) {
+    const m = line.match(/^(?:[-*]\s*)?(?:TODO|todo|Next|NEXT|Pending|pending)[:\-]?\s*(.+)$/)
+    if (m && m[1]) {
+      out.push(m[1].trim())
+    }
+  }
+  return out
+}
+
+function stripBulletPrefix(text) {
+  if (!text) return ''
+  return text.replace(/^[-*]\s*/, '')
 }
 
 function render(state, events) {
@@ -108,6 +134,37 @@ function render(state, events) {
     healthLines.push(`- Tests: ${latestTest.result} (${latestTest.count||0})`)
   }
 
+  // Pull recent notes to help resume context
+  const noteEvents = events.filter(e => e.type === 'note')
+  const recentNotes = noteEvents.slice(-5).reverse()
+  const noteBullets = []
+  for (const n of recentNotes) {
+    const ts = fmtTs(n.ts || n.timestamp)
+    noteBullets.push(`- note${ts}: ${formatNoteEvent(n)}`)
+  }
+
+  // Derive open TODOs / next steps heuristically from note content
+  const todoCandidates = []
+  for (const n of noteEvents) {
+    const todos = extractTodoLines(n)
+    if (!todos.length) continue
+    const ts = fmtTs(n.ts || n.timestamp)
+    for (const t of todos) {
+      todoCandidates.push({ ts, text: redact(t) })
+    }
+  }
+  const todoLines = todoCandidates.slice(-6).reverse().map(t => `- todo${t.ts}: ${t.text}`)
+
+  // Last progress marker from notes or commits
+  const lastProgress = recentNotes.length
+    ? formatNoteEvent(recentNotes[0])
+    : (latestTest ? `Latest test: ${latestTest.result}` : (bullets[0] ? stripBulletPrefix(bullets[0]) : '(none)'))
+
+  const latestCommit = [...events].reverse().find(e => e.type === 'commit')
+  const implementationLines = latestCommit
+    ? [`- commit${fmtTs(latestCommit.ts || latestCommit.timestamp)} ${String(latestCommit.sha||'').slice(0,7)}: ${redact(latestCommit.message || '')}`]
+    : ['- (none)']
+
   const totalEvents = events.length
   const recentLabel = `Recent Activity (showing last ${recent.length || 0} of ${totalEvents})`
 
@@ -118,6 +175,7 @@ function render(state, events) {
     `- Feature: ${current.feature}`,
     `- Branch: ${current.branch}`,
     `- Status: ${current.status}`,
+    `- Last Progress: ${lastProgress}`,
     '',
     recentLabel,
     ...(bullets.length ? bullets : ['- (none)']),
@@ -125,8 +183,17 @@ function render(state, events) {
     'Recent Chat',
     ...(chatBullets.length ? chatBullets : ['- (none)']),
     '',
+    'Recent Notes',
+    ...(noteBullets.length ? noteBullets : ['- (none)']),
+    '',
+    'Open TODOs / Next Steps',
+    ...(todoLines.length ? todoLines : ['- (none detected)']),
+    '',
     'Health Snapshot',
     ...(healthLines.length ? healthLines : ['- (no recent data)']),
+    '',
+    'Latest Implementation',
+    ...implementationLines,
   ]
   return lines.join('\n') + '\n'
 }

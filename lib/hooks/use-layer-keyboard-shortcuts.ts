@@ -31,7 +31,9 @@ const getPlatformModifier = (): string => {
  * Provides cross-platform keyboard navigation for the multi-layer canvas
  */
 export const useLayerKeyboardShortcuts = (callbacks: ShortcutCallbacks) => {
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
+  const multiLayerFlag = useFeatureFlag('ui.multiLayerCanvas');
+  const layerModelEnabled = useFeatureFlag('ui.layerModel');
+  const multiLayerEnabled = multiLayerFlag && layerModelEnabled;
   const modifierKey = getPlatformModifier();
   const keysPressed = useRef(new Set<string>());
   

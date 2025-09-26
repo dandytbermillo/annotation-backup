@@ -411,7 +411,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'critical' : 'normal', 'panel')
   
   // Multi-layer canvas context
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
+  const layerModelEnabledFlag = useFeatureFlag('ui.layerModel')
+  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabledFlag
   const layerContext = useLayer()
   
   // Use refs to avoid stale closures in event handlers
@@ -1192,7 +1194,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
       // Bring panel to front while dragging
       // Always use LayerManager for focus/z-index management
-      layerManager.focusNode(panelId) // This brings to front and updates focus time
+      if (layerManager.isEnabled) {
+        layerManager.focusNode(panelId) // This brings to front and updates focus time
+      }
       globalDraggingPanelId = panelId
       
       // Prevent text selection while dragging
@@ -1246,7 +1250,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       
       // Update position in LayerManager if enabled
       // Update position through LayerManager
-      layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+      if (layerManager.isEnabled) {
+        layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+      }
       
       // Clean up global dragging state
       if (globalDraggingPanelId === panelId) {
@@ -1823,7 +1829,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    layerManager.bringToFront(panelId)
+                    if (layerManager.isEnabled) {
+                      layerManager.bringToFront(panelId)
+                    }
                   }}
                   disabled={layerBandInfo?.isAtTop}
                   style={{
@@ -1863,7 +1871,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    layerManager.sendToBack(panelId)
+                    if (layerManager.isEnabled) {
+                      layerManager.sendToBack(panelId)
+                    }
                   }}
                   disabled={layerBandInfo?.isAtBottom}
                   style={{
@@ -2081,13 +2091,17 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
                       if (actionId === 'bringToFront') {
                         event.stopPropagation()
-                        layerManager.bringToFront(panelId)
+                        if (layerManager.isEnabled) {
+                          layerManager.bringToFront(panelId)
+                        }
                         closeOverflowMenu()
                         return
                       }
                       if (actionId === 'sendToBack') {
                         event.stopPropagation()
-                        layerManager.sendToBack(panelId)
+                        if (layerManager.isEnabled) {
+                          layerManager.sendToBack(panelId)
+                        }
                         closeOverflowMenu()
                         return
                       }

@@ -4,9 +4,10 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { getLayerManager, LayerManager } from '@/lib/canvas/layer-manager'
+import { getLayerManager, LayerManager, resetLayerManager } from '@/lib/canvas/layer-manager'
 import { CanvasNode } from '@/lib/canvas/canvas-node'
 import { useFeatureFlag } from '@/lib/offline/feature-flags'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 export interface UseLayerManagerReturn {
   /** Whether layer management is enabled */
@@ -53,83 +54,104 @@ export interface UseLayerManagerReturn {
  * Hook to use the LayerManager with React integration
  */
 export function useLayerManager(): UseLayerManagerReturn {
-  // Feature flag to enable/disable layer management
-  // LayerManager enabled by default; set NEXT_PUBLIC_LAYER_MODEL=0 to disable
-  const isEnabled = useFeatureFlag('ui.layerModel' as any) ||
-                    process.env.NEXT_PUBLIC_LAYER_MODEL !== '0'
-  
+  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas')
+  const layerModelEnabled = useFeatureFlag('ui.layerModel')
+  const isLayerModelEnabled = multiLayerEnabled && layerModelEnabled
+
   const [updateTrigger, setUpdateTrigger] = useState(0)
   const forceUpdate = useCallback(() => setUpdateTrigger(prev => prev + 1), [])
-  
+
   // Get the singleton LayerManager
-  const manager = isEnabled ? getLayerManager() : null
-  
+  const manager = isLayerModelEnabled ? getLayerManager() : null
+
   // Wrapped operations that trigger React updates
   const registerNode = useCallback((node: Partial<CanvasNode> & { id: string; type: 'panel' | 'component' }) => {
-    if (!manager || !isEnabled) return undefined
+    if (!manager || !isLayerModelEnabled) return undefined
     const result = manager.registerNode(node)
     forceUpdate()
     return result
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const getNode = useCallback((id: string) => {
-    if (!manager || !isEnabled) return undefined
+    if (!manager || !isLayerModelEnabled) return undefined
     return manager.getNode(id)
-  }, [manager, isEnabled])
-  
+  }, [manager, isLayerModelEnabled])
+
   const getNodes = useCallback(() => {
-    if (!manager || !isEnabled) return new Map<string, CanvasNode>()
+    if (!manager || !isLayerModelEnabled) return new Map<string, CanvasNode>()
     return manager.getNodes()
-  }, [manager, isEnabled])
-  
+  }, [manager, isLayerModelEnabled])
+
   const updateNode = useCallback((id: string, updates: Partial<CanvasNode>) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.updateNode(id, updates)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const bringToFront = useCallback((id: string) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.bringToFront(id)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const bringSelectionToFront = useCallback((ids: string[]) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.bringSelectionToFront(ids)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const focusNode = useCallback((id: string) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.focusNode(id)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const sendToBack = useCallback((id: string) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.sendToBack(id)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const removeNode = useCallback((id: string) => {
-    if (!manager || !isEnabled) return
+    if (!manager || !isLayerModelEnabled) return
     manager.removeNode(id)
     forceUpdate()
-  }, [manager, isEnabled, forceUpdate])
-  
+  }, [manager, isLayerModelEnabled, forceUpdate])
+
   const getOrderedNodes = useCallback(() => {
-    if (!manager || !isEnabled) return []
+    if (!manager || !isLayerModelEnabled) return []
     return manager.getOrderedNodes()
-  }, [manager, isEnabled, updateTrigger]) // Include trigger to get fresh data
-  
+  }, [manager, isLayerModelEnabled, updateTrigger]) // Include trigger to get fresh data
+
   const getLayerBandInfo = useCallback((nodeId: string) => {
-    if (!manager || !isEnabled) return null
+    if (!manager || !isLayerModelEnabled) return null
     return manager.getLayerBandInfo(nodeId)
-  }, [manager, isEnabled, updateTrigger]) // Include trigger for fresh data
-  
+  }, [manager, isLayerModelEnabled, updateTrigger]) // Include trigger for fresh data
+
+  useEffect(() => {
+    if (!isLayerModelEnabled) {
+      resetLayerManager()
+    }
+  }, [isLayerModelEnabled])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      ;(window as any).__canvasModel = isLayerModelEnabled ? 'multi-layer' : 'legacy'
+    }
+
+    debugLog({
+      component: 'LayerManagerHook',
+      action: 'state_change',
+      metadata: {
+        multiLayerEnabled,
+        layerModelEnabled,
+        isLayerModelEnabled,
+      },
+    }).catch(() => {})
+  }, [isLayerModelEnabled, multiLayerEnabled, layerModelEnabled])
+
   return {
-    isEnabled,
+    isEnabled: isLayerModelEnabled,
     registerNode,
     getNode,
     getNodes,
@@ -154,7 +176,7 @@ export function useCanvasNode(id: string, type: 'panel' | 'component', initialPo
   
   useEffect(() => {
     if (!layerManager.isEnabled) return
-    
+
     // Register node on mount
     const registered = layerManager.registerNode({
       id,

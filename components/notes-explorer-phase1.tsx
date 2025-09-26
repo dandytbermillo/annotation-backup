@@ -3219,8 +3219,10 @@ function NotesExplorerContent({
 
 // Main export component that wraps with LayerProvider if needed
 export function NotesExplorerPhase1(props: NotesExplorerProps) {
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
-  
+  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
+  const layerModelEnabled = useFeatureFlag('ui.layerModel')
+  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled
+
   // LayerProvider is provided at the app level (annotation-app.tsx)
   return <NotesExplorerContent {...props} multiLayerEnabled={multiLayerEnabled} />
 }

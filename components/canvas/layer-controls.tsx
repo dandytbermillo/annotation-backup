@@ -23,12 +23,14 @@ export const LayerControls: React.FC<LayerControlsProps> = ({
   className = '',
   position = 'bottom-right' 
 }) => {
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
+  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas');
+  const layerModelEnabled = useFeatureFlag('ui.layerModel');
+  const isLayerModelEnabled = multiLayerEnabled && layerModelEnabled;
   const layerContext = useLayer();
   const [isExpanded, setIsExpanded] = useState(true);
   const [showShortcuts, setShowShortcuts] = useState(false);
   
-  if (!multiLayerEnabled || !layerContext) {
+  if (!isLayerModelEnabled || !layerContext) {
     return null;
   }
   

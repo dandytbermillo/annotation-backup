@@ -45,7 +45,9 @@ function AnnotationAppContent() {
   const isPlainMode = collabMode === 'plain'
   
   // Multi-layer canvas feature
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas')
+  const layerModelEnabled = useFeatureFlag('ui.layerModel')
+  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled
   const layerContext = useLayer()
   
   // Handle note selection with force re-center support

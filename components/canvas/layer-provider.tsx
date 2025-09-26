@@ -54,7 +54,9 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
   children,
   initialPopupCount = 0,
 }) => {
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any);
+  const multiLayerCanvasFlag = useFeatureFlag('ui.multiLayerCanvas');
+  const layerModelEnabled = useFeatureFlag('ui.layerModel');
+  const multiLayerEnabled = multiLayerCanvasFlag && layerModelEnabled;
   
   // If feature is disabled, provide minimal stub context
   if (!multiLayerEnabled) {

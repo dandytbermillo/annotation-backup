@@ -1,12 +1,16 @@
+import { debugLog } from '@/lib/utils/debug-logger'
+
 /**
  * Feature Flag System for Unified Offline Foundation
- * 
+ *
  * Flags:
  * - offline.circuitBreaker: Phase 1 - Smart network detection with circuit breaker
  * - offline.swCaching: Phase 2 - Service Worker caching and write replay
  * - offline.conflictUI: Phase 3 - Conflict resolution dialog
  * - ui.multiLayerCanvas: Multi-layer canvas system with independent popup overlay
- * 
+ * - ui.layerModel: Internal toggle for LayerManager orchestration (must align with ui.multiLayerCanvas)
+ * - ui.panMode: Canvas pan mode experiments
+ *
  * Default: All OFF until acceptance criteria met per phase
  */
 
@@ -15,6 +19,8 @@ interface FeatureFlags {
   'offline.swCaching': boolean;
   'offline.conflictUI': boolean;
   'ui.multiLayerCanvas': boolean;
+  'ui.layerModel': boolean;
+  'ui.panMode': boolean;
 }
 
 // Default feature flag values (all OFF initially)
@@ -23,6 +29,8 @@ const DEFAULT_FLAGS: FeatureFlags = {
   'offline.swCaching': false,
   'offline.conflictUI': false,
   'ui.multiLayerCanvas': true, // ENABLED for multi-layer canvas testing
+  'ui.layerModel': true,
+  'ui.panMode': false,
 };
 
 // Environment-specific overrides
@@ -51,6 +59,28 @@ if (typeof window !== 'undefined') {
     const stored = localStorage.getItem('offlineFeatureFlags');
     if (stored) {
       runtimeFlags = JSON.parse(stored);
+    }
+    // Backfill newly added flags so legacy blobs cannot omit them
+    const defaults = DEFAULT_FLAGS;
+    let mutated = false;
+    (['ui.layerModel', 'ui.panMode'] as (keyof FeatureFlags)[]).forEach(flag => {
+      if (!(flag in runtimeFlags)) {
+        runtimeFlags[flag] = defaults[flag];
+        mutated = true;
+      }
+    });
+
+    if (mutated) {
+      try {
+        localStorage.setItem('offlineFeatureFlags', JSON.stringify(runtimeFlags));
+        debugLog({
+          component: 'FeatureFlags',
+          action: 'layer_model_migration',
+          metadata: { runtimeFlags }
+        }).catch(() => {});
+      } catch (error) {
+        console.error('[FeatureFlags] migrate failed', error);
+      }
     }
   } catch (e) {
     // Ignore localStorage errors
@@ -81,10 +111,25 @@ export function setFeatureFlag<K extends keyof FeatureFlags>(
   value: FeatureFlags[K]
 ): void {
   if (typeof window === 'undefined') return;
-  
+
   runtimeFlags[flag] = value;
   try {
     localStorage.setItem('offlineFeatureFlags', JSON.stringify(runtimeFlags));
+    if (flag === 'ui.multiLayerCanvas' || flag === 'ui.layerModel') {
+      const enabled = Boolean(
+        getFeatureFlag('ui.multiLayerCanvas') && getFeatureFlag('ui.layerModel')
+      );
+      debugLog({
+        component: 'FeatureFlags',
+        action: 'layer_model_toggle',
+        metadata: {
+          flag,
+          value,
+          enabled,
+          runtimeFlags,
+        },
+      }).catch(() => {});
+    }
   } catch (e) {
     console.error('Failed to save feature flags:', e);
   }
