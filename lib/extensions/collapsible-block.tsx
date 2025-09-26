@@ -1037,6 +1037,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const [selectionBlockCount, setSelectionBlockCount] = useState(0)
   const hasMultiSelection = selectionBlockCount > 1
   const actionTrayTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const HOVER_REVEAL_DELAY = 300
 
   const updateBlockSelectionState = useCallback(
     (snapshot?: CollapsibleSelectionSnapshot | null) => {
@@ -1264,7 +1265,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     }
     showControlsTimeoutRef.current = setTimeout(() => {
       setShowActions(true)
-    }, 450)
+    }, HOVER_REVEAL_DELAY)
   }
 
   const hideActionsImmediate = () => {
@@ -2132,7 +2133,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       clearPreviewIconTimeout()
       previewIconTimeoutRef.current = setTimeout(() => {
         setShowPreviewIcon(true)
-      }, 450)
+      }, HOVER_REVEAL_DELAY)
     }
   }
 
@@ -2352,7 +2353,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
         {!hasMultiSelection && (
           <>
-            {headerMetaLabel && (
+            {headerMetaLabel && !isActionTrayVisible && (
               <span
                 style={{
                   flexShrink: 0,
@@ -2376,42 +2377,44 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
                 flexShrink: 0,
               }}
             >
-              <button
-                type="button"
-                aria-label="Show block actions"
-                title="Show block actions"
-                data-collapsible-expand-control
-                onMouseEnter={handleExpandControlMouseEnter}
-                onMouseLeave={handleExpandControlMouseLeave}
-                onClick={handleExpandControlClick}
-                style={{
-                  border: '1px solid #d5dfe9',
-                  background: isActionTrayVisible ? 'rgba(148, 163, 184, 0.24)' : 'rgba(241, 245, 249, 0.9)',
-                  color: '#475569',
-                  padding: 0,
-                  width: '28px',
-                  height: '28px',
-                  borderRadius: '9999px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  transition: 'background 0.15s ease',
-                }}
-              >
-                <span
-                  aria-hidden="true"
+              {!isActionTrayVisible && (
+                <button
+                  type="button"
+                  aria-label="Show block actions"
+                  title="Show block actions"
+                  data-collapsible-expand-control
+                  onMouseEnter={handleExpandControlMouseEnter}
+                  onMouseLeave={handleExpandControlMouseLeave}
+                  onClick={handleExpandControlClick}
                   style={{
-                    fontSize: '18px',
-                    lineHeight: 1,
-                    display: 'inline-flex',
+                    border: '1px solid #d5dfe9',
+                    background: 'rgba(241, 245, 249, 0.9)',
+                    color: '#475569',
+                    padding: 0,
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '9999px',
+                    cursor: 'pointer',
+                    display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    transition: 'background 0.15s ease',
                   }}
                 >
-                  ⋯
-                </span>
-              </button>
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      fontSize: '18px',
+                      lineHeight: 1,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    ⋯
+                  </span>
+                </button>
+              )}
               <div
                 style={{
                   display: isActionTrayVisible ? 'inline-flex' : 'none',

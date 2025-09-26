@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-26 01:40Z] 50ee4cb: refine the inline button in the block
 - note: Added delayed hover timers for header controls so expand bubble and action tray only show after sustained hover; quick passes no longer flash buttons.
 - note: Updated collapsible block header so hover shows only metadata plus expand control; added timed action tray reveal and new move commands remain accessible inside expanded controls.
 - note: Test note for summary refresh check.
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 199)
 - note: Added multi-selection toolbar to interactive whitelist in collapsible-block node view so header capture no longer clears selection when pressing multi-select actions.
 - note: Reviewed CollapsibleBlock multi-select toolbar logs; saw NODEVIEW_PLAIN_MOUSEDOWN_CLEAR firing when buttons clicked. Planning patch to mark multi-selection buttons as interactive targets so header capture stops clearing selection.
 - commit [2025-09-26 00:07Z] 16e7d19: the persisting error gone
-- commit [2025-09-25 22:02Z] f6270d6: undo highlighting fixed
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
