@@ -1800,14 +1800,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         if (event.button !== 0) return
         if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return
 
-        const target = event.target as HTMLElement | null
+        const target = event.target as Element | null
         if (!target) return
 
         if (
           target.closest('[data-collapsible-header]') ||
           target.closest('[data-collapsible-actions]') ||
           target.closest('[data-preview-icon]') ||
-          target.closest('[data-collapsible-arrow]')
+          target.closest('[data-collapsible-arrow]') ||
+          target.closest('[data-multi-selection-actions]') ||
+          target.closest('button')
         ) {
           return
         }

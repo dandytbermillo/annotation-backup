@@ -208,3 +208,6 @@
 {"ts":"2025-09-25T20:25:18.815Z","type":"commit","sha":"ac5710398e8d5ec1349747a95d74d9e5722b7008","files_changed":5,"message":"implement unhighlight the block"}
 {"ts":"2025-09-25T21:47:47.007Z","type":"commit","sha":"02e0b8f543ef625b72d5faad1209dca0f4656b64","files_changed":2,"message":"fixed the automatic highlight when the block is expanded"}
 {"ts":"2025-09-25T22:02:34.686Z","type":"commit","sha":"f6270d6e986aa10845ed794b151b4cad3a187430","files_changed":4,"message":"undo highlighting fixed"}
+{"ts":"2025-09-26T00:07:24.141Z","type":"commit","sha":"16e7d198de215770d736ae447a7db725fe5a8085","files_changed":6,"message":"the persisting error gone"}
+{"ts":"2025-09-26T00:36:12.3NZ","type":"note","text":"Reviewed CollapsibleBlock multi-select toolbar logs; saw NODEVIEW_PLAIN_MOUSEDOWN_CLEAR firing when buttons clicked. Planning patch to mark multi-selection buttons as interactive targets so header capture stops clearing selection."}
+{"ts":"2025-09-26T00:38:52.3NZ","type":"note","text":"Added multi-selection toolbar to interactive whitelist in collapsible-block node view so header capture no longer clears selection when pressing multi-select actions."}

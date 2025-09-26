@@ -6,6 +6,9 @@ Current Work
 - Status: in_progress
 
 Recent Activity (showing last 10 of 199)
+- note: Added multi-selection toolbar to interactive whitelist in collapsible-block node view so header capture no longer clears selection when pressing multi-select actions.
+- note: Reviewed CollapsibleBlock multi-select toolbar logs; saw NODEVIEW_PLAIN_MOUSEDOWN_CLEAR firing when buttons clicked. Planning patch to mark multi-selection buttons as interactive targets so header capture stops clearing selection.
+- commit [2025-09-26 00:07Z] 16e7d19: the persisting error gone
 - commit [2025-09-25 22:02Z] f6270d6: undo highlighting fixed
 - commit [2025-09-25 21:47Z] 02e0b8f: fixed the automatic highlight when the block is expanded
 - commit [2025-09-25 20:25Z] ac57103: implement unhighlight the block
@@ -13,9 +16,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-09-25 19:50Z] f46d350: first time it highlights
 - commit [2025-09-25 19:39Z] 9fa8de9: fixing with response (GN)
 - note: Modifier mousedown now preventDefault but keep bubbling so plugin handles range; no NodeView selection commands.
-- note: Adjusted collapsible NodeView modifier handlers to pass through to selection plugin (no more duplicate commands).
-- note: Added shift+click regression research plan (plan_v2) under docs/proposal/blocks_multiselect/click_arrow_with_shift.
-- note: Intercepted shift/meta header & arrow clicks in NodeView to call selection commands and log via debug API for multi-select diagnostics.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed
@@ -39,4 +39,4 @@ flags and log it.
 - chat [2025-09-06 05:46Z] user: is it possible to include the chat conversation in the context-memory?
 
 Health Snapshot
-- Tests: pass (7)
+- (no recent data)
