@@ -11,7 +11,7 @@
 
 ## Fix
 - Allow the plugin to own selection state while still seeding anchors from the NodeView:
-  - Plain header clicks call `selectCollapsibleBlock` so the plugin always has an anchor/head before a Shift gesture.
+  - Plain header clicks call `selectCollapsibleBlock` so the plugin always has an anchor/head before a Shift gesture; clicking elsewhere in the editor without modifiers clears the selection (`EDITOR_POINTER_CLEAR`).
   - Shift clicks call `setCollapsibleBlockRange(selectionPos)` but skip issuing a new command if the block is already included in a range/multi snapshot.
   - Ctrl/Cmd clicks always call `toggleCollapsibleBlockSelection(selectionPos)` so blocks can be deselected even inside an existing range.
 - Listen to the plugin’s `collapsible-selection-change` event and expose `data-collapsible-selected` / `data-collapsible-selection-head` on the NodeView wrapper, letting the existing stylesheet highlight every block in the range.
@@ -97,3 +97,5 @@ return (
 ## Verification
 - Set `NEXT_PUBLIC_DEBUG_COLLAPSIBLE_SELECTION=true`, reproduce Shift/ Ctrl flows, and confirm `plain_select_block`, `shift_set_range_deferred`, `meta_toggle_selection_deferred`, `CMD_SET_RANGE`, and `CMD_TOGGLE_MULTI` entries appear in `debug_logs`.
 - Manually confirmed plain click + Shift+click highlights every block between anchor and head, and Ctrl/Cmd+click toggles individual blocks without collapsing the range.
+
+- Added `duplicateSelectedCollapsibleBlocks` command so multi-select inline actions can duplicate highlighted blocks.

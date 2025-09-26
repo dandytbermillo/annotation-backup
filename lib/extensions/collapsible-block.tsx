@@ -1031,6 +1031,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   const headerMetaLabel = metaBase
   const [isBlockSelected, setIsBlockSelected] = useState(false)
   const [isSelectionHead, setIsSelectionHead] = useState(false)
+  const [selectionBlockCount, setSelectionBlockCount] = useState(0)
 
   const updateBlockSelectionState = useCallback(
     (snapshot?: CollapsibleSelectionSnapshot | null) => {
@@ -1055,8 +1056,14 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
       }
 
       const blocks = Array.isArray(nextSnapshot.blocks) ? nextSnapshot.blocks : []
-      setIsBlockSelected(blocks.some(block => block?.pos === currentPos))
+      const selected = blocks.some(block => block?.pos === currentPos)
+      setIsBlockSelected(selected)
       setIsSelectionHead(nextSnapshot.head === currentPos)
+      setSelectionBlockCount(blocks.length)
+      if (blocks.length > 1) {
+        setShowActions(false)
+        setShowPreviewIcon(false)
+      }
     },
     [editor, getPos]
   )
@@ -1301,6 +1308,30 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     const tr = editor.view.state.tr.insert(pos + node.nodeSize, clone)
     editor.view.dispatch(tr)
     editor.view.focus()
+  }
+
+  const handleMultiCollapse = () => {
+    if (!editor) return
+    editor.chain().focus().collapseSelectedCollapsibleBlocks().run()
+  }
+
+  const handleMultiExpand = () => {
+    if (!editor) return
+    editor.chain().focus().expandSelectedCollapsibleBlocks().run()
+  }
+
+  const handleMultiDuplicate = () => {
+    if (!editor || !editor.commands.duplicateSelectedCollapsibleBlocks) return
+    editor.chain().focus().duplicateSelectedCollapsibleBlocks().run()
+  }
+
+  const handleMultiDelete = () => {
+    const confirmed = window.confirm('Delete selected blocks and nested content?')
+    if (!confirmed) {
+      return
+    }
+    if (!editor) return
+    editor.chain().focus().deleteSelectedCollapsibleBlocks().run()
   }
 
   const handleDelete = () => {
@@ -1998,6 +2029,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
   // Handle container hover
   const handleMouseEnter = () => {
     setIsHovered(true)
+    if (hasMultiSelection) {
+      return
+    }
     setShowActions(true)
     if (isCollapsed) {
       setShowPreviewIcon(true)
@@ -2009,6 +2043,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     setIsHovered(false)
     setShowPreviewIcon(false)
     scheduleTooltipHide(e.relatedTarget)
+    if (hasMultiSelection) {
+      return
+    }
     setShowActions(false)
   }
 
@@ -2056,6 +2093,9 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
     scheduleTooltipHide(e.relatedTarget)
   }
   
+  const hasMultiSelection = selectionBlockCount > 1
+  const showMultiSelectionActions = isSelectionHead && hasMultiSelection
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -2067,7 +2107,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
 
   return (
     <>
-    <NodeViewWrapper 
+      <NodeViewWrapper 
       data-collapsible-block
       data-collapsible-selected={isBlockSelected ? 'true' : undefined}
       data-collapsible-selection-head={isSelectionHead ? 'true' : undefined}
@@ -2101,8 +2141,8 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           minWidth: 0,
         }}
         contentEditable={false}
-        onMouseEnter={() => setShowActions(true)}
-        onMouseLeave={() => setShowActions(false)}
+        onMouseEnter={() => { if (!hasMultiSelection) setShowActions(true) }}
+        onMouseLeave={() => { if (!hasMultiSelection) setShowActions(false) }}
         onMouseDownCapture={handleHeaderMouseDownCapture}
         onClickCapture={handleHeaderClickCapture}
       >
@@ -2167,7 +2207,7 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
           </span>
         )}
 
-        {headerMetaLabel && !showActions && (
+        {headerMetaLabel && !hasMultiSelection && !showActions && (
           <span
             style={{
               flexShrink: 0,
@@ -2181,237 +2221,330 @@ function CollapsibleBlockFull({ node, updateAttributes, editor, getPos }: any) {
             {headerMetaLabel}
           </span>
         )}
-        <div
-          data-collapsible-actions
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            marginLeft: 'auto',
-            flexShrink: 0,
-          }}
-        >
-          {hasExplicitTemplate && appliedTemplate && (
-            <span
-              style={{
-                fontSize: '12px',
-                color: '#64748b',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {appliedTemplate.label}
-            </span>
-          )}
-          {templateUndoSnapshot && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                handleUndoTemplate()
-              }}
-              style={{
-                border: '1px solid #f1c4c4',
-                background: 'rgba(252, 231, 243, 0.65)',
-                color: '#b91c1c',
-                padding: '2px 10px',
-                borderRadius: '9999px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 600,
-                lineHeight: 1.4,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Undo template
-            </button>
-          )}
-          <button
-            type="button"
-            ref={templateButtonRef}
-            onClick={handleTemplateButtonClick}
-            aria-label={templateButtonLabel}
-            title={templateButtonLabel}
+        {!hasMultiSelection && (
+          <div
+            data-collapsible-actions
             style={{
-              border: '1px solid #d5dfe9',
-              background: isTemplateMenuOpen ? 'rgba(99, 102, 241, 0.16)' : 'rgba(241, 245, 249, 0.9)',
-              color: '#475569',
-              padding: 0,
-              width: '28px',
-              height: '28px',
-              borderRadius: '9999px',
-              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'background 0.15s ease',
+              gap: '8px',
+              marginLeft: 'auto',
+              flexShrink: 0,
             }}
           >
-            <span
-              aria-hidden="true"
+            {hasExplicitTemplate && appliedTemplate && (
+              <span
+                style={{
+                  fontSize: '12px',
+                  color: '#64748b',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {appliedTemplate.label}
+              </span>
+            )}
+            {templateUndoSnapshot && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  handleUndoTemplate()
+                }}
+                style={{
+                  border: '1px solid #f1c4c4',
+                  background: 'rgba(252, 231, 243, 0.65)',
+                  color: '#b91c1c',
+                  padding: '2px 10px',
+                  borderRadius: '9999px',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  lineHeight: 1.4,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Undo template
+              </button>
+            )}
+            <button
+              type="button"
+              ref={templateButtonRef}
+              onClick={handleTemplateButtonClick}
+              aria-label={templateButtonLabel}
+              title={templateButtonLabel}
               style={{
-                display: 'inline-flex',
+                border: '1px solid #d5dfe9',
+                background: isTemplateMenuOpen ? 'rgba(99, 102, 241, 0.16)' : 'rgba(241, 245, 249, 0.9)',
+                color: '#475569',
+                padding: 0,
+                width: '28px',
+                height: '28px',
+                borderRadius: '9999px',
+                cursor: 'pointer',
+                display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                width: '16px',
-                height: '16px',
+                transition: 'background 0.15s ease',
               }}
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
+              <span
+                aria-hidden="true"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '16px',
+                  height: '16px',
+                }}
               >
-                <rect x="1.5" y="2" width="11" height="2" rx="1" fill="currentColor" />
-                <rect x="1.5" y="6" width="11" height="2" rx="1" fill="currentColor" />
-                <rect x="1.5" y="10" width="7" height="2" rx="1" fill="currentColor" />
-              </svg>
-            </span>
-          </button>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <rect x="1.5" y="2" width="11" height="2" rx="1" fill="currentColor" />
+                  <rect x="1.5" y="6" width="11" height="2" rx="1" fill="currentColor" />
+                  <rect x="1.5" y="10" width="7" height="2" rx="1" fill="currentColor" />
+                </svg>
+              </span>
+            </button>
+            <div
+              style={{
+                display: showActions ? 'inline-flex' : 'none',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+              data-collapsible-actions
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleInsertBefore()
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+                aria-label="Insert paragraph before block"
+                title="Insert line before"
+              >
+                +↑
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleInsertAfter()
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+                aria-label="Insert paragraph after block"
+                title="Insert line after"
+              >
+                +↓
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMove('up')
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '14px',
+                }}
+                aria-label="Move block up"
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleMove('down')
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '14px',
+                }}
+                aria-label="Move block down"
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  handleOpenInspector(e)
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '14px',
+                }}
+                aria-label="Open block inspector"
+              >
+                🗔
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDuplicate()
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#708090',
+                  fontSize: '14px',
+                }}
+                aria-label="Duplicate block"
+              >
+                ⧉
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDelete()
+                }}
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: '#cc4a4a',
+                  fontSize: '14px',
+                }}
+                aria-label="Delete block"
+              >
+                🗑
+              </button>
+            </div>
+          </div>
+        )}
+        {showMultiSelectionActions && (
           <div
+            data-multi-selection-actions
             style={{
-              display: showActions ? 'inline-flex' : 'none',
+              display: 'flex',
+              gap: '8px',
               alignItems: 'center',
-              gap: '6px',
+              justifyContent: 'flex-end',
+              padding: '4px 0',
+              marginTop: '6px',
             }}
-            data-collapsible-actions
+            contentEditable={false}
           >
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation()
-                handleInsertBefore()
+                e.stopPropagation();
+                handleMultiCollapse();
               }}
               style={{
                 border: 'none',
                 background: 'none',
-                padding: 0,
+                padding: '2px 4px',
                 cursor: 'pointer',
-                color: '#708090',
-                fontSize: '12px',
-                fontWeight: 600,
-              }}
-              aria-label="Insert paragraph before block"
-              title="Insert line before"
-            >
-              +↑
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleInsertAfter()
-              }}
-              style={{
-                border: 'none',
-                background: 'none',
-                padding: 0,
-                cursor: 'pointer',
-                color: '#708090',
-                fontSize: '12px',
-                fontWeight: 600,
-              }}
-              aria-label="Insert paragraph after block"
-              title="Insert line after"
-            >
-              +↓
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleMove('up')
-              }}
-              style={{
-                border: 'none',
-                background: 'none',
-                padding: 0,
-                cursor: 'pointer',
-                color: '#708090',
+                color: '#475569',
                 fontSize: '14px',
               }}
-              aria-label="Move block up"
+              aria-label="Collapse selected blocks"
+              title="Collapse selected blocks"
             >
               ▲
             </button>
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation()
-                handleMove('down')
+                e.stopPropagation();
+                handleMultiExpand();
               }}
               style={{
                 border: 'none',
                 background: 'none',
-                padding: 0,
+                padding: '2px 4px',
                 cursor: 'pointer',
-                color: '#708090',
+                color: '#475569',
                 fontSize: '14px',
               }}
-              aria-label="Move block down"
+              aria-label="Expand selected blocks"
+              title="Expand selected blocks"
             >
               ▼
             </button>
             <button
               type="button"
               onClick={(e) => {
-                handleOpenInspector(e)
+                e.stopPropagation();
+                handleMultiDuplicate();
               }}
               style={{
                 border: 'none',
                 background: 'none',
-                padding: 0,
+                padding: '2px 4px',
                 cursor: 'pointer',
-                color: '#708090',
+                color: '#475569',
                 fontSize: '14px',
               }}
-              aria-label="Open block inspector"
-            >
-              🗔
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleDuplicate()
-              }}
-              style={{
-                border: 'none',
-                background: 'none',
-                padding: 0,
-                cursor: 'pointer',
-                color: '#708090',
-                fontSize: '14px',
-              }}
-              aria-label="Duplicate block"
+              aria-label="Duplicate selected blocks"
+              title="Duplicate selected blocks"
             >
               ⧉
             </button>
             <button
               type="button"
               onClick={(e) => {
-                e.stopPropagation()
-                handleDelete()
+                e.stopPropagation();
+                handleMultiDelete();
               }}
               style={{
                 border: 'none',
                 background: 'none',
-                padding: 0,
+                padding: '2px 4px',
                 cursor: 'pointer',
                 color: '#cc4a4a',
                 fontSize: '14px',
               }}
-              aria-label="Delete block"
+              aria-label="Delete selected blocks"
+              title="Delete selected blocks"
             >
               🗑
             </button>
           </div>
-        </div>
+        )}
 
         {/* Preview Icon - shows when collapsed and hovered */}
-        {isCollapsed && showPreviewIcon && (
+        {isCollapsed && showPreviewIcon && !hasMultiSelection && (
           <div
             ref={iconRef}
             onMouseEnter={handleIconMouseEnter}
@@ -3117,7 +3250,7 @@ function CollapsibleBlockPreview({ node }: any) {
           <NodeViewContent className="content" />
         </div>
       )}
-    </NodeViewWrapper>
+      </NodeViewWrapper>
   )
 }
 

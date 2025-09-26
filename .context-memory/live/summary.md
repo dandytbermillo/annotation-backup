@@ -6,6 +6,7 @@ Current Work
 - Status: in_progress
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-25 22:02Z] f6270d6: undo highlighting fixed
 - commit [2025-09-25 21:47Z] 02e0b8f: fixed the automatic highlight when the block is expanded
 - commit [2025-09-25 20:25Z] ac57103: implement unhighlight the block
 - commit [2025-09-25 20:07Z] ecab765: finally the issue as shift + clicking (ctrl/cmd) worked
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 199)
 - note: Adjusted collapsible NodeView modifier handlers to pass through to selection plugin (no more duplicate commands).
 - note: Added shift+click regression research plan (plan_v2) under docs/proposal/blocks_multiselect/click_arrow_with_shift.
 - note: Intercepted shift/meta header & arrow clicks in NodeView to call selection commands and log via debug API for multi-select diagnostics.
-- note: Modifiers now bubble through click capture so plugin can run CMD_SET_RANGE.
 
 Recent Chat
 - chat [2025-09-06 05:50Z] user: is the ff complete text are also stored right now?:What I changed

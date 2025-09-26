@@ -619,6 +619,56 @@ const extension = Extension.create({
         props.dispatch?.(tr.scrollIntoView())
         return true
       },
+
+      duplicateSelectedCollapsibleBlocks: () => props => {
+        const { state } = props
+        const type = state.schema.nodes.collapsibleBlock
+        if (!type) {
+          return false
+        }
+        const selectionState = pluginKey.getState(state) ?? emptyState
+        const targets = selectionState.blocks.length
+          ? selectionState.blocks
+          : (() => {
+              const pos = findCollapsibleBlockPos(state.doc, type.name, state.selection.from)
+              if (pos == null) return []
+              return buildItems(state.doc, type.name, [pos])
+            })()
+        if (!targets.length) {
+          return false
+        }
+
+        let tr = state.tr
+        const sortedTargets = [...targets].sort((a, b) => b.pos - a.pos)
+        const duplicatePositions: number[] = []
+
+        for (const block of sortedTargets) {
+          const node = tr.doc.nodeAt(block.pos)
+          if (!node || node.type !== type) continue
+          const insertPos = block.pos + node.nodeSize
+          tr = tr.insert(insertPos, node.copy(node.content))
+          duplicatePositions.push(insertPos)
+        }
+
+        duplicatePositions.sort((a, b) => a - b)
+        const items = buildItems(tr.doc, type.name, duplicatePositions)
+        if (items.length) {
+          const nextState: CollapsibleSelectionState = {
+            mode: items.length === 1 ? 'single' : 'range',
+            anchor: items[0]?.pos ?? null,
+            head: items[items.length - 1]?.pos ?? null,
+            blocks: items,
+            decorations: createDecorations(tr.doc, type.name, items),
+          }
+          tr.setMeta(pluginKey, { type: 'set', payload: toSnapshot(nextState) } satisfies SelectionMeta)
+        } else {
+          tr.setMeta(pluginKey, { type: 'clear' } satisfies SelectionMeta)
+        }
+
+        tr.setMeta('addToHistory', true)
+        props.dispatch?.(tr.scrollIntoView())
+        return true
+      },
     }
   },
 

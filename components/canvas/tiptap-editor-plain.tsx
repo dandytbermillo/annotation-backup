@@ -1716,6 +1716,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           case 'collapsible:delete':
             editor.chain().focus().deleteSelectedCollapsibleBlocks().run()
             break
+          case 'collapsible:duplicate':
+            if (editor.commands.duplicateSelectedCollapsibleBlocks) {
+              editor.chain().focus().duplicateSelectedCollapsibleBlocks().run()
+            }
+            break
           case 'collapsible:clearSelection':
             editor.chain().focus().clearCollapsibleBlockSelection().run()
             break
