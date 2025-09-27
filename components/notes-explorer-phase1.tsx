@@ -1387,7 +1387,7 @@ function NotesExplorerContent({
   }
   
   // Close all popovers
-  const closeAllPopovers = () => {
+  const closeAllPopovers = useCallback(() => {
     // Clear all timeouts
     hoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     hoverTimeoutRef.current.clear()
@@ -1395,7 +1395,25 @@ function NotesExplorerContent({
     // Clear all popovers
     setHoverPopovers(new Map())
     setDraggingPopup(null)
-  }
+  }, [])
+
+  const prevActiveLayerRef = useRef<'notes' | 'popups' | null>(layerContext?.activeLayer ?? null)
+
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) {
+      prevActiveLayerRef.current = null
+      return
+    }
+
+    const prev = prevActiveLayerRef.current
+    const current = layerContext.activeLayer
+
+    if (prev === 'popups' && current !== 'popups' && hoverPopovers.size > 0) {
+      closeAllPopovers()
+    }
+
+    prevActiveLayerRef.current = current
+  }, [multiLayerEnabled, layerContext, layerContext?.activeLayer, hoverPopovers.size, closeAllPopovers])
   
   // Close specific popover and its children
   const closePopover = (popoverId: string) => {

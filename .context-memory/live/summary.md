@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-27 04:58Z] 9158ca9: fixed duplicate child popup appearance
 - commit [2025-09-27 04:26Z] 8194fef: it takes 2-3 clicks before the popup overlay to appear permanently
 - commit [2025-09-27 04:10Z] 409a88c: fixed auto expanding popup overlay when file content is long
 - commit [2025-09-27 04:00Z] 5d4e478: fixing popup overlay expanding when file content is long
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-09-26 20:43Z] ae14413: the Internal Multi-Layer Canvas Flag is set to not feature flag
 - note [2025-09-26 20:41Z]: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 - note [2025-09-26 20:24Z]: Removed multi-layer canvas gating; layer manager + overlays now always on and legacy flags scrubbed.
-- commit [2025-09-26 19:12Z] b5dd5dc: fixed the flush persisting error on the popup overly
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-27 04:26Z] 8194fef: it takes 2-3 clicks before the popup overlay to appear permanently
+- commit [2025-09-27 04:58Z] 9158ca9: fixed duplicate child popup appearance
