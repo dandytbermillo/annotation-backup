@@ -229,73 +229,29 @@ function NotesExplorerContent({
   
   // Auto-scroll when dragging near edges
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
-    if (deltaX === 0 && deltaY === 0) {
-      return
-    }
-
     // Apply auto-scroll to all popups
     setHoverPopovers(prev => {
-      if (prev.size === 0) {
-        return prev
-      }
-
-      let changed = false
-      const nextMap = new Map(prev)
-
-      nextMap.forEach((popup, id) => {
-        const nextPosition = {
-          x: popup.position.x + deltaX,
-          y: popup.position.y + deltaY
-        }
-
-        const nextCanvasPosition = popup.canvasPosition
-          ? {
-              x: popup.canvasPosition.x + deltaX,
-              y: popup.canvasPosition.y + deltaY
-            }
-          : undefined
-
-        const positionUnchanged =
-          popup.position.x === nextPosition.x &&
-          popup.position.y === nextPosition.y
-
-        const canvasUnchanged = popup.canvasPosition
-          ? nextCanvasPosition !== undefined &&
-            popup.canvasPosition.x === nextCanvasPosition.x &&
-            popup.canvasPosition.y === nextCanvasPosition.y
-          : true
-
-        if (positionUnchanged && canvasUnchanged) {
-          return
-        }
-
-        changed = true
-        nextMap.set(id, {
+      const newMap = new Map(prev)
+      newMap.forEach((popup, id) => {
+        newMap.set(id, {
           ...popup,
-          position: nextPosition,
-          canvasPosition: nextCanvasPosition
+          position: {
+            x: popup.position.x + deltaX,
+            y: popup.position.y + deltaY
+          },
+          canvasPosition: popup.canvasPosition ? {
+            x: popup.canvasPosition.x + deltaX,
+            y: popup.canvasPosition.y + deltaY
+          } : undefined
         })
       })
-
-      return changed ? nextMap : prev
+      return newMap
     })
-
+    
     // Also update the dragging element's transform if using RAF mode
     if (rafDragEnabledRef.current && draggingElRef.current) {
       dragDeltaRef.current.dx += deltaX
       dragDeltaRef.current.dy += deltaY
-
-      if (dragRafRef.current == null) {
-        dragRafRef.current = requestAnimationFrame(() => {
-          dragRafRef.current = null
-          const el = draggingElRef.current
-          if (!el) {
-            return
-          }
-          const { dx, dy } = dragDeltaRef.current
-          el.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`
-        })
-      }
     }
   }, [])
 

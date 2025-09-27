@@ -63,35 +63,19 @@ export const useAutoScroll = ({
 
     const shouldScroll = velocityX !== 0 || velocityY !== 0
     
-    setAutoScroll(prev => {
-      if (
-        prev.isActive === shouldScroll &&
-        prev.velocity.x === velocityX &&
-        prev.velocity.y === velocityY
-      ) {
-        return prev
-      }
-
-      return {
-        ...prev,
-        isActive: shouldScroll,
-        velocity: { x: velocityX, y: velocityY }
-      }
-    })
+    setAutoScroll(prev => ({
+      ...prev,
+      isActive: shouldScroll,
+      velocity: { x: velocityX, y: velocityY }
+    }))
   }, [enabled, threshold, speed])
 
   const stopAutoScroll = useCallback(() => {
-    setAutoScroll(prev => {
-      if (!prev.isActive && prev.velocity.x === 0 && prev.velocity.y === 0) {
-        return prev
-      }
-
-      return {
-        ...prev,
-        isActive: false,
-        velocity: { x: 0, y: 0 }
-      }
-    })
+    setAutoScroll(prev => ({
+      ...prev,
+      isActive: false,
+      velocity: { x: 0, y: 0 }
+    }))
   }, [])
 
   // Auto-scroll animation loop
