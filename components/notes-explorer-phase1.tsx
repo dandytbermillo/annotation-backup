@@ -168,6 +168,14 @@ function NotesExplorerContent({
   const [resizingColumn, setResizingColumn] = useState<number | null>(null)
   // Canvas container target for mounting scoped overlays (prevents covering the sidebar)
   const [canvasContainer, setCanvasContainer] = useState<HTMLElement | null>(null)
+  const [overlayPersistenceEnabled, setOverlayPersistenceEnabled] = useState(false)
+  const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
+  const layoutRevisionRef = useRef<string | null>(null)
+  const lastSavedLayoutHashRef = useRef<string | null>(null)
+  const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const saveInFlightRef = useRef<boolean>(false)
+  const layoutLoadedRef = useRef<boolean>(false)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -207,14 +215,6 @@ function NotesExplorerContent({
   }>>(new Map())
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
-  const [overlayPersistenceEnabled, setOverlayPersistenceEnabled] = useState(false)
-  const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
-  const layoutRevisionRef = useRef<string | null>(null)
-  const lastSavedLayoutHashRef = useRef<string | null>(null)
-  const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const saveInFlightRef = useRef<boolean>(false)
-  const layoutLoadedRef = useRef<boolean>(false)
   
   // Dragging state for popups
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)

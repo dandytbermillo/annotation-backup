@@ -239,3 +239,4 @@
 {"ts":"2025-09-27T19:39:17Z","type":"note","note":"Drafted preserve popup overlay implementation plan (focus on plain mode) at docs/proposal/preserve_its_state/IMPLEMENTATION_PLAN.md."}
 {"ts":"2025-09-27T19:51:52Z","type":"note","note":"Expanded preserve-popup plan with Postgres persistence phase."}
 {"ts":"2025-09-27T20:01:59Z","type":"note","note":"Refined preserve-popup plan with coordinate policy, optimistic locking, debounce guidance, payload size cap."}
+{"ts":"2025-09-27T20:40:05.513Z","type":"commit","sha":"b6118d6e986dce4e823bad5f3205d6d38453c9db","files_changed":11,"message":"Preserve Popup Overlay State implemented"}
