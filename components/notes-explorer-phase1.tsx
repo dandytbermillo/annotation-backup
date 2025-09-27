@@ -254,6 +254,132 @@ function NotesExplorerContent({
     }
   }, [])
 
+  const hydratePersistedPopups = useCallback(
+    (descriptors: OverlayPopupDescriptor[]) => {
+      descriptors.forEach(descriptor => {
+        if (!descriptor.folderId) return
+
+        // Keep loading indicator visible while we hydrate
+        setHoverPopovers(prev => {
+          const next = new Map(prev)
+          const popup = next.get(descriptor.id)
+          if (!popup) return prev
+          next.set(descriptor.id, {
+            ...popup,
+            isLoading: true,
+          })
+          return next
+        })
+
+        void (async () => {
+          try {
+            const [itemRes, childrenRes] = await Promise.all([
+              fetch(`/api/items/${descriptor.folderId}`),
+              fetch(`/api/items/${descriptor.folderId}/children`),
+            ])
+
+            if (!itemRes.ok) {
+              throw new Error(`Failed to load folder ${descriptor.folderId}`)
+            }
+
+            const itemData = await itemRes.json()
+            const item = itemData?.item
+            if (!item) {
+              throw new Error(`Missing item payload for folder ${descriptor.folderId}`)
+            }
+
+            const childrenJson = childrenRes.ok ? await childrenRes.json() : { children: [] }
+            const mappedChildren: TreeNode[] = Array.isArray(childrenJson.children)
+              ? childrenJson.children.map((child: ItemFromAPI) => ({
+                  id: child.id,
+                  name: child.name,
+                  type: child.type,
+                  parentId: child.parentId,
+                  path: child.path,
+                  icon: child.icon,
+                  color: child.color,
+                  children: [],
+                  hasChildren: child.type === 'folder',
+                }))
+              : []
+
+            const hydratedFolder: TreeNode = {
+              id: item.id,
+              name: item.name,
+              type: item.type,
+              parentId: item.parentId,
+              path: item.path,
+              icon: item.icon,
+              color: item.color,
+              children: mappedChildren,
+              hasChildren: mappedChildren.length > 0,
+            }
+
+            const itemCount = mappedChildren.length
+            const height = 45 + Math.min(itemCount * 36, 320) + 30 + 20
+
+            setHoverPopovers(prev => {
+              const next = new Map(prev)
+              const popup = next.get(descriptor.id)
+              if (!popup) return prev
+              next.set(descriptor.id, {
+                ...popup,
+                folder: hydratedFolder,
+                isLoading: false,
+                height,
+                canvasPosition: popup.canvasPosition,
+              })
+              return next
+            })
+
+            fetch('/api/debug-log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                component: 'notes-explorer',
+                action: 'popover_loaded_restored',
+                metadata: {
+                  folderId: descriptor.folderId,
+                  popupId: descriptor.id,
+                  childrenCount: itemCount,
+                },
+              }),
+            }).catch(() => undefined)
+          } catch (error: any) {
+            fetch('/api/debug-log', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                component: 'notes-explorer',
+                action: 'popover_restore_failed',
+                metadata: {
+                  folderId: descriptor.folderId,
+                  popupId: descriptor.id,
+                  message: error?.message ?? 'Unknown error',
+                },
+              }),
+            }).catch(() => undefined)
+
+            const fallbackHeight = 45 + 60 + 30 + 20
+            setHoverPopovers(prev => {
+              const next = new Map(prev)
+              const popup = next.get(descriptor.id)
+              if (!popup) return prev
+              next.set(descriptor.id, {
+                ...popup,
+                isLoading: false,
+                folder: popup.folder ?? null,
+                height: popup.height ?? fallbackHeight,
+              })
+              return next
+            })
+          }
+        })()
+      })
+    },
+    [setHoverPopovers]
+  )
+
   const applyOverlayLayout = useCallback(
     (layout: OverlayLayoutPayload) => {
       const sanitizedPopups = Array.isArray(layout.popups) ? layout.popups : []
@@ -289,7 +415,7 @@ function NotesExplorerContent({
                 folder: previous?.folder ?? null,
                 position,
                 canvasPosition: pop.canvasPosition,
-                isLoading: false,
+                isLoading: Boolean(pop.folderId),
                 parentId: pop.parentId ?? undefined,
                 level: pop.level ?? 0,
                 height: pop.height,
@@ -301,8 +427,10 @@ function NotesExplorerContent({
       })
 
       setDraggingPopup(null)
+
+      hydratePersistedPopups(sanitizedPopups)
     },
-    [setHoverPopovers, setDraggingPopup]
+    [hydratePersistedPopups, setHoverPopovers, setDraggingPopup]
   )
   
   const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
