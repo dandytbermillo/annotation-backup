@@ -2,11 +2,6 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Underline from '@tiptap/extension-underline';
-import Highlight from '@tiptap/extension-highlight';
-import Placeholder from '@tiptap/extension-placeholder';
 import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
@@ -92,59 +87,7 @@ interface PreviewEntry {
   }>;
 }
 
-const PREVIEW_PLACEHOLDER_HTML = '<p class="text-sm text-gray-400 italic">Select a note to preview.</p>';
 const TOOLTIP_PREVIEW_MAX_LENGTH = 600;
-
-const PopupReadOnlyPreview: React.FC<{ content: unknown; loading: boolean; error?: string }> = ({ content, loading, error }) => {
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        bulletList: { keepMarks: true, keepAttributes: false },
-        orderedList: { keepMarks: true, keepAttributes: false },
-      }),
-      Underline,
-      Highlight,
-      Placeholder.configure({ placeholder: 'Select a note to preview.' }),
-    ],
-    content: PREVIEW_PLACEHOLDER_HTML,
-    editable: false,
-  });
-
-  useEffect(() => {
-    if (!editor) return;
-    if (loading) return;
-
-    if (error) {
-      editor.commands.setContent(`<p class="text-sm text-red-400">${error}</p>`, false);
-      return;
-    }
-
-    if (content) {
-      editor.commands.setContent(content as any, false);
-    } else {
-      editor.commands.setContent(PREVIEW_PLACEHOLDER_HTML, false);
-    }
-  }, [editor, content, loading, error]);
-
-  if (loading) {
-    return <div className="px-3 py-2 text-sm text-gray-400">Loading preview…</div>;
-  }
-
-  if (error) {
-    return <div className="px-3 py-2 text-sm text-red-400">{error}</div>;
-  }
-
-  if (!editor) {
-    return <div className="px-3 py-2 text-sm text-gray-400">Preparing preview…</div>;
-  }
-
-  return (
-    <div className="popup-preview-editor">
-      <EditorContent editor={editor} />
-    </div>
-  );
-};
 
 /**
  * PopupOverlay - React component for the popup layer
@@ -1347,13 +1290,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
-                          <div className="border-t border-gray-700 bg-gray-900">
-                <PopupReadOnlyPreview
-                  content={activePreview?.content ?? null}
-                  loading={activePreview?.status === 'loading'}
-                  error={activePreview?.status === 'error' ? activePreview.error : undefined}
-                />
-              </div>
               {/* Popup Footer */}
               <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
                 Level {popup.level} • {popup.folder?.children?.length || 0} items
@@ -1516,14 +1452,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </div>
               )}
             </div>
-            <div className="border-t border-gray-700 bg-gray-900">
-              <PopupReadOnlyPreview
-                content={activePreview?.content ?? null}
-                loading={activePreview?.status === 'loading'}
-                error={activePreview?.status === 'error' ? activePreview.error : undefined}
-              />
-            </div>
-            
             {/* Popup Footer */}
             <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
               Level {popup.level} • {popup.folder?.children?.length || 0} items

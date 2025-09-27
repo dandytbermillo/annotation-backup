@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Updated canvas_component_layering docs + verification script to reflect permanent multi-layer rollout and no env rollback.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-27 04:00Z] 5d4e478: fixing popup overlay expanding when file content is long
 - commit [2025-09-27 03:25Z] c5dd4f7: tooltips stuck on "loading preview" fixed
 - commit [2025-09-26 21:32Z] a9a418e: Add automated coverage so CI catches regressions (e.g., a Playwright/RTL test that flips
 - commit [2025-09-26 21:15Z] 171f861: Removed the timeout shim by reworking how the canvas editor
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-09-26 19:12Z] b5dd5dc: fixed the flush persisting error on the popup overly
 - commit [2025-09-26 18:47Z] 5e68274: multi-layer just implemented
 - commit [2025-09-26 03:52Z] be045aa: added resize button in the title border to resize the current panel to the hieght of the visible viewport
-- note: Adjusted panel height toggle to account for canvas zoom and use actual viewport top measurement; expanded panels now fill visible screen height.
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-27 03:25Z] c5dd4f7: tooltips stuck on "loading preview" fixed
+- commit [2025-09-27 04:00Z] 5d4e478: fixing popup overlay expanding when file content is long

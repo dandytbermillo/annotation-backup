@@ -230,3 +230,4 @@
 {"ts":"2025-09-26T21:15:55.233Z","type":"commit","sha":"171f861543a0d7f0e8337af54e7cc1e1102f083f","files_changed":3,"message":"Removed the timeout shim by reworking how the canvas editor"}
 {"ts":"2025-09-26T21:32:34.859Z","type":"commit","sha":"a9a418ee4e3438fcb0afe228743d5c8551be19c6","files_changed":3,"message":"Add automated coverage so CI catches regressions (e.g., a Playwright/RTL test that flips"}
 {"ts":"2025-09-27T03:25:21.347Z","type":"commit","sha":"c5dd4f7d056af9ff68b8dbf7909de8a180f97498","files_changed":11,"message":"tooltips stuck on \"loading preview\" fixed"}
+{"ts":"2025-09-27T04:00:46.753Z","type":"commit","sha":"5d4e47854f12f99a9da213a84ecb3a6f92f903d0","files_changed":8,"message":"fixing popup overlay expanding when file content is long"}
