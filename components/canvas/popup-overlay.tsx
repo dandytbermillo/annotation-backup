@@ -835,7 +835,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (!engaged) {
       const dx0 = e.clientX - panStartRef.current.x;
       const dy0 = e.clientY - panStartRef.current.y;
-      if (Math.hypot(dx0, dy0) < 2) return; // lower hysteresis for snappier start
+      if (Math.hypot(dx0, dy0) < 1) return; // maintain minimal hysteresis to avoid accidental pans
       setEngaged(true);
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });

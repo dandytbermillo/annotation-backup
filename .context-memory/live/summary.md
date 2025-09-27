@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-09-27 21:22Z] 1d6e26d: prevent the popup overlay to load first when the app loaded
 - commit [2025-09-27 21:04Z] c488c3a: Preserve Popup Overlay State successfully implemented
 - commit [2025-09-27 20:52Z] c25178c: the popup displayed the correct content but with errors
 - commit [2025-09-27 20:48Z] ed63731: error fixed after run
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - note [2025-09-27 19:39Z]: (no details)
 - note [2025-09-27 18:43Z]: (no details)
 - commit [2025-09-27 05:22Z] a1321ee: layer change popup overlay not disappearing with popup overlay canvas fixed
-- commit [2025-09-27 04:58Z] 9158ca9: fixed duplicate child popup appearance
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-09-27 21:04Z] c488c3a: Preserve Popup Overlay State successfully implemented
+- commit [2025-09-27 21:22Z] 1d6e26d: prevent the popup overlay to load first when the app loaded
