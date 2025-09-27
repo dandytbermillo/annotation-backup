@@ -229,3 +229,4 @@
 {"ts":"2025-09-26T20:43:28.065Z","type":"commit","sha":"ae14413a51ab8bc243e3e1e2204d3fe76359fdcd","files_changed":23,"message":"the Internal Multi-Layer Canvas Flag is set to not feature flag"}
 {"ts":"2025-09-26T21:15:55.233Z","type":"commit","sha":"171f861543a0d7f0e8337af54e7cc1e1102f083f","files_changed":3,"message":"Removed the timeout shim by reworking how the canvas editor"}
 {"ts":"2025-09-26T21:32:34.859Z","type":"commit","sha":"a9a418ee4e3438fcb0afe228743d5c8551be19c6","files_changed":3,"message":"Add automated coverage so CI catches regressions (e.g., a Playwright/RTL test that flips"}
+{"ts":"2025-09-27T03:25:21.347Z","type":"commit","sha":"c5dd4f7d056af9ff68b8dbf7909de8a180f97498","files_changed":11,"message":"tooltips stuck on \"loading preview\" fixed"}

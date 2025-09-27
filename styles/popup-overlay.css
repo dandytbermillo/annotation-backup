@@ -60,3 +60,107 @@
 #popup-overlay[data-panning="false"] {
   will-change: auto;
 }
+
+.popup-preview-tooltip {
+  background: rgba(15, 23, 42, 0.97);
+  border: 1px solid rgba(71, 85, 105, 0.65);
+  border-radius: 10px;
+  box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.55);
+  padding: 0;
+  max-width: 360px;
+  color: #e5e7eb;
+  overflow: hidden;
+}
+
+.popup-preview-tooltip__header {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid rgba(71, 85, 105, 0.65);
+}
+
+.popup-preview-tooltip__title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.popup-preview-tooltip__body {
+  padding: 10px 14px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 220px;
+  overflow-y: auto;
+  color: #cbd5f5;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.6) transparent;
+}
+
+.popup-preview-tooltip__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.popup-preview-tooltip__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.popup-preview-tooltip__body::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+
+.popup-preview-tooltip__body::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
+}
+
+.popup-preview-editor {
+  padding: 10px 14px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e2e8f0;
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.6) transparent;
+}
+
+.popup-preview-editor::-webkit-scrollbar {
+  width: 6px;
+}
+
+.popup-preview-editor::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.popup-preview-editor::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+
+.popup-preview-editor::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
+}
+
+.popup-preview-editor .ProseMirror {
+  padding: 0;
+  min-height: auto;
+  background: transparent;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.popup-preview-editor .ProseMirror p {
+  margin: 0 0 0.5rem 0;
+}
+
+.popup-preview-editor .ProseMirror p:last-child {
+  margin-bottom: 0;
+}
+
+.popup-preview-editor .ProseMirror p.is-editor-empty:first-child::before {
+  color: rgba(148, 163, 184, 0.66);
+  font-style: italic;
+}

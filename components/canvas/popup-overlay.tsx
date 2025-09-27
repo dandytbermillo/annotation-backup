@@ -13,7 +13,7 @@ import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildBranchPreview } from '@/lib/utils/branch-preview';
 import { debugLog } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
@@ -128,19 +128,19 @@ const PopupReadOnlyPreview: React.FC<{ content: unknown; loading: boolean; error
   }, [editor, content, loading, error]);
 
   if (loading) {
-    return <div className="p-3 text-sm text-gray-400">Loading preview…</div>;
+    return <div className="px-3 py-2 text-sm text-gray-400">Loading preview…</div>;
   }
 
   if (error) {
-    return <div className="p-3 text-sm text-red-400">{error}</div>;
+    return <div className="px-3 py-2 text-sm text-red-400">{error}</div>;
   }
 
   if (!editor) {
-    return <div className="p-3 text-sm text-gray-400">Preparing preview…</div>;
+    return <div className="px-3 py-2 text-sm text-gray-400">Preparing preview…</div>;
   }
 
   return (
-    <div className="p-3 text-sm text-gray-200 leading-relaxed">
+    <div className="popup-preview-editor">
       <EditorContent editor={editor} />
     </div>
   );
@@ -484,45 +484,52 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     <Eye className="w-4 h-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent
-                  side="left"
-                  align="center"
-                  className="max-w-sm bg-gray-900 border border-gray-700 p-0 text-left shadow-lg"
-                >
-                  <div className="px-3 py-2 border-b border-gray-800">
-                    <p className="text-xs font-medium text-gray-300 truncate">
-                      {child.name || 'Preview'}
-                    </p>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto px-3 py-2 text-xs">
-                    {tooltipBody}
-                  </div>
-                </TooltipContent>
+                        <TooltipPortal>
+                          <TooltipContent
+                            side="right"
+                            align="center"
+                            sideOffset={14}
+                            collisionPadding={24}
+                            avoidCollisions={true}
+                            className="popup-preview-tooltip"
+                          >
+                            <div className="popup-preview-tooltip__header">
+                              <p className="popup-preview-tooltip__title">
+                                {child.name || 'Preview'}
+                              </p>
+                            </div>
+                            <div className="popup-preview-tooltip__body">
+                              {tooltipBody}
+                            </div>
+                          </TooltipContent>
+                        </TooltipPortal>
               </Tooltip>
             </TooltipProvider>
           )}
           {folderLike && (
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Open folder"
-                    className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                    onMouseEnter={handleFolderHover}
-                    onFocus={handleFolderHover}
-                    onMouseLeave={() => rowLeaveFolder?.()}
-                    onBlur={() => rowLeaveFolder?.()}
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Open folder</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-      </div>
+                    <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="Open folder"
+                            className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                            onMouseEnter={handleFolderHover}
+                            onFocus={handleFolderHover}
+                            onMouseLeave={() => rowLeaveFolder?.()}
+                            onBlur={() => rowLeaveFolder?.()}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipPortal>
+                          <TooltipContent side="right">Open folder</TooltipContent>
+                        </TooltipPortal>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
+              </div>
     );
   };
 
@@ -1340,7 +1347,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
-              <div className="border-t border-gray-700 bg-gray-900">
+                          <div className="border-t border-gray-700 bg-gray-900">
                 <PopupReadOnlyPreview
                   content={activePreview?.content ?? null}
                   loading={activePreview?.status === 'loading'}
