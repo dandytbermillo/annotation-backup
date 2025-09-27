@@ -87,7 +87,7 @@ interface PreviewEntry {
   }>;
 }
 
-const TOOLTIP_PREVIEW_MAX_LENGTH = 600;
+const TOOLTIP_PREVIEW_MAX_LENGTH = Number.MAX_SAFE_INTEGER; // allow full content inside scrollable tooltip
 
 /**
  * PopupOverlay - React component for the popup layer

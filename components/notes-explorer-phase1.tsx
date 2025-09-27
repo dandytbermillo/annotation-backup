@@ -1142,8 +1142,12 @@ function NotesExplorerContent({
       })
     })
     
-    // Show popover after 500ms delay
-    const timeout = setTimeout(async () => {
+    const showPopover = async () => {
+      // In case a scheduled timeout already exists for this folder, clear it
+      if (hoverTimeoutRef.current.has(timeoutKey)) {
+        clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
+        hoverTimeoutRef.current.delete(timeoutKey)
+      }
       // Log loading state (non-blocking)
       fetch('/api/debug-log', {
         method: 'POST',
@@ -1314,10 +1318,18 @@ function NotesExplorerContent({
           })
         })
       }
-    }, 500) // 500ms delay before showing
-    
-    // Store timeout reference
-    hoverTimeoutRef.current.set(timeoutKey, timeout)
+    }
+
+    if (isPersistent) {
+      // Create persistent popovers immediately so the toggle feels responsive
+      showPopover()
+    } else {
+      const timeout = setTimeout(() => {
+        showPopover()
+      }, 500)
+      // Store timeout reference so hover leave can cancel if needed
+      hoverTimeoutRef.current.set(timeoutKey, timeout)
+    }
   }
   
   const handleFolderHoverLeave = (folderId?: string, parentPopoverId?: string) => {
