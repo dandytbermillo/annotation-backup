@@ -49,8 +49,8 @@ interface PopupOverlayProps {
   draggingPopup: string | null;
   onClosePopup: (id: string) => void;
   onDragStart?: (id: string, event: React.MouseEvent) => void;
-  onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string) => void;
-  onLeaveFolder?: () => void;
+  onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
+  onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
 }
 
 type PopupChildNode = {
@@ -315,8 +315,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       previewEntry?: PreviewEntry;
       activePreview?: { status: PreviewStatus; content?: unknown; error?: string };
       isPanning: boolean;
-      onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string) => void;
-      onLeaveFolder?: () => void;
+      onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
+      onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
     }
   ) => (child: PopupChildNode) => {
     const noteLike = isNoteLikeNode(child);
@@ -328,9 +328,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       requestPreview(popupId, child);
     };
 
-    const handleFolderHover = (event: React.MouseEvent) => {
+    const handleFolderHover = (event: React.MouseEvent, persistent = false) => {
       if (rowIsPanning || !folderLike) return;
-      rowHoverFolder?.(child, event, popupId);
+      rowHoverFolder?.(child, event, popupId, persistent);
     };
 
     const childPreviewEntry = noteLike ? previewEntry?.entries?.[child.id] : undefined;
@@ -384,12 +384,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           if (noteLike) {
             triggerPreview();
           } else {
-            handleFolderHover(event);
+            handleFolderHover(event, false);
           }
         }}
         onMouseLeave={() => {
           if (folderLike) {
-            rowLeaveFolder?.();
+            rowLeaveFolder?.(child.id, popupId);
           }
         }}
         onFocus={() => {
@@ -457,10 +457,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                             type="button"
                             aria-label="Open folder"
                             className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                            onMouseEnter={handleFolderHover}
-                            onFocus={handleFolderHover}
-                            onMouseLeave={() => rowLeaveFolder?.()}
-                            onBlur={() => rowLeaveFolder?.()}
+                            onMouseEnter={(event) => handleFolderHover(event, false)}
+                            onFocus={(event) => handleFolderHover(event, false)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleFolderHover(event, true);
+                            }}
+                            onMouseLeave={() => rowLeaveFolder?.(child.id, popupId)}
+                            onBlur={() => rowLeaveFolder?.(child.id, popupId)}
                           >
                             <Eye className="w-4 h-4" />
                           </button>

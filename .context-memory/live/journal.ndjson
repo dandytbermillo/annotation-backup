@@ -232,3 +232,4 @@
 {"ts":"2025-09-27T03:25:21.347Z","type":"commit","sha":"c5dd4f7d056af9ff68b8dbf7909de8a180f97498","files_changed":11,"message":"tooltips stuck on \"loading preview\" fixed"}
 {"ts":"2025-09-27T04:00:46.753Z","type":"commit","sha":"5d4e47854f12f99a9da213a84ecb3a6f92f903d0","files_changed":8,"message":"fixing popup overlay expanding when file content is long"}
 {"ts":"2025-09-27T04:10:32.478Z","type":"commit","sha":"409a88cf76caa6b8882eeab89a0054e3f9203e06","files_changed":4,"message":"fixed auto expanding popup overlay when file content is long"}
+{"ts":"2025-09-27T04:26:41.702Z","type":"commit","sha":"8194fef66de38811567e8ee2b81e491ce14db004","files_changed":4,"message":"it takes 2-3 clicks before the popup overlay to appear permanently"}

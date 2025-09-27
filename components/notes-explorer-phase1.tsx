@@ -1148,6 +1148,24 @@ function NotesExplorerContent({
         clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
         hoverTimeoutRef.current.delete(timeoutKey)
       }
+
+      // For persistent requests, reuse the existing popover if present
+      const existingEntry = Array.from(hoverPopovers.entries()).find(([, pop]) => pop.folder?.id === folder.id)
+      if (existingEntry) {
+        const [existingId, existingPopover] = existingEntry
+        if (isPersistent || existingPopover.isPersistent) {
+          // Promote the existing popover and ensure it stays persistent
+          setHoverPopovers(prev => {
+            if (!prev.has(existingId)) return prev
+            const updated = new Map(prev)
+            const current = updated.get(existingId)!
+            updated.delete(existingId)
+            updated.set(existingId, { ...current, isPersistent: true })
+            return updated
+          })
+          return
+        }
+      }
       // Log loading state (non-blocking)
       fetch('/api/debug-log', {
         method: 'POST',
