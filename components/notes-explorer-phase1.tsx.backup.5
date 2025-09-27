@@ -11,16 +11,7 @@ import { useLayer } from "@/components/canvas/layer-provider"
 import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortcuts"
 import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
-import { debugLog } from "@/lib/utils/debug-logger"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
-import {
-  OverlayLayoutAdapter,
-  OverlayLayoutConflictError,
-  OVERLAY_LAYOUT_SCHEMA_VERSION,
-  OverlayLayoutPayload,
-  OverlayPopupDescriptor,
-  isOverlayPersistenceEnabled,
-} from "@/lib/adapters/overlay-layout-adapter"
 
 // Configuration constants to avoid hard-coding
 const ROOT_FOLDER_CONFIG = {
@@ -174,23 +165,6 @@ function NotesExplorerContent({
       setCanvasContainer(document.getElementById('canvas-container'))
     }
   }, [])
-
-  useEffect(() => {
-    setOverlayPersistenceEnabled(isOverlayPersistenceEnabled())
-  }, [])
-
-  useEffect(() => {
-    if (!overlayPersistenceEnabled) {
-      overlayAdapterRef.current = null
-      return
-    }
-
-    overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey: 'default' })
-
-    return () => {
-      overlayAdapterRef.current = null
-    }
-  }, [overlayPersistenceEnabled])
   
   // Cascading popover state - now supports multiple popups with dragging
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
@@ -207,14 +181,6 @@ function NotesExplorerContent({
   }>>(new Map())
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
-  const [overlayPersistenceEnabled, setOverlayPersistenceEnabled] = useState(false)
-  const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
-  const layoutRevisionRef = useRef<string | null>(null)
-  const lastSavedLayoutHashRef = useRef<string | null>(null)
-  const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const saveInFlightRef = useRef<boolean>(false)
-  const layoutLoadedRef = useRef<boolean>(false)
   
   // Dragging state for popups
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
@@ -253,57 +219,6 @@ function NotesExplorerContent({
       dragDeltaRef.current.dy += deltaY
     }
   }, [])
-
-  const applyOverlayLayout = useCallback(
-    (layout: OverlayLayoutPayload) => {
-      const sanitizedPopups = Array.isArray(layout.popups) ? layout.popups : []
-      const inspectors = Array.isArray(layout.inspectors) ? layout.inspectors : []
-
-      const coreHash = JSON.stringify({
-        schemaVersion: layout.schemaVersion || OVERLAY_LAYOUT_SCHEMA_VERSION,
-        popups: sanitizedPopups,
-        inspectors,
-      })
-
-      lastSavedLayoutHashRef.current = coreHash
-      layoutLoadedRef.current = true
-
-      setHoverPopovers(prev => {
-        if (sanitizedPopups.length === 0) {
-          return new Map()
-        }
-
-        return new Map(
-          sanitizedPopups.map(pop => {
-            const position = {
-              x: pop.canvasPosition.x,
-              y: pop.canvasPosition.y,
-            }
-
-            const previous = prev.get(pop.id)
-
-            return [
-              pop.id,
-              {
-                id: pop.id,
-                folder: previous?.folder ?? null,
-                position,
-                canvasPosition: pop.canvasPosition,
-                isLoading: false,
-                parentId: pop.parentId ?? undefined,
-                level: pop.level ?? 0,
-                height: pop.height,
-                isPersistent: true,
-              },
-            ]
-          })
-        )
-      })
-
-      setDraggingPopup(null)
-    },
-    [setHoverPopovers, setDraggingPopup]
-  )
   
   const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
     enabled: true,
@@ -311,158 +226,6 @@ function NotesExplorerContent({
     speed: 8,
     onScroll: handleAutoScroll
   })
-
-  const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
-    const descriptors: OverlayPopupDescriptor[] = []
-
-    hoverPopovers.forEach(popover => {
-      const basePosition = popover.canvasPosition || popover.position
-      if (!basePosition) {
-        return
-      }
-
-      const x = Number.isFinite(basePosition.x) ? basePosition.x : 0
-      const y = Number.isFinite(basePosition.y) ? basePosition.y : 0
-
-      const descriptor: OverlayPopupDescriptor = {
-        id: popover.id,
-        folderId: popover.folder?.id ?? null,
-        parentId: popover.parentId ?? null,
-        canvasPosition: { x, y },
-        level: popover.level ?? 0,
-      }
-
-      if (typeof popover.height === 'number' && Number.isFinite(popover.height)) {
-        descriptor.height = popover.height
-      }
-
-      descriptors.push(descriptor)
-    })
-
-    descriptors.sort((a, b) => a.id.localeCompare(b.id))
-
-    const payload: OverlayLayoutPayload = {
-      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
-      popups: descriptors,
-      inspectors: [],
-      lastSavedAt: new Date().toISOString(),
-    }
-
-    const hash = JSON.stringify({
-      schemaVersion: payload.schemaVersion,
-      popups: payload.popups,
-      inspectors: payload.inspectors,
-    })
-
-    return { payload, hash }
-  }, [hoverPopovers])
-
-  const flushLayoutSave = useCallback(async () => {
-    if (!overlayPersistenceEnabled) {
-      return
-    }
-
-    const adapter = overlayAdapterRef.current
-    if (!adapter) {
-      return
-    }
-
-    const pending = pendingLayoutRef.current ?? (() => {
-      const snapshot = buildLayoutPayload()
-      return snapshot.hash === lastSavedLayoutHashRef.current ? null : snapshot
-    })()
-
-    if (!pending) {
-      return
-    }
-
-    if (saveInFlightRef.current) {
-      pendingLayoutRef.current = pending
-      return
-    }
-
-    pendingLayoutRef.current = null
-    saveInFlightRef.current = true
-
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-      saveTimeoutRef.current = null
-    }
-
-    try {
-      const envelope = await adapter.saveLayout({
-        layout: pending.payload,
-        version: pending.payload.schemaVersion,
-        revision: layoutRevisionRef.current,
-      })
-
-      layoutRevisionRef.current = envelope.revision
-      lastSavedLayoutHashRef.current = JSON.stringify({
-        schemaVersion: envelope.layout.schemaVersion,
-        popups: envelope.layout.popups,
-        inspectors: envelope.layout.inspectors,
-      })
-    } catch (error) {
-      if (error instanceof OverlayLayoutConflictError) {
-        const envelope = error.payload
-        layoutRevisionRef.current = envelope.revision
-        lastSavedLayoutHashRef.current = JSON.stringify({
-          schemaVersion: envelope.layout.schemaVersion,
-          popups: envelope.layout.popups,
-          inspectors: envelope.layout.inspectors,
-        })
-        applyOverlayLayout(envelope.layout)
-      } else {
-        console.error('[overlay-layout] save failed', error)
-        pendingLayoutRef.current = pending
-      }
-    } finally {
-      saveInFlightRef.current = false
-      if (pendingLayoutRef.current) {
-        void flushLayoutSave()
-      }
-    }
-  }, [
-    applyOverlayLayout,
-    buildLayoutPayload,
-    overlayPersistenceEnabled,
-  ])
-
-  const scheduleLayoutSave = useCallback(() => {
-    if (!overlayPersistenceEnabled) {
-      return
-    }
-
-    if (!overlayAdapterRef.current) {
-      return
-    }
-
-    const snapshot = buildLayoutPayload()
-
-    if (snapshot.hash === lastSavedLayoutHashRef.current) {
-      pendingLayoutRef.current = null
-      return
-    }
-
-    if (saveInFlightRef.current) {
-      pendingLayoutRef.current = snapshot
-      return
-    }
-
-    pendingLayoutRef.current = snapshot
-
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-
-    saveTimeoutRef.current = setTimeout(() => {
-      void flushLayoutSave()
-    }, 2500)
-  }, [
-    buildLayoutPayload,
-    flushLayoutSave,
-    overlayPersistenceEnabled,
-  ])
   
   // Convert popup state for multi-layer canvas
   const adaptedPopups = useMemo(() => {
@@ -480,73 +243,6 @@ function NotesExplorerContent({
     })
     return adapted
   }, [hoverPopovers, multiLayerEnabled, layerContext])
-
-  useEffect(() => {
-    if (!overlayPersistenceEnabled) {
-      return
-    }
-
-    scheduleLayoutSave()
-  }, [hoverPopovers, overlayPersistenceEnabled, scheduleLayoutSave])
-
-  useEffect(() => {
-    if (!overlayPersistenceEnabled || layoutLoadedRef.current) {
-      return
-    }
-
-    const adapter = overlayAdapterRef.current
-    if (!adapter) {
-      return
-    }
-
-    let cancelled = false
-
-    void (async () => {
-      try {
-        const envelope = await adapter.loadLayout()
-        if (cancelled) {
-          return
-        }
-
-        if (!envelope) {
-          layoutLoadedRef.current = true
-          return
-        }
-
-        layoutRevisionRef.current = envelope.revision
-        lastSavedLayoutHashRef.current = JSON.stringify({
-          schemaVersion: envelope.layout.schemaVersion,
-          popups: envelope.layout.popups,
-          inspectors: envelope.layout.inspectors,
-        })
-        applyOverlayLayout(envelope.layout)
-      } catch (error) {
-        if (!cancelled) {
-          console.error('[overlay-layout] load failed', error)
-        }
-      } finally {
-        if (!cancelled) {
-          layoutLoadedRef.current = true
-        }
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [applyOverlayLayout, overlayPersistenceEnabled])
-
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
-
-      if (overlayPersistenceEnabled) {
-        void flushLayoutSave()
-      }
-    }
-  }, [flushLayoutSave, overlayPersistenceEnabled])
   
   // Hybrid sync: Auto-switch layers based on popup count changes
   const prevPopupCountRef = useRef(hoverPopovers.size)
@@ -1712,27 +1408,12 @@ function NotesExplorerContent({
     const prev = prevActiveLayerRef.current
     const current = layerContext.activeLayer
 
-    if (prev !== current) {
-      void debugLog({
-        component: 'PopupOverlayLayer',
-        action: 'layer_visibility_changed',
-        metadata: {
-          previousLayer: prev ?? 'none',
-          nextLayer: current,
-          popupCount: hoverPopovers.size,
-        },
-      })
+    if (prev === 'popups' && current !== 'popups' && hoverPopovers.size > 0) {
+      closeAllPopovers()
     }
 
-    // Preserve existing popups when leaving the layer; they are cleared explicitly
-    // via UI actions or during explorer teardown.
     prevActiveLayerRef.current = current
-  }, [multiLayerEnabled, layerContext, layerContext?.activeLayer, hoverPopovers.size])
-
-  useEffect(() => () => {
-    // Ensure no stale popovers linger after the explorer unmounts.
-    closeAllPopovers()
-  }, [closeAllPopovers])
+  }, [multiLayerEnabled, layerContext, layerContext?.activeLayer, hoverPopovers.size, closeAllPopovers])
   
   // Close specific popover and its children
   const closePopover = (popoverId: string) => {

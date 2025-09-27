@@ -1,0 +1,35 @@
+export const OVERLAY_LAYOUT_SCHEMA_VERSION = '1.0.0'
+
+export interface OverlayCanvasPosition {
+  x: number
+  y: number
+}
+
+export interface OverlayPopupDescriptor {
+  id: string
+  folderId: string | null
+  parentId: string | null
+  canvasPosition: OverlayCanvasPosition
+  level: number
+  height?: number
+}
+
+export interface OverlayInspectorState {
+  type: string
+  visible: boolean
+  pane?: string
+}
+
+export interface OverlayLayoutPayload {
+  schemaVersion: string
+  popups: OverlayPopupDescriptor[]
+  inspectors: OverlayInspectorState[]
+  lastSavedAt: string
+}
+
+export interface OverlayLayoutEnvelope {
+  layout: OverlayLayoutPayload
+  version: string
+  revision: string
+  updatedAt: string
+}

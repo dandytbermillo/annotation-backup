@@ -234,3 +234,8 @@
 {"ts":"2025-09-27T04:10:32.478Z","type":"commit","sha":"409a88cf76caa6b8882eeab89a0054e3f9203e06","files_changed":4,"message":"fixed auto expanding popup overlay when file content is long"}
 {"ts":"2025-09-27T04:26:41.702Z","type":"commit","sha":"8194fef66de38811567e8ee2b81e491ce14db004","files_changed":4,"message":"it takes 2-3 clicks before the popup overlay to appear permanently"}
 {"ts":"2025-09-27T04:58:48.360Z","type":"commit","sha":"9158ca90571a265336a359d186b93d83069d24fc","files_changed":4,"message":"fixed duplicate child popup appearance"}
+{"ts":"2025-09-27T05:22:42.970Z","type":"commit","sha":"a1321eee875cad3979b5627af514379b73a22d36","files_changed":3,"message":"layer change popup overlay not disappearing with popup overlay canvas fixed"}
+{"ts":"2025-09-27T18:43:08Z","type":"note","note":"Reviewed RESUME.md next-steps, debug_logs how-to, CLAUDE Implementation Approach, and isolation-reactivity anti-patterns before advising."}
+{"ts":"2025-09-27T19:39:17Z","type":"note","note":"Drafted preserve popup overlay implementation plan (focus on plain mode) at docs/proposal/preserve_its_state/IMPLEMENTATION_PLAN.md."}
+{"ts":"2025-09-27T19:51:52Z","type":"note","note":"Expanded preserve-popup plan with Postgres persistence phase."}
+{"ts":"2025-09-27T20:01:59Z","type":"note","note":"Refined preserve-popup plan with coordinate policy, optimistic locking, debounce guidance, payload size cap."}
