@@ -161,30 +161,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const multiLayerEnabled = true;
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
   const previewStateRef = useRef(previewState);
-  const previewControllersRef = useRef<Map<string, AbortController>>(new Map());
   useEffect(() => {
     previewStateRef.current = previewState;
   }, [previewState]);
 
+  const isMountedRef = useRef(true);
   useEffect(() => {
     return () => {
-      previewControllersRef.current.forEach((controller) => {
-        try { controller.abort(); } catch {}
-      });
-      previewControllersRef.current.clear();
+      isMountedRef.current = false;
     };
   }, []);
 
   const fetchPreview = useCallback(async (popupId: string, childId: string) => {
-    const controllerKey = `${popupId}:${childId}`;
-    const existingController = previewControllersRef.current.get(controllerKey);
-    if (existingController) {
-      try { existingController.abort(); } catch {}
-    }
-
-    const controller = new AbortController();
-    previewControllersRef.current.set(controllerKey, controller);
-
     try {
       const response = await fetch(`/api/items/${childId}`, {
         method: 'GET',
@@ -193,7 +181,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         },
         credentials: 'same-origin',
         cache: 'no-store',
-        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);
@@ -202,6 +189,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const content = data?.item?.content ?? null;
       const contentText = data?.item?.contentText ?? '';
       const previewText = buildBranchPreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
+
+      if (!isMountedRef.current) return;
 
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_success', {
@@ -215,11 +204,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
 
       setPreviewState(prev => {
-        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
+        const entry = prev[popupId];
+        if (!entry || !entry.entries[childId]) {
+          return prev;
+        }
         return {
           ...prev,
           [popupId]: {
-            activeChildId: entry.activeChildId ?? childId,
+            ...entry,
             entries: {
               ...entry.entries,
               [childId]: {
@@ -233,9 +225,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         };
       });
     } catch (error: any) {
-      if (error?.name === 'AbortError') {
-        return;
-      }
+      if (!isMountedRef.current) return;
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_error', {
           popupId,
@@ -244,25 +234,25 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         });
       });
       setPreviewState(prev => {
-        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
+        const entry = prev[popupId];
+        if (!entry || !entry.entries[childId]) {
+          return prev;
+        }
         return {
           ...prev,
           [popupId]: {
-            activeChildId: entry.activeChildId ?? childId,
+            ...entry,
             entries: {
               ...entry.entries,
               [childId]: {
                 status: 'error',
                 error: error?.message ?? 'Failed to load preview',
                 previewText: entry.entries[childId]?.previewText,
-                requestedAt: undefined,
               },
             },
           },
         };
       });
-    } finally {
-      previewControllersRef.current.delete(controllerKey);
     }
   }, []);
 

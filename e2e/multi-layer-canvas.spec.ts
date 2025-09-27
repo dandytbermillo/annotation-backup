@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '@playwright/test'
 
 const TEST_NOTE_ID = 'multi-layer-test-note'
 const TEST_NOTE_TITLE = 'Test Multi-layer'
@@ -75,7 +75,38 @@ function seedLocalStorage({
   )
 }
 
-test.describe('Multi-layer canvas hover popups', () => {
+async function prepareCanvas(page: Page): Promise<{
+  explorer: Locator
+  notesButton: Locator
+  popupsButton: Locator
+}> {
+  const openExplorer = page.getByRole('button', { name: /Open Notes Explorer/i })
+  if (await openExplorer.isVisible()) {
+    await openExplorer.click()
+  } else {
+    const edgeToggle = page.locator('button[title="Notes Explorer"]')
+    if (await edgeToggle.isVisible()) {
+      await edgeToggle.click()
+    }
+  }
+
+  const explorer = page.locator('[data-sidebar="sidebar"]')
+  await expect(explorer).toBeVisible()
+
+  await explorer.getByText(TEST_NOTE_TITLE, { exact: true }).first().click()
+
+  // Ensure layer controls are visible
+  await expect(page.getByText('Layer Controls')).toBeVisible()
+
+  const notesButton = page.getByRole('button', { name: /^Notes$/ }).first()
+  const popupsButton = page.getByRole('button', { name: /^Popups$/ }).first()
+  await expect(notesButton).toBeVisible()
+  await expect(popupsButton).toBeVisible()
+
+  return { explorer, notesButton, popupsButton }
+}
+
+test.describe('Multi-layer canvas interactions', () => {
   test('hovering folder eye opens overlay without flushSync errors', async ({ page }) => {
     await page.addInitScript(seedLocalStorage, {
       noteId: TEST_NOTE_ID,
@@ -92,20 +123,7 @@ test.describe('Multi-layer canvas hover popups', () => {
 
     await page.goto('/')
 
-    const openExplorer = page.getByRole('button', { name: /Open Notes Explorer/i })
-    if (await openExplorer.isVisible()) {
-      await openExplorer.click()
-    } else {
-      const edgeToggle = page.locator('button[title="Notes Explorer"]')
-      if (await edgeToggle.isVisible()) {
-        await edgeToggle.click()
-      }
-    }
-
-    const explorer = page.locator('[data-sidebar="sidebar"]')
-    await expect(explorer).toBeVisible()
-
-    await explorer.getByText(TEST_NOTE_TITLE, { exact: true }).first().click()
+    const { explorer } = await prepareCanvas(page)
 
     await explorer.getByRole('button', { name: 'Organization' }).click()
 
@@ -134,5 +152,38 @@ test.describe('Multi-layer canvas hover popups', () => {
     await expect(popupCard).toBeVisible({ timeout: 4000 })
 
     await expect(flushSyncMessages).toHaveLength(0)
+  })
+
+  test('Tab key toggles between notes and popups layers', async ({ page }) => {
+    await page.addInitScript(seedLocalStorage, {
+      noteId: TEST_NOTE_ID,
+      noteTitle: TEST_NOTE_TITLE,
+      noteData: NOTE_DATA,
+    })
+
+    await page.goto('/')
+
+    const { notesButton, popupsButton } = await prepareCanvas(page)
+
+    await expect(notesButton).toHaveClass(/bg-blue-600/)
+    await expect(popupsButton).not.toHaveClass(/bg-purple-600/)
+
+    // Ensure canvas has focus before sending keyboard events
+    const canvas = page.locator('#canvas-container')
+    if (await canvas.isVisible()) {
+      await canvas.click({ position: { x: 200, y: 200 } })
+    } else {
+      await page.mouse.click(400, 400)
+    }
+
+    await page.keyboard.press('Tab')
+
+    await expect(popupsButton).toHaveClass(/bg-purple-600/)
+    await expect(notesButton).not.toHaveClass(/bg-blue-600/)
+
+    await page.keyboard.press('Tab')
+
+    await expect(notesButton).toHaveClass(/bg-blue-600/)
+    await expect(popupsButton).not.toHaveClass(/bg-purple-600/)
   })
 })

@@ -32,6 +32,38 @@ export async function GET(
     }
     
     const row = result.rows[0]
+
+    let content = row.content
+    let contentText: string | null = null
+
+    if (!content || (typeof content === 'object' && Object.keys(content).length === 0)) {
+      const docResult = await pool.query(
+        `SELECT content, document_text 
+           FROM document_saves 
+          WHERE note_id = $1 
+          ORDER BY created_at DESC 
+          LIMIT 1`,
+        [id]
+      )
+
+      if (docResult.rows.length > 0) {
+        content = docResult.rows[0].content || content
+        contentText = docResult.rows[0].document_text || null
+      }
+    }
+
+    if (!contentText) {
+      const noteTextResult = await pool.query(
+        `SELECT content_text 
+           FROM notes 
+          WHERE id = $1`,
+        [id]
+      )
+      if (noteTextResult.rows.length > 0) {
+        contentText = noteTextResult.rows[0].content_text
+      }
+    }
+
     const item = {
       id: row.id,
       type: row.type,
@@ -40,7 +72,8 @@ export async function GET(
       name: row.name,
       slug: row.slug,
       position: row.position,
-      content: row.content,
+      content,
+      contentText,
       metadata: row.metadata,
       icon: row.icon,
       color: row.color,
