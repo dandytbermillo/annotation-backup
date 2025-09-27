@@ -1187,6 +1187,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         // Contain layout/paint to this overlay to avoid expensive repaints
         contain: 'layout paint' as const,
       }}
@@ -1332,6 +1334,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         // Show grab cursor when hovering empty space
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         // Contain layout/paint to this overlay to avoid expensive repaints
         contain: 'layout paint' as const,
       }}

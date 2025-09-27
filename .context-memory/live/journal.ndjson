@@ -241,3 +241,4 @@
 {"ts":"2025-09-27T20:01:59Z","type":"note","note":"Refined preserve-popup plan with coordinate policy, optimistic locking, debounce guidance, payload size cap."}
 {"ts":"2025-09-27T20:40:05.513Z","type":"commit","sha":"b6118d6e986dce4e823bad5f3205d6d38453c9db","files_changed":11,"message":"Preserve Popup Overlay State implemented"}
 {"ts":"2025-09-27T20:48:25.737Z","type":"commit","sha":"ed6373139918089e3875cec45a7ab1b725b73ae2","files_changed":3,"message":"error fixed after run"}
+{"ts":"2025-09-27T20:52:15.309Z","type":"commit","sha":"c25178cc9c2aa727308fd9ddab89a31c5e0b21b8","files_changed":3,"message":"the popup displayed the correct content but with errors"}

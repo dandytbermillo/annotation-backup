@@ -161,7 +161,7 @@ function parseUserId(searchValue: string | null): string | null | 'invalid' {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { workspaceId: string } }
+  { params }: { params: Promise<{ workspaceId: string }> }
 ) {
   const rawUserId = parseUserId(request.nextUrl.searchParams.get('userId'))
   if (rawUserId === 'invalid') {
@@ -169,7 +169,8 @@ export async function GET(
   }
 
   try {
-    const workspaceId = await resolveWorkspaceId(params?.workspaceId)
+    const { workspaceId: rawWorkspaceId } = await params
+    const workspaceId = await resolveWorkspaceId(rawWorkspaceId)
     const userId = rawUserId
 
     const result = await pool.query<{
@@ -200,7 +201,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { workspaceId: string } }
+  { params }: { params: Promise<{ workspaceId: string }> }
 ) {
   const rawUserId = parseUserId(request.nextUrl.searchParams.get('userId'))
   if (rawUserId === 'invalid') {
@@ -222,7 +223,8 @@ export async function PUT(
   const bodyRevision = typeof parsedBody.revision === 'string' ? parsedBody.revision : null
 
   try {
-    const workspaceId = await resolveWorkspaceId(params?.workspaceId)
+    const { workspaceId: rawWorkspaceId } = await params
+    const workspaceId = await resolveWorkspaceId(rawWorkspaceId)
     const userId = rawUserId
 
     const normalizedLayout = normalizeLayout(parsedBody.layout, { useServerTimestamp: true })
