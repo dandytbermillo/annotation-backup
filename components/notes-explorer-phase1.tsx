@@ -176,6 +176,7 @@ function NotesExplorerContent({
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const saveInFlightRef = useRef<boolean>(false)
   const layoutLoadedRef = useRef<boolean>(false)
+  const skipNextAutoSwitchRef = useRef<boolean>(false)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -393,6 +394,8 @@ function NotesExplorerContent({
 
       lastSavedLayoutHashRef.current = coreHash
       layoutLoadedRef.current = true
+
+      skipNextAutoSwitchRef.current = true
 
       setHoverPopovers(prev => {
         if (sanitizedPopups.length === 0) {
@@ -681,14 +684,20 @@ function NotesExplorerContent({
   
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) return
-    
+
     const currentPopupCount = hoverPopovers.size
     const prevPopupCount = prevPopupCountRef.current
-    
+
+    if (skipNextAutoSwitchRef.current) {
+      skipNextAutoSwitchRef.current = false
+      prevPopupCountRef.current = currentPopupCount
+      return
+    }
+
     // Only auto-switch when popup count actually changes
     if (prevPopupCount !== currentPopupCount) {
       prevPopupCountRef.current = currentPopupCount
-      
+
       if (currentPopupCount > 0) {
         // Any popups open - switch to popup layer
         layerContext.setActiveLayer('popups')
