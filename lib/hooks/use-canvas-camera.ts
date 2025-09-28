@@ -39,18 +39,19 @@ export function useCanvasCamera() {
     // IMPORTANT: Divide by zoom to get correct world movement
     const dxWorld = dxScreen / currentZoom
     const dyWorld = dyScreen / currentZoom
-    
-    // Accumulate pan for smooth movement
-    panAccumRef.current.dx += dxWorld
-    panAccumRef.current.dy += dyWorld
-    
-    // Update canvas state with new camera position
+
+    // Accumulate pan for smooth movement (track actual camera offset)
+    panAccumRef.current.dx -= dxWorld
+    panAccumRef.current.dy -= dyWorld
+
+    // Update canvas state with new camera position. Subtracting moves the
+    // viewport in the direction of the pointer (drag right ⇒ camera pans right).
     dispatch({
       type: 'SET_CANVAS_STATE',
       payload: {
         ...state.canvasState,
-        translateX: (state.canvasState?.translateX || 0) + dxWorld,
-        translateY: (state.canvasState?.translateY || 0) + dyWorld,
+        translateX: (state.canvasState?.translateX || 0) - dxWorld,
+        translateY: (state.canvasState?.translateY || 0) - dyWorld,
       }
     })
   }, [isCameraEnabled, state.canvasState, dispatch])

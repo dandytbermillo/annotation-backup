@@ -629,9 +629,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       // Use camera-based panning
       panCameraBy({ dxScreen: deltaX, dyScreen: deltaY })
       
-      // Track accumulated pan for drop coordinate adjustment
-      dragState.current.initialPosition.x += deltaX
-      dragState.current.initialPosition.y += deltaY
+      // Track accumulated pan for drop coordinate adjustment.
+      // The camera moves opposite the screen delta, so subtract to keep
+      // the panel aligned with the pointer in screen space.
+      dragState.current.initialPosition.x -= deltaX
+      dragState.current.initialPosition.y -= deltaY
     } else {
       // Legacy: Move ALL panels to simulate canvas panning
       const allPanels = document.querySelectorAll('[data-panel-id]')

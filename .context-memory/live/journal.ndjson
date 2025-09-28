@@ -249,3 +249,5 @@
 {"ts":"2025-09-28T03:40:15.681Z","type":"commit","sha":"d93642af94e1870a74d149275f80aad47d08599a","files_changed":2,"message":"Refactored overlay canvas"}
 {"ts":"2025-09-28T19:50:31.229Z","type":"commit","sha":"9f13f3a048e089007591018eac899e4e6134b743","files_changed":1,"message":"snaping back gone"}
 {"ts":"2025-09-28T20:12:31.261Z","type":"commit","sha":"1348165b16288eccbd1371dd0e7be1e6fc168a3f","files_changed":3,"message":"fixing scroll-auto"}
+{"ts":"2025-09-28T20:31:32.049Z","type":"commit","sha":"aabc5f666df788f6866e691fbb7a41955284ceeb","files_changed":3,"message":"to implement auto-scroll on note canvas"}
+{"ts":"2025-09-28T20:50:59Z","type":"note","title":"Resumed canvas overlay work","body":"Reviewed policy, resume, and isolation-reactivity guardrails; refreshed plan to add panBy helper and rework Notes Explorer auto-scroll to rely on canvas camera."}
