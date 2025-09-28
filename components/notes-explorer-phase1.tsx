@@ -225,6 +225,7 @@ function NotesExplorerContent({
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const draggingPopupRef = useRef<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   // Plain-mode overlay container + offset (acts like a camera transform)
   const overlayContainerRef = useRef<HTMLDivElement | null>(null)
   const plainOverlayOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -325,6 +326,11 @@ function NotesExplorerContent({
           y: dragScreenPosRef.current.y + deltaY,
         }
 
+        dragOffsetRef.current = {
+          x: dragOffsetRef.current.x + deltaX,
+          y: dragOffsetRef.current.y + deltaY,
+        }
+
         if (rafDragEnabledRef.current && draggingElRef.current) {
           dragDeltaRef.current.dx -= deltaX
           dragDeltaRef.current.dy -= deltaY
@@ -378,6 +384,16 @@ function NotesExplorerContent({
           dragDeltaRef.current.dx -= deltaX
           dragDeltaRef.current.dy -= deltaY
 
+          dragStartPosRef.current = {
+            left: dragStartPosRef.current.left + deltaX,
+            top: dragStartPosRef.current.top + deltaY,
+          }
+
+          dragOffsetRef.current = {
+            x: dragOffsetRef.current.x + deltaX,
+            y: dragOffsetRef.current.y + deltaY,
+          }
+
           const el = draggingElRef.current
           if (el) {
             el.style.transform = `translate3d(${Math.round(dragDeltaRef.current.dx)}px, ${Math.round(dragDeltaRef.current.dy)}px, 0)`
@@ -395,6 +411,10 @@ function NotesExplorerContent({
               debugLog('NotesExplorer', 'plain_auto_scroll_applied', {
                 delta: { x: deltaX, y: deltaY },
                 dragDelta: { ...dragDeltaRef.current },
+                dragScreen: { ...dragScreenPosRef.current },
+                dragOffset: { ...dragOffsetRef.current },
+                overlayOffset: { ...plainOverlayOffsetRef.current },
+                popupId: draggingPopupRef.current,
               })
             })
           }
@@ -462,6 +482,11 @@ function NotesExplorerContent({
           el.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`
         })
       }
+    }
+
+    dragOffsetRef.current = {
+      x: dragOffsetRef.current.x + deltaX,
+      y: dragOffsetRef.current.y + deltaY,
     }
   }, [])
 
@@ -1043,8 +1068,14 @@ function NotesExplorerContent({
       // Allow dragging with minimal constraints - just keep header visible
       const minVisible = 50 // Minimum pixels that must remain visible
       const newPosition = {
-        x: Math.max(-250, Math.min(window.innerWidth - minVisible, e.clientX - dragOffset.x)),
-        y: Math.max(0, Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y))
+        x: Math.max(
+          -250,
+          Math.min(window.innerWidth - minVisible, e.clientX - dragOffsetRef.current.x)
+        ),
+        y: Math.max(
+          0,
+          Math.min(window.innerHeight - minVisible, e.clientY - dragOffsetRef.current.y)
+        )
       }
 
       const screenDelta = {
@@ -1186,11 +1217,11 @@ function NotesExplorerContent({
       const minVisible = 50
       const targetLeft = Math.max(
         -250,
-        Math.min(window.innerWidth - minVisible, e.clientX - dragOffset.x)
+        Math.min(window.innerWidth - minVisible, e.clientX - dragOffsetRef.current.x)
       )
       const targetTop = Math.max(
         0,
-        Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y)
+        Math.min(window.innerHeight - minVisible, e.clientY - dragOffsetRef.current.y)
       )
 
       const { left, top } = dragStartPosRef.current
@@ -2242,9 +2273,23 @@ function NotesExplorerContent({
     }
 
     setDragOffset(offset)
+    dragOffsetRef.current = offset
     setDraggingPopup(popupId)
     draggingPopupRef.current = popupId
     dragScreenPosRef.current = { ...screenPosition }
+
+    void debugLog({
+      component: 'NotesExplorer',
+      action: 'plain_drag_start',
+      metadata: {
+        popupId,
+        pointer: { x: e.clientX, y: e.clientY },
+        screenPosition,
+        canvasPosition: popup.canvasPosition,
+        overlayOffset,
+        scale: sharedOverlayTransform.scale,
+      },
+    })
 
     // Avoid setState at t=0 for smoother start; flag element instead
     const elFlag = document.getElementById(`popup-${popupId}`) as HTMLElement | null
@@ -2314,6 +2359,18 @@ function NotesExplorerContent({
         })
 
         dragScreenPosRef.current = { ...screenPosition }
+
+        void debugLog({
+          component: 'NotesExplorer',
+          action: 'plain_drag_end',
+          metadata: {
+            popupId: draggingPopup,
+            screenPosition,
+            finalCanvasPosition,
+            overlayOffset: offsetSnapshot,
+            hasPlainOffset,
+          },
+        })
       }
       return next
     })
