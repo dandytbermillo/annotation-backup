@@ -2225,14 +2225,14 @@ function NotesExplorerContent({
     // Get the exact position of the header element
     const rect = e.currentTarget.getBoundingClientRect()
     
-    // Calculate offset from mouse to popup position
+    const baseScreenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
     const overlayOffset = (!multiLayerEnabled && plainOverlayOffsetRef.current)
       ? plainOverlayOffsetRef.current
       : { x: 0, y: 0 }
 
     const screenPosition = {
-      x: popup.position.x + overlayOffset.x,
-      y: popup.position.y + overlayOffset.y,
+      x: baseScreenPosition.x + overlayOffset.x,
+      y: baseScreenPosition.y + overlayOffset.y,
     }
 
     const offset = {
@@ -2240,11 +2240,23 @@ function NotesExplorerContent({
       y: e.clientY - screenPosition.y
     }
 
+    setHoverPopovers(prev => {
+      const next = new Map(prev)
+      const currentPopup = next.get(popupId)
+      if (currentPopup) {
+        next.set(popupId, {
+          ...currentPopup,
+          position: screenPosition,
+        })
+      }
+      return next
+    })
+
     setDragOffset(offset)
     setDraggingPopup(popupId)
     draggingPopupRef.current = popupId
     dragScreenPosRef.current = { ...screenPosition }
-    
+
     // Avoid setState at t=0 for smoother start; flag element instead
     const elFlag = document.getElementById(`popup-${popupId}`) as HTMLElement | null
     if (elFlag) elFlag.setAttribute('data-dragging', 'true')
@@ -2258,9 +2270,7 @@ function NotesExplorerContent({
     const el = document.getElementById(`popup-${popupId}`) as HTMLElement | null
     if (el) {
       draggingElRef.current = el
-      const startLeft = parseFloat(el.style.left || '0') + overlayOffset.x
-      const startTop = parseFloat(el.style.top || '0') + overlayOffset.y
-      dragStartPosRef.current = { left: startLeft, top: startTop }
+      dragStartPosRef.current = { left: screenPosition.x, top: screenPosition.y }
       dragDeltaRef.current = { dx: 0, dy: 0 }
       el.style.willChange = 'transform'
       el.style.transition = 'none'
