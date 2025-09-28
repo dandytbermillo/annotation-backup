@@ -245,3 +245,4 @@
 {"ts":"2025-09-27T21:04:39.763Z","type":"commit","sha":"c488c3a4203cca2ba1fcd58c64b67449ab1cadd7","files_changed":4,"message":"Preserve Popup Overlay State successfully implemented"}
 {"ts":"2025-09-27T21:22:43.840Z","type":"commit","sha":"1d6e26d433c2501daa118f96d3f813bc5e3dbdaa","files_changed":3,"message":"prevent the popup overlay to load first when the app loaded"}
 {"ts":"2025-09-27T21:46:37.343Z","type":"commit","sha":"3dce061fc950ce709d660d9fe87e328885f1b598","files_changed":3,"message":"panning overlay canvas smooth"}
+{"ts":"2025-09-28T03:37:06.718Z","type":"commit","sha":"accfc5a995cc5d917d6fde4b557b78eea426b804","files_changed":8,"message":"refactored the overlay canvas"}
