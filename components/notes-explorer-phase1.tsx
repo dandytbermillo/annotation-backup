@@ -204,6 +204,8 @@ function NotesExplorerContent({
   // Cascading popover state - now supports multiple popups with dragging
   const identityTransform = { x: 0, y: 0, scale: 1 }
 
+  const sharedOverlayTransform = layerContext?.transforms.popups || identityTransform
+
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
     id: string
     folder: TreeNode | null
@@ -476,11 +478,7 @@ function NotesExplorerContent({
 
         return new Map(
           sanitizedPopups.map(pop => {
-            const position = {
-              x: pop.canvasPosition.x,
-              y: pop.canvasPosition.y,
-            }
-
+            const screenPosition = CoordinateBridge.canvasToScreen(pop.canvasPosition, sharedOverlayTransform)
             const previous = prev.get(pop.id)
 
             return [
@@ -488,7 +486,7 @@ function NotesExplorerContent({
               {
                 id: pop.id,
                 folder: previous?.folder ?? null,
-                position,
+                position: screenPosition,
                 canvasPosition: pop.canvasPosition,
                 isLoading: Boolean(pop.folderId),
                 parentId: pop.parentId ?? undefined,
@@ -505,7 +503,14 @@ function NotesExplorerContent({
 
       hydratePersistedPopups(sanitizedPopups)
     },
-    [hydratePersistedPopups, setHoverPopovers, setDraggingPopup]
+    [
+      hydratePersistedPopups,
+      setHoverPopovers,
+      setDraggingPopup,
+      sharedOverlayTransform.x,
+      sharedOverlayTransform.y,
+      sharedOverlayTransform.scale,
+    ]
   )
   
   const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
@@ -514,6 +519,43 @@ function NotesExplorerContent({
     speed: 8,
     onScroll: handleAutoScroll
   })
+
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) {
+      return
+    }
+
+    setHoverPopovers(prev => {
+      let changed = false
+      const next = new Map(prev)
+
+      prev.forEach((popup, id) => {
+        if (popup.isDragging) {
+          return
+        }
+
+        const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
+        if (
+          Math.round(screenPosition.x) !== Math.round(popup.position.x) ||
+          Math.round(screenPosition.y) !== Math.round(popup.position.y)
+        ) {
+          changed = true
+          next.set(id, {
+            ...popup,
+            position: screenPosition,
+          })
+        }
+      })
+
+      return changed ? next : prev
+    })
+  }, [
+    multiLayerEnabled,
+    layerContext,
+    sharedOverlayTransform.x,
+    sharedOverlayTransform.y,
+    sharedOverlayTransform.scale,
+  ])
 
   const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
     const descriptors: OverlayPopupDescriptor[] = []
@@ -852,12 +894,6 @@ function NotesExplorerContent({
   useEffect(() => {
     if (!draggingPopup || rafDragEnabledRef.current) return
     
-    let lastPosition = { x: 0, y: 0 }
-    const popup = hoverPopovers.get(draggingPopup)
-    if (popup) {
-      lastPosition = popup.position
-    }
-    
     const handleGlobalMouseMove = (e: MouseEvent) => {
       e.preventDefault()
       
@@ -870,30 +906,31 @@ function NotesExplorerContent({
         x: Math.max(-250, Math.min(window.innerWidth - minVisible, e.clientX - dragOffset.x)),
         y: Math.max(0, Math.min(window.innerHeight - minVisible, e.clientY - dragOffset.y))
       }
-      
-      // Calculate delta for layer transform update
-      const delta = {
-        x: newPosition.x - lastPosition.x,
-        y: newPosition.y - lastPosition.y
+
+      const screenDelta = {
+        x: newPosition.x - dragScreenPosRef.current.x,
+        y: newPosition.y - dragScreenPosRef.current.y,
       }
-      
-      // Update popup position
+
+      const activeTransform = sharedOverlayTransform
+      const canvasDelta = {
+        x: screenDelta.x / activeTransform.scale,
+        y: screenDelta.y / activeTransform.scale,
+      }
+
+      dragScreenPosRef.current = { ...newPosition }
+
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
-        const popup = newMap.get(draggingPopup)
-        if (popup) {
-          // Update canvas position for multi-layer mode
-          let updatedCanvasPosition = popup.canvasPosition
-          if (multiLayerEnabled && layerContext && popup.canvasPosition) {
-            // Update canvas position directly by delta (no transform recalculation)
-            updatedCanvasPosition = {
-              x: popup.canvasPosition.x + delta.x,
-              y: popup.canvasPosition.y + delta.y
-            }
+        const popupEntry = newMap.get(draggingPopup)
+        if (popupEntry) {
+          const updatedCanvasPosition = {
+            x: popupEntry.canvasPosition.x + canvasDelta.x,
+            y: popupEntry.canvasPosition.y + canvasDelta.y,
           }
-          
+
           newMap.set(draggingPopup, {
-            ...popup,
+            ...popupEntry,
             position: newPosition,
             canvasPosition: updatedCanvasPosition,
             isDragging: true
@@ -901,17 +938,6 @@ function NotesExplorerContent({
         }
         return newMap
       })
-      
-      // Update layer transform if in multi-layer mode
-      if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'popups') {
-        // When dragging a popup while the popup layer is active,
-        // we could optionally pan the entire layer. For now, we'll
-        // just let individual popups move.
-        // Uncomment below to pan the entire layer:
-        // layerContext.updateTransform('popups', delta)
-      }
-      
-      lastPosition = newPosition
     }
     
     const handleGlobalMouseUp = (e: MouseEvent) => {
@@ -920,14 +946,16 @@ function NotesExplorerContent({
       // Stop auto-scroll when dragging ends
       stopAutoScroll()
       
-      setHoverPopovers(prev => {
-        const newMap = new Map(prev)
-        const popup = newMap.get(draggingPopup)
-        if (popup) {
+     setHoverPopovers(prev => {
+       const newMap = new Map(prev)
+       const popup = newMap.get(draggingPopup)
+       if (popup) {
+          const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
           newMap.set(draggingPopup, { 
             ...popup, 
             isDragging: false,
-            canvasPosition: popup.canvasPosition // Preserve canvas position
+            canvasPosition: popup.canvasPosition,
+            position: screenPosition,
           })
         }
         return newMap
@@ -947,7 +975,15 @@ function NotesExplorerContent({
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
       stopAutoScroll() // Stop auto-scroll on cleanup
     }
-  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, hoverPopovers, checkAutoScroll, stopAutoScroll])
+  }, [
+    draggingPopup,
+    dragOffset,
+    multiLayerEnabled,
+    layerContext,
+    sharedOverlayTransform.scale,
+    checkAutoScroll,
+    stopAutoScroll
+  ])
 
   // RAF-driven popup drag: applies transform directly to the dragged element
   useEffect(() => {
@@ -986,6 +1022,7 @@ function NotesExplorerContent({
 
       const { left, top } = dragStartPosRef.current
       dragDeltaRef.current = { dx: targetLeft - left, dy: targetTop - top }
+      dragScreenPosRef.current = { x: targetLeft, y: targetTop }
       schedule()
     }
 
@@ -999,19 +1036,16 @@ function NotesExplorerContent({
       const { dx, dy } = dragDeltaRef.current
       const finalPos = { x: left + dx, y: top + dy }
 
-      // Commit once to React state
+      const finalCanvas = CoordinateBridge.screenToCanvas(finalPos, sharedOverlayTransform)
+
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
         const popup = newMap.get(draggingPopup)
         if (popup) {
-          let updatedCanvasPosition = popup.canvasPosition
-          if (multiLayerEnabled && layerContext && popup.canvasPosition) {
-            updatedCanvasPosition = { x: popup.canvasPosition.x + dx, y: popup.canvasPosition.y + dy }
-          }
           newMap.set(draggingPopup, {
             ...popup,
             position: finalPos,
-            canvasPosition: updatedCanvasPosition,
+            canvasPosition: finalCanvas,
             isDragging: false,
           })
         }
@@ -1717,13 +1751,13 @@ function NotesExplorerContent({
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
         
-        const popupTransform = layerContext?.transforms.popups || identityTransform
-        const canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, popupTransform)
+        const canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, sharedOverlayTransform)
+        const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedOverlayTransform)
         
         newMap.set(popoverId, {
           id: popoverId,
           folder: null,
-          position: adjustedPosition,
+          position: screenPosition,
           canvasPosition,
           isLoading: true,
           parentId: parentPopoverId,
@@ -1760,13 +1794,15 @@ function NotesExplorerContent({
                 // Calculate height based on loaded content
                 const itemCount = updatedFolder.children?.length || 0
                 const height = 45 + Math.min(itemCount * 36, 320) + 30 + 20
+                const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
                 
                 newMap.set(popoverId, {
                   ...popup,
                   folder: updatedFolder,
                   isLoading: false,
                   height,
-                  canvasPosition: popup.canvasPosition // Preserve canvas position
+                  canvasPosition: popup.canvasPosition,
+                  position: screenPosition,
                 })
               }
               return newMap
@@ -1794,23 +1830,25 @@ function NotesExplorerContent({
               metadata: { folderName: folder.name, error: error.message }
             })
           })
-          setHoverPopovers(prev => {
-            const newMap = new Map(prev)
-            const popup = newMap.get(popoverId)
-            if (popup) {
-              // Empty folder - minimal height
-              const height = 45 + 60 + 30 + 20 // Header + empty message + footer + padding
-              
-              newMap.set(popoverId, {
-                ...popup,
-                folder: { ...folder, children: [] },
-                isLoading: false,
-                height,
-                canvasPosition: popup.canvasPosition // Preserve canvas position
-              })
-            }
-            return newMap
-          })
+            setHoverPopovers(prev => {
+              const newMap = new Map(prev)
+              const popup = newMap.get(popoverId)
+              if (popup) {
+                // Empty folder - minimal height
+                const height = 45 + 60 + 30 + 20 // Header + empty message + footer + padding
+                const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
+                
+                newMap.set(popoverId, {
+                  ...popup,
+                  folder: { ...folder, children: [] },
+                  isLoading: false,
+                  height,
+                  canvasPosition: popup.canvasPosition,
+                  position: screenPosition,
+                })
+              }
+              return newMap
+            })
         }
       } else {
         setHoverPopovers(prev => {
@@ -1941,19 +1979,24 @@ function NotesExplorerContent({
   const closePopover = (popoverId: string) => {
     setHoverPopovers(prev => {
       const newMap = new Map(prev)
-      
-      // Find and remove this popover and all its children
-      const toRemove = [popoverId]
+
+      const toRemove = new Set<string>([popoverId])
+      const visited = new Set<string>()
+
       const findChildren = (parentId: string) => {
+        if (visited.has(parentId)) return
+        visited.add(parentId)
+
         prev.forEach((popup, id) => {
-          if (popup.parentId === parentId) {
-            toRemove.push(id)
-            findChildren(id) // Recursively find children
+          if (popup.parentId === parentId && !toRemove.has(id)) {
+            toRemove.add(id)
+            findChildren(id)
           }
         })
       }
+
       findChildren(popoverId)
-      
+
       toRemove.forEach(id => newMap.delete(id))
       return newMap
     })
@@ -1980,9 +2023,10 @@ function NotesExplorerContent({
       x: e.clientX - popup.position.x,
       y: e.clientY - popup.position.y
     }
-    
+
     setDragOffset(offset)
     setDraggingPopup(popupId)
+    dragScreenPosRef.current = { ...popup.position }
     
     // Avoid setState at t=0 for smoother start; flag element instead
     const elFlag = document.getElementById(`popup-${popupId}`) as HTMLElement | null
