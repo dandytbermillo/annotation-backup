@@ -61,13 +61,13 @@ export class ConnectionLineAdapter {
       const pathString = this.calculateBezierPath(
         startPos,
         endPos,
-        popup.isDragging || parent.isDragging
+        Boolean(popup.isDragging || parent.isDragging)
       );
       
       // Determine styling based on motion state
       // While global motion (isDragging) is true, prefer lighter, cheaper strokes.
       // If a specific popup is being dragged, slightly emphasize that link.
-      const popupActive = popup.isDragging || parent.isDragging;
+      const popupActive = Boolean(popup.isDragging || parent.isDragging);
       if (isDragging) {
         paths.push({
           d: pathString,
@@ -100,23 +100,14 @@ export class ConnectionLineAdapter {
    */
   private static getPopupPosition(popup: PopupState): Point | null {
     // Prefer canvas position for multi-layer mode
-    if (this.currentMode === 'layered' && popup.canvasPosition) {
-      // Add offset to connect from bottom-center of parent to top-center of child
-      return {
-        x: popup.canvasPosition.x + 150, // Center of 300px wide popup
-        y: popup.canvasPosition.y + 40,  // Bottom of header (40px height)
-      };
+    if (!popup.canvasPosition) {
+      return null;
     }
-    
-    // Fallback to screen position for legacy mode
-    if (popup.position) {
-      return {
-        x: popup.position.x + 150,
-        y: popup.position.y + 40,
-      };
-    }
-    
-    return null;
+
+    return {
+      x: popup.canvasPosition.x + 150,
+      y: popup.canvasPosition.y + 40,
+    };
   }
   
   /**

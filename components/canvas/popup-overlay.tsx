@@ -14,6 +14,8 @@ import { debugLog } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
 
+const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
+
 // Auto-scroll configuration - all values are configurable, not hardcoded
 const AUTO_SCROLL_CONFIG = {
   ENABLED: process.env.NEXT_PUBLIC_DISABLE_AUTOSCROLL !== 'true', // Feature flag
@@ -566,6 +568,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Use LayerProvider to gate interactivity by active layer
   const layerCtx = useLayer();
+  const hasSharedCamera = multiLayerEnabled && layerCtx?.layers instanceof Map && layerCtx.layers.size > 0;
+  const sharedTransform = hasSharedCamera ? (layerCtx.transforms.popups || IDENTITY_TRANSFORM) : null;
+  const activeTransform = sharedTransform ?? transform;
   const isActiveLayer = !!layerCtx && layerCtx.activeLayer === 'popups';
   
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -599,7 +604,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     maxSpeed: AUTO_SCROLL_CONFIG.MAX_SPEED
   }));
   const autoScrollRef = useRef<AutoScrollState>(autoScroll);
-  const animationFrameRef = useRef<number | null>(null);
+const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (hasSharedCamera && sharedTransform) {
+      transformRef.current = { ...sharedTransform };
+    }
+  }, [hasSharedCamera, sharedTransform]);
 
   // Inject global CSS once to hard-disable selection when dragging
   useEffect(() => {
@@ -653,13 +664,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'initialized', {
         popupCount: popups.size,
-        transform,
+        transform: activeTransform,
         multiLayerEnabled,
         isActiveLayer,
         layerCtx: layerCtx?.activeLayer || 'none'
       });
     });
-  }, [popups.size, transform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
+  }, [popups.size, activeTransform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
   // Avoid per-frame logging during pan to prevent jank/flicker
   // (transform updates every pointer move)
@@ -757,7 +768,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     console.log('[PopupOverlay] PAN START!', {
       clientX: e.clientX,
       clientY: e.clientY,
-      transform,
+      transform: activeTransform,
       pointerId: e.pointerId
     });
     
@@ -765,7 +776,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       debugLog('PopupOverlay', 'pan_start', { 
         clientX: e.clientX, 
         clientY: e.clientY,
-        currentTransform: transform,
+        currentTransform: activeTransform,
         pointerId: e.pointerId,
         isActiveLayer,
         popupCount: popups.size
@@ -798,12 +809,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Prevent text selection while dragging
     enableSelectionGuards();
     document.body.style.userSelect = 'none';
-    if (containerRef.current) {
-      // Apply GPU optimization hints directly during drag
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('overlay-pan');
+      transformRef.current = { ...activeTransform };
+    } else if (containerRef.current) {
       containerRef.current.style.willChange = 'transform';
       containerRef.current.style.backfaceVisibility = 'hidden';
       containerRef.current.style.perspective = '1000px';
-      // Sync current transform into ref and element style
       transformRef.current = { ...transform };
       const { x, y, scale } = transformRef.current;
       containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
@@ -813,7 +825,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     
     // Only prevent default for actual drag operations
     e.preventDefault();
-  }, [isOverlayEmptySpace, transform, isActiveLayer, popups.size]);
+  }, [
+    isOverlayEmptySpace,
+    transform,
+    sharedTransform,
+    activeTransform,
+    hasSharedCamera,
+    isActiveLayer,
+    popups.size,
+    layerCtx
+  ]);
   
   // Handle pan move (simplified like notes canvas)
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -842,31 +863,33 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
     }
     
-    // Update transform via ref and schedule RAF to apply element style only
-    transformRef.current = {
-      ...transformRef.current,
-      x: transformRef.current.x + deltaX,
-      y: transformRef.current.y + deltaY,
-    };
-    // Apply immediate transform for first responsive frame
-    if (containerRef.current) {
-      const { x, y, scale } = transformRef.current;
-      containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
-    }
-    if (rafIdRef.current == null) {
-      rafIdRef.current = requestAnimationFrame((ts) => {
-        rafIdRef.current = null;
-        if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
-        lastRafTsRef.current = ts;
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY });
+    } else {
+      transformRef.current = {
+        ...transformRef.current,
+        x: transformRef.current.x + deltaX,
+        y: transformRef.current.y + deltaY,
+      };
+      if (containerRef.current) {
         const { x, y, scale } = transformRef.current;
-        if (containerRef.current) {
-          containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
-        }
-      });
+        containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+      }
+      if (rafIdRef.current == null) {
+        rafIdRef.current = requestAnimationFrame((ts) => {
+          rafIdRef.current = null;
+          if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
+          lastRafTsRef.current = ts;
+          const { x, y, scale } = transformRef.current;
+          if (containerRef.current) {
+            containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+          }
+        });
+      }
     }
     
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
-  }, [isPanning, engaged, popups.size]);
+  }, [isPanning, engaged, popups.size, hasSharedCamera, layerCtx]);
   
   // Handle pan end (simplified)
   const handlePointerEnd = useCallback((e: React.PointerEvent) => {
@@ -875,8 +898,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'pan_end', { 
         totalDelta: {
-          x: transform.x,
-          y: transform.y
+          x: activeTransform.x,
+          y: activeTransform.y
         },
         pointerId: e.pointerId,
         wasEngaged: engaged
@@ -905,24 +928,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     
     // Reset styles
     document.body.style.userSelect = '';
-    if (containerRef.current) {
-      // Reset GPU optimization hints after drag
+    if (!hasSharedCamera && containerRef.current) {
       containerRef.current.style.willChange = 'auto';
       containerRef.current.style.backfaceVisibility = '';
       containerRef.current.style.perspective = '';
-      // Clear transform so React state can control again
       containerRef.current.style.transform = '';
     }
     if (overlayRef.current) overlayRef.current.style.cursor = '';
-    // Commit the final transform once to React state
-    setTransform(prev => ({ ...prev, ...transformRef.current }));
+    if (!hasSharedCamera) {
+      setTransform(prev => ({ ...prev, ...transformRef.current }));
+    }
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
     // Re-enable selection
     disableSelectionGuards();
-  }, [isPanning, transform, engaged]);
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('none');
+    }
+  }, [isPanning, hasSharedCamera, layerCtx, engaged, activeTransform]);
   
   // Note: With pointer capture, we don't need document-level listeners
   // The pointer events will continue to fire on the overlay even when
@@ -972,10 +997,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Container transform style with translate3d for GPU acceleration
   const containerStyle: React.CSSProperties = {
     // Round to nearest 0.5px to reduce jitter while maintaining smoothness
-    transform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
+    transform: `translate3d(${Math.round(activeTransform.x * 2) / 2}px, ${Math.round(activeTransform.y * 2) / 2}px, 0) scale(${activeTransform.scale})`,
     transformOrigin: '0 0',
     // Only apply will-change during active panning to optimize GPU layers
-    willChange: isPanning ? 'transform' : 'auto',
+    willChange: isPanning && !hasSharedCamera ? 'transform' : 'auto',
     // Force stable GPU layer to prevent text rasterization issues
     backfaceVisibility: 'hidden',
     transformStyle: 'preserve-3d',
@@ -984,12 +1009,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Ensure we're on a separate compositing layer
     isolation: 'isolate',
     // Force GPU acceleration
-    WebkitTransform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
+    WebkitTransform: `translate3d(${Math.round(activeTransform.x * 2) / 2}px, ${Math.round(activeTransform.y * 2) / 2}px, 0) scale(${activeTransform.scale})`,
     // Prevent font antialiasing changes during transform
     WebkitFontSmoothing: 'antialiased',
     MozOsxFontSmoothing: 'grayscale',
     // Apply subtle opacity during pan to force simpler rendering
-    opacity: isPanning ? 0.999 : 1,
+    opacity: isPanning && !hasSharedCamera ? 0.999 : 1,
   };
 
   // Recompute overlay bounds to match the canvas area (avoids hardcoded offsets)
@@ -1152,10 +1177,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     return Array.from(popups.values()).filter((popup) => {
       if (!popup.canvasPosition) return false
       
-      // Convert canvas position to screen position
       const screenPos = CoordinateBridge.canvasToScreen(
         popup.canvasPosition || popup.position,
-        transform
+        activeTransform
       )
       
       // Check if popup is within viewport (with some margin)
@@ -1170,7 +1194,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         screenPos.y <= viewport.height + margin
       )
     })
-  }, [popups, transform])
+  }, [popups, activeTransform])
   
   // Build overlay contents (absolute inside canvas container)
   const overlayInner = (

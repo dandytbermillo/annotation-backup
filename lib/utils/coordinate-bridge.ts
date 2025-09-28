@@ -29,7 +29,7 @@ export interface Rect {
  * All methods are static to ensure consistent usage across the codebase
  */
 export class CoordinateBridge {
-  private static migrationMode: 'screen' | 'canvas' | 'hybrid' = 'hybrid';
+  private static migrationMode: 'screen' | 'canvas' | 'hybrid' = 'canvas';
   
   /**
    * Convert screen coordinates to canvas coordinates

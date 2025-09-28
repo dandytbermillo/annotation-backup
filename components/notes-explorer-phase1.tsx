@@ -202,11 +202,13 @@ function NotesExplorerContent({
   }, [overlayPersistenceEnabled])
   
   // Cascading popover state - now supports multiple popups with dragging
+  const identityTransform = { x: 0, y: 0, scale: 1 }
+
   const [hoverPopovers, setHoverPopovers] = useState<Map<string, {
     id: string
     folder: TreeNode | null
     position: { x: number, y: number } // Screen position (for legacy mode)
-    canvasPosition?: { x: number, y: number } // Canvas position (for multi-layer mode) - stored once, not recalculated
+    canvasPosition: { x: number, y: number } // Canvas position (world space)
     isLoading: boolean
     parentId?: string // To track relationships for connection lines
     level: number // Depth level for positioning
@@ -233,6 +235,36 @@ function NotesExplorerContent({
       return
     }
 
+    if (multiLayerEnabled && layerContext) {
+      layerContext.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY })
+
+      if (draggingPopup) {
+        dragScreenPosRef.current = {
+          x: dragScreenPosRef.current.x + deltaX,
+          y: dragScreenPosRef.current.y + deltaY,
+        }
+
+        if (rafDragEnabledRef.current && draggingElRef.current) {
+          dragDeltaRef.current.dx -= deltaX
+          dragDeltaRef.current.dy -= deltaY
+
+          if (dragRafRef.current == null) {
+            dragRafRef.current = requestAnimationFrame(() => {
+              dragRafRef.current = null
+              const el = draggingElRef.current
+              if (!el) {
+                return
+              }
+              const { dx, dy } = dragDeltaRef.current
+              el.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`
+            })
+          }
+        }
+      }
+
+      return
+    }
+
     // Apply auto-scroll to all popups
     setHoverPopovers(prev => {
       if (prev.size === 0) {
@@ -248,22 +280,18 @@ function NotesExplorerContent({
           y: popup.position.y + deltaY
         }
 
-        const nextCanvasPosition = popup.canvasPosition
-          ? {
-              x: popup.canvasPosition.x + deltaX,
-              y: popup.canvasPosition.y + deltaY
-            }
-          : undefined
+        const nextCanvasPosition = {
+          x: popup.canvasPosition.x + deltaX,
+          y: popup.canvasPosition.y + deltaY
+        }
 
         const positionUnchanged =
           popup.position.x === nextPosition.x &&
           popup.position.y === nextPosition.y
 
-        const canvasUnchanged = popup.canvasPosition
-          ? nextCanvasPosition !== undefined &&
-            popup.canvasPosition.x === nextCanvasPosition.x &&
-            popup.canvasPosition.y === nextCanvasPosition.y
-          : true
+        const canvasUnchanged =
+          popup.canvasPosition.x === nextCanvasPosition.x &&
+          popup.canvasPosition.y === nextCanvasPosition.y
 
         if (positionUnchanged && canvasUnchanged) {
           return
@@ -491,7 +519,7 @@ function NotesExplorerContent({
     const descriptors: OverlayPopupDescriptor[] = []
 
     hoverPopovers.forEach(popover => {
-      const basePosition = popover.canvasPosition || popover.position
+      const basePosition = popover.canvasPosition
       if (!basePosition) {
         return
       }
@@ -642,15 +670,13 @@ function NotesExplorerContent({
   // Convert popup state for multi-layer canvas
   const adaptedPopups = useMemo(() => {
     if (!multiLayerEnabled || !layerContext) return null
-    
+
     const adapted = new Map()
-    
+
     hoverPopovers.forEach((popup, id) => {
       adapted.set(id, {
         ...popup,
-        // Use stored canvas position if available, don't recalculate!
-        // This prevents position/transform cancellation
-        canvasPosition: popup.canvasPosition || popup.position // Fallback to screen position if canvas not set
+        canvasPosition: popup.canvasPosition
       })
     })
     return adapted
@@ -1691,18 +1717,14 @@ function NotesExplorerContent({
       setHoverPopovers(prev => {
         const newMap = new Map(prev)
         
-        // Calculate canvas position once when creating popup (for multi-layer mode)
-        let canvasPosition = undefined
-        if (multiLayerEnabled && layerContext) {
-          const popupTransform = layerContext.transforms.popups || { x: 0, y: 0, scale: 1 }
-          canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, popupTransform)
-        }
+        const popupTransform = layerContext?.transforms.popups || identityTransform
+        const canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, popupTransform)
         
         newMap.set(popoverId, {
           id: popoverId,
           folder: null,
           position: adjustedPosition,
-          canvasPosition, // Store canvas position once, don't recalculate on render
+          canvasPosition,
           isLoading: true,
           parentId: parentPopoverId,
           level,
