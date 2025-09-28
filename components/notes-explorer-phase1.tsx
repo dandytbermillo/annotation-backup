@@ -227,7 +227,6 @@ function NotesExplorerContent({
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
   // Plain-mode overlay container + offset (acts like a camera transform)
   const overlayContainerRef = useRef<HTMLDivElement | null>(null)
-  const [plainOverlayOffset, setPlainOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const plainOverlayOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   // RAF-driven drag refs (avoid per-move React updates)
   const draggingElRef = useRef<HTMLElement | null>(null)
@@ -249,9 +248,6 @@ function NotesExplorerContent({
     })
 
     plainOverlayOffsetRef.current = { x: 0, y: 0 }
-    setPlainOverlayOffset(prev => (
-      prev.x === 0 && prev.y === 0 ? prev : { x: 0, y: 0 }
-    ))
 
     if (overlayContainerRef.current) {
       overlayContainerRef.current.style.transform = 'translate3d(0px, 0px, 0)'
@@ -333,6 +329,11 @@ function NotesExplorerContent({
           dragDeltaRef.current.dx -= deltaX
           dragDeltaRef.current.dy -= deltaY
 
+          const el = draggingElRef.current
+          if (el) {
+            el.style.transform = `translate3d(${Math.round(dragDeltaRef.current.dx)}px, ${Math.round(dragDeltaRef.current.dy)}px, 0)`
+          }
+
           if (dragRafRef.current == null) {
             dragRafRef.current = requestAnimationFrame(() => {
               dragRafRef.current = null
@@ -367,10 +368,6 @@ function NotesExplorerContent({
         dragging: Boolean(draggingPopupRef.current),
       })
 
-      setPlainOverlayOffset(prev => (
-        prev.x === nextOffset.x && prev.y === nextOffset.y ? prev : nextOffset
-      ))
-
       if (draggingPopupRef.current) {
         dragScreenPosRef.current = {
           x: dragScreenPosRef.current.x + deltaX,
@@ -380,6 +377,11 @@ function NotesExplorerContent({
         if (rafDragEnabledRef.current && draggingElRef.current) {
           dragDeltaRef.current.dx -= deltaX
           dragDeltaRef.current.dy -= deltaY
+
+          const el = draggingElRef.current
+          if (el) {
+            el.style.transform = `translate3d(${Math.round(dragDeltaRef.current.dx)}px, ${Math.round(dragDeltaRef.current.dy)}px, 0)`
+          }
 
           if (dragRafRef.current == null) {
             dragRafRef.current = requestAnimationFrame(() => {
@@ -1069,7 +1071,6 @@ function NotesExplorerContent({
 
           newMap.set(draggingPopup, {
             ...popupEntry,
-            position: newPosition,
             canvasPosition: updatedCanvasPosition,
             isDragging: true
           })
@@ -2240,18 +2241,6 @@ function NotesExplorerContent({
       y: e.clientY - screenPosition.y
     }
 
-    setHoverPopovers(prev => {
-      const next = new Map(prev)
-      const currentPopup = next.get(popupId)
-      if (currentPopup) {
-        next.set(popupId, {
-          ...currentPopup,
-          position: screenPosition,
-        })
-      }
-      return next
-    })
-
     setDragOffset(offset)
     setDraggingPopup(popupId)
     draggingPopupRef.current = popupId
@@ -2322,7 +2311,6 @@ function NotesExplorerContent({
           ...popup,
           isDragging: false,
           canvasPosition: finalCanvasPosition,
-          position: screenPosition,
         })
 
         dragScreenPosRef.current = { ...screenPosition }
@@ -3720,32 +3708,35 @@ function NotesExplorerContent({
           ref={overlayContainerRef}
           className="fixed inset-0"
           style={{
-            transform: `translate3d(${plainOverlayOffset.x}px, ${plainOverlayOffset.y}px, 0)`,
+            transform: `translate3d(${plainOverlayOffsetRef.current.x}px, ${plainOverlayOffsetRef.current.y}px, 0)`,
             willChange: 'transform',
           }}
         >
-          {Array.from(hoverPopovers.values()).map((popover) => (
-            <div
-              key={popover.id}
-              id={`popup-${popover.id}`}
-              className="absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
-              style={{
-                zIndex: popover.isDragging ? 10000 : 9999 + popover.level, // Highest z-index when dragging
-                left: `${popover.position.x}px`,
-                top: `${popover.position.y}px`,
-                width: '300px',
-                maxHeight: '80vh', // Use viewport height for better flexibility
-                cursor: popover.isDragging ? 'grabbing' : 'default',
-                transition: popover.isDragging ? 'none' : 'box-shadow 0.2s ease'
-              }}
-              onMouseEnter={() => {
-                // Keep popover open when hovering over it
-              }}
-              onMouseLeave={() => {
-                // Optional: could close this popover and its children
-                // closePopover(popover.id)
-              }}
-            >
+          {Array.from(hoverPopovers.values()).map((popover) => {
+            const screenPosition = CoordinateBridge.canvasToScreen(popover.canvasPosition, sharedOverlayTransform)
+
+            return (
+              <div
+                key={popover.id}
+                id={`popup-${popover.id}`}
+                className="absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
+                style={{
+                  zIndex: popover.isDragging ? 10000 : 9999 + popover.level,
+                  left: `${screenPosition.x}px`,
+                  top: `${screenPosition.y}px`,
+                  width: '300px',
+                  maxHeight: '80vh',
+                  cursor: popover.isDragging ? 'grabbing' : 'default',
+                  transition: popover.isDragging ? 'none' : 'box-shadow 0.2s ease'
+                }}
+                onMouseEnter={() => {
+                  // Keep popover open when hovering over it
+                }}
+                onMouseLeave={() => {
+                  // Optional: could close this popover and its children
+                  // closePopover(popover.id)
+                }}
+              >
               {/* Popover Header - Draggable Area */}
               <div 
                 className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
@@ -3823,7 +3814,8 @@ function NotesExplorerContent({
                 {popover.folder?.children?.length || 0} items
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       
@@ -3896,22 +3888,25 @@ function NotesExplorerContent({
             const headerHeight = 45
             
             // Calculate actual popup boundaries
+            const parentScreen = CoordinateBridge.canvasToScreen(parent.canvasPosition, sharedOverlayTransform)
+            const childScreen = CoordinateBridge.canvasToScreen(popover.canvasPosition, sharedOverlayTransform)
+
             const parentBounds = {
-              left: parent.position.x,
-              right: parent.position.x + popupWidth,
-              top: parent.position.y,
-              bottom: parent.position.y + parentHeight,
-              centerX: parent.position.x + popupWidth / 2,
-              centerY: parent.position.y + parentHeight / 2
+              left: parentScreen.x,
+              right: parentScreen.x + popupWidth,
+              top: parentScreen.y,
+              bottom: parentScreen.y + parentHeight,
+              centerX: parentScreen.x + popupWidth / 2,
+              centerY: parentScreen.y + parentHeight / 2
             }
             
             const childBounds = {
-              left: popover.position.x,
-              right: popover.position.x + popupWidth,
-              top: popover.position.y,
-              bottom: popover.position.y + childHeight,
-              centerX: popover.position.x + popupWidth / 2,
-              centerY: popover.position.y + childHeight / 2
+              left: childScreen.x,
+              right: childScreen.x + popupWidth,
+              top: childScreen.y,
+              bottom: childScreen.y + childHeight,
+              centerX: childScreen.x + popupWidth / 2,
+              centerY: childScreen.y + childHeight / 2
             }
             
             // Calculate relative position more accurately
