@@ -251,3 +251,4 @@
 {"ts":"2025-09-28T20:12:31.261Z","type":"commit","sha":"1348165b16288eccbd1371dd0e7be1e6fc168a3f","files_changed":3,"message":"fixing scroll-auto"}
 {"ts":"2025-09-28T20:31:32.049Z","type":"commit","sha":"aabc5f666df788f6866e691fbb7a41955284ceeb","files_changed":3,"message":"to implement auto-scroll on note canvas"}
 {"ts":"2025-09-28T20:50:59Z","type":"note","title":"Resumed canvas overlay work","body":"Reviewed policy, resume, and isolation-reactivity guardrails; refreshed plan to add panBy helper and rework Notes Explorer auto-scroll to rely on canvas camera."}
+{"ts":"2025-09-28T21:36:31.549Z","type":"commit","sha":"5282db4fee12043080ac205a5688586ac7c9dff0","files_changed":5,"message":"still fixing autoscroll on canvas"}

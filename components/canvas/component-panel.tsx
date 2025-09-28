@@ -74,14 +74,12 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     if (!dragState.current.isDragging) return
     
     if (isCameraEnabled) {
-      // Use camera-based panning
-      panCameraBy({ dxScreen: deltaX, dyScreen: deltaY })
+      // Use camera-based panning (pan opposite to pointer delta)
+      panCameraBy({ dxScreen: -deltaX, dyScreen: -deltaY })
       
-      // Track accumulated pan for drop coordinate adjustment. Camera movement
-      // is opposite the screen delta, so subtract to keep the component under
-      // the pointer in screen space.
-      dragState.current.initialPosition.x -= deltaX
-      dragState.current.initialPosition.y -= deltaY
+      // Keep the dragged component aligned with the pointer in screen space
+      dragState.current.initialPosition.x += deltaX
+      dragState.current.initialPosition.y += deltaY
     } else {
       // Legacy: Move ALL panels and components to simulate canvas panning
       const allPanels = document.querySelectorAll('[data-panel-id]')
