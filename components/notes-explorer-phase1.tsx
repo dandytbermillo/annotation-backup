@@ -223,14 +223,97 @@ function NotesExplorerContent({
   
   // Dragging state for popups
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
+  const draggingPopupRef = useRef<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  // Plain-mode overlay container + offset (acts like a camera transform)
+  const overlayContainerRef = useRef<HTMLDivElement | null>(null)
+  const [plainOverlayOffset, setPlainOverlayOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const plainOverlayOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   // RAF-driven drag refs (avoid per-move React updates)
   const draggingElRef = useRef<HTMLElement | null>(null)
   const dragStartPosRef = useRef<{ left: number; top: number }>({ left: 0, top: 0 })
   const dragDeltaRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 })
   const dragRafRef = useRef<number | null>(null)
   const rafDragEnabledRef = useRef<boolean>(false)
-  
+  const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+ 
+  const resetPlainOverlayOffset = useCallback((reason: string) => {
+    const current = plainOverlayOffsetRef.current
+    if (current.x === 0 && current.y === 0) {
+      return
+    }
+
+    debugLog('NotesExplorer', 'plain_auto_scroll_reset', {
+      reason,
+      offset: current,
+    })
+
+    plainOverlayOffsetRef.current = { x: 0, y: 0 }
+    setPlainOverlayOffset(prev => (
+      prev.x === 0 && prev.y === 0 ? prev : { x: 0, y: 0 }
+    ))
+
+    if (overlayContainerRef.current) {
+      overlayContainerRef.current.style.transform = 'translate3d(0px, 0px, 0)'
+    }
+  }, [])
+
+  const applyPlainOverlayOffsetToPopups = useCallback(
+    (source: Map<string, {
+      id: string
+      folder: TreeNode | null
+      position: { x: number, y: number }
+      canvasPosition: { x: number, y: number }
+      isLoading: boolean
+      parentId?: string
+      level: number
+      isDragging?: boolean
+      height?: number
+      isPersistent?: boolean
+    }>, options?: { skipId?: string | null }) => {
+      const offset = plainOverlayOffsetRef.current
+      if (offset.x === 0 && offset.y === 0) {
+        return source
+      }
+
+      if (source.size === 0) {
+        return source
+      }
+
+      const scale = sharedOverlayTransform.scale || 1
+      const canvasDelta = {
+        x: offset.x / scale,
+        y: offset.y / scale,
+      }
+
+      let changed = false
+      const adjusted = new Map(source)
+
+      adjusted.forEach((popup, id) => {
+        if (options?.skipId && id === options.skipId) {
+          return
+        }
+
+        const updatedCanvas = {
+          x: popup.canvasPosition.x + canvasDelta.x,
+          y: popup.canvasPosition.y + canvasDelta.y,
+        }
+
+        const screenPosition = CoordinateBridge.canvasToScreen(updatedCanvas, sharedOverlayTransform)
+
+        adjusted.set(id, {
+          ...popup,
+          canvasPosition: updatedCanvas,
+          position: screenPosition,
+        })
+        changed = true
+      })
+
+      return changed ? adjusted : source
+    },
+    [sharedOverlayTransform]
+  )
+
   // Auto-scroll when dragging near edges
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
     if (deltaX === 0 && deltaY === 0) {
@@ -240,7 +323,7 @@ function NotesExplorerContent({
     if (multiLayerEnabled && layerContext) {
       layerContext.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY })
 
-      if (draggingPopup) {
+      if (draggingPopupRef.current) {
         dragScreenPosRef.current = {
           x: dragScreenPosRef.current.x + deltaX,
           y: dragScreenPosRef.current.y + deltaY,
@@ -267,7 +350,59 @@ function NotesExplorerContent({
       return
     }
 
-    // Apply auto-scroll to all popups
+    if (overlayContainerRef.current) {
+      const previousOffset = { ...plainOverlayOffsetRef.current }
+      const nextOffset = {
+        x: plainOverlayOffsetRef.current.x + deltaX,
+        y: plainOverlayOffsetRef.current.y + deltaY,
+      }
+
+      plainOverlayOffsetRef.current = nextOffset
+      overlayContainerRef.current.style.transform = `translate3d(${Math.round(nextOffset.x)}px, ${Math.round(nextOffset.y)}px, 0)`
+
+      debugLog('NotesExplorer', 'plain_auto_scroll_step', {
+        delta: { x: deltaX, y: deltaY },
+        offsetBefore: previousOffset,
+        offsetAfter: nextOffset,
+        dragging: Boolean(draggingPopupRef.current),
+      })
+
+      setPlainOverlayOffset(prev => (
+        prev.x === nextOffset.x && prev.y === nextOffset.y ? prev : nextOffset
+      ))
+
+      if (draggingPopupRef.current) {
+        dragScreenPosRef.current = {
+          x: dragScreenPosRef.current.x + deltaX,
+          y: dragScreenPosRef.current.y + deltaY,
+        }
+
+        if (rafDragEnabledRef.current && draggingElRef.current) {
+          dragDeltaRef.current.dx -= deltaX
+          dragDeltaRef.current.dy -= deltaY
+
+          if (dragRafRef.current == null) {
+            dragRafRef.current = requestAnimationFrame(() => {
+              dragRafRef.current = null
+              const el = draggingElRef.current
+              if (!el) {
+                return
+              }
+              const { dx, dy } = dragDeltaRef.current
+              el.style.transform = `translate3d(${Math.round(dx)}px, ${Math.round(dy)}px, 0)`
+              debugLog('NotesExplorer', 'plain_auto_scroll_applied', {
+                delta: { x: deltaX, y: deltaY },
+                dragDelta: { ...dragDeltaRef.current },
+              })
+            })
+          }
+        }
+      }
+
+      return
+    }
+
+    // Fallback if the overlay container is unavailable
     setHoverPopovers(prev => {
       if (prev.size === 0) {
         return prev
@@ -310,7 +445,6 @@ function NotesExplorerContent({
       return changed ? nextMap : prev
     })
 
-    // Also update the dragging element's transform if using RAF mode
     if (rafDragEnabledRef.current && draggingElRef.current) {
       dragDeltaRef.current.dx += deltaX
       dragDeltaRef.current.dy += deltaY
@@ -519,6 +653,10 @@ function NotesExplorerContent({
     speed: 8,
     onScroll: handleAutoScroll
   })
+
+  useEffect(() => {
+    draggingPopupRef.current = draggingPopup
+  }, [draggingPopup])
 
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) {
@@ -945,23 +1083,55 @@ function NotesExplorerContent({
       
       // Stop auto-scroll when dragging ends
       stopAutoScroll()
-      
-     setHoverPopovers(prev => {
-       const newMap = new Map(prev)
-       const popup = newMap.get(draggingPopup)
-       if (popup) {
-          const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedOverlayTransform)
-          newMap.set(draggingPopup, { 
-            ...popup, 
+
+      const offsetSnapshot = { ...plainOverlayOffsetRef.current }
+      const hasPlainOffset = !multiLayerEnabled && (offsetSnapshot.x !== 0 || offsetSnapshot.y !== 0)
+
+      setHoverPopovers(prev => {
+        const baseMap = hasPlainOffset
+          ? applyPlainOverlayOffsetToPopups(prev, { skipId: draggingPopup })
+          : prev
+
+        if (!draggingPopup) {
+          return baseMap === prev ? new Map(baseMap) : baseMap
+        }
+
+        const next = new Map(baseMap)
+        const popup = next.get(draggingPopup)
+        if (popup) {
+          const scale = sharedOverlayTransform.scale || 1
+          const canvasDelta = hasPlainOffset
+            ? {
+                x: offsetSnapshot.x / scale,
+                y: offsetSnapshot.y / scale,
+              }
+            : { x: 0, y: 0 }
+
+          const finalCanvasPosition = {
+            x: popup.canvasPosition.x + canvasDelta.x,
+            y: popup.canvasPosition.y + canvasDelta.y,
+          }
+
+          const screenPosition = CoordinateBridge.canvasToScreen(finalCanvasPosition, sharedOverlayTransform)
+
+          next.set(draggingPopup, {
+            ...popup,
             isDragging: false,
-            canvasPosition: popup.canvasPosition,
+            canvasPosition: finalCanvasPosition,
             position: screenPosition,
           })
+
+          dragScreenPosRef.current = { ...screenPosition }
         }
-        return newMap
+        return next
       })
-      
+
+      if (hasPlainOffset) {
+        resetPlainOverlayOffset('mouse_up_plain_drag')
+      }
+
       setDraggingPopup(null)
+      draggingPopupRef.current = null
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
@@ -980,9 +1150,11 @@ function NotesExplorerContent({
     dragOffset,
     multiLayerEnabled,
     layerContext,
-    sharedOverlayTransform.scale,
+    sharedOverlayTransform,
     checkAutoScroll,
-    stopAutoScroll
+    stopAutoScroll,
+    applyPlainOverlayOffsetToPopups,
+    resetPlainOverlayOffset
   ])
 
   // RAF-driven popup drag: applies transform directly to the dragged element
@@ -1036,21 +1208,44 @@ function NotesExplorerContent({
       const { dx, dy } = dragDeltaRef.current
       const finalPos = { x: left + dx, y: top + dy }
 
-      const finalCanvas = CoordinateBridge.screenToCanvas(finalPos, sharedOverlayTransform)
+      const offsetSnapshot = { ...plainOverlayOffsetRef.current }
+      const hasPlainOffset = !multiLayerEnabled && (offsetSnapshot.x !== 0 || offsetSnapshot.y !== 0)
+      const finalScreenPosition = hasPlainOffset
+        ? {
+            x: finalPos.x + offsetSnapshot.x,
+            y: finalPos.y + offsetSnapshot.y,
+          }
+        : finalPos
+
+      const finalCanvas = CoordinateBridge.screenToCanvas(finalScreenPosition, sharedOverlayTransform)
 
       setHoverPopovers(prev => {
-        const newMap = new Map(prev)
-        const popup = newMap.get(draggingPopup)
+        const baseMap = hasPlainOffset
+          ? applyPlainOverlayOffsetToPopups(prev, { skipId: draggingPopup })
+          : prev
+
+        if (!draggingPopup) {
+          return baseMap === prev ? new Map(baseMap) : baseMap
+        }
+
+        const next = new Map(baseMap)
+        const popup = next.get(draggingPopup)
         if (popup) {
-          newMap.set(draggingPopup, {
+          next.set(draggingPopup, {
             ...popup,
-            position: finalPos,
+            position: finalScreenPosition,
             canvasPosition: finalCanvas,
             isDragging: false,
           })
         }
-        return newMap
+        return next
       })
+
+      dragScreenPosRef.current = { ...finalScreenPosition }
+
+      if (hasPlainOffset) {
+        resetPlainOverlayOffset('raf_mouse_up_plain_drag')
+      }
 
       // Reset styles
       if (el) {
@@ -1070,6 +1265,7 @@ function NotesExplorerContent({
       dragDeltaRef.current = { dx: 0, dy: 0 }
       rafDragEnabledRef.current = false
       setDraggingPopup(null)
+      draggingPopupRef.current = null
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
@@ -1087,7 +1283,17 @@ function NotesExplorerContent({
       rafDragEnabledRef.current = false
       stopAutoScroll() // Stop auto-scroll on cleanup
     }
-  }, [draggingPopup, dragOffset, multiLayerEnabled, layerContext, setHoverPopovers, checkAutoScroll, stopAutoScroll])
+  }, [
+    draggingPopup,
+    dragOffset,
+    multiLayerEnabled,
+    layerContext,
+    setHoverPopovers,
+    checkAutoScroll,
+    stopAutoScroll,
+    applyPlainOverlayOffsetToPopups,
+    resetPlainOverlayOffset
+  ])
   
   // Track note access
   const trackNoteAccess = useCallback(async (noteId: string) => {
@@ -2004,9 +2210,10 @@ function NotesExplorerContent({
     // Clear dragging state if this popup was being dragged
     if (draggingPopup === popoverId) {
       setDraggingPopup(null)
+      draggingPopupRef.current = null
     }
   }
-  
+
   // Handle popup drag start
   const handlePopupDragStart = (popupId: string, e: React.MouseEvent) => {
     e.preventDefault() // Prevent text selection during drag
@@ -2019,14 +2226,24 @@ function NotesExplorerContent({
     const rect = e.currentTarget.getBoundingClientRect()
     
     // Calculate offset from mouse to popup position
+    const overlayOffset = (!multiLayerEnabled && plainOverlayOffsetRef.current)
+      ? plainOverlayOffsetRef.current
+      : { x: 0, y: 0 }
+
+    const screenPosition = {
+      x: popup.position.x + overlayOffset.x,
+      y: popup.position.y + overlayOffset.y,
+    }
+
     const offset = {
-      x: e.clientX - popup.position.x,
-      y: e.clientY - popup.position.y
+      x: e.clientX - screenPosition.x,
+      y: e.clientY - screenPosition.y
     }
 
     setDragOffset(offset)
     setDraggingPopup(popupId)
-    dragScreenPosRef.current = { ...popup.position }
+    draggingPopupRef.current = popupId
+    dragScreenPosRef.current = { ...screenPosition }
     
     // Avoid setState at t=0 for smoother start; flag element instead
     const elFlag = document.getElementById(`popup-${popupId}`) as HTMLElement | null
@@ -2041,8 +2258,8 @@ function NotesExplorerContent({
     const el = document.getElementById(`popup-${popupId}`) as HTMLElement | null
     if (el) {
       draggingElRef.current = el
-      const startLeft = parseFloat(el.style.left || '0')
-      const startTop = parseFloat(el.style.top || '0')
+      const startLeft = parseFloat(el.style.left || '0') + overlayOffset.x
+      const startTop = parseFloat(el.style.top || '0') + overlayOffset.y
       dragStartPosRef.current = { left: startLeft, top: startTop }
       dragDeltaRef.current = { dx: 0, dy: 0 }
       el.style.willChange = 'transform'
@@ -2064,23 +2281,52 @@ function NotesExplorerContent({
   // Handle popup drag end
   const handlePopupDragEnd = () => {
     if (!draggingPopup) return
-    
-    // Remove dragging state
+
+    const offsetSnapshot = { ...plainOverlayOffsetRef.current }
+    const hasPlainOffset = !multiLayerEnabled && (offsetSnapshot.x !== 0 || offsetSnapshot.y !== 0)
+
     setHoverPopovers(prev => {
-      const newMap = new Map(prev)
-      const popup = newMap.get(draggingPopup)
+      const baseMap = hasPlainOffset
+        ? applyPlainOverlayOffsetToPopups(prev, { skipId: draggingPopup })
+        : prev
+
+      const next = new Map(baseMap)
+      const popup = next.get(draggingPopup)
       if (popup) {
-        newMap.set(draggingPopup, { 
-          ...popup, 
+        const scale = sharedOverlayTransform.scale || 1
+        const canvasDelta = hasPlainOffset
+          ? {
+              x: offsetSnapshot.x / scale,
+              y: offsetSnapshot.y / scale,
+            }
+          : { x: 0, y: 0 }
+
+        const finalCanvasPosition = {
+          x: popup.canvasPosition.x + canvasDelta.x,
+          y: popup.canvasPosition.y + canvasDelta.y,
+        }
+
+        const screenPosition = CoordinateBridge.canvasToScreen(finalCanvasPosition, sharedOverlayTransform)
+
+        next.set(draggingPopup, {
+          ...popup,
           isDragging: false,
-          canvasPosition: popup.canvasPosition // Preserve canvas position
+          canvasPosition: finalCanvasPosition,
+          position: screenPosition,
         })
+
+        dragScreenPosRef.current = { ...screenPosition }
       }
-      return newMap
+      return next
     })
-    
+
+    if (hasPlainOffset) {
+      resetPlainOverlayOffset('manual_drag_end_plain')
+    }
+
     setDraggingPopup(null)
-    
+    draggingPopupRef.current = null
+
     // Reset cursor
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
@@ -3460,107 +3706,115 @@ function NotesExplorerContent({
           onLeaveFolder={handleFolderHoverLeave}
         />
       ) : (
-        // Legacy popup rendering
-        Array.from(hoverPopovers.values()).map((popover) => (
         <div
-          key={popover.id}
-          id={`popup-${popover.id}`}
-          className="fixed bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
+          ref={overlayContainerRef}
+          className="fixed inset-0"
           style={{
-            zIndex: popover.isDragging ? 10000 : 9999 + popover.level, // Highest z-index when dragging
-            left: `${popover.position.x}px`,
-            top: `${popover.position.y}px`,
-            width: '300px',
-            maxHeight: '80vh', // Use viewport height for better flexibility
-            cursor: popover.isDragging ? 'grabbing' : 'default',
-            transition: popover.isDragging ? 'none' : 'box-shadow 0.2s ease'
-          }}
-          onMouseEnter={() => {
-            // Keep popover open when hovering over it
-          }}
-          onMouseLeave={() => {
-            // Optional: could close this popover and its children
-            // closePopover(popover.id)
+            transform: `translate3d(${plainOverlayOffset.x}px, ${plainOverlayOffset.y}px, 0)`,
+            willChange: 'transform',
           }}
         >
-          {/* Popover Header - Draggable Area */}
-          <div 
-            className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
-            onMouseDown={(e) => handlePopupDragStart(popover.id, e)}
-            style={{
-              backgroundColor: popover.isDragging ? '#374151' : 'transparent'
-            }}
-          >
-            <div className="flex items-center gap-2 pointer-events-none">
-              <Folder className="w-4 h-4 text-blue-400" />
-              <span className="text-sm font-medium text-white truncate">
-                {popover.folder?.name || 'Loading...'}
-              </span>
-            </div>
-            <button
-              onClick={() => closePopover(popover.id)}
-              onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking X
-              className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+          {Array.from(hoverPopovers.values()).map((popover) => (
+            <div
+              key={popover.id}
+              id={`popup-${popover.id}`}
+              className="absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl"
+              style={{
+                zIndex: popover.isDragging ? 10000 : 9999 + popover.level, // Highest z-index when dragging
+                left: `${popover.position.x}px`,
+                top: `${popover.position.y}px`,
+                width: '300px',
+                maxHeight: '80vh', // Use viewport height for better flexibility
+                cursor: popover.isDragging ? 'grabbing' : 'default',
+                transition: popover.isDragging ? 'none' : 'box-shadow 0.2s ease'
+              }}
+              onMouseEnter={() => {
+                // Keep popover open when hovering over it
+              }}
+              onMouseLeave={() => {
+                // Optional: could close this popover and its children
+                // closePopover(popover.id)
+              }}
             >
-              <X className="w-3.5 h-3.5 text-gray-400" />
-            </button>
-          </div>
-          
-          {/* Popover Content */}
-          <div className="overflow-y-auto" style={{ maxHeight: 'calc(80vh - 100px)' }}>
-            {popover.isLoading ? (
-              <div className="p-4 text-center text-gray-500 text-sm">
-                Loading...
+              {/* Popover Header - Draggable Area */}
+              <div 
+                className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+                onMouseDown={(e) => handlePopupDragStart(popover.id, e)}
+                style={{
+                  backgroundColor: popover.isDragging ? '#374151' : 'transparent'
+                }}
+              >
+                <div className="flex items-center gap-2 pointer-events-none">
+                  <Folder className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm font-medium text-white truncate">
+                    {popover.folder?.name || 'Loading...'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => closePopover(popover.id)}
+                  onMouseDown={(e) => e.stopPropagation()} // Prevent drag when clicking X
+                  className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                >
+                  <X className="w-3.5 h-3.5 text-gray-400" />
+                </button>
               </div>
-            ) : popover.folder?.children && popover.folder.children.length > 0 ? (
-              <div className="py-1">
-                {popover.folder.children.map((child) => (
-                  <div
-                    key={child.id}
-                    className="group px-3 py-1.5 hover:bg-gray-700 flex items-center gap-2 cursor-default"
-                  >
-                    {child.type === 'folder' ? (
-                      <Folder className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                    ) : (
-                      <FileText className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                    )}
-                    <span className="flex-1 text-sm text-gray-200 truncate">
-                      {child.icon && <span className="mr-1">{child.icon}</span>}
-                      {child.name || child.title || 'Untitled'}
-                    </span>
-                    
-                    {/* Eye icon for folders within popups - cascading effect */}
-                    {child.type === 'folder' && (
-                      <button
-                        onMouseEnter={(e) => {
-                          e.stopPropagation()
-                          handleFolderHover(child, e, popover.id)
-                        }}
-                        onMouseLeave={(e) => {
-                          e.stopPropagation()
-                          handleFolderHoverLeave(child.id, popover.id)
-                        }}
-                        className="p-0.5 hover:bg-gray-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Eye className="w-3 h-3 text-gray-400" />
-                      </button>
-                    )}
+              
+              {/* Popover Content */}
+              <div className="overflow-y-auto" style={{ maxHeight: 'calc(80vh - 100px)' }}>
+                {popover.isLoading ? (
+                  <div className="p-4 text-center text-gray-500 text-sm">
+                    Loading...
                   </div>
-                ))}
+                ) : popover.folder?.children && popover.folder.children.length > 0 ? (
+                  <div className="py-1">
+                    {popover.folder.children.map((child) => (
+                      <div
+                        key={child.id}
+                        className="group px-3 py-1.5 hover:bg-gray-700 flex items-center gap-2 cursor-default"
+                      >
+                        {child.type === 'folder' ? (
+                          <Folder className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                        ) : (
+                          <FileText className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                        )}
+                        <span className="flex-1 text-sm text-gray-200 truncate">
+                          {child.icon && <span className="mr-1">{child.icon}</span>}
+                          {child.name || child.title || 'Untitled'}
+                        </span>
+                        
+                        {/* Eye icon for folders within popups - cascading effect */}
+                        {child.type === 'folder' && (
+                          <button
+                            onMouseEnter={(e) => {
+                              e.stopPropagation()
+                              handleFolderHover(child, e, popover.id)
+                            }}
+                            onMouseLeave={(e) => {
+                              e.stopPropagation()
+                              handleFolderHoverLeave(child.id, popover.id)
+                            }}
+                            className="p-0.5 hover:bg-gray-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Eye className="w-3 h-3 text-gray-400" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-gray-500 text-sm">
+                    Empty folder
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="p-4 text-center text-gray-500 text-sm">
-                Empty folder
+              
+              {/* Popover Footer */}
+              <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+                {popover.folder?.children?.length || 0} items
               </div>
-            )}
-          </div>
-          
-          {/* Popover Footer */}
-          <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
-            {popover.folder?.children?.length || 0} items
-          </div>
+            </div>
+          ))}
         </div>
-      ))
       )}
       
       {/* Connection Lines Between Related Popovers - Annotation Style Bezier Curves */}

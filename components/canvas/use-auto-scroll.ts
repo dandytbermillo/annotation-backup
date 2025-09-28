@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface AutoScrollState {
   isActive: boolean
@@ -62,7 +63,18 @@ export const useAutoScroll = ({
     }
 
     const shouldScroll = velocityX !== 0 || velocityY !== 0
-    
+
+    if (shouldScroll) {
+      debugLog('useAutoScroll', 'trigger_auto_scroll', {
+        pointer: { x: clientX, y: clientY },
+        velocity: { x: velocityX, y: velocityY },
+      })
+    } else if (autoScrollRef.current.isActive) {
+      debugLog('useAutoScroll', 'auto_scroll_edge_exit', {
+        pointer: { x: clientX, y: clientY },
+      })
+    }
+
     setAutoScroll(prev => {
       if (
         prev.isActive === shouldScroll &&
@@ -92,6 +104,8 @@ export const useAutoScroll = ({
         velocity: { x: 0, y: 0 }
       }
     })
+
+    debugLog('useAutoScroll', 'stop_auto_scroll_manual', {})
   }, [])
 
   // Auto-scroll animation loop
