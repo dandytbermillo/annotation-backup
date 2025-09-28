@@ -116,23 +116,59 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     try { window.getSelection()?.removeAllRanges?.() } catch {}
   }, [])
 
-  const updateCanvasTransform = useCallback(
-    (updater: (prev: ReturnType<typeof createDefaultCanvasState>) => ReturnType<typeof createDefaultCanvasState>) => {
-      setCanvasState(prev => updater(prev))
+  const pendingDispatchRef = useRef({
+    translateX: canvasContextState.canvasState.translateX,
+    translateY: canvasContextState.canvasState.translateY,
+    zoom: canvasContextState.canvasState.zoom,
+  })
+  const dispatchFrameRef = useRef<number | null>(null)
+
+  const scheduleDispatch = useCallback(
+    (next: { translateX: number; translateY: number; zoom: number }) => {
+      pendingDispatchRef.current = next
+      if (dispatchFrameRef.current != null) return
+
+      dispatchFrameRef.current = requestAnimationFrame(() => {
+        dispatchFrameRef.current = null
+        const payload = pendingDispatchRef.current
+        dispatch({
+          type: 'SET_CANVAS_STATE',
+          payload,
+        })
+      })
     },
-    []
+    [dispatch]
   )
 
   useEffect(() => {
-    dispatch({
-      type: 'SET_CANVAS_STATE',
-      payload: {
-        translateX: canvasState.translateX,
-        translateY: canvasState.translateY,
-        zoom: canvasState.zoom,
-      },
-    })
-  }, [canvasState.translateX, canvasState.translateY, canvasState.zoom, dispatch])
+    return () => {
+      if (dispatchFrameRef.current != null) {
+        cancelAnimationFrame(dispatchFrameRef.current)
+        dispatchFrameRef.current = null
+      }
+    }
+  }, [])
+
+  const updateCanvasTransform = useCallback(
+    (updater: (prev: ReturnType<typeof createDefaultCanvasState>) => ReturnType<typeof createDefaultCanvasState>) => {
+      setCanvasState(prev => {
+        const next = updater(prev)
+        if (
+          next.translateX !== prev.translateX ||
+          next.translateY !== prev.translateY ||
+          next.zoom !== prev.zoom
+        ) {
+          scheduleDispatch({
+            translateX: next.translateX,
+            translateY: next.translateY,
+            zoom: next.zoom,
+          })
+        }
+        return next
+      })
+    },
+    [scheduleDispatch]
+  )
 
   const panBy = useCallback(
     (deltaX: number, deltaY: number) => {

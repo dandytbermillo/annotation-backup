@@ -63,7 +63,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     isDragging: false,
     startX: 0,
     startY: 0,
-    initialPosition: { x: position.x, y: position.y }
+    initialPosition: { x: position.x, y: position.y },
+    pointerDelta: { x: 0, y: 0 },
+    autoScrollOffset: { x: 0, y: 0 },
   })
   
   // Link dragStateRef to dragState for the useEffect above
@@ -76,10 +78,20 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
     if (isCameraEnabled) {
       // Use camera-based panning (pan opposite to pointer delta)
       panCameraBy({ dxScreen: -deltaX, dyScreen: -deltaY })
-      
-      // Keep the dragged component aligned with the pointer in screen space
-      dragState.current.initialPosition.x -= deltaX
-      dragState.current.initialPosition.y -= deltaY
+
+      const state = dragState.current
+      state.autoScrollOffset.x += deltaX
+      state.autoScrollOffset.y += deltaY
+
+      if (state.isDragging && panelRef.current) {
+        const { pointerDelta, initialPosition, autoScrollOffset } = state
+        const nextLeft = initialPosition.x + pointerDelta.x - autoScrollOffset.x
+        const nextTop = initialPosition.y + pointerDelta.y - autoScrollOffset.y
+
+        panelRef.current.style.left = `${nextLeft}px`
+        panelRef.current.style.top = `${nextTop}px`
+        setRenderPosition({ x: nextLeft, y: nextTop })
+      }
     } else {
       // Legacy: Move ALL panels and components to simulate canvas panning
       const allPanels = document.querySelectorAll('[data-panel-id]')
@@ -147,6 +159,8 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
+      dragState.current.pointerDelta = { x: 0, y: 0 }
+      dragState.current.autoScrollOffset = { x: 0, y: 0 }
       
       // Update render position to current position when starting drag
       setRenderPosition({ x: currentLeft, y: currentTop })
@@ -172,11 +186,16 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       checkAutoScroll(e.clientX, e.clientY)
       
       // Direct position update - no RAF accumulation
-      const deltaX = e.clientX - dragState.current.startX
-      const deltaY = e.clientY - dragState.current.startY
-      
-      const newLeft = dragState.current.initialPosition.x + deltaX
-      const newTop = dragState.current.initialPosition.y + deltaY
+      const state = dragState.current
+      const deltaX = e.clientX - state.startX
+      const deltaY = e.clientY - state.startY
+
+      state.pointerDelta = { x: deltaX, y: deltaY }
+
+      const baseX = state.initialPosition.x + deltaX
+      const baseY = state.initialPosition.y + deltaY
+      const newLeft = isCameraEnabled ? baseX - state.autoScrollOffset.x : baseX
+      const newTop = isCameraEnabled ? baseY - state.autoScrollOffset.y : baseY
       
       // Update render position to prevent snap-back during drag
       setRenderPosition({ x: newLeft, y: newTop })
@@ -219,6 +238,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
       if (isCameraEnabled) {
         resetPanAccumulation()
       }
+
+      dragState.current.pointerDelta = { x: 0, y: 0 }
+      dragState.current.autoScrollOffset = { x: 0, y: 0 }
       
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
