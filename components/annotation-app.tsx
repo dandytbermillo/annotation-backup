@@ -152,6 +152,7 @@ function AnnotationAppContent() {
 
   // Feature flag for Phase 1 API (can be toggled via environment variable or UI)
   const usePhase1API = process.env.NEXT_PUBLIC_USE_PHASE1_API === 'true' || false
+  const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
   return (
     <div className="flex h-screen w-screen overflow-hidden relative">
@@ -219,11 +220,7 @@ function AnnotationAppContent() {
         className="flex-1 relative transition-all duration-300 ease-in-out"
         style={{
           // Disable pointer events when popup layer is active
-          pointerEvents: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 'none' : 'auto',
-          // Dim the canvas when popup layer is active
-          opacity: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 0.6 : 1,
-          // Add transition for smooth visual feedback
-          transition: 'opacity 0.3s ease',
+          pointerEvents: isPopupLayerActive ? 'none' : 'auto',
           // Ensure canvas stays below popups even with z-index escalation
           position: 'relative',
           zIndex: 1,

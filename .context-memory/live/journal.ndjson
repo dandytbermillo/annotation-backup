@@ -256,3 +256,4 @@
 {"ts":"2025-09-28T21:57:42Z","type":"note","title":"canvas auto-scroll still drags panel","body":"User reports panel still moves with canvas during auto-scroll; need to invert coordinate adjustment so canvas pans while panel stays under cursor."}
 {"ts":"2025-09-28T23:24:20Z","type":"note","title":"Panel connection line alignment","body":"Reviewed current panel connector math and drafted popup-style bezier patch preview for user approval."}
 {"ts":"2025-09-28T23:27:17Z","type":"note","title":"Applied panel connector update","body":"Adopted popup-style bezier anchors in components/canvas/connection-lines.tsx after user approval."}
+{"ts":"2025-09-29T22:21:16.639Z","type":"commit","sha":"4c04c68d5f5ba6bd39d689f5b148a1b00ba62853","files_changed":3,"message":"the note sidebar pushing the overlay canvas fixed"}
