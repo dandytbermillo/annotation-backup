@@ -3759,6 +3759,7 @@ function NotesExplorerContent({
           onDragStart={handlePopupDragStart}
           onHoverFolder={handleFolderHover}
           onLeaveFolder={handleFolderHoverLeave}
+          sidebarOpen={isOpen}
         />
       ) : (
         <div

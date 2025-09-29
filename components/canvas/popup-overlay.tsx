@@ -53,6 +53,7 @@ interface PopupOverlayProps {
   onDragStart?: (id: string, event: React.MouseEvent) => void;
   onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
   onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
+  sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
 type PopupChildNode = {
@@ -102,6 +103,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onDragStart,
   onHoverFolder,
   onLeaveFolder,
+  sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
@@ -1092,7 +1094,32 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onScroll as any);
     };
-  }, [recomputeOverlayBounds]);
+  }, [recomputeOverlayBounds, sidebarOpen]); // Add sidebarOpen dependency to recalculate when sidebar toggles
+
+  // Recalculate bounds after sidebar animation completes
+  useEffect(() => {
+    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
+    if (!sidebarEl) return;
+
+    const handleTransitionEnd = (e: TransitionEvent) => {
+      // Recalculate bounds after sidebar animation completes
+      if (e.propertyName === 'transform') {
+        // Small delay to ensure getBoundingClientRect returns final values
+        setTimeout(() => {
+          recomputeOverlayBounds();
+          debugLog('PopupOverlay', 'bounds_recalc_after_transition', {
+            sidebarOpen,
+            timestamp: new Date().toISOString()
+          });
+        }, 10);
+      }
+    };
+
+    sidebarEl.addEventListener('transitionend', handleTransitionEnd);
+    return () => {
+      sidebarEl.removeEventListener('transitionend', handleTransitionEnd);
+    };
+  }, [recomputeOverlayBounds, sidebarOpen]);
 
   useEffect(() => {
     debugLog('PopupOverlay', 'transform_applied', {
