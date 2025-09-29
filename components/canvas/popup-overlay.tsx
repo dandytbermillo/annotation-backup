@@ -577,9 +577,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the on-screen bounds of the canvas container to scope the overlay
   const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
-  const [isPointerInside, setIsPointerInside] = useState<boolean>(false);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   // LOD: Track which popups are visible in the viewport to limit connection lines
   const visibleIdSetRef = useRef<Set<string>>(new Set());
@@ -604,7 +604,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     maxSpeed: AUTO_SCROLL_CONFIG.MAX_SPEED
   }));
   const autoScrollRef = useRef<AutoScrollState>(autoScroll);
-const animationFrameRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (hasSharedCamera && sharedTransform) {
@@ -709,6 +709,19 @@ const animationFrameRef = useRef<number | null>(null);
   
   // Handle pan start (simplified like notes canvas)
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
+    if (sidebarEl) {
+      const rect = sidebarEl.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        debugLog('PopupOverlay', 'pointer_blocked_over_sidebar', {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          sidebarRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+        });
+        return;
+      }
+    }
+
     // Always log that pointer down was received
     console.log('[PopupOverlay] pointerDown:', {
       target: (e.target as HTMLElement).className,
@@ -1023,33 +1036,48 @@ const animationFrameRef = useRef<number | null>(null);
     const canvasEl = document.getElementById('canvas-container');
     if (canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
-      // If a sidebar is present, subtract its area from the interactive bounds
-      const sidebarEl = document.querySelector('[data-sidebar]') as HTMLElement | null;
+      const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
       let effectiveLeft = rect.left;
       let effectiveWidth = rect.width;
+      let guardOffset = 0;
+
       if (sidebarEl) {
-        const s = sidebarEl.getBoundingClientRect();
-        // If the sidebar overlaps the left portion of the canvas horizontally,
-        // shift the interactive area to start at the sidebar's right edge
-        const overlap = Math.max(0, s.right - rect.left);
-        if (overlap > 0) {
-          effectiveLeft = rect.left + overlap;
-          effectiveWidth = Math.max(0, rect.width - overlap);
+        const sidebarRect = sidebarEl.getBoundingClientRect();
+        const sidebarWidth = sidebarRect.width;
+        const isSidebarVisible = sidebarWidth > 0 && sidebarRect.right > rect.left + 1;
+
+        if (isSidebarVisible) {
+          const overlap = Math.max(0, sidebarRect.right - rect.left);
+          if (overlap > 0) {
+            effectiveLeft = rect.left + overlap;
+            effectiveWidth = Math.max(0, rect.right - effectiveLeft);
+            guardOffset = overlap;
+            debugLog('PopupOverlay', 'bounds_sidebar_detected', {
+              sidebarWidth,
+              sidebarRight: sidebarRect.right,
+              canvasLeft: rect.left,
+              overlap,
+              effectiveLeft,
+              effectiveWidth,
+            });
+          }
         }
       }
+
       setOverlayBounds({
         top: Math.max(0, rect.top),
         left: Math.max(0, effectiveLeft),
         width: Math.max(0, effectiveWidth),
         height: Math.max(0, rect.height),
       });
-      // Track container for portal mounting
+      setPointerGuardOffset(guardOffset);
       setOverlayContainer(canvasEl as HTMLElement);
-      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect });
+      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect, effectiveLeft, effectiveWidth, guardOffset });
     } else {
-      // Fallback: full viewport minus sidebar (legacy)
-      setOverlayBounds({ top: 0, left: 320, width: window.innerWidth - 320, height: window.innerHeight });
-      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: 320 });
+      const fallbackSidebarWidth = 320;
+      setOverlayBounds({ top: 0, left: fallbackSidebarWidth, width: window.innerWidth - fallbackSidebarWidth, height: window.innerHeight });
+      setPointerGuardOffset(fallbackSidebarWidth);
+      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: fallbackSidebarWidth });
     }
   }, []);
 
@@ -1060,14 +1088,21 @@ const animationFrameRef = useRef<number | null>(null);
     window.addEventListener('resize', onResize);
     const onScroll = () => recomputeOverlayBounds();
     window.addEventListener('scroll', onScroll, { passive: true });
-    // Recompute after short delay to catch sidebar transitions
-    const t = setTimeout(recomputeOverlayBounds, 300);
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onScroll as any);
-      clearTimeout(t);
     };
   }, [recomputeOverlayBounds]);
+
+  useEffect(() => {
+    debugLog('PopupOverlay', 'transform_applied', {
+      x: activeTransform.x,
+      y: activeTransform.y,
+      scale: activeTransform.scale,
+      hasSharedCamera,
+      isPanning
+    });
+  }, [activeTransform.x, activeTransform.y, activeTransform.scale, hasSharedCamera, isPanning]);
 
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
@@ -1131,31 +1166,6 @@ const animationFrameRef = useRef<number | null>(null);
     };
   }, [overlayContainer, popups.size]);
 
-  // Gate overlay interactivity based on pointer location relative to canvas container
-  useEffect(() => {
-    const onPointerMove = (e: PointerEvent) => {
-      // If pointer is over any sidebar element, treat as outside overlay
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest('[data-sidebar]')) {
-        setIsPointerInside(false);
-        return;
-      }
-      let rect: DOMRect | null = null;
-      if (overlayContainer) {
-        rect = overlayContainer.getBoundingClientRect();
-      } else if (overlayBounds) {
-        rect = new DOMRect(overlayBounds.left, overlayBounds.top, overlayBounds.width, overlayBounds.height);
-      }
-      if (!rect) return;
-      const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-      setIsPointerInside(inside);
-    };
-    window.addEventListener('pointermove', onPointerMove, { passive: true });
-    return () => window.removeEventListener('pointermove', onPointerMove);
-  }, [overlayContainer, overlayBounds]);
-
-  // No global pointer tracking needed when overlay is confined to canvas container via portal.
-  
   // Debug log container style
   useEffect(() => {
     debugLog('PopupOverlay', 'container_style', {
@@ -1204,17 +1214,15 @@ const animationFrameRef = useRef<number | null>(null);
       className={`absolute inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
       style={{
-        // Keep overlay above canvas content but below sidebar (sidebar lives outside container)
-        zIndex: 40,
+        zIndex: Z_INDEX.POPUP_OVERLAY,
         overflow: 'hidden',
-        // Always capture events whenever popup layer is active to prevent native selection
         pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
         opacity: isActiveLayer ? 1 : 0,
         visibility: isActiveLayer ? 'visible' : 'hidden',
-        // Contain layout/paint to this overlay to avoid expensive repaints
         contain: 'layout paint' as const,
+        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -1256,6 +1264,7 @@ const animationFrameRef = useRef<number | null>(null);
             popup.isDragging || popup.id === draggingPopup,
             true
           );
+          const cappedZIndex = Math.min(zIndex, 100);
           return (
             <div
               key={popup.id}
@@ -1266,7 +1275,7 @@ const animationFrameRef = useRef<number | null>(null);
                 top: `${position.y}px`,
                 width: '300px',
                 maxHeight: '400px',
-                zIndex,
+                zIndex: cappedZIndex,
                 cursor: popup.isDragging ? 'grabbing' : 'default',
                 // Slightly reduce opacity during pan to prevent text rendering issues
                 opacity: isPanning ? 0.99 : 1,
@@ -1345,23 +1354,17 @@ const animationFrameRef = useRef<number | null>(null);
       data-panning={isPanning.toString()}
       style={{
         top: overlayBounds ? `${overlayBounds.top}px` : 0,
-        left: overlayBounds ? `${overlayBounds.left}px` : '320px',
-        width: overlayBounds ? `${overlayBounds.width}px` : `calc(100vw - 320px)`,
+        left: overlayBounds ? `${overlayBounds.left}px` : 0,
+        width: overlayBounds ? `${overlayBounds.width}px` : '100vw',
         height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
-        // Popup overlay should be below sidebar (z-50) but above canvas
-        zIndex: 40, // Below sidebar z-50, above canvas
-        // Ensure overlay content does not spill into sidebar area
-        overflow: 'hidden',
-        // Always capture events whenever popup layer is active to prevent native selection
         pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
-        // Prevent browser touch gestures when active
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
-        // Show grab cursor when hovering empty space
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
         opacity: isActiveLayer ? 1 : 0,
         visibility: isActiveLayer ? 'visible' : 'hidden',
-        // Contain layout/paint to this overlay to avoid expensive repaints
         contain: 'layout paint' as const,
+        zIndex: Z_INDEX.POPUP_OVERLAY,
+        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -1409,6 +1412,7 @@ const animationFrameRef = useRef<number | null>(null);
           popup.isDragging || popup.id === draggingPopup,
           true
         );
+        const cappedZIndex = Math.min(zIndex, 100);
         
         const previewEntry = previewState[popup.id];
         const activeChildId = previewEntry?.activeChildId ?? null;
@@ -1434,7 +1438,7 @@ const animationFrameRef = useRef<number | null>(null);
               top: `${position.y}px`,
               width: '300px',
               maxHeight: '400px',
-              zIndex,
+              zIndex: cappedZIndex,
               cursor: popup.isDragging ? 'grabbing' : 'default',
               // Slightly reduce opacity during pan to prevent text rendering issues
               opacity: isPanning ? 0.99 : 1,

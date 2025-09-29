@@ -173,10 +173,15 @@ function AnnotationAppContent() {
       
       {/* Notes Explorer - Sliding Panel with hover control */}
       <div
-        className={`fixed left-0 top-0 h-full z-50 transition-transform duration-300 ease-in-out ${
+        data-sidebar="sidebar"
+        className={`fixed left-0 top-0 h-full transition-transform duration-300 ease-in-out ${
           isNotesExplorerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
-        style={{ width: '320px' }} // lg:w-80 = 320px
+        style={{
+          width: '320px',
+          isolation: 'isolate',
+          zIndex: 9999,
+        }}
         onMouseEnter={handleSidebarMouseEnter}
         onMouseLeave={handleSidebarMouseLeave}
       >
@@ -201,7 +206,8 @@ function AnnotationAppContent() {
         <button
           onMouseEnter={openNotesExplorer}
           onClick={openNotesExplorer}
-          className="fixed left-0 top-1/2 -translate-y-1/2 z-30 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
+          className="fixed left-0 top-1/2 -translate-y-1/2 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
+          style={{ zIndex: 10005 }}
           title="Notes Explorer"
         >
           <span className="font-bold text-lg group-hover:text-xl transition-all">N</span>
@@ -220,7 +226,8 @@ function AnnotationAppContent() {
           transition: 'opacity 0.3s ease',
           // Ensure canvas stays below popups even with z-index escalation
           position: 'relative',
-          zIndex: 1
+          zIndex: 1,
+          isolation: 'isolate',
         }}
       >
         {selectedNoteId ? (
