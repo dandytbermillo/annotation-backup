@@ -3053,11 +3053,9 @@ function NotesExplorerContent({
   }
 
   return (
-    <div 
+    <div
       data-sidebar="sidebar"
-      className={`h-screen w-80 bg-gray-900 text-white flex flex-col border-r border-gray-800 fixed left-0 top-0 z-50 transition-transform duration-300 ease-in-out ${
-        isOpen ? 'translate-x-0' : '-translate-x-full'
-      }`}
+      className="h-full w-full bg-gray-900 text-white flex flex-col border-r border-gray-800"
     >
       {/* Header */}
       <div className="p-4 border-b border-gray-800">

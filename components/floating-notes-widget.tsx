@@ -1,0 +1,42 @@
+"use client"
+
+import React from 'react'
+import { NotesExplorerPhase1 } from './notes-explorer-phase1'
+
+interface FloatingNotesWidgetProps {
+  clickX: number
+  clickY: number
+  onClose: () => void
+  onNoteSelect: (noteId: string) => void
+}
+
+export function FloatingNotesWidget({
+  clickX,
+  clickY,
+  onClose,
+  onNoteSelect
+}: FloatingNotesWidgetProps) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: clickX,
+        top: clickY,
+        zIndex: 15000,
+        width: '320px',
+        maxHeight: '80vh',
+      }}
+      className="rounded-lg shadow-2xl overflow-hidden"
+    >
+      {/* Notes Explorer Content - Full Widget */}
+      <NotesExplorerPhase1
+        onNoteSelect={onNoteSelect}
+        isOpen={true}
+        onClose={onClose}
+        enableTreeView={true}
+        usePhase1API={true}
+        multiLayerEnabled={true}
+      />
+    </div>
+  )
+}

@@ -6,7 +6,6 @@ import dynamic from 'next/dynamic'
 import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
-import { useFeatureFlag } from "@/lib/offline/feature-flags"
 
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
@@ -28,6 +27,7 @@ function AnnotationAppContent() {
     zoom: 1,
     showConnections: true
   })
+  const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
   
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
@@ -43,8 +43,8 @@ function AnnotationAppContent() {
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
   
-  // Multi-layer canvas feature
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  // Multi-layer canvas is always enabled
+  const multiLayerEnabled = true
   const layerContext = useLayer()
   
   // Handle note selection with force re-center support
@@ -152,16 +152,17 @@ function AnnotationAppContent() {
 
   // Feature flag for Phase 1 API (can be toggled via environment variable or UI)
   const usePhase1API = process.env.NEXT_PUBLIC_USE_PHASE1_API === 'true' || false
+  const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
   return (
     <div className="flex h-screen w-screen overflow-hidden relative">
-      {/* Mode Indicator Badge */}
-      {isPlainMode && (
+      {/* Mode Indicator Badge - Disabled per user request */}
+      {/* {isPlainMode && (
         <div className="fixed top-4 right-4 z-50 px-3 py-1.5 bg-gray-800 text-gray-200 rounded-md shadow-lg flex items-center gap-2 text-sm font-medium">
           <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
           Offline Mode - No Collaboration
         </div>
-      )}
+      )} */}
       
       {/* Backdrop Overlay */}
       {isNotesExplorerOpen && (
@@ -173,10 +174,15 @@ function AnnotationAppContent() {
       
       {/* Notes Explorer - Sliding Panel with hover control */}
       <div
-        className={`fixed left-0 top-0 h-full z-50 transition-transform duration-300 ease-in-out ${
+        data-sidebar="sidebar"
+        className={`fixed left-0 top-0 h-full transition-transform duration-300 ease-in-out ${
           isNotesExplorerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
-        style={{ width: '320px' }} // lg:w-80 = 320px
+        style={{
+          width: '320px',
+          isolation: 'isolate',
+          zIndex: 9999,
+        }}
         onMouseEnter={handleSidebarMouseEnter}
         onMouseLeave={handleSidebarMouseLeave}
       >
@@ -184,6 +190,7 @@ function AnnotationAppContent() {
           onNoteSelect={handleNoteSelect} 
           isOpen={true} // Always render, control visibility with transform
           onClose={closeNotesExplorer}
+          onAddComponent={() => setShowAddComponentMenu(true)}
           zoom={canvasState.zoom * 100}
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
@@ -200,7 +207,8 @@ function AnnotationAppContent() {
         <button
           onMouseEnter={openNotesExplorer}
           onClick={openNotesExplorer}
-          className="fixed left-0 top-1/2 -translate-y-1/2 z-30 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
+          className="fixed left-0 top-1/2 -translate-y-1/2 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
+          style={{ zIndex: 10005 }}
           title="Notes Explorer"
         >
           <span className="font-bold text-lg group-hover:text-xl transition-all">N</span>
@@ -212,14 +220,11 @@ function AnnotationAppContent() {
         className="flex-1 relative transition-all duration-300 ease-in-out"
         style={{
           // Disable pointer events when popup layer is active
-          pointerEvents: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 'none' : 'auto',
-          // Dim the canvas when popup layer is active
-          opacity: multiLayerEnabled && layerContext?.activeLayer === 'popups' ? 0.6 : 1,
-          // Add transition for smooth visual feedback
-          transition: 'opacity 0.3s ease',
+          pointerEvents: isPopupLayerActive ? 'none' : 'auto',
           // Ensure canvas stays below popups even with z-index escalation
           position: 'relative',
-          zIndex: 1
+          zIndex: 1,
+          isolation: 'isolate',
         }}
       >
         {selectedNoteId ? (
@@ -229,6 +234,8 @@ function AnnotationAppContent() {
             ref={canvasRef}
             isNotesExplorerOpen={isNotesExplorerOpen}
             onCanvasStateChange={setCanvasState}
+            showAddComponentMenu={showAddComponentMenu}
+            onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-950">

@@ -3,6 +3,7 @@
 import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
+import type { DataStore } from "@/lib/data-store"
 import { IsolationProvider } from "@/lib/isolation/context"
 import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
@@ -41,6 +42,7 @@ interface CanvasImperativeHandle {
   zoomIn: () => void
   zoomOut: () => void
   resetView: () => void
+  panBy: (deltaX: number, deltaY: number) => void
   toggleConnections: () => void
   centerOnPanel: (panelId: string) => void
 }
@@ -72,13 +74,15 @@ const ensureMainPanel = (items: CanvasItem[]): CanvasItem[] => {
   return hasMain ? items : [...items, createPanelItem("main", { x: 2000, y: 1500 }, "main")]
 }
 
-const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
+const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
   noteId, 
   isNotesExplorerOpen = false,
   onCanvasStateChange,
   showAddComponentMenu: externalShowAddComponentMenu,
   onToggleAddComponentMenu
 }, ref) => {
+  const { state: canvasContextState, dispatch, dataStore } = useCanvas()
+
   const [canvasState, setCanvasState] = useState(createDefaultCanvasState)
 
   // Unified canvas items state
@@ -111,6 +115,97 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     document.addEventListener('dragstart', onDragStart, true)
     try { window.getSelection()?.removeAllRanges?.() } catch {}
   }, [])
+
+  const pendingDispatchRef = useRef({
+    translateX: canvasContextState.canvasState.translateX,
+    translateY: canvasContextState.canvasState.translateY,
+    zoom: canvasContextState.canvasState.zoom,
+  })
+  const dispatchFrameRef = useRef<number | null>(null)
+
+  const scheduleDispatch = useCallback(
+    (next: { translateX: number; translateY: number; zoom: number }) => {
+      pendingDispatchRef.current = next
+      if (dispatchFrameRef.current != null) return
+
+      dispatchFrameRef.current = requestAnimationFrame(() => {
+        dispatchFrameRef.current = null
+        const payload = pendingDispatchRef.current
+        dispatch({
+          type: 'SET_CANVAS_STATE',
+          payload,
+        })
+      })
+    },
+    [dispatch]
+  )
+
+  useEffect(() => {
+    return () => {
+      if (dispatchFrameRef.current != null) {
+        cancelAnimationFrame(dispatchFrameRef.current)
+        dispatchFrameRef.current = null
+      }
+    }
+  }, [])
+
+  const updateCanvasTransform = useCallback(
+    (updater: (prev: ReturnType<typeof createDefaultCanvasState>) => ReturnType<typeof createDefaultCanvasState>) => {
+      setCanvasState(prev => {
+        const next = updater(prev)
+        if (
+          next.translateX !== prev.translateX ||
+          next.translateY !== prev.translateY ||
+          next.zoom !== prev.zoom
+        ) {
+          scheduleDispatch({
+            translateX: next.translateX,
+            translateY: next.translateY,
+            zoom: next.zoom,
+          })
+        }
+        return next
+      })
+    },
+    [scheduleDispatch]
+  )
+
+  const panBy = useCallback(
+    (deltaX: number, deltaY: number) => {
+      if (deltaX === 0 && deltaY === 0) {
+        return
+      }
+      updateCanvasTransform(prev => ({
+        ...prev,
+        translateX: prev.translateX + deltaX,
+        translateY: prev.translateY + deltaY,
+      }))
+    },
+    [updateCanvasTransform]
+  )
+
+  useEffect(() => {
+    const { translateX, translateY, zoom } = canvasContextState.canvasState
+    setCanvasState(prev => {
+      if (
+        prev.translateX === translateX &&
+        prev.translateY === translateY &&
+        prev.zoom === zoom
+      ) {
+        return prev
+      }
+      return {
+        ...prev,
+        translateX,
+        translateY,
+        zoom,
+      }
+    })
+  }, [
+    canvasContextState.canvasState.translateX,
+    canvasContextState.canvasState.translateY,
+    canvasContextState.canvasState.zoom,
+  ])
 
   const disableSelectionGuards = useCallback(() => {
     if (typeof document === 'undefined') return
@@ -331,12 +426,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     const deltaX = e.clientX - canvasState.lastMouseX
     const deltaY = e.clientY - canvasState.lastMouseY
 
-    setCanvasState(prev => ({
+    updateCanvasTransform(prev => ({
       ...prev,
       translateX: prev.translateX + deltaX,
       translateY: prev.translateY + deltaY,
       lastMouseX: e.clientX,
-      lastMouseY: e.clientY
+      lastMouseY: e.clientY,
     }))
   }
 
@@ -364,11 +459,11 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     
     const zoomChange = newZoom / canvasState.zoom
     
-    setCanvasState(prev => ({
+    updateCanvasTransform(prev => ({
       ...prev,
       zoom: newZoom,
       translateX: mouseX - (mouseX - prev.translateX) * zoomChange,
-      translateY: mouseY - (mouseY - prev.translateY) * zoomChange
+      translateY: mouseY - (mouseY - prev.translateY) * zoomChange,
     }))
   }
 
@@ -406,8 +501,26 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
     setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
   }
 
-  const handleCreatePanel = (panelId: string) => {
-    console.log('[AnnotationCanvas] Creating panel:', panelId)
+  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }) => {
+    console.log('[AnnotationCanvas] Creating panel:', panelId, 'with parent:', parentPanelId, 'at position:', parentPosition)
+    
+    // Log to debug_logs table
+    fetch('/api/debug/log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        component: 'AnnotationCanvas',
+        action: 'handle_create_panel',
+        metadata: {
+          panelId: panelId,
+          parentPanelId: parentPanelId,
+          parentPosition: parentPosition,
+          isPlainMode: isPlainModeActive()
+        },
+        content_preview: `Creating panel ${panelId} at x=${parentPosition?.x}, y=${parentPosition?.y}`,
+        note_id: noteId
+      })
+    }).catch(console.error)
     
     // Check if we're in plain mode
     const isPlainMode = isPlainModeActive()
@@ -422,6 +535,17 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         // Plain mode: Check if panel data exists
         // Note: We'll need to get dataStore from context provider
         console.log('[Plain mode] Creating panel:', panelId)
+        
+        // If parent position is provided, update the dataStore
+        if (parentPosition && (window as any).canvasDataStore) {
+          const dataStore = (window as any).canvasDataStore
+          const panelData = dataStore.get(panelId)
+          if (panelData) {
+            // Update position to be beside parent
+            panelData.position = parentPosition
+            dataStore.set(panelId, panelData)
+          }
+        }
       } else {
         // Ensure the provider knows about the current note
         const provider = UnifiedProvider.getInstance()
@@ -434,6 +558,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         if (!panelData) {
           console.warn(`No data found for panel ${panelId}`)
           return prev
+        }
+        
+        // If parent position is provided, update the position
+        if (parentPosition && panelData) {
+          panelData.position = parentPosition
+          branchesMap.set(panelId, panelData)
         }
       }
       
@@ -470,7 +600,10 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
                        panelId.includes('explore') ? 'explore' : 
                        panelId.includes('promote') ? 'promote' : 'note'
       
-      return [...prev, createPanelItem(panelId, { x: 2000, y: 1500 }, panelType)]
+      // Use parentPosition if provided, otherwise use default
+      const position = parentPosition || { x: 2000, y: 1500 }
+      
+      return [...prev, createPanelItem(panelId, position, panelType)]
     })
   }
   
@@ -529,13 +662,42 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   useEffect(() => {
     const handlePanelEvent = (event: CustomEvent) => {
       if (event.detail?.panelId) {
-        handleCreatePanel(event.detail.panelId)
+        handleCreatePanel(
+          event.detail.panelId, 
+          event.detail.parentPanelId, 
+          event.detail.parentPosition
+        )
+      }
+    }
+    
+    const handlePreviewPanelEvent = (event: CustomEvent) => {
+      if (event.detail?.panelId) {
+        // Create a temporary preview panel
+        // For now, just create a regular panel - you can enhance this later
+        // to show it in a special preview mode (e.g., semi-transparent, different position)
+        handleCreatePanel(
+          event.detail.panelId, 
+          event.detail.parentPanelId, 
+          event.detail.parentPosition
+        )
+      }
+    }
+    
+    const handleRemovePreviewPanelEvent = (event: CustomEvent) => {
+      if (event.detail?.panelId) {
+        // Remove the preview panel
+        handlePanelClose(event.detail.panelId)
       }
     }
 
     window.addEventListener('create-panel' as any, handlePanelEvent)
+    window.addEventListener('preview-panel' as any, handlePreviewPanelEvent)
+    window.addEventListener('remove-preview-panel' as any, handleRemovePreviewPanelEvent)
+    
     return () => {
       window.removeEventListener('create-panel' as any, handlePanelEvent)
+      window.removeEventListener('preview-panel' as any, handlePreviewPanelEvent)
+      window.removeEventListener('remove-preview-panel' as any, handleRemovePreviewPanelEvent)
     }
   }, [noteId]) // Add noteId dependency to ensure we're using the correct note
 
@@ -585,28 +747,29 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     zoomIn: () => {
-      setCanvasState(prev => {
+      updateCanvasTransform(prev => {
         const newZoom = Math.min(prev.zoom * 1.1, 2)
-        const newState = { ...prev, zoom: newZoom }
+        const next = { ...prev, zoom: newZoom }
         onCanvasStateChange?.({ zoom: newZoom, showConnections: prev.showConnections })
-        return newState
+        return next
       })
     },
     zoomOut: () => {
-      setCanvasState(prev => {
+      updateCanvasTransform(prev => {
         const newZoom = Math.max(prev.zoom * 0.9, 0.3)
-        const newState = { ...prev, zoom: newZoom }
+        const next = { ...prev, zoom: newZoom }
         onCanvasStateChange?.({ zoom: newZoom, showConnections: prev.showConnections })
-        return newState
+        return next
       })
     },
     resetView: () => {
-      setCanvasState(prev => {
-        const newState = { ...prev, zoom: 1, translateX: -1000, translateY: -1200 }
+      updateCanvasTransform(prev => {
+        const next = { ...prev, zoom: 1, translateX: -1000, translateY: -1200 }
         onCanvasStateChange?.({ zoom: 1, showConnections: prev.showConnections })
-        return newState
+        return next
       })
     },
+    panBy,
     toggleConnections: () => {
       setCanvasState(prev => {
         const newShowConnections = !prev.showConnections
@@ -666,7 +829,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             panelId,
             () => position, // Direct position since we already have it
             { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom },
-            (viewportState) => setCanvasState(prev => ({
+            (viewportState) => updateCanvasTransform(prev => ({
               ...prev,
               translateX: viewportState.x ?? prev.translateX,
               translateY: viewportState.y ?? prev.translateY,
@@ -700,20 +863,18 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
       
       attemptCenter()
     }
-  }), [onCanvasStateChange, canvasState])
+  }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy])
 
   return (
-    <IsolationProvider config={{ enabled: false }}>
-    <CanvasProvider noteId={noteId}>
       <div className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
-        {/* Demo Header */}
-        <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10 flex items-center justify-between">
+        {/* Demo Header - Disabled per user request */}
+        {/* <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10 flex items-center justify-between">
           <span>🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor</span>
           <span className="text-gray-300 flex items-center gap-2">
             <span className="text-yellow-400">💡</span>
             Hold <kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs font-bold">Shift</kbd> + Scroll to zoom
           </span>
-        </div>
+        </div> */}
 
         {/* Canvas Controls - Removed per user request */}
         {/* {!isNotesExplorerOpen && (
@@ -753,7 +914,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
         <EnhancedMinimap 
           canvasItems={canvasItems}
           canvasState={canvasState}
-          onNavigate={(x, y) => setCanvasState(prev => ({ ...prev, translateX: x, translateY: y }))}
+          onNavigate={(x, y) => updateCanvasTransform(prev => ({ ...prev, translateX: x, translateY: y }))}
         />
         
         {/* Add Components Menu */}
@@ -808,11 +969,12 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
             )}
 
             {/* Panels */}
-            <PanelsRenderer
-              noteId={noteId}
-              canvasItems={canvasItems}
-              onClose={handlePanelClose}
-            />
+        <PanelsRenderer
+          noteId={noteId}
+          canvasItems={canvasItems}
+          dataStore={dataStore}
+          onClose={handlePanelClose}
+        />
             
             {/* Component Panels */}
             {floatingComponents.map(component => (
@@ -841,13 +1003,20 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           stickyOverlayEl
         )}
 
-        {/* Annotation Toolbar */}
+        {/* Annotation Toolbar - controlled by Actions button */}
         <AnnotationToolbar />
+
       </div>
-    </CanvasProvider>
-    </IsolationProvider>
   )
 })
+
+const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => (
+  <IsolationProvider config={{ enabled: false }}>
+    <CanvasProvider noteId={props.noteId}>
+      <ModernAnnotationCanvasInner {...props} ref={ref} />
+    </CanvasProvider>
+  </IsolationProvider>
+))
 
 ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 
@@ -855,13 +1024,14 @@ ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 function PanelsRenderer({
   noteId,
   canvasItems,
+  dataStore,
   onClose,
 }: {
   noteId: string
   canvasItems: CanvasItem[]
+  dataStore: DataStore
   onClose: (id: string) => void
 }) {
-  const { dataStore } = useCanvas()
   const isPlainMode = isPlainModeActive()
   
   // Yjs access only when not in plain mode

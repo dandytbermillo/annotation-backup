@@ -9,6 +9,8 @@ import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
+import { useLayer } from "./canvas/layer-provider"
+import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 // import { CanvasControls } from "./canvas/canvas-controls" // Removed per user request
 import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
@@ -74,14 +76,18 @@ const ensureMainPanel = (items: CanvasItem[]): CanvasItem[] => {
   return hasMain ? items : [...items, createPanelItem("main", { x: 2000, y: 1500 }, "main")]
 }
 
-const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
-  noteId, 
+const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({
+  noteId,
   isNotesExplorerOpen = false,
   onCanvasStateChange,
   showAddComponentMenu: externalShowAddComponentMenu,
   onToggleAddComponentMenu
 }, ref) => {
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
+
+  // Layer system for multi-layer canvas
+  const layerContext = useLayer()
+  const canvasOpacity = layerContext ? PopupStateAdapter.getLayerOpacity('notes', layerContext.activeLayer) : 1
 
   const [canvasState, setCanvasState] = useState(createDefaultCanvasState)
 
@@ -866,7 +872,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy])
 
   return (
-      <div className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
+      <div
+        className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500"
+        style={{
+          opacity: canvasOpacity,
+          transition: 'opacity 0.3s ease',
+        }}
+      >
         {/* Demo Header - Disabled per user request */}
         {/* <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10 flex items-center justify-between">
           <span>🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor</span>

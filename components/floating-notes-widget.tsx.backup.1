@@ -1,0 +1,105 @@
+"use client"
+
+import React, { useState, useRef, useEffect } from 'react'
+import { X, GripVertical } from 'lucide-react'
+import { NotesExplorerPhase1 } from './notes-explorer-phase1'
+
+interface FloatingNotesWidgetProps {
+  initialX: number
+  initialY: number
+  onClose: () => void
+  onNoteSelect: (noteId: string) => void
+}
+
+export function FloatingNotesWidget({
+  initialX,
+  initialY,
+  onClose,
+  onNoteSelect
+}: FloatingNotesWidgetProps) {
+  const [position, setPosition] = useState({ x: initialX, y: initialY })
+  const [isDragging, setIsDragging] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const widgetRef = useRef<HTMLDivElement>(null)
+
+  // Handle drag start
+  const handleDragStart = (e: React.MouseEvent) => {
+    if (!widgetRef.current) return
+
+    const rect = widgetRef.current.getBoundingClientRect()
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    })
+    setIsDragging(true)
+  }
+
+  // Handle dragging
+  useEffect(() => {
+    if (!isDragging) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setPosition({
+        x: e.clientX - dragOffset.x,
+        y: e.clientY - dragOffset.y
+      })
+    }
+
+    const handleMouseUp = () => {
+      setIsDragging(false)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging, dragOffset])
+
+  return (
+    <div
+      ref={widgetRef}
+      style={{
+        position: 'fixed',
+        left: position.x,
+        top: position.y,
+        zIndex: 15000,
+        width: '380px',
+        maxHeight: '80vh',
+        cursor: isDragging ? 'grabbing' : 'default',
+      }}
+      className="bg-gray-900 text-white rounded-lg shadow-2xl border border-gray-700 overflow-hidden"
+    >
+      {/* Drag Handle Header */}
+      <div
+        onMouseDown={handleDragStart}
+        className="flex items-center justify-between p-3 bg-gray-800 border-b border-gray-700 cursor-grab active:cursor-grabbing"
+      >
+        <div className="flex items-center gap-2">
+          <GripVertical size={18} className="text-gray-500" />
+          <span className="text-sm font-semibold">Notes Explorer</span>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-1 hover:bg-gray-700 rounded transition-colors"
+          aria-label="Close"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      {/* Notes Explorer Content */}
+      <div className="overflow-hidden" style={{ maxHeight: 'calc(80vh - 50px)' }}>
+        <NotesExplorerPhase1
+          onNoteSelect={onNoteSelect}
+          isOpen={true}
+          onClose={onClose}
+          enableTreeView={true}
+          usePhase1API={true}
+        />
+      </div>
+    </div>
+  )
+}

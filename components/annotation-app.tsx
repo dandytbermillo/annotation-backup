@@ -1,9 +1,9 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
-import { NotesExplorerPhase1 as NotesExplorer } from "./notes-explorer-phase1"
+import { FloatingNotesWidget } from "./floating-notes-widget"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 
@@ -21,21 +21,22 @@ const ModernAnnotationCanvas = dynamic(
 
 function AnnotationAppContent() {
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
-  const [isNotesExplorerOpen, setIsNotesExplorerOpen] = useState(false) // Hidden by default
-  const [isMouseNearEdge, setIsMouseNearEdge] = useState(false)
   const [canvasState, setCanvasState] = useState({
     zoom: 1,
     showConnections: true
   })
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
+
+  // Floating notes widget state
+  const [showNotesWidget, setShowNotesWidget] = useState(false)
+  const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
   
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
   
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
-  const sidebarHideTimer = useRef<NodeJS.Timeout | null>(null)
-  
+
   // Ref to track last centered note to avoid repeated centering during normal flow
   const lastCenteredRef = useRef<string | null>(null)
   
@@ -72,54 +73,17 @@ function AnnotationAppContent() {
     return () => clearTimeout(timeoutId)
   }, [selectedNoteId, centerTrigger]) // Also watch centerTrigger
 
-  const openNotesExplorer = () => {
-    // Clear any pending hide timer when opening
-    if (sidebarHideTimer.current) {
-      clearTimeout(sidebarHideTimer.current)
-      sidebarHideTimer.current = null
-    }
-    setIsNotesExplorerOpen(true)
-    setIsMouseNearEdge(false) // Mark as manually opened
-  }
+  // Handle right-click to show notes widget
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setNotesWidgetPosition({ x: e.clientX, y: e.clientY })
+    setShowNotesWidget(true)
+  }, [])
 
-  const closeNotesExplorer = () => {
-    // Clear timer when manually closing
-    if (sidebarHideTimer.current) {
-      clearTimeout(sidebarHideTimer.current)
-      sidebarHideTimer.current = null
-    }
-    setIsNotesExplorerOpen(false)
-  }
-  
-  const handleSidebarMouseEnter = () => {
-    // Cancel any pending hide timer when mouse enters sidebar
-    if (sidebarHideTimer.current) {
-      clearTimeout(sidebarHideTimer.current)
-      sidebarHideTimer.current = null
-    }
-    // Ensure sidebar stays open
-    setIsNotesExplorerOpen(true)
-  }
-  
-  const handleSidebarMouseLeave = () => {
-    // Start hide timer when mouse leaves sidebar
-    if (sidebarHideTimer.current) {
-      clearTimeout(sidebarHideTimer.current)
-    }
-    sidebarHideTimer.current = setTimeout(() => {
-      setIsNotesExplorerOpen(false)
-      setIsMouseNearEdge(false)
-      sidebarHideTimer.current = null
-    }, 800) // Wait 800ms before hiding
-  }
-
-  // Disabled auto-show/hide sidebar based on mouse position
-  // Now controlled only by button hover
-  /*
-  useEffect(() => {
-    // Removed edge detection logic
-  }, [isNotesExplorerOpen, isMouseNearEdge])
-  */
+  // Handle closing notes widget
+  const handleCloseNotesWidget = useCallback(() => {
+    setShowNotesWidget(false)
+  }, [])
 
   // Navigation control functions
   const handleZoomIn = () => {
@@ -155,64 +119,18 @@ function AnnotationAppContent() {
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
   return (
-    <div className="flex h-screen w-screen overflow-hidden relative">
-      {/* Mode Indicator Badge - Disabled per user request */}
-      {/* {isPlainMode && (
-        <div className="fixed top-4 right-4 z-50 px-3 py-1.5 bg-gray-800 text-gray-200 rounded-md shadow-lg flex items-center gap-2 text-sm font-medium">
-          <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-          Offline Mode - No Collaboration
-        </div>
-      )} */}
-      
-      {/* Backdrop Overlay */}
-      {isNotesExplorerOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-30 z-40 lg:hidden"
-          onClick={closeNotesExplorer}
+    <div
+      className="flex h-screen w-screen overflow-hidden relative"
+      onContextMenu={handleContextMenu}
+    >
+      {/* Floating Notes Widget */}
+      {showNotesWidget && (
+        <FloatingNotesWidget
+          clickX={notesWidgetPosition.x}
+          clickY={notesWidgetPosition.y}
+          onClose={handleCloseNotesWidget}
+          onNoteSelect={handleNoteSelect}
         />
-      )}
-      
-      {/* Notes Explorer - Sliding Panel with hover control */}
-      <div
-        data-sidebar="sidebar"
-        className={`fixed left-0 top-0 h-full transition-transform duration-300 ease-in-out ${
-          isNotesExplorerOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-        style={{
-          width: '320px',
-          isolation: 'isolate',
-          zIndex: 9999,
-        }}
-        onMouseEnter={handleSidebarMouseEnter}
-        onMouseLeave={handleSidebarMouseLeave}
-      >
-        <NotesExplorer 
-          onNoteSelect={handleNoteSelect} 
-          isOpen={true} // Always render, control visibility with transform
-          onClose={closeNotesExplorer}
-          onAddComponent={() => setShowAddComponentMenu(true)}
-          zoom={canvasState.zoom * 100}
-          onZoomIn={handleZoomIn}
-          onZoomOut={handleZoomOut}
-          onResetView={handleResetView}
-          onToggleConnections={handleToggleConnections}
-          showConnections={canvasState.showConnections}
-          enableTreeView={true}
-          usePhase1API={usePhase1API}
-        />
-      </div>
-      
-      {/* Toggle Button - Centered on left edge */}
-      {!isNotesExplorerOpen && (
-        <button
-          onMouseEnter={openNotesExplorer}
-          onClick={openNotesExplorer}
-          className="fixed left-0 top-1/2 -translate-y-1/2 w-10 h-20 bg-gray-800 hover:bg-gray-700 text-white rounded-r-lg shadow-lg transition-all hover:w-12 flex items-center justify-center group"
-          style={{ zIndex: 10005 }}
-          title="Notes Explorer"
-        >
-          <span className="font-bold text-lg group-hover:text-xl transition-all">N</span>
-        </button>
       )}
       
       {/* Canvas Area - Full width when explorer is closed */}
@@ -228,11 +146,11 @@ function AnnotationAppContent() {
         }}
       >
         {selectedNoteId ? (
-          <ModernAnnotationCanvas 
-            key={selectedNoteId} 
+          <ModernAnnotationCanvas
+            key={selectedNoteId}
             noteId={selectedNoteId}
             ref={canvasRef}
-            isNotesExplorerOpen={isNotesExplorerOpen}
+            isNotesExplorerOpen={false}
             onCanvasStateChange={setCanvasState}
             showAddComponentMenu={showAddComponentMenu}
             onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
@@ -244,16 +162,8 @@ function AnnotationAppContent() {
                 Welcome to Annotation Canvas
               </h2>
               <p className="text-gray-500 mb-6">
-                Select a note from the explorer or create a new one to get started
+                Right-click anywhere to open Notes Explorer and create a new note
               </p>
-              {!isNotesExplorerOpen && (
-                <button
-                  onClick={openNotesExplorer}
-                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"
-                >
-                  Open Notes Explorer
-                </button>
-              )}
             </div>
           </div>
         )}
