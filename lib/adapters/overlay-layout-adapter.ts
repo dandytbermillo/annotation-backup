@@ -73,6 +73,15 @@ export class OverlayLayoutAdapter {
     revision,
     userId,
   }: SaveLayoutParams): Promise<OverlayLayoutEnvelope> {
+    // Ensure both canvasPosition and overlayPosition are saved (backfill if missing)
+    const enrichedLayout: OverlayLayoutPayload = {
+      ...layout,
+      popups: layout.popups.map(popup => ({
+        ...popup,
+        overlayPosition: popup.overlayPosition || popup.canvasPosition
+      }))
+    }
+
     const response = await fetch(this.buildUrl(userId), {
       method: 'PUT',
       headers: {
@@ -80,7 +89,7 @@ export class OverlayLayoutAdapter {
       },
       cache: 'no-store',
       body: JSON.stringify({
-        layout,
+        layout: enrichedLayout,
         version,
         revision,
       }),
