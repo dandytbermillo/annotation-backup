@@ -1,4 +1,4 @@
-export const OVERLAY_LAYOUT_SCHEMA_VERSION = '1.0.0'
+export const OVERLAY_LAYOUT_SCHEMA_VERSION = '2.0.0'
 
 export interface OverlayCanvasPosition {
   x: number
@@ -10,6 +10,7 @@ export interface OverlayPopupDescriptor {
   folderId: string | null
   parentId: string | null
   canvasPosition: OverlayCanvasPosition
+  overlayPosition?: OverlayCanvasPosition
   level: number
   height?: number
 }
