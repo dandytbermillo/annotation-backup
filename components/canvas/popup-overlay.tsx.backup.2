@@ -1096,16 +1096,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [recomputeOverlayBounds, sidebarOpen]); // Add sidebarOpen dependency to recalculate when sidebar toggles
 
-  // Debug log PopupOverlay state
-  useEffect(() => {
-    debugLog('PopupOverlay', 'render_state', {
-      popupCount: popups.size,
-      overlayContainerExists: !!overlayContainer,
-      isActiveLayer,
-      activeLayer: (window as any).__layerContext?.activeLayer,
-    });
-  }, [popups.size, overlayContainer, isActiveLayer])
-
   // Recalculate bounds after sidebar animation completes
   useEffect(() => {
     const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
@@ -1253,11 +1243,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       style={{
         zIndex: Z_INDEX.POPUP_OVERLAY,
         overflow: 'hidden',
-        pointerEvents: (popups.size > 0) ? 'auto' : 'none',
-        touchAction: (popups.size > 0) ? 'none' : 'auto',
-        cursor: isPanning ? 'grabbing' : ((popups.size > 0) ? 'grab' : 'default'),
-        opacity: (popups.size > 0) ? 1 : 0,
-        visibility: (popups.size > 0) ? 'visible' : 'hidden',
+        pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
+        touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
+        cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
         clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
@@ -1301,7 +1291,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             popup.isDragging || popup.id === draggingPopup,
             true
           );
-          const cappedZIndex = Math.min(zIndex, 20000);
+          const cappedZIndex = Math.min(zIndex, 100);
           return (
             <div
               key={popup.id}
@@ -1395,11 +1385,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         left: overlayBounds ? `${overlayBounds.left}px` : 0,
         width: overlayBounds ? `${overlayBounds.width}px` : '100vw',
         height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
-        pointerEvents: (popups.size > 0) ? 'auto' : 'none',
-        touchAction: (popups.size > 0) ? 'none' : 'auto',
-        cursor: isPanning ? 'grabbing' : ((popups.size > 0) ? 'grab' : 'default'),
-        opacity: (popups.size > 0) ? 1 : 0,
-        visibility: (popups.size > 0) ? 'visible' : 'hidden',
+        pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
+        touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
+        cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
         zIndex: Z_INDEX.POPUP_OVERLAY,
         clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',

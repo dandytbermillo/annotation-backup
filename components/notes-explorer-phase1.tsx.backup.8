@@ -180,16 +180,7 @@ function NotesExplorerContent({
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const container = document.getElementById('canvas-container')
-      debugLog({
-        component: 'notes-explorer',
-        action: 'canvas_container_lookup',
-        metadata: {
-          containerFound: !!container,
-          containerExists: container !== null
-        }
-      })
-      setCanvasContainer(container)
+      setCanvasContainer(document.getElementById('canvas-container'))
     }
   }, [])
 
@@ -995,23 +986,7 @@ function NotesExplorerContent({
       }
     }
   }, [hoverPopovers.size, multiLayerEnabled, layerContext])
-
-  // Debug log popup state changes
-  useEffect(() => {
-    if (hoverPopovers.size > 0) {
-      debugLog({
-        component: 'notes-explorer',
-        action: 'popups_state_changed',
-        metadata: {
-          popupCount: hoverPopovers.size,
-          canvasContainerExists: !!canvasContainer,
-          multiLayerEnabled,
-          activeLayer: layerContext?.activeLayer
-        }
-      })
-    }
-  }, [hoverPopovers.size, canvasContainer, multiLayerEnabled, layerContext?.activeLayer])
-
+  
   // DISABLED: Space/Alt drag handler was preventing space bar in text editors
   // and interfering with direct popup overlay panning
   // The popup overlay now handles its own panning with plain click+drag
@@ -3079,17 +3054,26 @@ function NotesExplorerContent({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                // Always create persistent popover on click
+                // On click, always create a persistent popover (don't toggle)
+                const existingPopover = Array.from(hoverPopovers.values()).find(p => p.folder?.id === node.id && p.isPersistent)
                 debugLog({
                   component: 'notes-explorer',
                   action: 'eye_icon_clicked',
                   metadata: {
                     folderName: node.name,
                     folderId: node.id,
+                    existingPopover: existingPopover ? {
+                      id: existingPopover.id,
+                      isPersistent: existingPopover.isPersistent,
+                      isLoading: existingPopover.isLoading
+                    } : null,
                     totalPopovers: hoverPopovers.size
                   }
                 })
-                handleFolderHover(node, e, undefined, true)
+                // Don't create duplicate - if persistent popup already exists for this folder, do nothing
+                if (!existingPopover) {
+                  handleFolderHover(node, e, undefined, true)
+                }
               }}
               title="Click to view folder contents"
               className="p-1 hover:bg-gray-600 rounded transition-colors opacity-0 group-hover:opacity-100"
@@ -4166,42 +4150,40 @@ function NotesExplorerContent({
       )}
       
       {/* Click outside to close all popovers - backdrop BELOW popups */}
-      {hoverPopovers.size > 0 && (
-        canvasContainer ? createPortal(
-          <div
-            className="absolute inset-0"
-            style={{ zIndex: 50 }}
-            onClick={(e) => {
-              // Ignore clicks that happened shortly after backdrop was created
-              const now = Date.now()
-              if (now < backdropIgnoreUntilRef.current) {
-                debugLog({
-                  component: 'notes-explorer',
-                  action: 'backdrop_click_ignored',
-                  metadata: {
-                    ignoreUntil: backdropIgnoreUntilRef.current,
-                    now,
-                    remainingMs: backdropIgnoreUntilRef.current - now
-                  }
-                })
-                return
-              }
-
+      {hoverPopovers.size > 0 && canvasContainer && createPortal(
+        <div
+          className="absolute inset-0"
+          style={{ zIndex: 50 }}
+          onClick={(e) => {
+            // Ignore clicks that happened shortly after backdrop was created
+            const now = Date.now()
+            if (now < backdropIgnoreUntilRef.current) {
               debugLog({
                 component: 'notes-explorer',
-                action: 'backdrop_clicked',
+                action: 'backdrop_click_ignored',
                 metadata: {
-                  draggingPopup: draggingPopup ? true : false,
-                  popoverCount: hoverPopovers.size,
-                  target: (e.target as HTMLElement).className
+                  ignoreUntil: backdropIgnoreUntilRef.current,
+                  now,
+                  remainingMs: backdropIgnoreUntilRef.current - now
                 }
               })
-              if (!draggingPopup) closeAllPopovers()
-            }}
-            onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
-          />,
-          canvasContainer
-        ) : null
+              return
+            }
+
+            debugLog({
+              component: 'notes-explorer',
+              action: 'backdrop_clicked',
+              metadata: {
+                draggingPopup: draggingPopup ? true : false,
+                popoverCount: hoverPopovers.size,
+                target: (e.target as HTMLElement).className
+              }
+            })
+            if (!draggingPopup) closeAllPopovers()
+          }}
+          onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
+        />,
+        canvasContainer
       )}
     </div>
   )

@@ -26,9 +26,7 @@ export function FloatingNotesWidget({
         width: '320px',
         maxHeight: '80vh',
       }}
-      className="rounded-lg shadow-2xl"
-      onClick={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
+      className="rounded-lg shadow-2xl overflow-hidden"
     >
       {/* Notes Explorer Content - Full Widget */}
       <NotesExplorerPhase1
