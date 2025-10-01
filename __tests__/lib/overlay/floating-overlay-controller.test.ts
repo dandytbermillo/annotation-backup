@@ -14,6 +14,12 @@ class MockAdapter implements OverlayAdapter {
   private transform: Transform = { x: 0, y: 0, scale: 1 }
   private listeners: Set<(t: Transform) => void> = new Set()
 
+  // Optional capability methods (initialized based on capabilities)
+  setActiveLayer?: (layer: string) => void
+  registerShortcut?: (key: string, handler: () => void) => () => void
+  resetView?: () => void
+  toggleSidebar?: () => void
+
   constructor(capabilities: Partial<OverlayCapabilities> = {}) {
     this.capabilities = {
       transforms: true,

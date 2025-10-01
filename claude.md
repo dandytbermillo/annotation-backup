@@ -75,6 +75,174 @@
 
 ---
 
+## MANDATORY VERIFICATION CHECKPOINTS
+
+**CRITICAL: Before making ANY claim about code status, implementation, or testing, agents MUST complete these verification steps.**
+
+### Before Claiming Code Works:
+
+**REQUIRED STEPS (All must be completed):**
+
+1. **Read Current File State**
+   ```
+   ✓ Use Read tool to read the ENTIRE current file
+   ✓ Verify the exact lines you claim exist
+   ✓ Copy the actual line numbers and code snippet
+   ✓ State: "I verified lines X-Y in [file] contain: [snippet]"
+   ```
+
+2. **Verify Implementation Origin**
+   ```
+   ✓ If you wrote it: Cite the specific message/tool call where you wrote it
+   ✓ If user wrote it: State "User modified [file] with [changes]"
+   ✓ If unknown: State "I cannot determine who implemented this code"
+   ✓ NEVER claim "YOU implemented..." unless explicitly stated in system reminder
+   ```
+
+3. **Run Actual Tests**
+   ```
+   ✓ Use Bash tool to run: npm run type-check
+   ✓ Show the complete output
+   ✓ If errors exist: Report them, don't claim "fixed"
+   ✓ If tests pass: Show the passing output
+   ✓ State: "Type-check output: [actual output]"
+   ```
+
+4. **Check File Timestamps/Status**
+   ```
+   ✓ Use Bash tool: ls -la [file] or git status
+   ✓ Show the output
+   ✓ Verify file was actually modified
+   ✓ State: "File last modified: [timestamp]"
+   ```
+
+### Before Writing Implementation Reports:
+
+**REQUIRED EVIDENCE (All must be included):**
+
+1. **Code Verification Section**
+   ```markdown
+   ## Code Verification
+
+   Files modified: [list]
+
+   Verification performed:
+   - [ ] Read complete files with Read tool
+   - [ ] Verified lines X-Y contain expected code
+   - [ ] Ran type-check: [PASS/FAIL + output]
+   - [ ] Ran tests: [PASS/FAIL + output]
+   - [ ] Checked git status: [output]
+
+   Evidence:
+   [Paste actual tool outputs here]
+   ```
+
+2. **Implementation vs Proposal Distinction**
+   ```markdown
+   ## Status Declaration
+
+   - Proposed approach: [description]
+   - Current codebase state: [what actually exists in files]
+   - Implementation status: [NOT STARTED / IN PROGRESS / COMPLETED / UNKNOWN]
+   - Verification date: [timestamp]
+   - Verified by: [Read tool line numbers + outputs]
+   ```
+
+3. **Test Results Section**
+   ```markdown
+   ## Test Results
+
+   Type-check:
+   ```bash
+   $ npm run type-check
+   [actual output]
+   ```
+
+   Unit tests:
+   ```bash
+   $ npm run test
+   [actual output]
+   ```
+
+   Status: [All passing / X failures / Not run]
+   ```
+
+### Before Marking Acceptance Criteria Complete:
+
+**REQUIRED FOR EACH CHECKBOX:**
+
+```markdown
+- [x] Feature X works
+  - Verified: [date/time]
+  - Evidence: [tool output / line numbers / test results]
+  - Method: [how it was verified]
+  - Status: [confirmed working / assumed working / not verified]
+```
+
+**FORBIDDEN:**
+- Checking boxes without evidence
+- Marking complete based on "should work" logic
+- Assuming tests pass without running them
+- Claiming verification without showing proof
+
+### Mandatory Uncertainty Language:
+
+**When you CANNOT verify something, you MUST use these exact phrases:**
+
+- "I cannot verify this claim"
+- "I do not know who implemented this code"
+- "I cannot determine from available information"
+- "I have not tested this functionality"
+- "I assumed X but cannot confirm"
+- "This may or may not be implemented"
+
+**ABSOLUTELY FORBIDDEN phrases when uncertain:**
+
+- ❌ "This is complete"
+- ❌ "I confirmed this works"
+- ❌ "YOU implemented..."
+- ❌ "Tests pass" (without showing output)
+- ❌ "Fixed" (without verification)
+- ❌ "Verified" (without evidence)
+- ❌ Checking [x] boxes without proof
+
+### Red-Team Self-Check Triggers:
+
+**STOP and warn the user if ANY of these occur:**
+
+1. **About to mark something complete** → Have you run the verification checklist?
+2. **About to claim "fixed"** → Do you have test output proving it?
+3. **System reminder contradicts your claim** → Acknowledge the contradiction immediately
+4. **Cannot trace implementation to specific message** → State "I cannot determine origin"
+5. **No tool output to back up claim** → Don't make the claim
+6. **About to write implementation report** → Have you completed all required evidence sections?
+
+### Enforcement Protocol:
+
+**When caught violating verification requirements:**
+
+1. **Immediate acknowledgment:**
+   ```
+   "I violated verification requirements by claiming [X] without evidence.
+   I do not have proof that [X] is true.
+   The actual state is: [unknown / contradicts my claim / unverified]."
+   ```
+
+2. **Corrective action:**
+   - Use Read tool to check current file state
+   - Use Bash tool to run actual tests
+   - Show all outputs
+   - Revise claims to match evidence only
+
+3. **Documentation correction:**
+   - Mark any reports as "UNVERIFIED" if lacking evidence
+   - Remove any checked acceptance criteria lacking proof
+   - Add "Verification Status: FAILED" to affected documents
+
+**Remember: No amount of rules guarantees compliance. User must verify all claims regardless.**
+
+---
+
 ## CODE STYLE
 - Language: TypeScript + React + Next.js 15
 - Editor: TipTap

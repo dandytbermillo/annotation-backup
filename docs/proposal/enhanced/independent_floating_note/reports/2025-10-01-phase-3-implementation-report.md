@@ -20,8 +20,8 @@ Phase 3 introduces the `FloatingOverlayController`, a central controller that ma
 ### Task 1: Create FloatingOverlayController ✅
 
 **Files Created:**
-- `lib/overlay/types.ts` (189 lines)
-- `lib/overlay/floating-overlay-controller.ts` (307 lines)
+- `lib/overlay/types.ts` (46 lines)
+- `lib/overlay/floating-overlay-controller.ts` (261 lines)
 
 **Core Interfaces:**
 
@@ -387,7 +387,7 @@ $ npm run lint 2>&1 | head -20
 
 ---
 
-### Type-Check ⚠️
+### Type-Check ✅
 
 ```bash
 $ npm run type-check
@@ -405,25 +405,14 @@ $ npm run type-check
 - `lib/utils/__tests__/coordinate-bridge.test.ts` - 6 errors
 - `lib/workspace/workspace-store.ts` - 3 errors
 
-**New Phase 3 Error (Non-critical):**
+**Phase 3 Type Errors:** None
 
-```
-__tests__/lib/overlay/floating-overlay-controller.test.ts(285,15):
-error TS2339: Property 'resetView' does not exist on type 'MockAdapter'.
-```
+**Fix Applied:**
+- MockAdapter now declares optional capability methods (`resetView?`, `toggleSidebar?`, etc.)
+- Matches OverlayAdapter interface properly
+- Tests still pass (15/15)
 
-**Analysis:**
-- Line 285 assigns `resetView` method to MockAdapter in test
-- This is valid JavaScript but TypeScript complains about assignment to interface
-- Tests pass successfully (15/15 passing)
-- Not a runtime issue
-
-**Decision:**
-- Document but do not block Phase 3 completion
-- Can be fixed in Phase 4 by properly typing MockAdapter methods
-- Alternative: Use `// @ts-expect-error` comment
-
-**Result:** ⚠️ One minor TypeScript issue in test file (non-blocking)
+**Result:** ✅ No type errors in Phase 3 files
 
 ---
 
@@ -485,21 +474,22 @@ All commits include `Co-Authored-By: Claude <noreply@anthropic.com>` per CLAUDE.
 ### From IMPLEMENTATION_PLAN.md:
 
 - [x] **Controller class created with capability API**
-  - Verified: lib/overlay/floating-overlay-controller.ts:307
+  - Verified: lib/overlay/floating-overlay-controller.ts:261 (actual line count)
   - Evidence: Full implementation with 6 capabilities defined
 
 - [x] **React Context Provider created**
   - Verified: components/overlay/floating-overlay-provider.tsx:158
   - Evidence: Provider with 5 hooks (controller, transform, capabilities, registration, position)
+  - **Note:** Provider does NOT auto-register adapters yet (Phase 4 feature)
 
 - [x] **Unit tests pass**
-  - Verified: 15/15 tests passing in 0.19s
+  - Verified: 15/15 tests passing in 0.226s
   - Evidence: Complete coverage of capabilities, transforms, popups, lifecycle, capability-aware methods
 
-- [x] **Type-check passes (with exceptions)**
-  - Verified: No new type errors in Phase 3 implementation files
-  - Exception: 1 minor test typing issue (non-blocking)
-  - Evidence: 43 pre-existing errors, 1 new test error (property assignment)
+- [x] **Type-check passes**
+  - Verified: No type errors in Phase 3 implementation files
+  - Fix: MockAdapter now declares optional capability methods
+  - Evidence: 43 pre-existing errors in unrelated files, 0 Phase 3 errors
 
 - [x] **Capability matrix documented in README**
   - Verified: lib/overlay/README.md:50-98
@@ -553,20 +543,20 @@ All commits include `Co-Authored-By: Claude <noreply@anthropic.com>` per CLAUDE.
    - Controller exists but no concrete adapters (CanvasOverlayAdapter, IdentityOverlayAdapter)
    - Phase 4 will implement adapters
 
-2. **No Consumers Yet**
+2. **No Auto-Registration**
+   - Provider does NOT auto-detect LayerProvider or register adapters
+   - Implementation plan described this feature but it was deferred to Phase 4
+   - Provider currently only instantiates bare controller
+
+3. **No Consumers Yet**
    - NotesExplorerPhase1 and PopupOverlay still use LayerProvider directly
    - Phase 5 will refactor consumers
-
-3. **Minor Test Typing Issue**
-   - MockAdapter property assignment triggers TypeScript error
-   - Does not affect runtime or test execution
-   - Can be resolved with proper typing or `@ts-expect-error`
 
 ### Mitigation Strategies
 
 1. **Phase 4 Next** - Implement adapters immediately to make controller functional
-2. **Phase 5 Consumer Refactor** - Systematic migration of existing components
-3. **Fix Test Typing** - Add proper method typing to MockAdapter or use type assertions
+2. **Auto-Registration in Phase 4** - Add LayerProvider detection and adapter wiring to provider
+3. **Phase 5 Consumer Refactor** - Systematic migration of existing components
 
 ---
 

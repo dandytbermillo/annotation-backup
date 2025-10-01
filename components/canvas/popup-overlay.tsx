@@ -13,6 +13,7 @@ import { buildBranchPreview } from '@/lib/utils/branch-preview';
 import { debugLog } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
+import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from '@/lib/utils/overlay-host';
 
 const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
 
@@ -582,6 +583,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
+  const [usingFallbackHost, setUsingFallbackHost] = useState(false);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   // LOD: Track which popups are visible in the viewport to limit connection lines
   const visibleIdSetRef = useRef<Set<string>>(new Set());
@@ -1074,12 +1076,31 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
       setPointerGuardOffset(guardOffset);
       setOverlayContainer(canvasEl as HTMLElement);
+      setUsingFallbackHost(false);
       debugLog('PopupOverlay', 'overlay_bounds_updated', { rect, effectiveLeft, effectiveWidth, guardOffset });
     } else {
-      const fallbackSidebarWidth = 320;
-      setOverlayBounds({ top: 0, left: fallbackSidebarWidth, width: window.innerWidth - fallbackSidebarWidth, height: window.innerHeight });
-      setPointerGuardOffset(fallbackSidebarWidth);
-      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: fallbackSidebarWidth });
+      const fallbackHost = ensureFloatingOverlayHost();
+      if (fallbackHost) {
+        const rect = fallbackHost.getBoundingClientRect();
+        setOverlayBounds({
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+        });
+        setPointerGuardOffset(0);
+        setOverlayContainer(fallbackHost);
+        setUsingFallbackHost(fallbackHost.id === FLOATING_OVERLAY_HOST_ID);
+        debugLog('PopupOverlay', 'overlay_bounds_fallback', {
+          hostId: fallbackHost.id,
+          rect,
+        });
+      } else {
+        setOverlayBounds({ top: 0, left: 0, width: window.innerWidth, height: window.innerHeight });
+        setPointerGuardOffset(0);
+        setOverlayContainer(null);
+        setUsingFallbackHost(false);
+      }
     }
   }, []);
 
@@ -1238,7 +1259,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     <div
       ref={overlayRef}
       id="popup-overlay"
-      className={`absolute inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
+      className={`${usingFallbackHost ? 'fixed' : 'absolute'} inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
       style={{
         zIndex: Z_INDEX.POPUP_OVERLAY,
@@ -1249,7 +1270,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         opacity: (popups.size > 0) ? 1 : 0,
         visibility: (popups.size > 0) ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
-        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
+        clipPath: !usingFallbackHost && pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -1367,6 +1388,20 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       </div>
     </div>
   );
+
+  useEffect(() => {
+    if (!usingFallbackHost || !overlayContainer) {
+      return;
+    }
+
+    const host = overlayContainer;
+    host.style.pointerEvents = popups.size > 0 ? 'auto' : 'none';
+    host.style.zIndex = String(Z_INDEX.POPUP_OVERLAY);
+
+    return () => {
+      host.style.pointerEvents = 'none';
+    };
+  }, [overlayContainer, popups.size, usingFallbackHost]);
 
   // Render strategy:
   // 1. If canvas-container exists, portal into it (scoped to canvas area)

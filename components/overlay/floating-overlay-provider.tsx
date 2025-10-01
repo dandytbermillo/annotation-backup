@@ -4,7 +4,9 @@
  * FloatingOverlayProvider
  *
  * React context provider for FloatingOverlayController.
- * Auto-registers appropriate adapter based on LayerProvider availability.
+ *
+ * NOTE: Phase 3 provides controller skeleton only. Adapter registration
+ * will be implemented in Phase 4 (CanvasOverlayAdapter, IdentityOverlayAdapter).
  *
  * Usage:
  *   <FloatingOverlayProvider>
