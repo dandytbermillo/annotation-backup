@@ -1312,6 +1312,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
               }}
               data-popup-id={popup.id}
+              onClick={(e) => e.stopPropagation()}
             >
               {/* Popup Header */}
               <div
@@ -1474,6 +1475,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               backfaceVisibility: 'hidden' as const,
               willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
             }}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Popup Header */}
             <div

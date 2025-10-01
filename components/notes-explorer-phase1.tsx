@@ -1932,12 +1932,13 @@ function NotesExplorerContent({
         hoverTimeoutRef.current.delete(timeoutKey)
       }
 
-      // For persistent requests, reuse the existing popover if present
+      // For persistent requests, check if an existing popover is already showing
       const existingEntry = Array.from(hoverPopovers.entries()).find(([, pop]) => pop.folder?.id === folder.id)
       if (existingEntry) {
         const [existingId, existingPopover] = existingEntry
-        if (isPersistent || existingPopover.isPersistent) {
-          // Promote the existing popover and ensure it stays persistent
+        // If we're requesting a persistent popover and one already exists and is persistent
+        if (isPersistent && existingPopover.isPersistent) {
+          // It's already showing, just ensure it stays on top
           setHoverPopovers(prev => {
             if (!prev.has(existingId)) return prev
             const updated = new Map(prev)
@@ -1947,6 +1948,14 @@ function NotesExplorerContent({
             return updated
           })
           return
+        } else if (isPersistent) {
+          // We want a persistent popup but existing is not persistent, remove the old one first
+          setHoverPopovers(prev => {
+            const newMap = new Map(prev)
+            newMap.delete(existingId)
+            return newMap
+          })
+          // Continue to create a new persistent popup below
         }
       }
       // Log loading state (non-blocking)
@@ -2171,12 +2180,22 @@ function NotesExplorerContent({
   
   // Close all popovers
   const closeAllPopovers = useCallback(() => {
+    setHoverPopovers(prev => {
+      if (prev.size > 0) {
+        debugLog({
+          component: 'notes-explorer',
+          action: 'close_all_popovers_called',
+          metadata: {
+            popoverCount: prev.size,
+            popoverIds: Array.from(prev.keys())
+          }
+        })
+      }
+      return new Map()
+    })
     // Clear all timeouts
     hoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     hoverTimeoutRef.current.clear()
-    
-    // Clear all popovers
-    setHoverPopovers(new Map())
     setDraggingPopup(null)
   }, [])
 
@@ -3017,6 +3036,20 @@ function NotesExplorerContent({
                 e.stopPropagation()
                 // On click, create persistent popover or toggle existing one
                 const existingPopover = Array.from(hoverPopovers.values()).find(p => p.folder?.id === node.id)
+                debugLog({
+                  component: 'notes-explorer',
+                  action: 'eye_icon_clicked',
+                  metadata: {
+                    folderName: node.name,
+                    folderId: node.id,
+                    existingPopover: existingPopover ? {
+                      id: existingPopover.id,
+                      isPersistent: existingPopover.isPersistent,
+                      isLoading: existingPopover.isLoading
+                    } : null,
+                    totalPopovers: hoverPopovers.size
+                  }
+                })
                 if (existingPopover && existingPopover.isPersistent) {
                   // If persistent popover exists, close it
                   closePopover(existingPopover.id)
@@ -3025,18 +3058,7 @@ function NotesExplorerContent({
                   handleFolderHover(node, e, undefined, true)
                 }
               }}
-              onMouseEnter={(e) => {
-                e.stopPropagation()
-                // On hover, only show if no persistent popover exists
-                const hasPersistent = Array.from(hoverPopovers.values()).some(p => p.folder?.id === node.id && p.isPersistent)
-                if (!hasPersistent) {
-                  handleFolderHover(node, e, undefined, false)
-                }
-              }}
-              onMouseLeave={(e) => {
-                e.stopPropagation()
-                handleFolderHoverLeave(node.id)
-              }}
+              title="Click to view folder contents"
               className="p-1 hover:bg-gray-600 rounded transition-colors opacity-0 group-hover:opacity-100"
             >
               <Eye className="w-3.5 h-3.5 text-gray-400" />
@@ -3681,14 +3703,7 @@ function NotesExplorerContent({
                                 e.stopPropagation()
                                 handleBrowseSubfolder(child, columnIndex)
                               }}
-                              onMouseEnter={(e) => {
-                                e.stopPropagation()
-                                handleFolderHover(child, e)
-                              }}
-                              onMouseLeave={(e) => {
-                                e.stopPropagation()
-                                handleFolderHoverLeave(child.id)
-                              }}
+                              title="Click to browse folder"
                               className="p-1 hover:bg-gray-700 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                             >
                               <Eye className="w-3.5 h-3.5 text-gray-400" />
@@ -3842,14 +3857,11 @@ function NotesExplorerContent({
                         {/* Eye icon for folders within popups - cascading effect */}
                         {child.type === 'folder' && (
                           <button
-                            onMouseEnter={(e) => {
+                            onClick={(e) => {
                               e.stopPropagation()
-                              handleFolderHover(child, e, popover.id)
+                              handleFolderHover(child, e, popover.id, true)
                             }}
-                            onMouseLeave={(e) => {
-                              e.stopPropagation()
-                              handleFolderHoverLeave(child.id, popover.id)
-                            }}
+                            title="Click to view folder"
                             className="p-0.5 hover:bg-gray-600 rounded opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <Eye className="w-3 h-3 text-gray-400" />
@@ -4120,14 +4132,25 @@ function NotesExplorerContent({
         </svg>
       )}
       
-      {/* Click outside to close all popovers */}
+      {/* Click outside to close all popovers - backdrop BELOW popups */}
       {hoverPopovers.size > 0 && (
         canvasContainer
           ? createPortal(
               <div
                 className="absolute inset-0"
-                style={{ zIndex: 9997 }}
-                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
+                style={{ zIndex: 50 }}
+                onClick={(e) => {
+                  debugLog({
+                    component: 'notes-explorer',
+                    action: 'backdrop_clicked',
+                    metadata: {
+                      draggingPopup: draggingPopup ? true : false,
+                      popoverCount: hoverPopovers.size,
+                      target: (e.target as HTMLElement).className
+                    }
+                  })
+                  if (!draggingPopup) closeAllPopovers()
+                }}
                 onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
               />,
               canvasContainer
@@ -4135,8 +4158,19 @@ function NotesExplorerContent({
           : (
               <div
                 className="fixed"
-                style={{ top: 0, left: 320, right: 0, bottom: 0, zIndex: 9997 }}
-                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
+                style={{ top: 0, left: 320, right: 0, bottom: 0, zIndex: 50 }}
+                onClick={(e) => {
+                  debugLog({
+                    component: 'notes-explorer',
+                    action: 'backdrop_clicked_fixed',
+                    metadata: {
+                      draggingPopup: draggingPopup ? true : false,
+                      popoverCount: hoverPopovers.size,
+                      target: (e.target as HTMLElement).className
+                    }
+                  })
+                  if (!draggingPopup) closeAllPopovers()
+                }}
                 onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
               />
             )

@@ -2180,23 +2180,14 @@ function NotesExplorerContent({
   
   // Close all popovers
   const closeAllPopovers = useCallback(() => {
-    debugLog({
-      component: 'notes-explorer',
-      action: 'close_all_popovers_called',
-      metadata: {
-        popoverCount: hoverPopovers.size,
-        popoverIds: Array.from(hoverPopovers.keys()),
-        stackTrace: new Error().stack?.split('\n').slice(1, 5).join('\n')
-      }
-    })
     // Clear all timeouts
     hoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     hoverTimeoutRef.current.clear()
-
+    
     // Clear all popovers
     setHoverPopovers(new Map())
     setDraggingPopup(null)
-  }, [hoverPopovers])
+  }, [])
 
   const prevActiveLayerRef = useRef<'notes' | 'popups' | null>(layerContext?.activeLayer ?? null)
 
@@ -3035,20 +3026,6 @@ function NotesExplorerContent({
                 e.stopPropagation()
                 // On click, create persistent popover or toggle existing one
                 const existingPopover = Array.from(hoverPopovers.values()).find(p => p.folder?.id === node.id)
-                debugLog({
-                  component: 'notes-explorer',
-                  action: 'eye_icon_clicked',
-                  metadata: {
-                    folderName: node.name,
-                    folderId: node.id,
-                    existingPopover: existingPopover ? {
-                      id: existingPopover.id,
-                      isPersistent: existingPopover.isPersistent,
-                      isLoading: existingPopover.isLoading
-                    } : null,
-                    totalPopovers: hoverPopovers.size
-                  }
-                })
                 if (existingPopover && existingPopover.isPersistent) {
                   // If persistent popover exists, close it
                   closePopover(existingPopover.id)
@@ -4138,18 +4115,7 @@ function NotesExplorerContent({
               <div
                 className="absolute inset-0"
                 style={{ zIndex: 50 }}
-                onClick={(e) => {
-                  debugLog({
-                    component: 'notes-explorer',
-                    action: 'backdrop_clicked',
-                    metadata: {
-                      draggingPopup: draggingPopup ? true : false,
-                      popoverCount: hoverPopovers.size,
-                      target: (e.target as HTMLElement).className
-                    }
-                  })
-                  if (!draggingPopup) closeAllPopovers()
-                }}
+                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
                 onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
               />,
               canvasContainer
@@ -4158,18 +4124,7 @@ function NotesExplorerContent({
               <div
                 className="fixed"
                 style={{ top: 0, left: 320, right: 0, bottom: 0, zIndex: 50 }}
-                onClick={(e) => {
-                  debugLog({
-                    component: 'notes-explorer',
-                    action: 'backdrop_clicked_fixed',
-                    metadata: {
-                      draggingPopup: draggingPopup ? true : false,
-                      popoverCount: hoverPopovers.size,
-                      target: (e.target as HTMLElement).className
-                    }
-                  })
-                  if (!draggingPopup) closeAllPopovers()
-                }}
+                onClick={(e) => { if (!draggingPopup) closeAllPopovers() }}
                 onMouseDown={(e) => { if (draggingPopup) e.preventDefault() }}
               />
             )

@@ -2,22 +2,19 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Underline from '@tiptap/extension-underline';
-import Highlight from '@tiptap/extension-highlight';
-import Placeholder from '@tiptap/extension-placeholder';
 import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildBranchPreview } from '@/lib/utils/branch-preview';
 import { debugLog } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
+
+const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
 
 // Auto-scroll configuration - all values are configurable, not hardcoded
 const AUTO_SCROLL_CONFIG = {
@@ -54,8 +51,9 @@ interface PopupOverlayProps {
   draggingPopup: string | null;
   onClosePopup: (id: string) => void;
   onDragStart?: (id: string, event: React.MouseEvent) => void;
-  onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string) => void;
-  onLeaveFolder?: () => void;
+  onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
+  onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
+  sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
 type PopupChildNode = {
@@ -92,59 +90,7 @@ interface PreviewEntry {
   }>;
 }
 
-const PREVIEW_PLACEHOLDER_HTML = '<p class="text-sm text-gray-400 italic">Select a note to preview.</p>';
-const TOOLTIP_PREVIEW_MAX_LENGTH = 600;
-
-const PopupReadOnlyPreview: React.FC<{ content: unknown; loading: boolean; error?: string }> = ({ content, loading, error }) => {
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-        bulletList: { keepMarks: true, keepAttributes: false },
-        orderedList: { keepMarks: true, keepAttributes: false },
-      }),
-      Underline,
-      Highlight,
-      Placeholder.configure({ placeholder: 'Select a note to preview.' }),
-    ],
-    content: PREVIEW_PLACEHOLDER_HTML,
-    editable: false,
-  });
-
-  useEffect(() => {
-    if (!editor) return;
-    if (loading) return;
-
-    if (error) {
-      editor.commands.setContent(`<p class="text-sm text-red-400">${error}</p>`, false);
-      return;
-    }
-
-    if (content) {
-      editor.commands.setContent(content as any, false);
-    } else {
-      editor.commands.setContent(PREVIEW_PLACEHOLDER_HTML, false);
-    }
-  }, [editor, content, loading, error]);
-
-  if (loading) {
-    return <div className="p-3 text-sm text-gray-400">Loading preview…</div>;
-  }
-
-  if (error) {
-    return <div className="p-3 text-sm text-red-400">{error}</div>;
-  }
-
-  if (!editor) {
-    return <div className="p-3 text-sm text-gray-400">Preparing preview…</div>;
-  }
-
-  return (
-    <div className="p-3 text-sm text-gray-200 leading-relaxed">
-      <EditorContent editor={editor} />
-    </div>
-  );
-};
+const TOOLTIP_PREVIEW_MAX_LENGTH = Number.MAX_SAFE_INTEGER; // allow full content inside scrollable tooltip
 
 /**
  * PopupOverlay - React component for the popup layer
@@ -157,22 +103,35 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onDragStart,
   onHoverFolder,
   onLeaveFolder,
+  sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
   const previewStateRef = useRef(previewState);
+  const previewControllersRef = useRef<Map<string, AbortController>>(new Map());
   useEffect(() => {
     previewStateRef.current = previewState;
   }, [previewState]);
 
-  const isMountedRef = useRef(true);
   useEffect(() => {
     return () => {
-      isMountedRef.current = false;
+      previewControllersRef.current.forEach((controller) => {
+        try { controller.abort(); } catch {}
+      });
+      previewControllersRef.current.clear();
     };
   }, []);
 
   const fetchPreview = useCallback(async (popupId: string, childId: string) => {
+    const controllerKey = `${popupId}:${childId}`;
+    const existingController = previewControllersRef.current.get(controllerKey);
+    if (existingController) {
+      try { existingController.abort(); } catch {}
+    }
+
+    const controller = new AbortController();
+    previewControllersRef.current.set(controllerKey, controller);
+
     try {
       const response = await fetch(`/api/items/${childId}`, {
         method: 'GET',
@@ -181,6 +140,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         },
         credentials: 'same-origin',
         cache: 'no-store',
+        signal: controller.signal,
       });
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`);
@@ -189,8 +149,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const content = data?.item?.content ?? null;
       const contentText = data?.item?.contentText ?? '';
       const previewText = buildBranchPreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
-
-      if (!isMountedRef.current) return;
 
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_success', {
@@ -204,14 +162,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
 
       setPreviewState(prev => {
-        const entry = prev[popupId];
-        if (!entry || !entry.entries[childId]) {
-          return prev;
-        }
+        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
         return {
           ...prev,
           [popupId]: {
-            ...entry,
+            activeChildId: entry.activeChildId ?? childId,
             entries: {
               ...entry.entries,
               [childId]: {
@@ -225,7 +180,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         };
       });
     } catch (error: any) {
-      if (!isMountedRef.current) return;
+      if (error?.name === 'AbortError') {
+        return;
+      }
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_error', {
           popupId,
@@ -234,25 +191,25 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         });
       });
       setPreviewState(prev => {
-        const entry = prev[popupId];
-        if (!entry || !entry.entries[childId]) {
-          return prev;
-        }
+        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
         return {
           ...prev,
           [popupId]: {
-            ...entry,
+            activeChildId: entry.activeChildId ?? childId,
             entries: {
               ...entry.entries,
               [childId]: {
                 status: 'error',
                 error: error?.message ?? 'Failed to load preview',
                 previewText: entry.entries[childId]?.previewText,
+                requestedAt: undefined,
               },
             },
           },
         };
       });
+    } finally {
+      previewControllersRef.current.delete(controllerKey);
     }
   }, []);
 
@@ -362,8 +319,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       previewEntry?: PreviewEntry;
       activePreview?: { status: PreviewStatus; content?: unknown; error?: string };
       isPanning: boolean;
-      onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string) => void;
-      onLeaveFolder?: () => void;
+      onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
+      onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
     }
   ) => (child: PopupChildNode) => {
     const noteLike = isNoteLikeNode(child);
@@ -375,9 +332,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       requestPreview(popupId, child);
     };
 
-    const handleFolderHover = (event: React.MouseEvent) => {
+    const handleFolderHover = (event: React.MouseEvent, persistent = false) => {
       if (rowIsPanning || !folderLike) return;
-      rowHoverFolder?.(child, event, popupId);
+      rowHoverFolder?.(child, event, popupId, persistent);
     };
 
     const childPreviewEntry = noteLike ? previewEntry?.entries?.[child.id] : undefined;
@@ -431,12 +388,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           if (noteLike) {
             triggerPreview();
           } else {
-            handleFolderHover(event);
+            handleFolderHover(event, false);
           }
         }}
         onMouseLeave={() => {
           if (folderLike) {
-            rowLeaveFolder?.();
+            rowLeaveFolder?.(child.id, popupId);
           }
         }}
         onFocus={() => {
@@ -474,45 +431,56 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     <Eye className="w-4 h-4" />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent
-                  side="left"
-                  align="center"
-                  className="max-w-sm bg-gray-900 border border-gray-700 p-0 text-left shadow-lg"
-                >
-                  <div className="px-3 py-2 border-b border-gray-800">
-                    <p className="text-xs font-medium text-gray-300 truncate">
-                      {child.name || 'Preview'}
-                    </p>
-                  </div>
-                  <div className="max-h-48 overflow-y-auto px-3 py-2 text-xs">
-                    {tooltipBody}
-                  </div>
-                </TooltipContent>
+                        <TooltipPortal>
+                          <TooltipContent
+                            side="right"
+                            align="center"
+                            sideOffset={14}
+                            collisionPadding={24}
+                            avoidCollisions={true}
+                            className="popup-preview-tooltip"
+                          >
+                            <div className="popup-preview-tooltip__header">
+                              <p className="popup-preview-tooltip__title">
+                                {child.name || 'Preview'}
+                              </p>
+                            </div>
+                            <div className="popup-preview-tooltip__body">
+                              {tooltipBody}
+                            </div>
+                          </TooltipContent>
+                        </TooltipPortal>
               </Tooltip>
             </TooltipProvider>
           )}
           {folderLike && (
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    aria-label="Open folder"
-                    className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                    onMouseEnter={handleFolderHover}
-                    onFocus={handleFolderHover}
-                    onMouseLeave={() => rowLeaveFolder?.()}
-                    onBlur={() => rowLeaveFolder?.()}
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Open folder</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-      </div>
+                    <TooltipProvider delayDuration={150}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="Open folder"
+                            className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                            onMouseEnter={(event) => handleFolderHover(event, false)}
+                            onFocus={(event) => handleFolderHover(event, false)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleFolderHover(event, true);
+                            }}
+                            onMouseLeave={() => rowLeaveFolder?.(child.id, popupId)}
+                            onBlur={() => rowLeaveFolder?.(child.id, popupId)}
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipPortal>
+                          <TooltipContent side="right">Open folder</TooltipContent>
+                        </TooltipPortal>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
+              </div>
     );
   };
 
@@ -602,15 +570,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Use LayerProvider to gate interactivity by active layer
   const layerCtx = useLayer();
+  const hasSharedCamera = multiLayerEnabled && layerCtx?.layers instanceof Map && layerCtx.layers.size > 0;
+  const sharedTransform = hasSharedCamera ? (layerCtx.transforms.popups || IDENTITY_TRANSFORM) : null;
+  const activeTransform = sharedTransform ?? transform;
   const isActiveLayer = !!layerCtx && layerCtx.activeLayer === 'popups';
   
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the on-screen bounds of the canvas container to scope the overlay
   const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
-  const [isPointerInside, setIsPointerInside] = useState<boolean>(false);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   // LOD: Track which popups are visible in the viewport to limit connection lines
   const visibleIdSetRef = useRef<Set<string>>(new Set());
@@ -636,6 +607,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   }));
   const autoScrollRef = useRef<AutoScrollState>(autoScroll);
   const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (hasSharedCamera && sharedTransform) {
+      transformRef.current = { ...sharedTransform };
+    }
+  }, [hasSharedCamera, sharedTransform]);
 
   // Inject global CSS once to hard-disable selection when dragging
   useEffect(() => {
@@ -689,13 +666,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'initialized', {
         popupCount: popups.size,
-        transform,
+        transform: activeTransform,
         multiLayerEnabled,
         isActiveLayer,
         layerCtx: layerCtx?.activeLayer || 'none'
       });
     });
-  }, [popups.size, transform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
+  }, [popups.size, activeTransform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
   // Avoid per-frame logging during pan to prevent jank/flicker
   // (transform updates every pointer move)
@@ -734,6 +711,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Handle pan start (simplified like notes canvas)
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
+    if (sidebarEl) {
+      const rect = sidebarEl.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        debugLog('PopupOverlay', 'pointer_blocked_over_sidebar', {
+          clientX: e.clientX,
+          clientY: e.clientY,
+          sidebarRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+        });
+        return;
+      }
+    }
+
     // Always log that pointer down was received
     console.log('[PopupOverlay] pointerDown:', {
       target: (e.target as HTMLElement).className,
@@ -793,7 +783,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     console.log('[PopupOverlay] PAN START!', {
       clientX: e.clientX,
       clientY: e.clientY,
-      transform,
+      transform: activeTransform,
       pointerId: e.pointerId
     });
     
@@ -801,7 +791,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       debugLog('PopupOverlay', 'pan_start', { 
         clientX: e.clientX, 
         clientY: e.clientY,
-        currentTransform: transform,
+        currentTransform: activeTransform,
         pointerId: e.pointerId,
         isActiveLayer,
         popupCount: popups.size
@@ -834,12 +824,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Prevent text selection while dragging
     enableSelectionGuards();
     document.body.style.userSelect = 'none';
-    if (containerRef.current) {
-      // Apply GPU optimization hints directly during drag
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('overlay-pan');
+      transformRef.current = { ...activeTransform };
+    } else if (containerRef.current) {
       containerRef.current.style.willChange = 'transform';
       containerRef.current.style.backfaceVisibility = 'hidden';
       containerRef.current.style.perspective = '1000px';
-      // Sync current transform into ref and element style
       transformRef.current = { ...transform };
       const { x, y, scale } = transformRef.current;
       containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
@@ -849,7 +840,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     
     // Only prevent default for actual drag operations
     e.preventDefault();
-  }, [isOverlayEmptySpace, transform, isActiveLayer, popups.size]);
+  }, [
+    isOverlayEmptySpace,
+    transform,
+    sharedTransform,
+    activeTransform,
+    hasSharedCamera,
+    isActiveLayer,
+    popups.size,
+    layerCtx
+  ]);
   
   // Handle pan move (simplified like notes canvas)
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
@@ -871,38 +871,40 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (!engaged) {
       const dx0 = e.clientX - panStartRef.current.x;
       const dy0 = e.clientY - panStartRef.current.y;
-      if (Math.hypot(dx0, dy0) < 2) return; // lower hysteresis for snappier start
+      if (Math.hypot(dx0, dy0) < 1) return; // maintain minimal hysteresis to avoid accidental pans
       setEngaged(true);
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
       });
     }
     
-    // Update transform via ref and schedule RAF to apply element style only
-    transformRef.current = {
-      ...transformRef.current,
-      x: transformRef.current.x + deltaX,
-      y: transformRef.current.y + deltaY,
-    };
-    // Apply immediate transform for first responsive frame
-    if (containerRef.current) {
-      const { x, y, scale } = transformRef.current;
-      containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
-    }
-    if (rafIdRef.current == null) {
-      rafIdRef.current = requestAnimationFrame((ts) => {
-        rafIdRef.current = null;
-        if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
-        lastRafTsRef.current = ts;
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY });
+    } else {
+      transformRef.current = {
+        ...transformRef.current,
+        x: transformRef.current.x + deltaX,
+        y: transformRef.current.y + deltaY,
+      };
+      if (containerRef.current) {
         const { x, y, scale } = transformRef.current;
-        if (containerRef.current) {
-          containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
-        }
-      });
+        containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+      }
+      if (rafIdRef.current == null) {
+        rafIdRef.current = requestAnimationFrame((ts) => {
+          rafIdRef.current = null;
+          if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
+          lastRafTsRef.current = ts;
+          const { x, y, scale } = transformRef.current;
+          if (containerRef.current) {
+            containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+          }
+        });
+      }
     }
     
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
-  }, [isPanning, engaged, popups.size]);
+  }, [isPanning, engaged, popups.size, hasSharedCamera, layerCtx]);
   
   // Handle pan end (simplified)
   const handlePointerEnd = useCallback((e: React.PointerEvent) => {
@@ -911,8 +913,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'pan_end', { 
         totalDelta: {
-          x: transform.x,
-          y: transform.y
+          x: activeTransform.x,
+          y: activeTransform.y
         },
         pointerId: e.pointerId,
         wasEngaged: engaged
@@ -941,24 +943,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     
     // Reset styles
     document.body.style.userSelect = '';
-    if (containerRef.current) {
-      // Reset GPU optimization hints after drag
+    if (!hasSharedCamera && containerRef.current) {
       containerRef.current.style.willChange = 'auto';
       containerRef.current.style.backfaceVisibility = '';
       containerRef.current.style.perspective = '';
-      // Clear transform so React state can control again
       containerRef.current.style.transform = '';
     }
     if (overlayRef.current) overlayRef.current.style.cursor = '';
-    // Commit the final transform once to React state
-    setTransform(prev => ({ ...prev, ...transformRef.current }));
+    if (!hasSharedCamera) {
+      setTransform(prev => ({ ...prev, ...transformRef.current }));
+    }
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
     // Re-enable selection
     disableSelectionGuards();
-  }, [isPanning, transform, engaged]);
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('none');
+    }
+  }, [isPanning, hasSharedCamera, layerCtx, engaged, activeTransform]);
   
   // Note: With pointer capture, we don't need document-level listeners
   // The pointer events will continue to fire on the overlay even when
@@ -1008,10 +1012,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Container transform style with translate3d for GPU acceleration
   const containerStyle: React.CSSProperties = {
     // Round to nearest 0.5px to reduce jitter while maintaining smoothness
-    transform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
+    transform: `translate3d(${Math.round(activeTransform.x * 2) / 2}px, ${Math.round(activeTransform.y * 2) / 2}px, 0) scale(${activeTransform.scale})`,
     transformOrigin: '0 0',
     // Only apply will-change during active panning to optimize GPU layers
-    willChange: isPanning ? 'transform' : 'auto',
+    willChange: isPanning && !hasSharedCamera ? 'transform' : 'auto',
     // Force stable GPU layer to prevent text rasterization issues
     backfaceVisibility: 'hidden',
     transformStyle: 'preserve-3d',
@@ -1020,12 +1024,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Ensure we're on a separate compositing layer
     isolation: 'isolate',
     // Force GPU acceleration
-    WebkitTransform: `translate3d(${Math.round(transform.x * 2) / 2}px, ${Math.round(transform.y * 2) / 2}px, 0) scale(${transform.scale})`,
+    WebkitTransform: `translate3d(${Math.round(activeTransform.x * 2) / 2}px, ${Math.round(activeTransform.y * 2) / 2}px, 0) scale(${activeTransform.scale})`,
     // Prevent font antialiasing changes during transform
     WebkitFontSmoothing: 'antialiased',
     MozOsxFontSmoothing: 'grayscale',
     // Apply subtle opacity during pan to force simpler rendering
-    opacity: isPanning ? 0.999 : 1,
+    opacity: isPanning && !hasSharedCamera ? 0.999 : 1,
   };
 
   // Recompute overlay bounds to match the canvas area (avoids hardcoded offsets)
@@ -1034,33 +1038,48 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     const canvasEl = document.getElementById('canvas-container');
     if (canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
-      // If a sidebar is present, subtract its area from the interactive bounds
-      const sidebarEl = document.querySelector('[data-sidebar]') as HTMLElement | null;
+      const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
       let effectiveLeft = rect.left;
       let effectiveWidth = rect.width;
+      let guardOffset = 0;
+
       if (sidebarEl) {
-        const s = sidebarEl.getBoundingClientRect();
-        // If the sidebar overlaps the left portion of the canvas horizontally,
-        // shift the interactive area to start at the sidebar's right edge
-        const overlap = Math.max(0, s.right - rect.left);
-        if (overlap > 0) {
-          effectiveLeft = rect.left + overlap;
-          effectiveWidth = Math.max(0, rect.width - overlap);
+        const sidebarRect = sidebarEl.getBoundingClientRect();
+        const sidebarWidth = sidebarRect.width;
+        const isSidebarVisible = sidebarWidth > 0 && sidebarRect.right > rect.left + 1;
+
+        if (isSidebarVisible) {
+          const overlap = Math.max(0, sidebarRect.right - rect.left);
+          if (overlap > 0) {
+            effectiveLeft = rect.left + overlap;
+            effectiveWidth = Math.max(0, rect.right - effectiveLeft);
+            guardOffset = overlap;
+            debugLog('PopupOverlay', 'bounds_sidebar_detected', {
+              sidebarWidth,
+              sidebarRight: sidebarRect.right,
+              canvasLeft: rect.left,
+              overlap,
+              effectiveLeft,
+              effectiveWidth,
+            });
+          }
         }
       }
+
       setOverlayBounds({
         top: Math.max(0, rect.top),
         left: Math.max(0, effectiveLeft),
         width: Math.max(0, effectiveWidth),
         height: Math.max(0, rect.height),
       });
-      // Track container for portal mounting
+      setPointerGuardOffset(guardOffset);
       setOverlayContainer(canvasEl as HTMLElement);
-      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect });
+      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect, effectiveLeft, effectiveWidth, guardOffset });
     } else {
-      // Fallback: full viewport minus sidebar (legacy)
-      setOverlayBounds({ top: 0, left: 320, width: window.innerWidth - 320, height: window.innerHeight });
-      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: 320 });
+      const fallbackSidebarWidth = 320;
+      setOverlayBounds({ top: 0, left: fallbackSidebarWidth, width: window.innerWidth - fallbackSidebarWidth, height: window.innerHeight });
+      setPointerGuardOffset(fallbackSidebarWidth);
+      debugLog('PopupOverlay', 'overlay_bounds_fallback', { left: fallbackSidebarWidth });
     }
   }, []);
 
@@ -1071,14 +1090,46 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     window.addEventListener('resize', onResize);
     const onScroll = () => recomputeOverlayBounds();
     window.addEventListener('scroll', onScroll, { passive: true });
-    // Recompute after short delay to catch sidebar transitions
-    const t = setTimeout(recomputeOverlayBounds, 300);
     return () => {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('scroll', onScroll as any);
-      clearTimeout(t);
     };
-  }, [recomputeOverlayBounds]);
+  }, [recomputeOverlayBounds, sidebarOpen]); // Add sidebarOpen dependency to recalculate when sidebar toggles
+
+  // Recalculate bounds after sidebar animation completes
+  useEffect(() => {
+    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
+    if (!sidebarEl) return;
+
+    const handleTransitionEnd = (e: TransitionEvent) => {
+      // Recalculate bounds after sidebar animation completes
+      if (e.propertyName === 'transform') {
+        // Small delay to ensure getBoundingClientRect returns final values
+        setTimeout(() => {
+          recomputeOverlayBounds();
+          debugLog('PopupOverlay', 'bounds_recalc_after_transition', {
+            sidebarOpen,
+            timestamp: new Date().toISOString()
+          });
+        }, 10);
+      }
+    };
+
+    sidebarEl.addEventListener('transitionend', handleTransitionEnd);
+    return () => {
+      sidebarEl.removeEventListener('transitionend', handleTransitionEnd);
+    };
+  }, [recomputeOverlayBounds, sidebarOpen]);
+
+  useEffect(() => {
+    debugLog('PopupOverlay', 'transform_applied', {
+      x: activeTransform.x,
+      y: activeTransform.y,
+      scale: activeTransform.scale,
+      hasSharedCamera,
+      isPanning
+    });
+  }, [activeTransform.x, activeTransform.y, activeTransform.scale, hasSharedCamera, isPanning]);
 
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
@@ -1142,31 +1193,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [overlayContainer, popups.size]);
 
-  // Gate overlay interactivity based on pointer location relative to canvas container
-  useEffect(() => {
-    const onPointerMove = (e: PointerEvent) => {
-      // If pointer is over any sidebar element, treat as outside overlay
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest('[data-sidebar]')) {
-        setIsPointerInside(false);
-        return;
-      }
-      let rect: DOMRect | null = null;
-      if (overlayContainer) {
-        rect = overlayContainer.getBoundingClientRect();
-      } else if (overlayBounds) {
-        rect = new DOMRect(overlayBounds.left, overlayBounds.top, overlayBounds.width, overlayBounds.height);
-      }
-      if (!rect) return;
-      const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
-      setIsPointerInside(inside);
-    };
-    window.addEventListener('pointermove', onPointerMove, { passive: true });
-    return () => window.removeEventListener('pointermove', onPointerMove);
-  }, [overlayContainer, overlayBounds]);
-
-  // No global pointer tracking needed when overlay is confined to canvas container via portal.
-  
   // Debug log container style
   useEffect(() => {
     debugLog('PopupOverlay', 'container_style', {
@@ -1188,10 +1214,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     return Array.from(popups.values()).filter((popup) => {
       if (!popup.canvasPosition) return false
       
-      // Convert canvas position to screen position
       const screenPos = CoordinateBridge.canvasToScreen(
         popup.canvasPosition || popup.position,
-        transform
+        activeTransform
       )
       
       // Check if popup is within viewport (with some margin)
@@ -1206,7 +1231,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         screenPos.y <= viewport.height + margin
       )
     })
-  }, [popups, transform])
+  }, [popups, activeTransform])
   
   // Build overlay contents (absolute inside canvas container)
   const overlayInner = (
@@ -1216,15 +1241,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       className={`absolute inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
       style={{
-        // Keep overlay above canvas content but below sidebar (sidebar lives outside container)
-        zIndex: 40,
+        zIndex: Z_INDEX.POPUP_OVERLAY,
         overflow: 'hidden',
-        // Always capture events whenever popup layer is active to prevent native selection
         pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
-        // Contain layout/paint to this overlay to avoid expensive repaints
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
+        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -1266,6 +1291,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             popup.isDragging || popup.id === draggingPopup,
             true
           );
+          const cappedZIndex = Math.min(zIndex, 100);
           return (
             <div
               key={popup.id}
@@ -1276,7 +1302,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 top: `${position.y}px`,
                 width: '300px',
                 maxHeight: '400px',
-                zIndex,
+                zIndex: cappedZIndex,
                 cursor: popup.isDragging ? 'grabbing' : 'default',
                 // Slightly reduce opacity during pan to prevent text rendering issues
                 opacity: isPanning ? 0.99 : 1,
@@ -1330,13 +1356,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
-              <div className="border-t border-gray-700 bg-gray-900">
-                <PopupReadOnlyPreview
-                  content={activePreview?.content ?? null}
-                  loading={activePreview?.status === 'loading'}
-                  error={activePreview?.status === 'error' ? activePreview.error : undefined}
-                />
-              </div>
               {/* Popup Footer */}
               <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
                 Level {popup.level} • {popup.folder?.children?.length || 0} items
@@ -1362,21 +1381,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       data-panning={isPanning.toString()}
       style={{
         top: overlayBounds ? `${overlayBounds.top}px` : 0,
-        left: overlayBounds ? `${overlayBounds.left}px` : '320px',
-        width: overlayBounds ? `${overlayBounds.width}px` : `calc(100vw - 320px)`,
+        left: overlayBounds ? `${overlayBounds.left}px` : 0,
+        width: overlayBounds ? `${overlayBounds.width}px` : '100vw',
         height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
-        // Popup overlay should be below sidebar (z-50) but above canvas
-        zIndex: 40, // Below sidebar z-50, above canvas
-        // Ensure overlay content does not spill into sidebar area
-        overflow: 'hidden',
-        // Always capture events whenever popup layer is active to prevent native selection
         pointerEvents: (isActiveLayer && popups.size > 0) ? 'auto' : 'none',
-        // Prevent browser touch gestures when active
         touchAction: (isActiveLayer && popups.size > 0) ? 'none' : 'auto',
-        // Show grab cursor when hovering empty space
         cursor: isPanning ? 'grabbing' : ((isActiveLayer && popups.size > 0) ? 'grab' : 'default'),
-        // Contain layout/paint to this overlay to avoid expensive repaints
+        opacity: isActiveLayer ? 1 : 0,
+        visibility: isActiveLayer ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
+        zIndex: Z_INDEX.POPUP_OVERLAY,
+        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -1424,6 +1439,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           popup.isDragging || popup.id === draggingPopup,
           true
         );
+        const cappedZIndex = Math.min(zIndex, 100);
         
         const previewEntry = previewState[popup.id];
         const activeChildId = previewEntry?.activeChildId ?? null;
@@ -1449,7 +1465,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               top: `${position.y}px`,
               width: '300px',
               maxHeight: '400px',
-              zIndex,
+              zIndex: cappedZIndex,
               cursor: popup.isDragging ? 'grabbing' : 'default',
               // Slightly reduce opacity during pan to prevent text rendering issues
               opacity: isPanning ? 0.99 : 1,
@@ -1499,14 +1515,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </div>
               )}
             </div>
-            <div className="border-t border-gray-700 bg-gray-900">
-              <PopupReadOnlyPreview
-                content={activePreview?.content ?? null}
-                loading={activePreview?.status === 'loading'}
-                error={activePreview?.status === 'error' ? activePreview.error : undefined}
-              />
-            </div>
-            
             {/* Popup Footer */}
             <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
               Level {popup.level} • {popup.folder?.children?.length || 0} items
