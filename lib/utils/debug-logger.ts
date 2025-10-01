@@ -2,6 +2,9 @@
  * Debug Logger - Logs to PostgreSQL debug_logs table
  */
 
+// Feature flag to disable debug logging
+const DEBUG_LOGGING_ENABLED = true; // Set to true to enable debug logging
+
 let sessionId: string | null = null;
 
 // Generate or get session ID
@@ -28,9 +31,14 @@ export async function debugLog(
   event?: string,
   details?: any
 ): Promise<void> {
+  // Early return if debug logging is disabled
+  if (!DEBUG_LOGGING_ENABLED) {
+    return;
+  }
+
   try {
     let logData: DebugLogData;
-    
+
     // Support both calling styles
     if (typeof dataOrContext === 'string') {
       // Legacy 3-parameter style: debugLog('Context', 'event', {...})
@@ -43,7 +51,7 @@ export async function debugLog(
       // New object style: debugLog({ component: '...', action: '...', ... })
       logData = dataOrContext;
     }
-    
+
     await fetch('/api/debug/log', {
       method: 'POST',
       headers: {

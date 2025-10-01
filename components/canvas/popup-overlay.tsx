@@ -1096,16 +1096,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [recomputeOverlayBounds, sidebarOpen]); // Add sidebarOpen dependency to recalculate when sidebar toggles
 
-  // Debug log PopupOverlay state
-  useEffect(() => {
-    debugLog('PopupOverlay', 'render_state', {
-      popupCount: popups.size,
-      overlayContainerExists: !!overlayContainer,
-      isActiveLayer,
-      activeLayer: (window as any).__layerContext?.activeLayer,
-    });
-  }, [popups.size, overlayContainer, isActiveLayer])
-
   // Recalculate bounds after sidebar animation completes
   useEffect(() => {
     const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
@@ -1378,165 +1368,150 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     </div>
   );
 
-  // Prefer mounting inside canvas container when available
-  if (typeof window !== 'undefined' && overlayContainer) {
-    return createPortal(overlayInner, overlayContainer);
+  // Render strategy:
+  // 1. If canvas-container exists, portal into it (scoped to canvas area)
+  // 2. Otherwise, render as fixed overlay on document.body (for floating notes widget when no note is open)
+  if (typeof window !== 'undefined') {
+    if (overlayContainer) {
+      // Preferred: portal into canvas container
+      return createPortal(overlayInner, overlayContainer);
+    } else if (popups.size > 0) {
+      // Fallback: render as fixed overlay when canvas doesn't exist but popups do
+      // This handles the case where floating notes widget is open but no note is selected
+      const fallbackOverlay = (
+        <div
+          ref={overlayRef}
+          id="popup-overlay"
+          className={`fixed inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
+          data-panning={isPanning.toString()}
+          style={{
+            zIndex: Z_INDEX.POPUP_OVERLAY,
+            overflow: 'hidden',
+            pointerEvents: (popups.size > 0) ? 'auto' : 'none',
+            touchAction: (popups.size > 0) ? 'none' : 'auto',
+            cursor: isPanning ? 'grabbing' : ((popups.size > 0) ? 'grab' : 'default'),
+            opacity: (popups.size > 0) ? 1 : 0,
+            visibility: (popups.size > 0) ? 'visible' : 'hidden',
+            contain: 'layout paint' as const,
+          }}
+          data-layer="popups"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          onPointerEnter={() => setIsOverlayHovered(true)}
+          onPointerLeave={() => setIsOverlayHovered(false)}
+        >
+          {/* Transform container - applies pan/zoom to all children */}
+          <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
+            {/* Connection lines (canvas coords) */}
+            <svg className="absolute inset-0 pointer-events-none" style={{ overflow: 'visible' }}>
+              {connectionPaths.map((path, index) => (
+                <path key={index} d={path.d} stroke={path.stroke} strokeWidth={path.strokeWidth} opacity={path.opacity} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              ))}
+            </svg>
+            {/* Popups (canvas coords) - only render visible ones */}
+            {visiblePopups.map((popup) => {
+              const previewEntry = previewState[popup.id];
+              const activeChildId = previewEntry?.activeChildId ?? null;
+              const activePreview = activeChildId && previewEntry?.entries
+                ? previewEntry.entries[activeChildId]
+                : undefined;
+
+              const renderChildRow = renderPopupChildRow(popup.id, {
+                previewEntry,
+                activePreview,
+                isPanning,
+                onHoverFolder,
+                onLeaveFolder,
+              });
+
+              const position = popup.canvasPosition || popup.position;
+              if (!position) return null;
+              const zIndex = getPopupZIndex(
+                popup.level,
+                popup.isDragging || popup.id === draggingPopup,
+                true
+              );
+              const cappedZIndex = Math.min(zIndex, 20000);
+              return (
+                <div
+                  key={popup.id}
+                  id={`popup-${popup.id}`}
+                  className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
+                  style={{
+                    left: `${position.x}px`,
+                    top: `${position.y}px`,
+                    width: '300px',
+                    maxHeight: '400px',
+                    zIndex: cappedZIndex,
+                    cursor: popup.isDragging ? 'grabbing' : 'default',
+                    opacity: isPanning ? 0.99 : 1,
+                    transform: 'translateZ(0)',
+                    backfaceVisibility: 'hidden' as const,
+                    willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
+                  }}
+                  data-popup-id={popup.id}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Popup Header */}
+                  <div
+                    className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+                    onMouseDown={(e) => onDragStart?.(popup.id, e)}
+                    style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Folder className="w-4 h-4 text-blue-400" />
+                      <span className="text-sm font-medium text-white truncate">
+                        {popup.folder?.name || 'Loading...'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => onClosePopup(popup.id)}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                      aria-label="Close popup"
+                    >
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
+                  </div>
+                  {/* Popup Content */}
+                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
+                    {popup.isLoading ? (
+                      <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
+                    ) : popup.folder?.children && popup.folder.children.length > 0 ? (
+                      popup.folder.children.length > 200 ? (
+                        <VirtualList
+                          items={popup.folder.children}
+                          itemHeight={36}
+                          height={300}
+                          overscan={8}
+                          renderItem={(child: PopupChildNode) => renderChildRow(child)}
+                        />
+                      ) : (
+                        <div className="py-1">
+                          {popup.folder.children.map(renderChildRow)}
+                        </div>
+                      )
+                    ) : (
+                      <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
+                    )}
+                  </div>
+                  {/* Popup Footer */}
+                  <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+                    Level {popup.level} • {popup.folder?.children?.length || 0} items
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+      return createPortal(fallbackOverlay, document.body);
+    }
   }
 
-  // Fallback: fixed overlay aligned to canvas bounds
-  return (
-    <div
-      ref={overlayRef}
-      id="popup-overlay"
-      className={`fixed ${isPanning ? 'popup-overlay-panning' : ''}`}
-      data-panning={isPanning.toString()}
-      style={{
-        top: overlayBounds ? `${overlayBounds.top}px` : 0,
-        left: overlayBounds ? `${overlayBounds.left}px` : 0,
-        width: overlayBounds ? `${overlayBounds.width}px` : '100vw',
-        height: overlayBounds ? `${overlayBounds.height}px` : '100vh',
-        pointerEvents: (popups.size > 0) ? 'auto' : 'none',
-        touchAction: (popups.size > 0) ? 'none' : 'auto',
-        cursor: isPanning ? 'grabbing' : ((popups.size > 0) ? 'grab' : 'default'),
-        opacity: (popups.size > 0) ? 1 : 0,
-        visibility: (popups.size > 0) ? 'visible' : 'hidden',
-        contain: 'layout paint' as const,
-        zIndex: Z_INDEX.POPUP_OVERLAY,
-        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
-      }}
-      data-layer="popups"
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerEnd}
-      onPointerCancel={handlePointerEnd}
-      onPointerEnter={() => setIsOverlayHovered(true)}
-      onPointerLeave={() => setIsOverlayHovered(false)}
-    >
-      {/* Transform container - applies pan/zoom to all children */}
-      <div
-        ref={containerRef}
-        className="absolute inset-0"
-        style={containerStyle}
-      >
-        {/* Removed full-viewport background inside transform to prevent repaint flicker */}
-        
-        {/* Connection lines (canvas coords) */}
-        <svg 
-          className="absolute inset-0 pointer-events-none"
-          style={{ overflow: 'visible' }}
-        >
-        {connectionPaths.map((path, index) => (
-          <path
-            key={index}
-            d={path.d}
-            stroke={path.stroke}
-            strokeWidth={path.strokeWidth}
-            opacity={path.opacity}
-            fill="none"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        ))}
-      </svg>
-      
-      {/* Popups (canvas coords) - only render visible ones */}
-      {visiblePopups.map((popup) => {
-        // Use canvas position if available, otherwise use screen position
-        const position = popup.canvasPosition || popup.position;
-        if (!position) return null;
-        
-        const zIndex = getPopupZIndex(
-          popup.level,
-          popup.isDragging || popup.id === draggingPopup,
-          true
-        );
-        const cappedZIndex = Math.min(zIndex, 100);
-        
-        const previewEntry = previewState[popup.id];
-        const activeChildId = previewEntry?.activeChildId ?? null;
-        const activePreview = activeChildId && previewEntry?.entries
-          ? previewEntry.entries[activeChildId]
-          : undefined;
-
-        const renderChildRow = renderPopupChildRow(popup.id, {
-          previewEntry,
-          activePreview,
-          isPanning,
-          onHoverFolder,
-          onLeaveFolder,
-        });
-
-        return (
-          <div
-            key={popup.id}
-            id={`popup-${popup.id}`}
-            className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
-            style={{
-              left: `${position.x}px`,
-              top: `${position.y}px`,
-              width: '300px',
-              maxHeight: '400px',
-              zIndex: cappedZIndex,
-              cursor: popup.isDragging ? 'grabbing' : 'default',
-              // Slightly reduce opacity during pan to prevent text rendering issues
-              opacity: isPanning ? 0.99 : 1,
-              // Add GPU optimization to individual popups
-              transform: 'translateZ(0)',
-              backfaceVisibility: 'hidden' as const,
-              willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Popup Header */}
-            <div
-              className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
-              onMouseDown={(e) => onDragStart?.(popup.id, e)}
-              style={{
-                backgroundColor: popup.isDragging ? '#374151' : 'transparent',
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <Folder className="w-4 h-4 text-blue-400" />
-                <span className="text-sm font-medium text-white truncate">
-                  {popup.folder?.name || 'Loading...'}
-                </span>
-              </div>
-              <button
-                onClick={() => onClosePopup(popup.id)}
-                onMouseDown={(e) => e.stopPropagation()}
-                className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                aria-label="Close popup"
-              >
-                <X className="w-4 h-4 text-gray-400" />
-              </button>
-            </div>
-            
-            {/* Popup Content */}
-            <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
-              {popup.isLoading ? (
-                <div className="p-4 text-center text-gray-500 text-sm">
-                  Loading...
-                </div>
-              ) : popup.folder?.children && popup.folder.children.length > 0 ? (
-                <div className="py-1">
-                  {popup.folder.children.map(renderChildRow)}
-                </div>
-              ) : (
-                <div className="p-4 text-center text-gray-500 text-sm">
-                  Empty folder
-                </div>
-              )}
-            </div>
-            {/* Popup Footer */}
-            <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
-              Level {popup.level} • {popup.folder?.children?.length || 0} items
-            </div>
-          </div>
-        );
-      })}
-      </div> {/* Close transform container */}
-    </div>
-  );
+  return null;
 };
 
 // Export for use in other components

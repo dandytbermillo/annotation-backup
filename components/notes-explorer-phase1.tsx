@@ -181,14 +181,6 @@ function NotesExplorerContent({
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const container = document.getElementById('canvas-container')
-      debugLog({
-        component: 'notes-explorer',
-        action: 'canvas_container_lookup',
-        metadata: {
-          containerFound: !!container,
-          containerExists: container !== null
-        }
-      })
       setCanvasContainer(container)
     }
   }, [])
@@ -995,22 +987,6 @@ function NotesExplorerContent({
       }
     }
   }, [hoverPopovers.size, multiLayerEnabled, layerContext])
-
-  // Debug log popup state changes
-  useEffect(() => {
-    if (hoverPopovers.size > 0) {
-      debugLog({
-        component: 'notes-explorer',
-        action: 'popups_state_changed',
-        metadata: {
-          popupCount: hoverPopovers.size,
-          canvasContainerExists: !!canvasContainer,
-          multiLayerEnabled,
-          activeLayer: layerContext?.activeLayer
-        }
-      })
-    }
-  }, [hoverPopovers.size, canvasContainer, multiLayerEnabled, layerContext?.activeLayer])
 
   // DISABLED: Space/Alt drag handler was preventing space bar in text editors
   // and interfering with direct popup overlay panning
@@ -1912,9 +1888,11 @@ function NotesExplorerContent({
 
   // Handle hover popover with support for cascading
   const handleFolderHover = async (folder: TreeNode, event: React.MouseEvent, parentPopoverId?: string, isPersistent: boolean = false) => {
+    console.log('[handleFolderHover CALLED]', { folderName: folder.name, folderId: folder.id, isPersistent, currentPopupCount: hoverPopovers.size })
+
     // Get position for popover FIRST (before any async calls)
     const rect = event.currentTarget.getBoundingClientRect()
-    
+
     // Smart positioning - check available space
     const spaceRight = window.innerWidth - rect.right
     const spaceBelow = window.innerHeight - rect.bottom
@@ -1961,10 +1939,13 @@ function NotesExplorerContent({
 
       // For persistent requests, check if an existing popover is already showing
       const existingEntry = Array.from(hoverPopovers.entries()).find(([, pop]) => pop.folder?.id === folder.id)
+      console.log('[showPopover] existingEntry check', { folderId: folder.id, existingEntry: existingEntry ? { id: existingEntry[0], isPersistent: existingEntry[1].isPersistent } : null, isPersistent })
+
       if (existingEntry) {
         const [existingId, existingPopover] = existingEntry
         // If we're requesting a persistent popover and one already exists and is persistent
         if (isPersistent && existingPopover.isPersistent) {
+          console.log('[showPopover] RETURNING EARLY - popup already exists and is persistent')
           // It's already showing, just ensure it stays on top
           setHoverPopovers(prev => {
             if (!prev.has(existingId)) return prev
@@ -1976,6 +1957,7 @@ function NotesExplorerContent({
           })
           return
         } else if (isPersistent) {
+          console.log('[showPopover] Removing existing non-persistent popup to create a new persistent one')
           // We want a persistent popup but existing is not persistent, remove the old one first
           setHoverPopovers(prev => {
             const newMap = new Map(prev)
@@ -2027,6 +2009,17 @@ function NotesExplorerContent({
 
         const canvasPosition = CoordinateBridge.screenToCanvas(adjustedPosition, sharedOverlayTransform)
         const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedOverlayTransform)
+
+        console.log('[showPopover] ADDING NEW POPUP TO STATE', {
+          popoverId,
+          folderName: folder.name,
+          isPersistent,
+          canvasPosition,
+          screenPosition,
+          sharedOverlayTransform,
+          prevSize: prev.size,
+          newSize: prev.size + 1
+        })
 
         debugLog({
           component: 'notes-explorer',
@@ -2111,7 +2104,7 @@ function NotesExplorerContent({
               })
             })
           }
-        } catch (error) {
+        } catch (error: any) {
           // Log error (non-blocking)
           fetch('/api/debug-log', {
             method: 'POST',
@@ -2119,7 +2112,7 @@ function NotesExplorerContent({
             body: JSON.stringify({
               component: 'notes-explorer',
               action: 'popover_error',
-              metadata: { folderName: folder.name, error: error.message }
+              metadata: { folderName: folder.name, error: error?.message || 'Unknown error' }
             })
           })
             setHoverPopovers(prev => {
@@ -2242,7 +2235,18 @@ function NotesExplorerContent({
     hoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     hoverTimeoutRef.current.clear()
     setDraggingPopup(null)
-  }, [])
+
+    // Immediately flush the layout save when closing all popups
+    if (overlayPersistenceEnabled && overlayAdapterRef.current) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      setTimeout(() => {
+        void flushLayoutSave()
+      }, 0)
+    }
+  }, [overlayPersistenceEnabled, flushLayoutSave])
 
   const prevActiveLayerRef = useRef<'notes' | 'popups' | null>(layerContext?.activeLayer ?? null)
 
@@ -2274,8 +2278,11 @@ function NotesExplorerContent({
 
   useEffect(() => () => {
     // Ensure no stale popovers linger after the explorer unmounts.
+    // Note: We intentionally don't include closeAllPopovers in dependencies
+    // to avoid infinite loops. This cleanup only runs once on unmount.
     closeAllPopovers()
-  }, [closeAllPopovers])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   
   // Close specific popover and its children
   const closePopover = (popoverId: string) => {
@@ -2302,11 +2309,25 @@ function NotesExplorerContent({
       toRemove.forEach(id => newMap.delete(id))
       return newMap
     })
-    
+
     // Clear dragging state if this popup was being dragged
     if (draggingPopup === popoverId) {
       setDraggingPopup(null)
       draggingPopupRef.current = null
+    }
+
+    // Immediately flush the layout save when closing a popup
+    // (don't wait for the 2.5s debounce)
+    if (overlayPersistenceEnabled && overlayAdapterRef.current) {
+      // Cancel any pending debounced save
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      // Schedule immediate save (after state update completes)
+      setTimeout(() => {
+        void flushLayoutSave()
+      }, 0)
     }
   }
 
@@ -3080,6 +3101,12 @@ function NotesExplorerContent({
               onClick={(e) => {
                 e.stopPropagation()
                 // Always create persistent popover on click
+                console.log('[EYE ICON CLICKED]', {
+                  folderName: node.name,
+                  folderId: node.id,
+                  totalPopovers: hoverPopovers.size,
+                  currentPopovers: Array.from(hoverPopovers.entries()).map(([id, p]) => ({ id, folderId: p.folder?.id, isPersistent: p.isPersistent }))
+                })
                 debugLog({
                   component: 'notes-explorer',
                   action: 'eye_icon_clicked',
