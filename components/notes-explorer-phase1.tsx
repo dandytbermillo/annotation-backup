@@ -11,6 +11,7 @@ import { useLayer } from "@/components/canvas/layer-provider"
 import { useLayerKeyboardShortcuts } from "@/lib/hooks/use-layer-keyboard-shortcuts"
 import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
+import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from "@/lib/utils/overlay-host"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 import {
@@ -179,9 +180,17 @@ function NotesExplorerContent({
   const skipNextAutoSwitchRef = useRef<boolean>(false)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const container = document.getElementById('canvas-container')
-      setCanvasContainer(container)
+    if (typeof window === 'undefined') return
+
+    const canvas = document.getElementById('canvas-container')
+    if (canvas) {
+      setCanvasContainer(canvas)
+      return
+    }
+
+    const fallbackHost = ensureFloatingOverlayHost()
+    if (fallbackHost) {
+      setCanvasContainer(fallbackHost)
     }
   }, [])
 
@@ -219,6 +228,25 @@ function NotesExplorerContent({
     height?: number // Actual height of the popup
     isPersistent?: boolean // True when clicked (stays open), false when just hovering
   }>>(new Map())
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const canvas = document.getElementById('canvas-container')
+    if (canvas) {
+      if (canvasContainer !== canvas) {
+        setCanvasContainer(canvas)
+      }
+      return
+    }
+
+    if (!canvas && (!canvasContainer || canvasContainer.id !== FLOATING_OVERLAY_HOST_ID)) {
+      const fallbackHost = ensureFloatingOverlayHost()
+      if (fallbackHost && canvasContainer !== fallbackHost) {
+        setCanvasContainer(fallbackHost)
+      }
+    }
+  }, [canvasContainer, hoverPopovers.size])
   const hoverTimeoutRef = React.useRef<Map<string, NodeJS.Timeout>>(new Map())
   const popoverIdCounter = React.useRef(0)
   
