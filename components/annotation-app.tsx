@@ -34,6 +34,7 @@ function AnnotationAppContent() {
 
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
+  const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
 
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
@@ -148,6 +149,15 @@ function AnnotationAppContent() {
     setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
   }, [])
 
+  // Handle popup drag start
+  const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
+    setDraggingPopup(popupId)
+    // Mark popup as dragging
+    setOverlayPopups(prev =>
+      prev.map(p => p.id === popupId ? { ...p, isDragging: true } : p)
+    )
+  }, [])
+
   // Navigation control functions
   const handleZoomIn = () => {
     setCanvasState(prev => ({ ...prev, zoom: Math.min(prev.zoom * 1.1, 2) }))
@@ -237,8 +247,9 @@ function AnnotationAppContent() {
       {multiLayerEnabled && adaptedPopups && (
         <PopupOverlay
           popups={adaptedPopups}
-          draggingPopup={null}
+          draggingPopup={draggingPopup}
           onClosePopup={handleCloseOverlayPopup}
+          onDragStart={handlePopupDragStart}
           onHoverFolder={() => {}}
           onLeaveFolder={() => {}}
           sidebarOpen={false}
