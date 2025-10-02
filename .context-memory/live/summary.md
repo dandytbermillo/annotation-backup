@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-02 04:10Z] e20245f: fixing the nondraggable popup
 - commit [2025-10-02 03:54Z] 7ecfc80: making sure the floating toolbar is independent of canvases
 - commit [2025-10-02 01:57Z] a595ef5: fixing the disappearance of the poups in the overlay canvas whlicked
 - commit [2025-10-02 01:20Z] 515b1a6: adding folder eye icon click event
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-01 19:19Z] 6aeeadd: feat(overlay): Phase 3 Task 3 - Add controller unit tests - Add comprehensive tests for [REDACTED] - 15 t
 - commit [2025-10-01 19:17Z] db7359c: feat(overlay): Phase 3 Task 2 - Create context provider - Add [REDACTED]-overlay-provider.tsx - Impleme
 - commit [2025-10-01 19:15Z] 438b832: feat(overlay): Phase 3 Task 1 - Create [REDACTED] - Add lib/overlay/types.ts with core interfaces - Add l
-- commit [2025-10-01 19:08Z] de0aa7b: docs(overlay): Phase 2 Implementation Report - Comprehensive report for Phase 2 (Screen-Space Persistence Layer) - Docum
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-02 03:54Z] 7ecfc80: making sure the floating toolbar is independent of canvases
+- commit [2025-10-02 04:10Z] e20245f: fixing the nondraggable popup

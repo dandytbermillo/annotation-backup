@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
 import { FloatingToolbar, type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
+import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 
@@ -35,6 +36,9 @@ function AnnotationAppContent() {
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const draggingPopupRef = useRef<string | null>(null)
+  const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
@@ -87,6 +91,69 @@ function AnnotationAppContent() {
       }
     }
   }, [overlayPopups.length, multiLayerEnabled, layerContext])
+
+  // Keep draggingPopupRef in sync
+  useEffect(() => {
+    draggingPopupRef.current = draggingPopup
+  }, [draggingPopup])
+
+  // Handle global mouse events for dragging popup
+  useEffect(() => {
+    if (!draggingPopup) return
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      e.preventDefault()
+
+      const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+
+      // Calculate new screen position
+      const newScreenPosition = {
+        x: e.clientX - dragOffsetRef.current.x,
+        y: e.clientY - dragOffsetRef.current.y
+      }
+
+      // Convert to canvas coordinates
+      const newCanvasPosition = CoordinateBridge.screenToCanvas(newScreenPosition, sharedTransform)
+
+      // Update popup position
+      setOverlayPopups(prev =>
+        prev.map(p =>
+          p.id === draggingPopup
+            ? { ...p, canvasPosition: newCanvasPosition, position: newScreenPosition, isDragging: true }
+            : p
+        )
+      )
+
+      dragScreenPosRef.current = newScreenPosition
+    }
+
+    const handleGlobalMouseUp = () => {
+      if (!draggingPopup) return
+
+      // Mark popup as no longer dragging
+      setOverlayPopups(prev =>
+        prev.map(p =>
+          p.id === draggingPopup
+            ? { ...p, isDragging: false }
+            : p
+        )
+      )
+
+      setDraggingPopup(null)
+      draggingPopupRef.current = null
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    // Use capture phase for better responsiveness
+    document.addEventListener('mousemove', handleGlobalMouseMove, true)
+    document.addEventListener('mouseup', handleGlobalMouseUp, true)
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove, true)
+      document.removeEventListener('mouseup', handleGlobalMouseUp, true)
+    }
+  }, [draggingPopup, layerContext]) // Stable during drag - only refs used inside
   
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
@@ -151,12 +218,36 @@ function AnnotationAppContent() {
 
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const popup = overlayPopups.find(p => p.id === popupId)
+    if (!popup) return
+
+    // Get the shared transform for coordinate conversion
+    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+
+    // Calculate offset between mouse position and popup position
+    const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedTransform)
+    const offset = {
+      x: event.clientX - screenPosition.x,
+      y: event.clientY - screenPosition.y
+    }
+
+    dragOffsetRef.current = offset
     setDraggingPopup(popupId)
+    draggingPopupRef.current = popupId
+    dragScreenPosRef.current = { x: screenPosition.x, y: screenPosition.y }
+
     // Mark popup as dragging
     setOverlayPopups(prev =>
       prev.map(p => p.id === popupId ? { ...p, isDragging: true } : p)
     )
-  }, [])
+
+    // Prevent text selection
+    document.body.style.cursor = 'grabbing'
+    document.body.style.userSelect = 'none'
+  }, [overlayPopups, layerContext])
 
   // Navigation control functions
   const handleZoomIn = () => {
