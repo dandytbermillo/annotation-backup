@@ -7,13 +7,15 @@ import dynamic from 'next/dynamic'
 import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
+import { EditorToolbar } from "./editor-toolbar"
+import { FormatToolbar } from "./format-toolbar"
 import { v4 as uuidv4 } from "uuid"
 import { createAnnotationBranch } from "@/lib/models/annotation"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
-import { type CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
+import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
@@ -22,9 +24,6 @@ import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
 import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
-import { NoteCreationDialog } from "@/components/shared/note-creation-dialog"
-import { createNote } from "@/lib/utils/note-creator"
-import { Save } from "lucide-react"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -54,13 +53,19 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
-
+  
+  // Sidebar toggle state - must be declared early before useEffects that use it
+  const [isSidebarVisible, setIsSidebarVisible] = useState(false)
+  const [isSidebarHovering, setIsSidebarHovering] = useState(false)
+  const sidebarTimeoutRef = useRef<NodeJS.Timeout>()
+  const sidebarShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
   const actionsTimeoutRef = useRef<NodeJS.Timeout>()
   const actionsShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-
+  
   // Panel hover state for hiding/showing buttons
   const [isPanelHovered, setIsPanelHovered] = useState(false)
   const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -71,7 +76,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [isPanelHeightExpanded, setIsPanelHeightExpanded] = useState(false)
   const cameraZoomRef = useRef<number>(1)
 
-  const headerControlsActive = isPanelHovered || isActionsVisible || isActionsHovering
+  const headerControlsActive = isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering
   
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
@@ -105,6 +110,69 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return renderPosition.y
   }, [renderPosition.y])
 
+  // Header action overflow management
+  const ACTION_GAP = 8
+  const actionsContainerRef = useRef<HTMLDivElement | null>(null)
+  const formatActionRef = useRef<HTMLDivElement | null>(null)
+  const overflowButtonRef = useRef<HTMLButtonElement | null>(null)
+  const actionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const actionWidthsRef = useRef<Record<string, number>>({})
+  const [hiddenActionIds, setHiddenActionIds] = useState<string[]>([])
+  const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false)
+
+  const registerActionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
+    actionRefs.current[id] = el
+  }, [])
+
+  const closeOverflowMenu = useCallback(() => {
+    setIsOverflowMenuOpen(false)
+  }, [])
+
+  const handleBranchesButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
+    event?.stopPropagation()
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+
+    if (isSidebarVisible) {
+      setIsSidebarVisible(false)
+      setIsSidebarHovering(false)
+    } else {
+      setIsSidebarVisible(true)
+      setIsSidebarHovering(true)
+    }
+
+    closeOverflowMenu()
+  }, [closeOverflowMenu, isSidebarVisible])
+
+  const handleBranchesButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+    if (sidebarTimeoutRef.current) {
+      clearTimeout(sidebarTimeoutRef.current)
+    }
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+    sidebarShowTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovering(true)
+      setIsSidebarVisible(true)
+      sidebarShowTimeoutRef.current = null
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [])
+
+  const handleBranchesButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+    sidebarTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovering(false)
+      setIsSidebarVisible(false)
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [])
 
   const positionAnnotationToolbar = useCallback((target: HTMLElement) => {
     const toolbar = document.getElementById("annotation-toolbar")
@@ -135,7 +203,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       actionsShowTimeoutRef.current = null
     }
 
-    const target = event?.currentTarget as HTMLElement
+    const target = (event?.currentTarget as HTMLElement) ?? overflowButtonRef.current ?? null
 
     const nextVisible = !isActionsVisible
     setIsActionsVisible(nextVisible)
@@ -146,7 +214,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     } else if (!nextVisible) {
       hideAnnotationToolbar()
     }
-  }, [hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
+
+    closeOverflowMenu()
+  }, [closeOverflowMenu, hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
 
   const handleActionsButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.currentTarget.style.background = "rgba(255,255,255,0.3)"
@@ -204,6 +274,114 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     setPanelHeight(expandedHeight)
     setIsPanelHeightExpanded(true)
   }, [getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded, panelHeight])
+
+  const recalcOverflow = useCallback(() => {
+    const container = actionsContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const containerWidth = container.getBoundingClientRect().width
+    if (!containerWidth) {
+      if (hiddenActionIds.length > 0) {
+        setHiddenActionIds([])
+      }
+      return
+    }
+
+    const overflowWidth = overflowButtonRef.current?.getBoundingClientRect().width ?? 36
+    const measuredFormatWidth = formatActionRef.current?.getBoundingClientRect().width ?? 0
+    const storedFormatWidth = actionWidthsRef.current.format ?? 0
+    const formatWidth = measuredFormatWidth > 0 ? measuredFormatWidth : storedFormatWidth
+    if (measuredFormatWidth > 0) {
+      actionWidthsRef.current.format = measuredFormatWidth
+    }
+
+    const order = layerManager.isEnabled
+      ? ['bringToFront', 'sendToBack', 'resizeToggle', 'branches', 'actions']
+      : ['resizeToggle', 'branches', 'actions']
+
+    const widthMap: Record<string, number> = {}
+    order.forEach((id) => {
+      const element = actionRefs.current[id]
+      const measured = element?.getBoundingClientRect().width ?? 0
+      const stored = actionWidthsRef.current[id] ?? 0
+      const width = measured > 0 ? measured : stored
+      if (width > 0) {
+        widthMap[id] = width
+        if (measured > 0) {
+          actionWidthsRef.current[id] = measured
+        }
+      }
+    })
+
+    const availableIds = order.filter((id) => widthMap[id] !== undefined)
+    let visibleIds: string[] = []
+    let hiddenIds: string[] = []
+    let usedWidth = formatWidth
+    let visibleCount = formatWidth > 0 ? 1 : 0
+
+    availableIds.forEach((id) => {
+      const width = widthMap[id] ?? 0
+      if (width === 0) {
+        return
+      }
+      const gapBefore = visibleCount > 0 ? ACTION_GAP : 0
+      if (usedWidth + gapBefore + width <= containerWidth) {
+        visibleIds.push(id)
+        usedWidth += gapBefore + width
+        visibleCount += 1
+      } else {
+        hiddenIds.push(id)
+      }
+    })
+
+    if (hiddenIds.length > 0) {
+      const computeUsage = (ids: string[]) => {
+        let width = formatWidth
+        let count = formatWidth > 0 ? 1 : 0
+        ids.forEach((id) => {
+          const w = widthMap[id] ?? 0
+          if (w === 0) {
+            return
+          }
+          width += (count > 0 ? ACTION_GAP : 0) + w
+          count += 1
+        })
+        return { width, count }
+      }
+
+      let { width: recomputedWidth, count } = computeUsage(visibleIds)
+      while (
+        visibleIds.length > 0 &&
+        recomputedWidth + (count > 0 ? ACTION_GAP : 0) + overflowWidth > containerWidth
+      ) {
+        const removed = visibleIds.pop()
+        if (!removed) {
+          break
+        }
+        hiddenIds.unshift(removed)
+        const recalculated = computeUsage(visibleIds)
+        recomputedWidth = recalculated.width
+        count = recalculated.count
+      }
+    }
+
+    const arraysEqual = (a: string[], b: string[]) => {
+      if (a.length !== b.length) {
+        return false
+      }
+      return a.every((value, index) => value === b[index])
+    }
+
+    if (!arraysEqual(hiddenActionIds, hiddenIds)) {
+      setHiddenActionIds(hiddenIds)
+    }
+
+    if (hiddenIds.length === 0 && isOverflowMenuOpen) {
+      setIsOverflowMenuOpen(false)
+    }
+  }, [ACTION_GAP, hiddenActionIds, isOverflowMenuOpen, layerManager.isEnabled])
   
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
@@ -248,6 +426,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
+      if (sidebarTimeoutRef.current) {
+        clearTimeout(sidebarTimeoutRef.current)
+      }
+      if (sidebarShowTimeoutRef.current) {
+        clearTimeout(sidebarShowTimeoutRef.current)
+        sidebarShowTimeoutRef.current = null
+      }
       if (actionsTimeoutRef.current) {
         clearTimeout(actionsTimeoutRef.current)
       }
@@ -270,12 +455,26 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement
-
+      
+      // Close sidebar if clicking outside of it
+      if (isSidebarHovering || isSidebarVisible) {
+        const sidebar = document.getElementById(`branches-sidebar-${panelId}`)
+        const button = document.getElementById(`branches-button-${panelId}`)
+        
+        if (sidebar && !sidebar.contains(target) && button && !button.contains(target)) {
+          setIsSidebarHovering(false)
+          setIsSidebarVisible(false)
+          if (sidebarTimeoutRef.current) {
+            clearTimeout(sidebarTimeoutRef.current)
+          }
+        }
+      }
+      
       // Close actions panel if clicking outside of it
       if (isActionsHovering || isActionsVisible) {
         const actions = document.getElementById(`actions-panel-${panelId}`)
         const button = document.getElementById(`actions-button-${panelId}`)
-
+        
         if (actions && !actions.contains(target) && button && !button.contains(target)) {
           setIsActionsHovering(false)
           setIsActionsVisible(false)
@@ -285,12 +484,59 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }
       }
     }
-
+    
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [isActionsHovering, isActionsVisible, panelId])
+  }, [isSidebarHovering, isSidebarVisible, isActionsHovering, isActionsVisible, panelId])
+  
+  useLayoutEffect(() => {
+    recalcOverflow()
+  }, [recalcOverflow])
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const container = actionsContainerRef.current
+    if (!container) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      recalcOverflow()
+    })
+    observer.observe(container)
+    return () => {
+      observer.disconnect()
+    }
+  }, [recalcOverflow])
+
+  useEffect(() => {
+    if (!isOverflowMenuOpen) {
+      return
+    }
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!actionsContainerRef.current?.contains(target)) {
+        setIsOverflowMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOverflowMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOverflowMenuOpen])
 
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
@@ -357,9 +603,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
-
-  // Save As dialog state
-  const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
   const [plainProvider, setPlainProvider] = useState<PlainOfflineProvider | null>(null)
   const postLoadEditApplied = useRef(false)
   
@@ -815,40 +1058,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
       toggleBtn.title = newEditableState ? 'Save Changes' : 'Edit Content'
     }
-
+    
     dataStore.update(panelId, { isEditable: newEditableState })
-
+    
     if (newEditableState) {
       editorRef.current?.focus()
-    }
-  }
-
-  // Handle Save As - creates a new note with the branch content
-  const handleSaveAs = async (noteName: string, folderId: string | null, customPath?: string) => {
-    try {
-      // TODO: Handle custom folder path creation if provided
-
-      const result = await createNote({
-        name: noteName,
-        parentId: folderId,
-        metadata: {
-          branchType: currentBranch.type,
-          savedFrom: panelId,
-          savedAt: new Date().toISOString()
-        }
-      })
-
-      if (result.success && result.noteId) {
-        // TODO: Save the actual branch content to the note
-        // This would require extracting content from the editor
-        alert(`Note "${noteName}" created successfully!`)
-      } else {
-        throw new Error(result.error || 'Failed to create note')
-      }
-    } catch (error) {
-      console.error('[CanvasPanel] Save As failed:', error)
-      alert('Failed to save note. Please try again.')
-      throw error
     }
   }
 
@@ -1374,7 +1588,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       onClick={() => {
         // Register this panel's editor as active when panel is clicked
         if (editorRef.current && onRegisterActiveEditor) {
-          onRegisterActiveEditor(editorRef.current, panelId)
+          onRegisterActiveEditor(editorRef.current)
         }
       }}
       onMouseEnter={() => {
@@ -1407,7 +1621,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
         panelHoverHideTimeoutRef.current = setTimeout(() => {
           // Only hide if no popups are visible
-          if (!isActionsVisible && !isActionsHovering) {
+          if (!isSidebarVisible && !isActionsVisible && !isSidebarHovering && !isActionsHovering) {
             setIsPanelHovered(false)
           }
           panelHoverHideTimeoutRef.current = null
@@ -1516,7 +1730,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             </button>
             
             {onClose && (
-              <button
+              <button 
                 className="panel-close"
                 onClick={onClose}
                 style={{
@@ -1546,16 +1760,40 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 ×
               </button>
             )}
-          </div>
 
+            {/* Drag Handle */}
+            <div
+              className="drag-indicator"
+              title="Drag to move panel"
+              style={{
+                width: '56px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '6px',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1px)',
+                backgroundSize: '6px 6px',
+                backgroundPosition: '0 0',
+                cursor: 'move',
+              }}
+            />
+          </div>
+          
           {/* Panel Title */}
           {showPanelTitle && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
               gap: '10px',
+              opacity: headerControlsActive ? 0 : 1,
+              transition: 'opacity 0.2s ease, max-width 0.2s ease',
               overflow: 'hidden',
-              flex: 1,
+              flex: headerControlsActive ? '0 0 auto' : 1,
+              maxWidth: headerControlsActive ? 0 : '100%',
+              width: headerControlsActive ? 0 : 'auto',
+              pointerEvents: headerControlsActive ? 'none' : 'auto',
             }}>
               <span style={{
                 whiteSpace: 'nowrap',
@@ -1582,10 +1820,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         
         {/* Right side buttons */}
         <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
+          ref={actionsContainerRef}
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: `${ACTION_GAP}px`,
             opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
             pointerEvents: headerControlsActive ? 'auto' : 'none',
@@ -1597,116 +1836,339 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         >
           {layerManager.isEnabled && (
             <>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (layerManager.isEnabled) {
-                    layerManager.bringToFront(panelId)
-                  }
-                }}
-                disabled={layerBandInfo?.isAtTop}
+              <div
+                ref={registerActionRef('bringToFront')}
                 style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '4px 8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease',
-                  color: 'white',
-                  fontSize: '12px',
-                  opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
+                  display: hiddenActionIds.includes('bringToFront') ? 'none' : 'flex',
                 }}
-                onMouseEnter={(e) => {
-                  if (!layerBandInfo?.isAtTop) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                }}
-                title="Bring to front"
               >
-                ↑
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (layerManager.isEnabled) {
+                      layerManager.bringToFront(panelId)
+                    }
+                  }}
+                  disabled={layerBandInfo?.isAtTop}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    color: 'white',
+                    fontSize: '12px',
+                    opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!layerBandInfo?.isAtTop) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  }}
+                  title="Bring to front"
+                >
+                  ↑
+                </button>
+              </div>
 
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (layerManager.isEnabled) {
-                    layerManager.sendToBack(panelId)
-                  }
-                }}
-                disabled={layerBandInfo?.isAtBottom}
+              <div
+                ref={registerActionRef('sendToBack')}
                 style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '4px 8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease',
-                  color: 'white',
-                  fontSize: '12px',
-                  opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
+                  display: hiddenActionIds.includes('sendToBack') ? 'none' : 'flex',
                 }}
-                onMouseEnter={(e) => {
-                  if (!layerBandInfo?.isAtBottom) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                }}
-                title="Send to back"
               >
-                ↓
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (layerManager.isEnabled) {
+                      layerManager.sendToBack(panelId)
+                    }
+                  }}
+                  disabled={layerBandInfo?.isAtBottom}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    color: 'white',
+                    fontSize: '12px',
+                    opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!layerBandInfo?.isAtBottom) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  }}
+                  title="Send to back"
+                >
+                  ↓
+                </button>
+              </div>
             </>
           )}
 
-          {/* Save As button */}
+          <div
+            ref={formatActionRef}
+            style={{
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <FormatToolbar
+              editorRef={editorRef}
+              panelId={panelId}
+              hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
+              collapsibleSelection={collapsibleSelection}
+            />
+          </div>
+
+          <div
+            ref={registerActionRef('resizeToggle')}
+            style={{
+              display: hiddenActionIds.includes('resizeToggle') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              onClick={(event) => {
+                event.stopPropagation()
+                handleTogglePanelHeight()
+              }}
+              title={isPanelHeightExpanded ? 'Restore panel height' : 'Expand panel height'}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                color: 'white',
+                transition: 'all 0.2s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                height: '24px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14" />
+                <path d="M9 8l3-3 3 3" />
+                <path d="M9 16l3 3 3-3" />
+              </svg>
+              <span>{isPanelHeightExpanded ? 'Restore' : 'Resize'}</span>
+            </button>
+          </div>
+
+          <div
+            ref={registerActionRef('branches')}
+            style={{
+              display: hiddenActionIds.includes('branches') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              id={`branches-button-${panelId}`}
+              onClick={handleBranchesButtonClick}
+              onMouseEnter={handleBranchesButtonMouseEnter}
+              onMouseLeave={handleBranchesButtonMouseLeave}
+              title={isSidebarVisible ? "Hide branches" : "Show branches"}
+              style={{
+                background: "rgba(255,255,255,0.2)",
+                border: "none",
+                borderRadius: "4px",
+                padding: "4px 8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                color: "white",
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                height: "24px",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+                <line x1="14" y1="8" x2="18" y2="8" />
+                <line x1="14" y1="12" x2="18" y2="12" />
+                <line x1="14" y1="16" x2="18" y2="16" />
+              </svg>
+              <span>Branches</span>
+            </button>
+          </div>
+
+          <div
+            ref={registerActionRef('actions')}
+            style={{
+              display: hiddenActionIds.includes('actions') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              id={`actions-button-${panelId}`}
+              onClick={handleActionsButtonClick}
+              onMouseEnter={handleActionsButtonMouseEnter}
+              onMouseLeave={handleActionsButtonMouseLeave}
+              title="Create annotation"
+              style={{
+                background: "rgba(255,255,255,0.2)",
+                border: "none",
+                borderRadius: "4px",
+                padding: "4px 8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                color: "white",
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                height: "24px",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span>Actions</span>
+            </button>
+          </div>
+
           <button
-            onClick={(e) => {
-              e.stopPropagation()
-              console.log('[SaveAs] Button clicked')
-              setShowSaveAsDialog(true)
+            ref={overflowButtonRef}
+            onClick={(event) => {
+              event.stopPropagation()
+              setIsOverflowMenuOpen((prev) => !prev)
             }}
             style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              display: 'flex',
+              display: hiddenActionIds.length > 0 ? 'flex' : 'none',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '4px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
+              background: 'rgba(255,255,255,0.15)',
+              border: 'none',
+              borderRadius: '4px',
+              padding: '4px 6px',
               color: 'white',
-              fontSize: '12px',
-              pointerEvents: 'auto', // Ensure button is always clickable
-              position: 'relative',
-              zIndex: 1,
+              cursor: 'pointer',
+              fontSize: '14px',
+              height: '24px',
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-              console.log('[SaveAs] Button hovered')
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-            }}
-            title="Save branch as new note"
+            title="More actions"
           >
-            <Save className="w-3 h-3" />
-            <span>Save As</span>
+            »
           </button>
-        </div>
 
+          {isOverflowMenuOpen && hiddenActionIds.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                right: 0,
+                background: 'rgba(22,22,22,0.95)',
+                color: 'white',
+                borderRadius: '8px',
+                padding: '8px 0',
+                boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+                minWidth: '160px',
+                zIndex: Z_INDEX.DROPDOWN,
+              }}
+            >
+              {hiddenActionIds.map((actionId) => {
+                const isDisabled =
+                  (actionId === 'bringToFront' && layerBandInfo?.isAtTop) ||
+                  (actionId === 'sendToBack' && layerBandInfo?.isAtBottom)
+
+                return (
+                  <button
+                    key={actionId}
+                    onClick={(event) => {
+                      if (isDisabled) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        return
+                      }
+
+                      if (actionId === 'bringToFront') {
+                        event.stopPropagation()
+                        if (layerManager.isEnabled) {
+                          layerManager.bringToFront(panelId)
+                        }
+                        closeOverflowMenu()
+                        return
+                      }
+                      if (actionId === 'sendToBack') {
+                        event.stopPropagation()
+                        if (layerManager.isEnabled) {
+                          layerManager.sendToBack(panelId)
+                        }
+                        closeOverflowMenu()
+                        return
+                      }
+                      if (actionId === 'branches') {
+                        handleBranchesButtonClick(event)
+                        return
+                      }
+                      if (actionId === 'actions') {
+                        handleActionsButtonClick(event)
+                        return
+                      }
+                      if (actionId === 'resizeToggle') {
+                        handleTogglePanelHeight()
+                        closeOverflowMenu()
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      width: '100%',
+                      padding: '8px 16px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'white',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      cursor: isDisabled ? 'not-allowed' : 'pointer',
+                      fontSize: '13px',
+                      textAlign: 'left',
+                      opacity: isDisabled ? 0.6 : 1,
+                    }}
+                  >
+                    <span>
+                      {actionId === 'bringToFront' && 'Bring to Front'}
+                      {actionId === 'sendToBack' && 'Send to Back'}
+                      {actionId === 'resizeToggle' && (isPanelHeightExpanded ? 'Restore Height' : 'Expand Height')}
+                      {actionId === 'branches' && 'Branches'}
+                      {actionId === 'actions' && 'Actions'}
+                    </span>
+                    {(actionId === 'bringToFront' && layerBandInfo?.isAtTop) && (
+                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
+                    )}
+                    {(actionId === 'sendToBack' && layerBandInfo?.isAtBottom) && (
+                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        
       </div>
 
       {/* Check if isolated and show placeholder */}
@@ -1813,6 +2275,277 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
       </div>
       )}
+      
+      
+      {/* Branches Sidebar - Floating Panel */}
+      {(isSidebarVisible || isSidebarHovering) && (
+        <div 
+          id={`branches-sidebar-${panelId}`}
+          onMouseEnter={() => {
+            // Keep sidebar visible when hovering over it
+            if (sidebarTimeoutRef.current) {
+              clearTimeout(sidebarTimeoutRef.current)
+            }
+            if (sidebarShowTimeoutRef.current) {
+              clearTimeout(sidebarShowTimeoutRef.current)
+              sidebarShowTimeoutRef.current = null
+            }
+            setIsSidebarHovering(true)
+          }}
+          onMouseLeave={() => {
+            // Hide sidebar after delay when leaving
+            if (sidebarShowTimeoutRef.current) {
+              clearTimeout(sidebarShowTimeoutRef.current)
+              sidebarShowTimeoutRef.current = null
+            }
+            sidebarTimeoutRef.current = setTimeout(() => {
+              setIsSidebarHovering(false)
+            }, HEADER_BUTTON_HOVER_DELAY_MS)
+          }}
+          style={{
+          position: 'absolute',
+          top: '60px',
+          right: '10px',
+          width: '300px',
+          maxHeight: 'calc(100% - 80px)',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          borderRadius: '12px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+          padding: '20px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          zIndex: zIndex + 10,
+        }}>
+          <div style={{
+            color: 'white',
+            fontSize: '16px',
+            fontWeight: 600,
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <span>📌</span> Branches ({allBranches.length})
+          </div>
+
+          {/* Filter buttons */}
+          <div style={{
+            display: 'flex',
+            gap: '6px',
+            marginBottom: '16px',
+            background: 'rgba(255,255,255,0.1)',
+            padding: '4px',
+            borderRadius: '8px',
+          }}>
+            {['all', 'note', 'explore', 'promote'].map(filter => (
+              <button
+                key={filter}
+                onClick={() => setActiveFilter(filter as typeof activeFilter)}
+                style={{
+                  flex: 1,
+                  padding: '6px 12px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  background: activeFilter === filter ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
+                  color: 'white',
+                  fontSize: '12px',
+                  fontWeight: activeFilter === filter ? 600 : 500,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  textTransform: 'capitalize',
+                }}
+                onMouseEnter={(e) => {
+                  if (activeFilter !== filter) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (activeFilter !== filter) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)'
+                  }
+                }}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+
+          {/* Branch items */}
+          <div style={{ flex: 1 }}>
+            {filteredBranches.length === 0 ? (
+              <div style={{
+                color: 'rgba(255,255,255,0.7)',
+                textAlign: 'center',
+                fontSize: '14px',
+                marginTop: '20px',
+              }}>
+                No {activeFilter !== 'all' ? `${activeFilter} ` : ''}branches yet
+              </div>
+            ) : (
+              filteredBranches.map((branchId: string) => {
+                // Try both stores for branch data
+                const providerChild = branchesMap.get(branchId)
+                const storeChild = dataStore.get(branchId)
+                const childBranch = providerChild || storeChild
+                
+                if (!childBranch) {
+                  return null
+                }
+
+                return (
+                  <div
+                    key={branchId}
+                    className={`branch-item ${childBranch.type}`}
+                    style={{
+                      background: 'rgba(255,255,255,0.95)',
+                      borderRadius: '12px',
+                      padding: '16px',
+                      marginBottom: '12px',
+                      transition: 'all 0.3s ease',
+                      borderLeft: `4px solid ${
+                        childBranch.type === 'note' ? '#2196f3' :
+                        childBranch.type === 'explore' ? '#ff9800' : '#4caf50'
+                      }`,
+                      userSelect: 'none',
+                      position: 'relative',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateX(4px)'
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateX(0)'
+                      e.currentTarget.style.boxShadow = 'none'
+                    }}
+                  >
+                    {/* Branch content - clickable area */}
+                    <div 
+                      style={{
+                        flex: 1,
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleBranchClick(branchId)
+                      }}
+                    >
+                      <div style={{
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        color: '#2c3e50',
+                        marginBottom: '4px',
+                      }}>
+                        {childBranch.title}
+                      </div>
+                      <div style={{
+                        fontSize: '12px',
+                        color: '#7f8c8d',
+                        lineHeight: 1.4,
+                      }}>
+                        {childBranch.originalText || 'Click to open'}
+                      </div>
+                    </div>
+                    
+                    {/* Eye/View button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Clear any preview timeout to prevent conflicts
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Clear preview state since we're opening permanently
+                        setPreviewBranchId(null)
+                        // Click opens the panel permanently
+                        handleBranchClick(branchId)
+                      }}
+                      onMouseEnter={(e) => {
+                        e.stopPropagation()
+                        // Clear any existing timeout
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Only show preview if not already clicked/opened
+                        // Check if panel already exists
+                        const panelExists = document.querySelector(`[data-panel-id="${branchId}"]`)
+                        if (!panelExists) {
+                          // Show preview after short delay
+                          previewTimeoutRef.current = setTimeout(() => {
+                            setPreviewBranchId(branchId)
+                            
+                            // Get position for the preview panel (reuse same logic)
+                            const parentPosition = calculateBranchPanelPosition()
+                            
+                            // Dispatch event to create temporary preview panel
+                            window.dispatchEvent(new CustomEvent('preview-panel', { 
+                              detail: { 
+                                panelId: branchId,
+                                parentPanelId: panelId,
+                                parentPosition: parentPosition,
+                                isPreview: true
+                              },
+                              bubbles: true 
+                            }))
+                          }, 300) // 300ms delay before showing preview
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.stopPropagation()
+                        // Clear timeout
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Only remove preview if it's actually a preview (not a permanent panel)
+                        if (previewBranchId === branchId) {
+                          setPreviewBranchId(null)
+                          // Dispatch event to remove preview panel
+                          window.dispatchEvent(new CustomEvent('remove-preview-panel', { 
+                            detail: { panelId: branchId },
+                            bubbles: true 
+                          }))
+                        }
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #ddd',
+                        borderRadius: '50%',
+                        width: '32px',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        color: '#7f8c8d',
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = 'rgba(0,0,0,0.05)'
+                        e.currentTarget.style.borderColor = '#999'
+                        e.currentTarget.style.color = '#2c3e50'
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent'
+                        e.currentTarget.style.borderColor = '#ddd'
+                        e.currentTarget.style.color = '#7f8c8d'
+                      }}
+                      title="Preview branch (hover) / Open (click)"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Connection points */}
       {!isMainPanel && (
@@ -1841,24 +2574,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         border: '3px solid white',
         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
       }} />
-
-      {/* Save As Dialog - reuses the shared note creation dialog */}
-      {showSaveAsDialog && (
-        <>
-          {console.log(`[CanvasPanel ${panelId}] Rendering Save As dialog, showSaveAsDialog=${showSaveAsDialog}`)}
-          <NoteCreationDialog
-            isOpen={showSaveAsDialog}
-            onClose={() => {
-              console.log(`[CanvasPanel ${panelId}] Closing dialog`)
-              setShowSaveAsDialog(false)
-            }}
-            onCreateNote={handleSaveAs}
-            defaultNoteName={currentBranch.title || "Untitled"}
-            title="Save Branch As Note"
-            submitButtonText="Save Note"
-          />
-        </>
-      )}
     </div>
   )
 } 

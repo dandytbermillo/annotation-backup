@@ -33,6 +33,7 @@ function AnnotationAppContent() {
   const [showNotesWidget, setShowNotesWidget] = useState(false)
   const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
   const activeEditorRef = useRef<any>(null) // Track the currently active editor
+  const activePanelIdRef = useRef<string | null>(null) // Track the currently active panel ID
 
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
@@ -210,8 +211,9 @@ function AnnotationAppContent() {
   }, [])
 
   // Handle registering active editor (called by panels when they gain focus)
-  const handleRegisterActiveEditor = useCallback((editorRef: any) => {
+  const handleRegisterActiveEditor = useCallback((editorRef: any, panelId: string) => {
     activeEditorRef.current = editorRef
+    activePanelIdRef.current = panelId
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
@@ -522,6 +524,7 @@ function AnnotationAppContent() {
           onSelectNote={handleNoteSelect}
           onCreateOverlayPopup={handleCreateOverlayPopup}
           editorRef={activeEditorRef}
+          activePanelId={activePanelIdRef.current}
         />
       )}
       

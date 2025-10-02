@@ -16,7 +16,7 @@ interface CanvasContextType {
   dataStore: DataStore
   events: EventEmitter
   noteId?: string
-  onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
+  onRegisterActiveEditor?: (editorRef: any) => void
 }
 
 const CanvasContext = createContext<CanvasContextType | null>(null)
@@ -106,7 +106,7 @@ function canvasReducer(state: CanvasState, action: any): CanvasState {
 interface CanvasProviderProps {
   children: ReactNode
   noteId?: string
-  onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
+  onRegisterActiveEditor?: (editorRef: any) => void
 }
 
 export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: CanvasProviderProps) {

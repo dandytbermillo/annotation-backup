@@ -1,0 +1,109 @@
+/**
+ * Shared note creation utility
+ * Used by both FloatingToolbar and NotesExplorer to ensure consistent behavior
+ */
+
+interface CreateNoteOptions {
+  name?: string
+  parentId?: string | null
+  metadata?: Record<string, any>
+}
+
+interface CreateNoteResult {
+  success: boolean
+  noteId?: string
+  error?: string
+}
+
+/**
+ * Creates a new note using the Phase 1 API
+ * Matches the behavior of notes-explorer-phase1.tsx createNewNote function
+ */
+export async function createNote(options: CreateNoteOptions = {}): Promise<CreateNoteResult> {
+  try {
+    const { name, parentId = null, metadata = {} } = options
+
+    // Generate default name if not provided
+    const timestamp = new Date().toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    })
+    const noteName = name?.trim() || `New Note - ${timestamp}`
+
+    // Determine parent folder
+    let finalParentId = parentId
+
+    // If no parent specified, try to find "Uncategorized" folder
+    if (finalParentId === null || finalParentId === undefined) {
+      try {
+        const foldersResponse = await fetch('/api/items?parentId=null')
+        if (foldersResponse.ok) {
+          const data = await foldersResponse.json()
+          const uncategorized = data.items?.find((item: any) =>
+            item.type === 'folder' && item.name === 'Uncategorized'
+          )
+          finalParentId = uncategorized?.id || null
+        }
+      } catch (err) {
+        console.warn('[createNote] Could not find Uncategorized folder, creating in root')
+      }
+    }
+
+    // Create the note
+    const response = await fetch('/api/items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'note',
+        name: noteName,
+        parentId: finalParentId,
+        metadata
+      })
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Failed to create note: ${errorText}`)
+    }
+
+    const data = await response.json()
+    const noteId = data.item.id
+
+    // Track the new note as recently accessed
+    try {
+      await fetch(`/api/items/${noteId}/access`, { method: 'POST' })
+    } catch (err) {
+      console.warn('[createNote] Failed to track note access:', err)
+    }
+
+    return {
+      success: true,
+      noteId
+    }
+  } catch (error) {
+    console.error('[createNote] Error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }
+  }
+}
+
+/**
+ * Helper to get available folders for note creation
+ */
+export async function getAvailableFolders(): Promise<any[]> {
+  try {
+    const response = await fetch('/api/items?parentId=null')
+    if (!response.ok) return []
+
+    const data = await response.json()
+    return data.items?.filter((item: any) => item.type === 'folder') || []
+  } catch (error) {
+    console.error('[getAvailableFolders] Error:', error)
+    return []
+  }
+}

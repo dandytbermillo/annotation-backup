@@ -13,7 +13,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
-import { type CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
+import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
@@ -22,9 +22,6 @@ import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
 import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
-import { NoteCreationDialog } from "@/components/shared/note-creation-dialog"
-import { createNote } from "@/lib/utils/note-creator"
-import { Save } from "lucide-react"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -357,9 +354,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
-
-  // Save As dialog state
-  const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
   const [plainProvider, setPlainProvider] = useState<PlainOfflineProvider | null>(null)
   const postLoadEditApplied = useRef(false)
   
@@ -815,40 +809,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
       toggleBtn.title = newEditableState ? 'Save Changes' : 'Edit Content'
     }
-
+    
     dataStore.update(panelId, { isEditable: newEditableState })
-
+    
     if (newEditableState) {
       editorRef.current?.focus()
-    }
-  }
-
-  // Handle Save As - creates a new note with the branch content
-  const handleSaveAs = async (noteName: string, folderId: string | null, customPath?: string) => {
-    try {
-      // TODO: Handle custom folder path creation if provided
-
-      const result = await createNote({
-        name: noteName,
-        parentId: folderId,
-        metadata: {
-          branchType: currentBranch.type,
-          savedFrom: panelId,
-          savedAt: new Date().toISOString()
-        }
-      })
-
-      if (result.success && result.noteId) {
-        // TODO: Save the actual branch content to the note
-        // This would require extracting content from the editor
-        alert(`Note "${noteName}" created successfully!`)
-      } else {
-        throw new Error(result.error || 'Failed to create note')
-      }
-    } catch (error) {
-      console.error('[CanvasPanel] Save As failed:', error)
-      alert('Failed to save note. Please try again.')
-      throw error
     }
   }
 
@@ -1668,43 +1633,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               </button>
             </>
           )}
-
-          {/* Save As button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              console.log('[SaveAs] Button clicked')
-              setShowSaveAsDialog(true)
-            }}
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '4px 8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '4px',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              color: 'white',
-              fontSize: '12px',
-              pointerEvents: 'auto', // Ensure button is always clickable
-              position: 'relative',
-              zIndex: 1,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-              console.log('[SaveAs] Button hovered')
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-            }}
-            title="Save branch as new note"
-          >
-            <Save className="w-3 h-3" />
-            <span>Save As</span>
-          </button>
         </div>
 
       </div>
@@ -1841,24 +1769,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         border: '3px solid white',
         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
       }} />
-
-      {/* Save As Dialog - reuses the shared note creation dialog */}
-      {showSaveAsDialog && (
-        <>
-          {console.log(`[CanvasPanel ${panelId}] Rendering Save As dialog, showSaveAsDialog=${showSaveAsDialog}`)}
-          <NoteCreationDialog
-            isOpen={showSaveAsDialog}
-            onClose={() => {
-              console.log(`[CanvasPanel ${panelId}] Closing dialog`)
-              setShowSaveAsDialog(false)
-            }}
-            onCreateNote={handleSaveAs}
-            defaultNoteName={currentBranch.title || "Untitled"}
-            title="Save Branch As Note"
-            submitButtonText="Save Note"
-          />
-        </>
-      )}
     </div>
   )
 } 

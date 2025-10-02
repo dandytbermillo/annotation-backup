@@ -1,6 +1,5 @@
 "use client"
 
-import { useState, useRef } from "react"
 import { useCanvas } from "./canvas-context"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
@@ -23,11 +22,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   const dataStore = propDataStore || canvasContext?.dataStore
   const dispatch = propDispatch || canvasContext?.dispatch
   const state = propState || canvasContext?.state
-
-  // State for preview functionality
-  const [isPreview, setIsPreview] = useState(false)
-  const previewTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
-
+  
   // Early return if dataStore is not available
   if (!dataStore) return null
 
@@ -146,145 +141,17 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     promote: "border-l-green-400",
   }
 
-  // Eye icon handlers
-  const handleEyeClick = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    // Clear any preview timeout
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-    // Clear preview state since we're opening permanently
-    setIsPreview(false)
-    // Click opens the panel permanently
-    handleClick()
-  }
-
-  const handleEyeMouseEnter = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    // Clear any existing timeout
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-    // Only show preview if panel doesn't already exist
-    const panelExists = document.querySelector(`[data-panel-id="${branchId}"]`)
-    if (!panelExists) {
-      // Show preview after short delay
-      previewTimeoutRef.current = setTimeout(() => {
-        setIsPreview(true)
-
-        // Dispatch event to create temporary preview panel
-        window.dispatchEvent(new CustomEvent('preview-panel', {
-          detail: {
-            panelId: branchId,
-            parentPanelId: parentId,
-            isPreview: true
-          },
-          bubbles: true
-        }))
-      }, 300) // 300ms delay
-    }
-  }
-
-  const handleEyeMouseLeave = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    // Clear timeout
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-    // Only remove preview if it's actually a preview (not permanent)
-    if (isPreview) {
-      setIsPreview(false)
-      // Dispatch event to remove preview panel
-      window.dispatchEvent(new CustomEvent('remove-preview-panel', {
-        detail: { panelId: branchId },
-        bubbles: true
-      }))
-    }
-  }
-
-  const borderColor = branch.type === 'note' ? '#3498db' :
-                      branch.type === 'explore' ? '#f39c12' : '#27ae60'
-
   return (
     <div
-      style={{
-        background: 'rgba(255,255,255,0.95)',
-        borderRadius: '12px',
-        padding: '16px',
-        marginBottom: '12px',
-        transition: 'all 0.3s ease',
-        borderLeft: `4px solid ${borderColor}`,
-        userSelect: 'none',
-        position: 'relative',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.transform = 'translateX(4px)'
-        e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.transform = 'translateX(0)'
-        e.currentTarget.style.boxShadow = 'none'
-      }}
+      className={`branch-item bg-white/15 backdrop-blur-sm rounded-lg p-4 mb-3 cursor-pointer transition-all duration-300 border-l-4 border-white/50 hover:bg-white/25 hover:translate-x-1 select-none ${
+        borderColors[branch.type as keyof typeof borderColors] || "border-l-white/50"
+      }`}
+      onClick={handleClick}
     >
-      {/* Branch content - clickable area */}
-      <div
-        style={{
-          flex: 1,
-          cursor: 'pointer',
-        }}
-        onClick={handleClick}
-      >
-        <div style={{
-          fontSize: '14px',
-          fontWeight: 600,
-          color: '#2c3e50',
-          marginBottom: '4px',
-        }}>
-          {getTypeIcon(branch.type)} {branch.title}
-        </div>
-        <div style={{
-          fontSize: '12px',
-          color: '#7f8c8d',
-          lineHeight: 1.4,
-        }}>
-          {preview || 'Click to open'}
-        </div>
+      <div className="branch-name text-white font-semibold text-xs mb-1.5 flex items-center gap-1.5">
+        {getTypeIcon(branch.type)} {branch.title}
       </div>
-
-      {/* Eye/View button */}
-      <button
-        onClick={handleEyeClick}
-        onMouseEnter={handleEyeMouseEnter}
-        onMouseLeave={handleEyeMouseLeave}
-        style={{
-          background: 'transparent',
-          border: '1px solid #ddd',
-          borderRadius: '50%',
-          width: '32px',
-          height: '32px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease',
-          color: '#7f8c8d',
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.background = 'rgba(0,0,0,0.05)'
-          e.currentTarget.style.borderColor = '#999'
-          e.currentTarget.style.color = '#2c3e50'
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.background = 'transparent'
-          e.currentTarget.style.borderColor = '#ddd'
-          e.currentTarget.style.color = '#7f8c8d'
-        }}
-      >
-        <span style={{ fontSize: '16px' }}>👁</span>
-      </button>
+      <div className="branch-preview text-white/85 text-xs leading-relaxed">{preview}</div>
     </div>
   )
 }

@@ -9,6 +9,31 @@ import { debugLog } from "@/lib/debug-logger"
 
 type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
 
+// Keyboard shortcut mappings
+const SHORTCUTS: Record<string, string> = {
+  bold: 'Mod+B',
+  italic: 'Mod+I',
+  underline: 'Mod+U',
+  heading2: 'Mod+Alt+2',
+  heading3: 'Mod+Alt+3',
+  bulletList: 'Mod+Shift+8',
+  orderedList: 'Mod+Shift+7',
+  blockquote: 'Mod+Shift+B',
+  highlight: 'Mod+Shift+H',
+  collapsibleBlock: 'Mod+Shift+C',
+  removeFormat: 'Mod+\\',
+}
+
+// Helper to format shortcuts for display (⌘ on Mac, Ctrl on Windows/Linux)
+const formatShortcut = (shortcut: string): string => {
+  const isMac = typeof window !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform)
+  return shortcut
+    .replace('Mod', isMac ? '⌘' : 'Ctrl')
+    .replace('Alt', isMac ? '⌥' : 'Alt')
+    .replace('Shift', isMac ? '⇧' : 'Shift')
+    .replace('+', isMac ? '' : '+')
+}
+
 interface FormatToolbarProps {
   editorRef: React.RefObject<UnifiedEditorHandle | null>
   panelId: string
@@ -19,7 +44,7 @@ interface FormatToolbarProps {
 export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsibleSelection }: FormatToolbarProps) {
   const [isVisible, setIsVisible] = useState(false) // Start hidden
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 })
-  const timeoutRef = useRef<NodeJS.Timeout>()
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
   const showTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const blockSelection = collapsibleSelection?.blocks ?? []
@@ -225,7 +250,7 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
           {/* First row */}
           <button
             onClick={() => { executeCommand("bold"); setIsVisible(false) }}
-            title="Bold"
+            title={`Bold (${formatShortcut(SHORTCUTS.bold)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -234,12 +259,13 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "16px",
-              fontWeight: "bold",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              position: "relative",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -250,12 +276,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            B
+            <span style={{ fontSize: "16px", fontWeight: "bold" }}>B</span>
+            <span style={{ fontSize: "9px", color: "#5f6368", marginTop: "2px" }}>
+              {formatShortcut(SHORTCUTS.bold)}
+            </span>
           </button>
           
           <button
             onClick={() => { executeCommand("italic"); setIsVisible(false) }}
-            title="Italic"
+            title={`Italic (${formatShortcut(SHORTCUTS.italic)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -264,13 +293,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "16px",
-              fontStyle: "italic",
-              fontFamily: "serif",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -281,12 +309,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            I
+            <span style={{ fontSize: "16px", fontStyle: "italic", fontFamily: "serif" }}>I</span>
+            <span style={{ fontSize: "9px", color: "#5f6368", marginTop: "2px" }}>
+              {formatShortcut(SHORTCUTS.italic)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("underline"); setIsVisible(false) }}
-            title="Underline"
+            title={`Underline (${formatShortcut(SHORTCUTS.underline)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -295,12 +326,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "16px",
-              textDecoration: "underline",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -311,12 +342,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            U
+            <span style={{ fontSize: "16px", textDecoration: "underline" }}>U</span>
+            <span style={{ fontSize: "9px", color: "#5f6368", marginTop: "2px" }}>
+              {formatShortcut(SHORTCUTS.underline)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("heading", 2); setIsVisible(false) }}
-            title="Heading 2"
+            title={`Heading 2 (${formatShortcut(SHORTCUTS.heading2)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -325,12 +359,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "14px",
-              fontWeight: "600",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -341,12 +375,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            H2
+            <span style={{ fontSize: "13px", fontWeight: "600" }}>H2</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.heading2)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("heading", 3); setIsVisible(false) }}
-            title="Heading 3"
+            title={`Heading 3 (${formatShortcut(SHORTCUTS.heading3)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -355,12 +392,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "14px",
-              fontWeight: "600",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -371,13 +408,16 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            H3
+            <span style={{ fontSize: "13px", fontWeight: "600" }}>H3</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.heading3)}
+            </span>
           </button>
 
           {/* Second row */}
           <button
             onClick={() => { executeCommand("bulletList"); setIsVisible(false) }}
-            title="Bullet List"
+            title={`Bullet List (${formatShortcut(SHORTCUTS.bulletList)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -386,11 +426,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "20px",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -401,12 +442,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            •
+            <span style={{ fontSize: "18px" }}>•</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.bulletList)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("orderedList"); setIsVisible(false) }}
-            title="Numbered List"
+            title={`Numbered List (${formatShortcut(SHORTCUTS.orderedList)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -415,11 +459,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "14px",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -430,12 +475,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            1.
+            <span style={{ fontSize: "13px" }}>1.</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.orderedList)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("blockquote"); setIsVisible(false) }}
-            title="Quote"
+            title={`Quote (${formatShortcut(SHORTCUTS.blockquote)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -444,12 +492,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "20px",
-              fontWeight: "500",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -460,12 +508,15 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            "
+            <span style={{ fontSize: "18px", fontWeight: "500" }}>"</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.blockquote)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("highlight"); setIsVisible(false) }}
-            title="Highlight"
+            title={`Highlight (${formatShortcut(SHORTCUTS.highlight)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -474,10 +525,13 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "16px",
+              color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
+              gap: "2px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -488,15 +542,18 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ea4335" strokeWidth="2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea4335" strokeWidth="2">
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
+            <span style={{ fontSize: "8px", color: "#5f6368" }}>
+              {formatShortcut(SHORTCUTS.highlight)}
+            </span>
           </button>
 
           <button
             onClick={() => { executeCommand("collapsibleBlock"); setIsVisible(false) }}
-            title="Block Based"
+            title={`Block Based (${formatShortcut(SHORTCUTS.collapsibleBlock)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -505,11 +562,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "20px",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -520,13 +578,16 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            ▦
+            <span style={{ fontSize: "18px" }}>▦</span>
+            <span style={{ fontSize: "8px", color: "#5f6368", marginTop: "1px" }}>
+              {formatShortcut(SHORTCUTS.collapsibleBlock)}
+            </span>
           </button>
 
           {/* Third row - only Clear Format */}
           <button
             onClick={() => { executeCommand("removeFormat"); setIsVisible(false) }}
-            title="Clear Format"
+            title={`Clear Format (${formatShortcut(SHORTCUTS.removeFormat)})`}
             style={{
               background: "white",
               border: "1px solid #dadce0",
@@ -535,11 +596,12 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               height: "42px",
               cursor: "pointer",
               transition: "all 0.15s ease",
-              fontSize: "20px",
               color: "#202124",
               display: "flex",
+              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
+              padding: "4px",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.background = "#f1f3f4"
@@ -550,7 +612,10 @@ export function FormatToolbar({ editorRef, panelId, hoverDelayMs = 300, collapsi
               e.currentTarget.style.borderColor = "#dadce0"
             }}
           >
-            ✕
+            <span style={{ fontSize: "18px" }}>✕</span>
+            <span style={{ fontSize: "9px", color: "#5f6368", marginTop: "2px" }}>
+              {formatShortcut(SHORTCUTS.removeFormat)}
+            </span>
           </button>
 
           {hasBlockSelection && (

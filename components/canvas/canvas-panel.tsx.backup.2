@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer, useCallback } from "react"
+import { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import dynamic from 'next/dynamic'
@@ -9,11 +9,14 @@ import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
 import { EditorToolbar } from "./editor-toolbar"
 import { FormatToolbar } from "./format-toolbar"
+import { v4 as uuidv4 } from "uuid"
+import { createAnnotationBranch } from "@/lib/models/annotation"
+import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
+import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
-import { useFeatureFlag } from "@/lib/offline/feature-flags"
 import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
 import { Z_INDEX } from "@/lib/constants/z-index"
@@ -27,6 +30,8 @@ const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr
 // Track which panel is currently being dragged globally
 let globalDraggingPanelId: string | null = null
 
+const HEADER_BUTTON_HOVER_DELAY_MS = 300
+
 interface CanvasPanelProps {
   panelId: string
   branch: Branch
@@ -36,13 +41,14 @@ interface CanvasPanelProps {
 }
 
 export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
-  const { dispatch, state, dataStore, noteId: contextNoteId } = useCanvas()
+  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor } = useCanvas()
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   
   // Layer management integration
   const layerManager = useLayerManager()
+  const layerBandInfo = layerManager.getLayerBandInfo(panelId)
   const { node: canvasNode } = useCanvasNode(panelId, 'panel', position)
   
   // State to track render position and prevent snap-back during drag
@@ -52,11 +58,330 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [isSidebarVisible, setIsSidebarVisible] = useState(false)
   const [isSidebarHovering, setIsSidebarHovering] = useState(false)
   const sidebarTimeoutRef = useRef<NodeJS.Timeout>()
+  const sidebarShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
   const actionsTimeoutRef = useRef<NodeJS.Timeout>()
+  const actionsShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // Panel hover state for hiding/showing buttons
+  const [isPanelHovered, setIsPanelHovered] = useState(false)
+  const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const [panelHeight, setPanelHeight] = useState<number>(500)
+  const previousPanelHeightRef = useRef<number>(500)
+  const [isPanelHeightExpanded, setIsPanelHeightExpanded] = useState(false)
+  const cameraZoomRef = useRef<number>(1)
+
+  const headerControlsActive = isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering
+  
+  // Branch preview state
+  const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
+  const previewTimeoutRef = useRef<NodeJS.Timeout>()
+  const [collapsibleSelection, setCollapsibleSelection] = useState<CollapsibleSelectionSnapshot | null>(null)
+  const handleCollapsibleSelectionChange = useCallback((snapshot: CollapsibleSelectionSnapshot) => {
+    if (snapshot.mode === 'none') {
+      setCollapsibleSelection(null)
+      return
+    }
+    setCollapsibleSelection(snapshot)
+  }, [])
+
+  const getViewportFillHeight = useCallback((top: number) => {
+    if (typeof window === 'undefined') {
+      return previousPanelHeightRef.current
+    }
+    const viewportHeight = window.innerHeight
+    const marginBottom = 8
+    const screenAvailable = viewportHeight - Math.max(top, 0) - marginBottom
+    const safeZoom = cameraZoomRef.current || 1
+    const worldHeight = screenAvailable / safeZoom
+    return Math.max(worldHeight, 320)
+  }, [])
+
+  const getCurrentPanelTop = useCallback(() => {
+    if (panelRef.current) {
+      const rect = panelRef.current.getBoundingClientRect()
+      return rect.top
+    }
+    return renderPosition.y
+  }, [renderPosition.y])
+
+  // Header action overflow management
+  const ACTION_GAP = 8
+  const actionsContainerRef = useRef<HTMLDivElement | null>(null)
+  const formatActionRef = useRef<HTMLDivElement | null>(null)
+  const overflowButtonRef = useRef<HTMLButtonElement | null>(null)
+  const actionRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const actionWidthsRef = useRef<Record<string, number>>({})
+  const [hiddenActionIds, setHiddenActionIds] = useState<string[]>([])
+  const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false)
+
+  const registerActionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
+    actionRefs.current[id] = el
+  }, [])
+
+  const closeOverflowMenu = useCallback(() => {
+    setIsOverflowMenuOpen(false)
+  }, [])
+
+  const handleBranchesButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
+    event?.stopPropagation()
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+
+    if (isSidebarVisible) {
+      setIsSidebarVisible(false)
+      setIsSidebarHovering(false)
+    } else {
+      setIsSidebarVisible(true)
+      setIsSidebarHovering(true)
+    }
+
+    closeOverflowMenu()
+  }, [closeOverflowMenu, isSidebarVisible])
+
+  const handleBranchesButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+    if (sidebarTimeoutRef.current) {
+      clearTimeout(sidebarTimeoutRef.current)
+    }
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+    sidebarShowTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovering(true)
+      setIsSidebarVisible(true)
+      sidebarShowTimeoutRef.current = null
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [])
+
+  const handleBranchesButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+    if (sidebarShowTimeoutRef.current) {
+      clearTimeout(sidebarShowTimeoutRef.current)
+      sidebarShowTimeoutRef.current = null
+    }
+    sidebarTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovering(false)
+      setIsSidebarVisible(false)
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [])
+
+  const positionAnnotationToolbar = useCallback((target: HTMLElement) => {
+    const toolbar = document.getElementById("annotation-toolbar")
+    if (!toolbar) return
+
+    const rect = target.getBoundingClientRect()
+    toolbar.style.position = "fixed"
+    toolbar.style.left = `${rect.left + rect.width / 2}px`
+    toolbar.style.top = `${rect.bottom + 8}px`
+    toolbar.style.opacity = "1"
+    toolbar.style.pointerEvents = "auto"
+    toolbar.classList.add("visible")
+  }, [])
+
+  const hideAnnotationToolbar = useCallback(() => {
+    const toolbar = document.getElementById("annotation-toolbar")
+    if (!toolbar) return
+    toolbar.style.opacity = "0"
+    toolbar.style.pointerEvents = "none"
+    toolbar.classList.remove("visible")
+  }, [])
+
+  const handleActionsButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
+    event?.stopPropagation()
+
+    if (actionsShowTimeoutRef.current) {
+      clearTimeout(actionsShowTimeoutRef.current)
+      actionsShowTimeoutRef.current = null
+    }
+
+    const target = (event?.currentTarget as HTMLElement) ?? overflowButtonRef.current ?? null
+
+    const nextVisible = !isActionsVisible
+    setIsActionsVisible(nextVisible)
+    setIsActionsHovering(false)
+
+    if (nextVisible && target) {
+      positionAnnotationToolbar(target)
+    } else if (!nextVisible) {
+      hideAnnotationToolbar()
+    }
+
+    closeOverflowMenu()
+  }, [closeOverflowMenu, hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
+
+  const handleActionsButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = "rgba(255,255,255,0.3)"
+    if (actionsTimeoutRef.current) {
+      clearTimeout(actionsTimeoutRef.current)
+    }
+    if (actionsShowTimeoutRef.current) {
+      clearTimeout(actionsShowTimeoutRef.current)
+      actionsShowTimeoutRef.current = null
+    }
+
+    const buttonEl = event.currentTarget
+
+    const showToolbar = (target: HTMLButtonElement) => {
+      setIsActionsHovering(true)
+      positionAnnotationToolbar(target)
+    }
+
+    if (isActionsVisible || isActionsHovering) {
+      showToolbar(buttonEl)
+      return
+    }
+
+    actionsShowTimeoutRef.current = setTimeout(() => {
+      showToolbar(buttonEl)
+      actionsShowTimeoutRef.current = null
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [isActionsHovering, isActionsVisible, positionAnnotationToolbar])
+
+  const handleActionsButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = "rgba(255,255,255,0.2)"
+    if (actionsShowTimeoutRef.current) {
+      clearTimeout(actionsShowTimeoutRef.current)
+      actionsShowTimeoutRef.current = null
+    }
+    actionsTimeoutRef.current = setTimeout(() => {
+      setIsActionsHovering(false)
+      const toolbar = document.getElementById("annotation-toolbar")
+      if (toolbar && !toolbar.matches(':hover')) {
+        hideAnnotationToolbar()
+      }
+    }, HEADER_BUTTON_HOVER_DELAY_MS)
+  }, [hideAnnotationToolbar])
+
+  const handleTogglePanelHeight = useCallback(() => {
+    if (isPanelHeightExpanded) {
+      setPanelHeight(previousPanelHeightRef.current)
+      setIsPanelHeightExpanded(false)
+      return
+    }
+
+    previousPanelHeightRef.current = panelHeight
+    const panelTop = getCurrentPanelTop()
+    const expandedHeight = getViewportFillHeight(panelTop)
+    setPanelHeight(expandedHeight)
+    setIsPanelHeightExpanded(true)
+  }, [getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded, panelHeight])
+
+  const recalcOverflow = useCallback(() => {
+    const container = actionsContainerRef.current
+    if (!container) {
+      return
+    }
+
+    const containerWidth = container.getBoundingClientRect().width
+    if (!containerWidth) {
+      if (hiddenActionIds.length > 0) {
+        setHiddenActionIds([])
+      }
+      return
+    }
+
+    const overflowWidth = overflowButtonRef.current?.getBoundingClientRect().width ?? 36
+    const measuredFormatWidth = formatActionRef.current?.getBoundingClientRect().width ?? 0
+    const storedFormatWidth = actionWidthsRef.current.format ?? 0
+    const formatWidth = measuredFormatWidth > 0 ? measuredFormatWidth : storedFormatWidth
+    if (measuredFormatWidth > 0) {
+      actionWidthsRef.current.format = measuredFormatWidth
+    }
+
+    const order = layerManager.isEnabled
+      ? ['bringToFront', 'sendToBack', 'resizeToggle', 'branches', 'actions']
+      : ['resizeToggle', 'branches', 'actions']
+
+    const widthMap: Record<string, number> = {}
+    order.forEach((id) => {
+      const element = actionRefs.current[id]
+      const measured = element?.getBoundingClientRect().width ?? 0
+      const stored = actionWidthsRef.current[id] ?? 0
+      const width = measured > 0 ? measured : stored
+      if (width > 0) {
+        widthMap[id] = width
+        if (measured > 0) {
+          actionWidthsRef.current[id] = measured
+        }
+      }
+    })
+
+    const availableIds = order.filter((id) => widthMap[id] !== undefined)
+    let visibleIds: string[] = []
+    let hiddenIds: string[] = []
+    let usedWidth = formatWidth
+    let visibleCount = formatWidth > 0 ? 1 : 0
+
+    availableIds.forEach((id) => {
+      const width = widthMap[id] ?? 0
+      if (width === 0) {
+        return
+      }
+      const gapBefore = visibleCount > 0 ? ACTION_GAP : 0
+      if (usedWidth + gapBefore + width <= containerWidth) {
+        visibleIds.push(id)
+        usedWidth += gapBefore + width
+        visibleCount += 1
+      } else {
+        hiddenIds.push(id)
+      }
+    })
+
+    if (hiddenIds.length > 0) {
+      const computeUsage = (ids: string[]) => {
+        let width = formatWidth
+        let count = formatWidth > 0 ? 1 : 0
+        ids.forEach((id) => {
+          const w = widthMap[id] ?? 0
+          if (w === 0) {
+            return
+          }
+          width += (count > 0 ? ACTION_GAP : 0) + w
+          count += 1
+        })
+        return { width, count }
+      }
+
+      let { width: recomputedWidth, count } = computeUsage(visibleIds)
+      while (
+        visibleIds.length > 0 &&
+        recomputedWidth + (count > 0 ? ACTION_GAP : 0) + overflowWidth > containerWidth
+      ) {
+        const removed = visibleIds.pop()
+        if (!removed) {
+          break
+        }
+        hiddenIds.unshift(removed)
+        const recalculated = computeUsage(visibleIds)
+        recomputedWidth = recalculated.width
+        count = recalculated.count
+      }
+    }
+
+    const arraysEqual = (a: string[], b: string[]) => {
+      if (a.length !== b.length) {
+        return false
+      }
+      return a.every((value, index) => value === b[index])
+    }
+
+    if (!arraysEqual(hiddenActionIds, hiddenIds)) {
+      setHiddenActionIds(hiddenIds)
+    }
+
+    if (hiddenIds.length === 0 && isOverflowMenuOpen) {
+      setIsOverflowMenuOpen(false)
+    }
+  }, [ACTION_GAP, hiddenActionIds, isOverflowMenuOpen, layerManager.isEnabled])
   
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
@@ -69,12 +394,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   }, [position, canvasNode?.position])
   
   // Camera-based panning
-  const { 
-    panCameraBy, 
-    resetPanAccumulation, 
-    getPanAccumulation, 
-    isCameraEnabled 
+  const {
+    panCameraBy,
+    resetPanAccumulation,
+    getPanAccumulation,
+    isCameraEnabled,
+    getCameraState,
   } = useCanvasCamera()
+
+  cameraZoomRef.current = getCameraState().zoom || 1
   
   // Isolation system integration
   const { isIsolated, level, placeholder } = useIsolation(panelId)
@@ -82,7 +410,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useRegisterWithIsolation(panelId, panelRef as any, panelId === 'main' ? 'critical' : 'normal', 'panel')
   
   // Multi-layer canvas context
-  const multiLayerEnabled = useFeatureFlag('ui.multiLayerCanvas' as any)
+  const multiLayerEnabled = true
   const layerContext = useLayer()
   
   // Use refs to avoid stale closures in event handlers
@@ -101,8 +429,24 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (sidebarTimeoutRef.current) {
         clearTimeout(sidebarTimeoutRef.current)
       }
+      if (sidebarShowTimeoutRef.current) {
+        clearTimeout(sidebarShowTimeoutRef.current)
+        sidebarShowTimeoutRef.current = null
+      }
       if (actionsTimeoutRef.current) {
         clearTimeout(actionsTimeoutRef.current)
+      }
+      if (actionsShowTimeoutRef.current) {
+        clearTimeout(actionsShowTimeoutRef.current)
+        actionsShowTimeoutRef.current = null
+      }
+      if (panelHoverShowTimeoutRef.current) {
+        clearTimeout(panelHoverShowTimeoutRef.current)
+        panelHoverShowTimeoutRef.current = null
+      }
+      if (panelHoverHideTimeoutRef.current) {
+        clearTimeout(panelHoverHideTimeoutRef.current)
+        panelHoverHideTimeoutRef.current = null
       }
     }
   }, [])
@@ -147,6 +491,53 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [isSidebarHovering, isSidebarVisible, isActionsHovering, isActionsVisible, panelId])
   
+  useLayoutEffect(() => {
+    recalcOverflow()
+  }, [recalcOverflow])
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+    const container = actionsContainerRef.current
+    if (!container) {
+      return
+    }
+    const observer = new ResizeObserver(() => {
+      recalcOverflow()
+    })
+    observer.observe(container)
+    return () => {
+      observer.disconnect()
+    }
+  }, [recalcOverflow])
+
+  useEffect(() => {
+    if (!isOverflowMenuOpen) {
+      return
+    }
+
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (!actionsContainerRef.current?.contains(target)) {
+        setIsOverflowMenuOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOverflowMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOverflowMenuOpen])
+
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
   
@@ -196,7 +587,18 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   
   // Compute whether the editor should be editable based on layer state
   const isLayerInteractive = !multiLayerEnabled || !layerContext || layerContext.activeLayer === 'notes'
-  const actuallyEditable = isEditing && isLayerInteractive
+  const isLayerInteractiveRef = useRef(isLayerInteractive)
+  useEffect(() => {
+    isLayerInteractiveRef.current = isLayerInteractive
+    if (!isLayerInteractive && typeof window !== 'undefined') {
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement?.closest('.ProseMirror')) {
+        activeElement.blur()
+      }
+    }
+  }, [isLayerInteractive])
+
+  const actuallyEditable = isEditing
   const [activeFilter, setActiveFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
@@ -208,31 +610,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const currentNoteId = noteId || contextNoteId
   
   // Blur editor when switching to popup layer
-  useEffect(() => {
-    if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'popups') {
-      // Blur any focused editor to prevent keyboard input
-      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
-        editorRef.current.setEditable(false)
-        // Also blur the DOM element
-        const activeElement = document.activeElement as HTMLElement
-        if (activeElement && activeElement.closest('.ProseMirror')) {
-          activeElement.blur()
-        }
-      }
-    } else if (multiLayerEnabled && layerContext && layerContext.activeLayer === 'notes') {
-      // Re-enable editing when returning to notes layer
-      if (editorRef.current && typeof editorRef.current.setEditable === 'function') {
-        editorRef.current.setEditable(isEditing)
-      }
-    }
-  }, [layerContext?.activeLayer, multiLayerEnabled, isEditing])
-  
   // Simplified drag state - no RAF accumulation
   const dragState = useRef({
     isDragging: false,
     startX: 0,
     startY: 0,
-    initialPosition: { x: 0, y: 0 }
+    initialPosition: { x: 0, y: 0 },
+    pointerDelta: { x: 0, y: 0 },
+    autoScrollOffset: { x: 0, y: 0 },
   })
   
   // Link dragStateRef to dragState for the useEffect above
@@ -243,12 +628,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     if (!dragState.current.isDragging) return
     
     if (isCameraEnabled) {
-      // Use camera-based panning
-      panCameraBy({ dxScreen: deltaX, dyScreen: deltaY })
-      
-      // Track accumulated pan for drop coordinate adjustment
-      dragState.current.initialPosition.x += deltaX
-      dragState.current.initialPosition.y += deltaY
+      // Use camera-based panning (pan opposite to pointer delta)
+      panCameraBy({ dxScreen: -deltaX, dyScreen: -deltaY })
+
+      const state = dragState.current
+      state.autoScrollOffset.x += deltaX
+      state.autoScrollOffset.y += deltaY
+
+      if (state.isDragging && panelRef.current) {
+        const { pointerDelta, initialPosition, autoScrollOffset } = state
+        const nextLeft = initialPosition.x + pointerDelta.x - autoScrollOffset.x
+        const nextTop = initialPosition.y + pointerDelta.y - autoScrollOffset.y
+
+        panelRef.current.style.left = `${nextLeft}px`
+        panelRef.current.style.top = `${nextTop}px`
+        setRenderPosition({ x: nextLeft, y: nextTop })
+      }
     } else {
       // Legacy: Move ALL panels to simulate canvas panning
       const allPanels = document.querySelectorAll('[data-panel-id]')
@@ -371,6 +766,37 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       panelRef.current.style.top = position.y + 'px'
     }
   }, [])
+
+  const cameraZoom = state.canvasState?.zoom || 1
+
+  useEffect(() => {
+    if (!isPanelHeightExpanded) {
+      return
+    }
+    if (dragStateRef.current?.isDragging) {
+      return
+    }
+    cameraZoomRef.current = cameraZoom
+    const panelTop = getCurrentPanelTop()
+    setPanelHeight(getViewportFillHeight(panelTop))
+  }, [cameraZoom, getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded])
+
+  useEffect(() => {
+    if (!isPanelHeightExpanded) {
+      return
+    }
+    if (dragStateRef.current?.isDragging) {
+      return
+    }
+    const handleResize = () => {
+      const panelTop = getCurrentPanelTop()
+      setPanelHeight(getViewportFillHeight(panelTop))
+    }
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [cameraZoom, getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded])
   
   // Auto-focus editor when panel mounts if content is empty or it's the main panel
   useEffect(() => {
@@ -383,7 +809,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const focusAttempts = [100, 300, 500, 800]
       focusAttempts.forEach(delay => {
         setTimeout(() => {
-          if (editorRef.current && isEditing && isLayerInteractive) {
+          if (editorRef.current && isEditing && isLayerInteractiveRef.current) {
             editorRef.current.focus()
           }
         }, delay)
@@ -391,7 +817,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     } else if (isEditing && isEmpty && editorRef.current) {
       // For non-main panels, single focus attempt
       setTimeout(() => {
-        if (editorRef.current && isLayerInteractive) {
+        if (editorRef.current && isLayerInteractiveRef.current) {
           editorRef.current.focus()
         }
       }, 300)
@@ -464,14 +890,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (empty) {
         setIsEditing(true)
         setTimeout(() => {
-          if (editorRef.current && isLayerInteractive) {
-            editorRef.current.setEditable(true as any)
+          if (editorRef.current && isLayerInteractiveRef.current) {
             editorRef.current.focus()
           }
         }, 120)
       }
     },
-    [isPlainMode, panelId, branch.originalText, dataStore, isLayerInteractive]
+    [isPlainMode, panelId, branch.originalText, dataStore]
   )
   
   // Update edit mode when branch content changes (Option A only)
@@ -493,8 +918,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       
       // Also trigger focus
       setTimeout(() => {
-        if (editorRef.current) {
-          editorRef.current.setEditable(true)
+        if (editorRef.current && isLayerInteractiveRef.current) {
           editorRef.current.focus()
         }
       }, 100)
@@ -534,6 +958,27 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return data
   }
   const currentBranch = getBranchData()
+  
+  // Generate title for branch panels if not set
+  const getPanelTitle = () => {
+    if (currentBranch.title) {
+      return currentBranch.title
+    }
+    
+    // For branch panels without a title, use the originalText
+    if (panelId !== 'main' && currentBranch.originalText) {
+      const truncatedText = currentBranch.originalText.length > 30 
+        ? currentBranch.originalText.substring(0, 30) + '...' 
+        : currentBranch.originalText
+      return `"${truncatedText}"`
+    }
+    
+    // Fallback to panelId if no title can be generated
+    return panelId
+  }
+
+  const panelTitle = getPanelTitle()
+  const showPanelTitle = Boolean(panelTitle)
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
@@ -601,25 +1046,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       },
     })
 
-    const toolbar = document.getElementById("annotation-toolbar")
-    if (toolbar && text.length > 0) {
-      const selection = window.getSelection()
-      if (selection && selection.rangeCount > 0) {
-        const rect = selection.getRangeAt(0).getBoundingClientRect()
-        toolbar.style.left = rect.left + rect.width / 2 + "px"
-        toolbar.style.top = rect.top - 80 + "px"
-        toolbar.classList.add("visible")
-      }
-    } else if (toolbar) {
-      toolbar.classList.remove("visible")
-    }
+    // Don't show toolbar on text selection - only show via Actions button
   }
 
   const handleToggleEditing = () => {
     const newEditableState = !isEditing
     setIsEditing(newEditableState)
-    editorRef.current?.setEditable(newEditableState)
-    
+
     const toggleBtn = document.querySelector(`#toolbar-${panelId} .toolbar-btn.special`) as HTMLButtonElement
     if (toggleBtn) {
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
@@ -750,6 +1183,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
+      dragState.current.pointerDelta = { x: 0, y: 0 }
+      dragState.current.autoScrollOffset = { x: 0, y: 0 }
       
       // Update render position to current position when starting drag
       setRenderPosition({ x: currentLeft, y: currentTop })
@@ -759,7 +1194,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
       // Bring panel to front while dragging
       // Always use LayerManager for focus/z-index management
-      layerManager.focusNode(panelId) // This brings to front and updates focus time
+      if (layerManager.isEnabled) {
+        layerManager.focusNode(panelId) // This brings to front and updates focus time
+      }
       globalDraggingPanelId = panelId
       
       // Prevent text selection while dragging
@@ -778,11 +1215,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       checkAutoScroll(e.clientX, e.clientY)
       
       // Direct position update - no RAF accumulation
-      const deltaX = e.clientX - dragState.current.startX
-      const deltaY = e.clientY - dragState.current.startY
-      
-      const newLeft = dragState.current.initialPosition.x + deltaX
-      const newTop = dragState.current.initialPosition.y + deltaY
+      const state = dragState.current
+      const deltaX = e.clientX - state.startX
+      const deltaY = e.clientY - state.startY
+
+      state.pointerDelta = { x: deltaX, y: deltaY }
+
+      const baseX = state.initialPosition.x + deltaX
+      const baseY = state.initialPosition.y + deltaY
+      const newLeft = isCameraEnabled ? baseX - state.autoScrollOffset.x : baseX
+      const newTop = isCameraEnabled ? baseY - state.autoScrollOffset.y : baseY
       
       // Update render position to prevent snap-back during drag
       setRenderPosition({ x: newLeft, y: newTop })
@@ -813,7 +1255,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       
       // Update position in LayerManager if enabled
       // Update position through LayerManager
-      layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+      if (layerManager.isEnabled) {
+        layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
+      }
       
       // Clean up global dragging state
       if (globalDraggingPanelId === panelId) {
@@ -835,6 +1279,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (isCameraEnabled) {
         resetPanAccumulation()
       }
+
+      dragState.current.pointerDelta = { x: 0, y: 0 }
+      dragState.current.autoScrollOffset = { x: 0, y: 0 }
       
       // Reset cursor
       document.body.style.userSelect = ''
@@ -895,6 +1342,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [isEditing, isContentLoading, isPlainMode, isLayerInteractive])
 
+  // Registration happens in onClick handler above (when panel is clicked)
+
   // Filter branches based on active filter
   // In plain mode, get branches from dataStore; otherwise use provider
   const allBranches = isPlainMode 
@@ -922,11 +1371,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     if (isPlainMode) {
       // Set up listener for dataStore changes
       const handleDataStoreUpdate = (updatedPanelId: string) => {
-        // If this panel or its branches were updated, force re-render
-        if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
-          setLastBranchUpdate(Date.now())
-          forceUpdate()
-        }
+        // Defer state updates to avoid React warning
+        setTimeout(() => {
+          // If this panel or its branches were updated, force re-render
+          if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
+            setLastBranchUpdate(Date.now())
+            forceUpdate()
+          }
+        }, 0)
       }
       
       // Listen for dataStore updates
@@ -946,18 +1398,24 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
     
     const updateHandler = (event: any) => {
-      // Check if this panel's branches were updated
-      if (event && event.keysChanged && event.keysChanged.has(panelId)) {
-        setLastBranchUpdate(Date.now())
-      }
-      
-      forceUpdate()
+      // Defer state updates to avoid React warning
+      setTimeout(() => {
+        // Check if this panel's branches were updated
+        if (event && event.keysChanged && event.keysChanged.has(panelId)) {
+          setLastBranchUpdate(Date.now())
+        }
+        
+        forceUpdate()
+      }, 0)
     }
     
     // Listen for changes to the YJS native structure
     const branchesArrayUpdateHandler = () => {
-      setLastBranchUpdate(Date.now())
-      forceUpdate()
+      // Defer state updates to avoid React warning
+      setTimeout(() => {
+        setLastBranchUpdate(Date.now())
+        forceUpdate()
+      }, 0)
     }
     
     // Listen for any changes to the branches map (legacy)
@@ -990,6 +1448,114 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [panelId, forceUpdate, branchesMap, provider, isPlainMode])
 
+  // Calculate position for branch panel relative to parent
+  const calculateBranchPanelPosition = () => {
+    const currentPanel = panelRef.current
+    let parentPosition = { x: 2000, y: 1500 } // Default position
+    
+    if (currentPanel) {
+      // Get the actual panel dimensions
+      const rect = currentPanel.getBoundingClientRect()
+      const panelWidth = rect.width || 800 // Fallback to 800 if width not available
+      const gap = 50 // Gap between panels
+      
+      // Get the transform values from the panel's style
+      const style = window.getComputedStyle(currentPanel)
+      const transform = style.transform
+      
+      if (transform && transform !== 'none') {
+        // Extract translation values from the transform matrix
+        const matrix = new DOMMatrixReadOnly(transform)
+        const currentX = matrix.m41
+        const currentY = matrix.m42
+        
+        // Smart positioning logic:
+        // 1. Check if there are already panels on either side
+        // 2. Prefer right side by default
+        // 3. Use left if right side would go too far (beyond viewport or x > 4000)
+        // 4. Alternate sides if multiple branches are opened
+        
+        // Get all existing panels to check for collisions
+        const allPanels = document.querySelectorAll('[data-panel-id]')
+        let rightOccupied = false
+        let leftOccupied = false
+        
+        allPanels.forEach((panel) => {
+          if (panel === currentPanel) return
+          
+          const panelStyle = window.getComputedStyle(panel)
+          const panelTransform = panelStyle.transform
+          
+          if (panelTransform && panelTransform !== 'none') {
+            const panelMatrix = new DOMMatrixReadOnly(panelTransform)
+            const panelX = panelMatrix.m41
+            
+            // Check if a panel is already on the right
+            if (panelX > currentX + panelWidth && 
+                panelX < currentX + panelWidth + gap + 100) {
+              rightOccupied = true
+            }
+            
+            // Check if a panel is already on the left
+            if (panelX < currentX - gap && 
+                panelX > currentX - panelWidth - gap - 100) {
+              leftOccupied = true
+            }
+          }
+        })
+        
+        // Decide placement based on occupancy and viewport constraints
+        let placeOnLeft = false
+        
+        if (!rightOccupied && !leftOccupied) {
+          // Neither side occupied - check viewport constraints
+          const viewportWidth = window.innerWidth
+          const rightEdgePosition = currentX + panelWidth + gap + panelWidth
+          
+          // Place on left if right would exceed viewport or go beyond x=4000
+          placeOnLeft = rightEdgePosition > viewportWidth || currentX > 2500
+        } else if (rightOccupied && !leftOccupied) {
+          // Right is occupied, left is free
+          placeOnLeft = true
+        } else if (!rightOccupied && leftOccupied) {
+          // Left is occupied, right is free
+          placeOnLeft = false
+        } else {
+          // Both sides occupied - stack on the right with offset
+          placeOnLeft = false
+          // Add vertical offset to avoid complete overlap
+          parentPosition.y = currentY + 100
+        }
+        
+        // Position the new panel to the left or right of the parent with gap
+        parentPosition = {
+          x: placeOnLeft 
+            ? currentX - panelWidth - gap // Panel width + gap on the left
+            : currentX + panelWidth + gap, // Panel width + gap on the right
+          y: parentPosition.y || currentY // Use offset Y if set, otherwise same vertical position
+        }
+      } else {
+        // Fallback: try to get position from data stores
+        const panelData = isPlainMode 
+          ? dataStore.get(panelId) 
+          : branchesMap.get(panelId)
+        
+        if (panelData?.position) {
+          // Simple fallback logic when transform not available
+          const placeOnLeft = panelData.position.x > 2500
+          parentPosition = {
+            x: placeOnLeft 
+              ? panelData.position.x - panelWidth - gap 
+              : panelData.position.x + panelWidth + gap,
+            y: panelData.position.y
+          }
+        }
+      }
+    }
+    
+    return parentPosition
+  }
+
   // Handle branch click to open panel
   const handleBranchClick = (branchId: string) => {
     // Check if branch exists before creating panel
@@ -999,9 +1565,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       return
     }
     
-    // Dispatch event to create panel
+    // Get position for the new panel
+    const parentPosition = calculateBranchPanelPosition()
+    
+    // Dispatch event to create panel with parent position
     window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { panelId: branchId },
+      detail: { 
+        panelId: branchId,
+        parentPanelId: panelId,
+        parentPosition: parentPosition
+      },
       bubbles: true 
     }))
   }
@@ -1012,12 +1585,55 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       className={`panel ${currentBranch.type}`}
       id={`panel-${panelId}`}
       data-panel-id={panelId}
+      onClick={() => {
+        // Register this panel's editor as active when panel is clicked
+        if (editorRef.current && onRegisterActiveEditor) {
+          onRegisterActiveEditor(editorRef.current, panelId)
+        }
+      }}
+      onMouseEnter={() => {
+        if (panelHoverHideTimeoutRef.current) {
+          clearTimeout(panelHoverHideTimeoutRef.current)
+          panelHoverHideTimeoutRef.current = null
+        }
+        if (panelHoverShowTimeoutRef.current) {
+          clearTimeout(panelHoverShowTimeoutRef.current)
+        }
+
+        if (isPanelHovered) {
+          panelHoverShowTimeoutRef.current = null
+          return
+        }
+
+        panelHoverShowTimeoutRef.current = setTimeout(() => {
+          setIsPanelHovered(true)
+          panelHoverShowTimeoutRef.current = null
+        }, HEADER_BUTTON_HOVER_DELAY_MS)
+      }}
+      onMouseLeave={() => {
+        if (panelHoverShowTimeoutRef.current) {
+          clearTimeout(panelHoverShowTimeoutRef.current)
+          panelHoverShowTimeoutRef.current = null
+        }
+        if (panelHoverHideTimeoutRef.current) {
+          clearTimeout(panelHoverHideTimeoutRef.current)
+        }
+
+        panelHoverHideTimeoutRef.current = setTimeout(() => {
+          // Only hide if no popups are visible
+          if (!isSidebarVisible && !isActionsVisible && !isSidebarHovering && !isActionsHovering) {
+            setIsPanelHovered(false)
+          }
+          panelHoverHideTimeoutRef.current = null
+        }, HEADER_BUTTON_HOVER_DELAY_MS)
+      }}
       style={{
         position: 'absolute',
         left: renderPosition.x + 'px',
         top: renderPosition.y + 'px',
         width: '500px',
-        minHeight: '400px',
+        height: `${panelHeight}px`,
+        maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
         boxShadow: isIsolated 
@@ -1041,7 +1657,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             : currentBranch.type === 'explore'
             ? 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)'
             : 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-          padding: '20px 25px',
+          padding: '12px 20px',
+          height: '56px',
+          minHeight: '56px',
+          maxHeight: '56px',
           color: 'white',
           fontWeight: 600,
           fontSize: '16px',
@@ -1052,276 +1671,504 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           alignItems: 'center',
           pointerEvents: 'auto',
           borderBottom: isIsolated ? '3px solid #ef4444' : 'none',
+          flexShrink: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>{currentBranch.title}</span>
-          {isIsolated && (
-            <span style={{
-              background: '#ef4444',
-              color: 'white',
-              fontSize: '10px',
-              padding: '2px 8px',
-              borderRadius: '12px',
-              fontWeight: 'bold',
-              textTransform: 'uppercase',
-            }}>
-              ISOLATED
-            </span>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Layer action buttons - only show when LayerManager is enabled */}
-          {layerManager.isEnabled && (
-            <>
-              {/* Bring to Front button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  layerManager.bringToFront(panelId)
-                }}
-                disabled={layerManager.getLayerBandInfo(panelId)?.isAtTop}
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '4px 8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease',
-                  color: 'white',
-                  fontSize: '12px',
-                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtTop ? 0.5 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (!layerManager.getLayerBandInfo(panelId)?.isAtTop) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: '8px',
+          flex: '0 0 auto',
+        }}>
+          {/* Lock and Close buttons - moved to left side before title */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '6px',
+            opacity: headerControlsActive ? 1 : 0,
+            transition: 'opacity 0.2s ease',
+            pointerEvents: headerControlsActive ? 'auto' : 'none'
+          }}>
+            {/* Lock/Unlock button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                const debug = (window as any).__isolationDebug
+                if (debug) {
+                  if (isIsolated) {
+                    debug.restore(panelId)
+                  } else {
+                    debug.isolate(panelId)
                   }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                }}
-                title="Bring to front"
-              >
-                ↑
-              </button>
-              
-              {/* Send to Back button */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  layerManager.sendToBack(panelId)
-                }}
-                disabled={layerManager.getLayerBandInfo(panelId)?.isAtBottom}
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '4px 8px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s ease',
-                  color: 'white',
-                  fontSize: '12px',
-                  opacity: layerManager.getLayerBandInfo(panelId)?.isAtBottom ? 0.5 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (!layerManager.getLayerBandInfo(panelId)?.isAtBottom) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                }}
-                title="Send to back"
-              >
-                ↓
-              </button>
-            </>
-          )}
-          
-          {/* Format Toolbar */}
-          <FormatToolbar
-            editorRef={editorRef}
-            panelId={panelId}
-          />
-          
-          {/* Sidebar Toggle button */}
-          <button
-            id={`branches-button-${panelId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              setIsSidebarVisible(!isSidebarVisible)
-              // Clear any hover state when clicking
-              if (sidebarTimeoutRef.current) {
-                clearTimeout(sidebarTimeoutRef.current)
-              }
-              setIsSidebarHovering(false)
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
-              // Show sidebar on hover
-              if (sidebarTimeoutRef.current) {
-                clearTimeout(sidebarTimeoutRef.current)
-              }
-              setIsSidebarHovering(true)
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
-              // Hide sidebar after a delay when mouse leaves
-              sidebarTimeoutRef.current = setTimeout(() => {
-                setIsSidebarHovering(false)
-              }, 300)
-            }}
-            title={isSidebarVisible ? "Hide branches" : "Show branches"}
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "none",
-              borderRadius: "4px",
-              padding: "4px 8px",
-              cursor: "pointer",
-              fontSize: "11px",
-              color: "white",
-              transition: "all 0.2s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              height: "24px",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-              <line x1="14" y1="8" x2="18" y2="8" />
-              <line x1="14" y1="12" x2="18" y2="12" />
-              <line x1="14" y1="16" x2="18" y2="16" />
-            </svg>
-            <span>Branches</span>
-          </button>
-          
-          {/* Actions button (Note/Explore/Promote) */}
-          <button
-            id={`actions-button-${panelId}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              setIsActionsVisible(!isActionsVisible)
-              // Clear any hover state when clicking
-              if (actionsTimeoutRef.current) {
-                clearTimeout(actionsTimeoutRef.current)
-              }
-              setIsActionsHovering(false)
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.3)"
-              // Show actions panel on hover
-              if (actionsTimeoutRef.current) {
-                clearTimeout(actionsTimeoutRef.current)
-              }
-              setIsActionsHovering(true)
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.2)"
-              // Hide actions panel after a delay when mouse leaves
-              actionsTimeoutRef.current = setTimeout(() => {
-                setIsActionsHovering(false)
-              }, 300)
-            }}
-            title="Create annotation"
-            style={{
-              background: "rgba(255,255,255,0.2)",
-              border: "none",
-              borderRadius: "4px",
-              padding: "4px 8px",
-              cursor: "pointer",
-              fontSize: "11px",
-              color: "white",
-              transition: "all 0.2s ease",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              height: "24px",
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            <span>Actions</span>
-          </button>
-          
-          {/* Lock/Unlock button */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              const debug = (window as any).__isolationDebug
-              if (debug) {
-                if (isIsolated) {
-                  debug.restore(panelId)
-                } else {
-                  debug.isolate(panelId)
                 }
-              }
-            }}
-            style={{
-              background: isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              borderRadius: '50%',
-              width: '28px',
-              height: '28px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              color: 'white',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.3)'
-              e.currentTarget.style.transform = 'scale(1.1)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)'
-              e.currentTarget.style.transform = 'scale(1)'
-            }}
-            title={isIsolated ? 'Restore panel' : 'Isolate panel'}
-          >
-            {isIsolated ? '🔓' : '🔒'}
-          </button>
-          {onClose && (
-            <button 
-              className="panel-close"
-              onClick={onClose}
+              }}
               style={{
-                background: 'rgba(255,255,255,0.2)',
+                background: isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)',
                 border: 'none',
                 borderRadius: '50%',
-                width: '28px',
-                height: '28px',
+                width: '24px',
+                height: '24px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
-                fontSize: '16px',
                 color: 'white',
+                fontSize: '12px',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.3)'
                 e.currentTarget.style.transform = 'scale(1.1)'
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                e.currentTarget.style.background = isIsolated ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.2)'
                 e.currentTarget.style.transform = 'scale(1)'
               }}
-              title="Close panel"
+              title={isIsolated ? 'Restore panel' : 'Isolate panel'}
             >
-              ×
+              {isIsolated ? '🔓' : '🔒'}
             </button>
+            
+            {onClose && (
+              <button 
+                className="panel-close"
+                onClick={onClose}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  fontSize: '14px',
+                  color: 'white',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  e.currentTarget.style.transform = 'scale(1.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+                title="Close panel"
+              >
+                ×
+              </button>
+            )}
+
+            {/* Drag Handle */}
+            <div
+              className="drag-indicator"
+              title="Drag to move panel"
+              style={{
+                width: '56px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '6px',
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1px)',
+                backgroundSize: '6px 6px',
+                backgroundPosition: '0 0',
+                cursor: 'move',
+              }}
+            />
+          </div>
+          
+          {/* Panel Title */}
+          {showPanelTitle && (
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '10px',
+              opacity: headerControlsActive ? 0 : 1,
+              transition: 'opacity 0.2s ease, max-width 0.2s ease',
+              overflow: 'hidden',
+              flex: headerControlsActive ? '0 0 auto' : 1,
+              maxWidth: headerControlsActive ? 0 : '100%',
+              width: headerControlsActive ? 0 : 'auto',
+              pointerEvents: headerControlsActive ? 'none' : 'auto',
+            }}>
+              <span style={{
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: '300px',
+              }}>{panelTitle}</span>
+              {isIsolated && currentBranch.type !== 'main' && (
+                <span style={{
+                  background: '#ef4444',
+                  color: 'white',
+                  fontSize: '10px',
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontWeight: 'bold',
+                  textTransform: 'uppercase',
+                }}>
+                  ISOLATED
+                </span>
+              )}
+            </div>
           )}
         </div>
+        
+        {/* Right side buttons */}
+        <div
+          ref={actionsContainerRef}
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: `${ACTION_GAP}px`,
+            opacity: headerControlsActive ? 1 : 0,
+            transition: 'opacity 0.2s ease',
+            pointerEvents: headerControlsActive ? 'auto' : 'none',
+            position: 'relative',
+            justifyContent: 'flex-end',
+            flex: (currentBranch.type === 'main' || headerControlsActive) ? '1 1 auto' : '0 1 auto',
+            marginLeft: 'auto'
+          }}
+        >
+          {layerManager.isEnabled && (
+            <>
+              <div
+                ref={registerActionRef('bringToFront')}
+                style={{
+                  display: hiddenActionIds.includes('bringToFront') ? 'none' : 'flex',
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (layerManager.isEnabled) {
+                      layerManager.bringToFront(panelId)
+                    }
+                  }}
+                  disabled={layerBandInfo?.isAtTop}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    color: 'white',
+                    fontSize: '12px',
+                    opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!layerBandInfo?.isAtTop) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  }}
+                  title="Bring to front"
+                >
+                  ↑
+                </button>
+              </div>
+
+              <div
+                ref={registerActionRef('sendToBack')}
+                style={{
+                  display: hiddenActionIds.includes('sendToBack') ? 'none' : 'flex',
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (layerManager.isEnabled) {
+                      layerManager.sendToBack(panelId)
+                    }
+                  }}
+                  disabled={layerBandInfo?.isAtBottom}
+                  style={{
+                    background: 'rgba(255,255,255,0.2)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease',
+                    color: 'white',
+                    fontSize: '12px',
+                    opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!layerBandInfo?.isAtBottom) {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  }}
+                  title="Send to back"
+                >
+                  ↓
+                </button>
+              </div>
+            </>
+          )}
+
+          <div
+            ref={formatActionRef}
+            style={{
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <FormatToolbar
+              editorRef={editorRef}
+              panelId={panelId}
+              hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
+              collapsibleSelection={collapsibleSelection}
+            />
+          </div>
+
+          <div
+            ref={registerActionRef('resizeToggle')}
+            style={{
+              display: hiddenActionIds.includes('resizeToggle') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              onClick={(event) => {
+                event.stopPropagation()
+                handleTogglePanelHeight()
+              }}
+              title={isPanelHeightExpanded ? 'Restore panel height' : 'Expand panel height'}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                color: 'white',
+                transition: 'all 0.2s ease',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                height: '24px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14" />
+                <path d="M9 8l3-3 3 3" />
+                <path d="M9 16l3 3 3-3" />
+              </svg>
+              <span>{isPanelHeightExpanded ? 'Restore' : 'Resize'}</span>
+            </button>
+          </div>
+
+          <div
+            ref={registerActionRef('branches')}
+            style={{
+              display: hiddenActionIds.includes('branches') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              id={`branches-button-${panelId}`}
+              onClick={handleBranchesButtonClick}
+              onMouseEnter={handleBranchesButtonMouseEnter}
+              onMouseLeave={handleBranchesButtonMouseLeave}
+              title={isSidebarVisible ? "Hide branches" : "Show branches"}
+              style={{
+                background: "rgba(255,255,255,0.2)",
+                border: "none",
+                borderRadius: "4px",
+                padding: "4px 8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                color: "white",
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                height: "24px",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+                <line x1="14" y1="8" x2="18" y2="8" />
+                <line x1="14" y1="12" x2="18" y2="12" />
+                <line x1="14" y1="16" x2="18" y2="16" />
+              </svg>
+              <span>Branches</span>
+            </button>
+          </div>
+
+          <div
+            ref={registerActionRef('actions')}
+            style={{
+              display: hiddenActionIds.includes('actions') ? 'none' : 'flex'
+            }}
+          >
+            <button
+              id={`actions-button-${panelId}`}
+              onClick={handleActionsButtonClick}
+              onMouseEnter={handleActionsButtonMouseEnter}
+              onMouseLeave={handleActionsButtonMouseLeave}
+              title="Create annotation"
+              style={{
+                background: "rgba(255,255,255,0.2)",
+                border: "none",
+                borderRadius: "4px",
+                padding: "4px 8px",
+                cursor: "pointer",
+                fontSize: "11px",
+                color: "white",
+                transition: "all 0.2s ease",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                height: "24px",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span>Actions</span>
+            </button>
+          </div>
+
+          <button
+            ref={overflowButtonRef}
+            onClick={(event) => {
+              event.stopPropagation()
+              setIsOverflowMenuOpen((prev) => !prev)
+            }}
+            style={{
+              display: hiddenActionIds.length > 0 ? 'flex' : 'none',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(255,255,255,0.15)',
+              border: 'none',
+              borderRadius: '4px',
+              padding: '4px 6px',
+              color: 'white',
+              cursor: 'pointer',
+              fontSize: '14px',
+              height: '24px',
+            }}
+            title="More actions"
+          >
+            »
+          </button>
+
+          {isOverflowMenuOpen && hiddenActionIds.length > 0 && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 8px)',
+                right: 0,
+                background: 'rgba(22,22,22,0.95)',
+                color: 'white',
+                borderRadius: '8px',
+                padding: '8px 0',
+                boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
+                minWidth: '160px',
+                zIndex: Z_INDEX.DROPDOWN,
+              }}
+            >
+              {hiddenActionIds.map((actionId) => {
+                const isDisabled =
+                  (actionId === 'bringToFront' && layerBandInfo?.isAtTop) ||
+                  (actionId === 'sendToBack' && layerBandInfo?.isAtBottom)
+
+                return (
+                  <button
+                    key={actionId}
+                    onClick={(event) => {
+                      if (isDisabled) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        return
+                      }
+
+                      if (actionId === 'bringToFront') {
+                        event.stopPropagation()
+                        if (layerManager.isEnabled) {
+                          layerManager.bringToFront(panelId)
+                        }
+                        closeOverflowMenu()
+                        return
+                      }
+                      if (actionId === 'sendToBack') {
+                        event.stopPropagation()
+                        if (layerManager.isEnabled) {
+                          layerManager.sendToBack(panelId)
+                        }
+                        closeOverflowMenu()
+                        return
+                      }
+                      if (actionId === 'branches') {
+                        handleBranchesButtonClick(event)
+                        return
+                      }
+                      if (actionId === 'actions') {
+                        handleActionsButtonClick(event)
+                        return
+                      }
+                      if (actionId === 'resizeToggle') {
+                        handleTogglePanelHeight()
+                        closeOverflowMenu()
+                      }
+                    }}
+                    style={{
+                      display: 'flex',
+                      width: '100%',
+                      padding: '8px 16px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'white',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      cursor: isDisabled ? 'not-allowed' : 'pointer',
+                      fontSize: '13px',
+                      textAlign: 'left',
+                      opacity: isDisabled ? 0.6 : 1,
+                    }}
+                  >
+                    <span>
+                      {actionId === 'bringToFront' && 'Bring to Front'}
+                      {actionId === 'sendToBack' && 'Send to Back'}
+                      {actionId === 'resizeToggle' && (isPanelHeightExpanded ? 'Restore Height' : 'Expand Height')}
+                      {actionId === 'branches' && 'Branches'}
+                      {actionId === 'actions' && 'Actions'}
+                    </span>
+                    {(actionId === 'bringToFront' && layerBandInfo?.isAtTop) && (
+                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
+                    )}
+                    {(actionId === 'sendToBack' && layerBandInfo?.isAtBottom) && (
+                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        
       </div>
 
       {/* Check if isolated and show placeholder */}
@@ -1360,50 +2207,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             Saved
           </div>
 
-          {/* Editor Header */}
-          <div style={{
-            marginBottom: '20px',
-            paddingBottom: '15px',
-            borderBottom: '2px solid #f1f3f4',
-          }}>
-            <div style={{
-              fontSize: '20px',
-              fontWeight: 700,
-              color: '#2c3e50',
-              marginBottom: '8px',
-            }}>
-              {currentBranch.title}
-            </div>
-            {generateBreadcrumb() && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                fontSize: '12px',
-                color: '#6c757d',
-                gap: '5px',
-              }}>
-                {generateBreadcrumb()}
-              </div>
-            )}
-          </div>
-
           {/* Editor Content */}
           <div style={{ flex: 1, overflowY: 'auto' }}>
-            {currentBranch.originalText && (
-              <div style={{
-                background: 'linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%)',
-                padding: '15px',
-                borderLeft: '4px solid #2196f3',
-                marginBottom: '20px',
-                fontStyle: 'italic',
-                borderRadius: '0 8px 8px 0',
-                color: '#1565c0',
-                fontSize: '14px',
-              }}>
-                "{currentBranch.originalText}"
-              </div>
-            )}
-
             <div className="rich-editor-wrapper">
               
               {isContentLoading ? (
@@ -1425,6 +2230,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                     panelId={panelId}
                     onUpdate={(content) => handleUpdate(typeof content === 'string' ? content : JSON.stringify(content))}
                     onSelectionChange={handleSelectionChange}
+                    onCollapsibleSelectionChange={handleCollapsibleSelectionChange}
                     placeholder={`Start writing your ${currentBranch.type || 'note'}...`}
                     provider={plainProvider}
                     onContentLoaded={handleEditorContentLoaded}
@@ -1470,157 +2276,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       </div>
       )}
       
-      {/* Actions Panel - Note/Explore/Promote */}
-      {(isActionsVisible || isActionsHovering) && (
-        <div
-          id={`actions-panel-${panelId}`}
-          onMouseEnter={() => {
-            // Keep actions panel visible when hovering over it
-            if (actionsTimeoutRef.current) {
-              clearTimeout(actionsTimeoutRef.current)
-            }
-            setIsActionsHovering(true)
-          }}
-          onMouseLeave={() => {
-            // Hide actions panel after delay when leaving
-            actionsTimeoutRef.current = setTimeout(() => {
-              setIsActionsHovering(false)
-            }, 300)
-          }}
-          style={{
-            position: 'absolute',
-            top: '60px',
-            right: '10px',
-            background: 'white',
-            borderRadius: '12px',
-            boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-            padding: '12px',
-            display: 'flex',
-            gap: '8px',
-            zIndex: zIndex + 10,
-          }}
-        >
-          <button
-            onClick={() => {
-              // Dispatch Note annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "note",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(52, 152, 219, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            📝 Note
-          </button>
-
-          <button
-            onClick={() => {
-              // Dispatch Explore annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "explore",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(243, 156, 18, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            🔍 Explore
-          </button>
-
-          <button
-            onClick={() => {
-              // Dispatch Promote annotation event
-              dispatch({
-                type: "CREATE_ANNOTATION",
-                payload: {
-                  type: "promote",
-                  panelId,
-                  selectedText: state.selection?.text || "",
-                },
-              })
-              setIsActionsVisible(false)
-              setIsActionsHovering(false)
-            }}
-            style={{
-              background: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              padding: '10px 20px',
-              cursor: 'pointer',
-              fontSize: '14px',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)'
-              e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          >
-            ⭐ Promote
-          </button>
-        </div>
-      )}
       
       {/* Branches Sidebar - Floating Panel */}
       {(isSidebarVisible || isSidebarHovering) && (
@@ -1631,13 +2286,21 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             if (sidebarTimeoutRef.current) {
               clearTimeout(sidebarTimeoutRef.current)
             }
+            if (sidebarShowTimeoutRef.current) {
+              clearTimeout(sidebarShowTimeoutRef.current)
+              sidebarShowTimeoutRef.current = null
+            }
             setIsSidebarHovering(true)
           }}
           onMouseLeave={() => {
             // Hide sidebar after delay when leaving
+            if (sidebarShowTimeoutRef.current) {
+              clearTimeout(sidebarShowTimeoutRef.current)
+              sidebarShowTimeoutRef.current = null
+            }
             sidebarTimeoutRef.current = setTimeout(() => {
               setIsSidebarHovering(false)
-            }, 300)
+            }, HEADER_BUTTON_HOVER_DELAY_MS)
           }}
           style={{
           position: 'absolute',
@@ -1734,22 +2397,21 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   <div
                     key={branchId}
                     className={`branch-item ${childBranch.type}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleBranchClick(branchId)
-                    }}
                     style={{
                       background: 'rgba(255,255,255,0.95)',
                       borderRadius: '12px',
                       padding: '16px',
                       marginBottom: '12px',
-                      cursor: 'pointer',
                       transition: 'all 0.3s ease',
                       borderLeft: `4px solid ${
                         childBranch.type === 'note' ? '#2196f3' :
                         childBranch.type === 'explore' ? '#ff9800' : '#4caf50'
                       }`,
                       userSelect: 'none',
+                      position: 'relative',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = 'translateX(4px)'
@@ -1760,21 +2422,123 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                       e.currentTarget.style.boxShadow = 'none'
                     }}
                   >
-                    <div style={{
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      color: '#2c3e50',
-                      marginBottom: '4px',
-                    }}>
-                      {childBranch.title}
+                    {/* Branch content - clickable area */}
+                    <div 
+                      style={{
+                        flex: 1,
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleBranchClick(branchId)
+                      }}
+                    >
+                      <div style={{
+                        fontSize: '14px',
+                        fontWeight: 600,
+                        color: '#2c3e50',
+                        marginBottom: '4px',
+                      }}>
+                        {childBranch.title}
+                      </div>
+                      <div style={{
+                        fontSize: '12px',
+                        color: '#7f8c8d',
+                        lineHeight: 1.4,
+                      }}>
+                        {childBranch.originalText || 'Click to open'}
+                      </div>
                     </div>
-                    <div style={{
-                      fontSize: '12px',
-                      color: '#7f8c8d',
-                      lineHeight: 1.4,
-                    }}>
-                      {childBranch.originalText || 'Click to open'}
-                    </div>
+                    
+                    {/* Eye/View button */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Clear any preview timeout to prevent conflicts
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Clear preview state since we're opening permanently
+                        setPreviewBranchId(null)
+                        // Click opens the panel permanently
+                        handleBranchClick(branchId)
+                      }}
+                      onMouseEnter={(e) => {
+                        e.stopPropagation()
+                        // Clear any existing timeout
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Only show preview if not already clicked/opened
+                        // Check if panel already exists
+                        const panelExists = document.querySelector(`[data-panel-id="${branchId}"]`)
+                        if (!panelExists) {
+                          // Show preview after short delay
+                          previewTimeoutRef.current = setTimeout(() => {
+                            setPreviewBranchId(branchId)
+                            
+                            // Get position for the preview panel (reuse same logic)
+                            const parentPosition = calculateBranchPanelPosition()
+                            
+                            // Dispatch event to create temporary preview panel
+                            window.dispatchEvent(new CustomEvent('preview-panel', { 
+                              detail: { 
+                                panelId: branchId,
+                                parentPanelId: panelId,
+                                parentPosition: parentPosition,
+                                isPreview: true
+                              },
+                              bubbles: true 
+                            }))
+                          }, 300) // 300ms delay before showing preview
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.stopPropagation()
+                        // Clear timeout
+                        if (previewTimeoutRef.current) {
+                          clearTimeout(previewTimeoutRef.current)
+                        }
+                        // Only remove preview if it's actually a preview (not a permanent panel)
+                        if (previewBranchId === branchId) {
+                          setPreviewBranchId(null)
+                          // Dispatch event to remove preview panel
+                          window.dispatchEvent(new CustomEvent('remove-preview-panel', { 
+                            detail: { panelId: branchId },
+                            bubbles: true 
+                          }))
+                        }
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #ddd',
+                        borderRadius: '50%',
+                        width: '32px',
+                        height: '32px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        color: '#7f8c8d',
+                      }}
+                      onMouseOver={(e) => {
+                        e.currentTarget.style.background = 'rgba(0,0,0,0.05)'
+                        e.currentTarget.style.borderColor = '#999'
+                        e.currentTarget.style.color = '#2c3e50'
+                      }}
+                      onMouseOut={(e) => {
+                        e.currentTarget.style.background = 'transparent'
+                        e.currentTarget.style.borderColor = '#ddd'
+                        e.currentTarget.style.color = '#7f8c8d'
+                      }}
+                      title="Preview branch (hover) / Open (click)"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </button>
                   </div>
                 )
               })

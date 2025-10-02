@@ -33,6 +33,7 @@ function AnnotationAppContent() {
   const [showNotesWidget, setShowNotesWidget] = useState(false)
   const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
   const activeEditorRef = useRef<any>(null) // Track the currently active editor
+  const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
 
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
@@ -200,6 +201,27 @@ function AnnotationAppContent() {
   // Handle right-click to show notes widget
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
+
+    // Find which panel was right-clicked
+    let target = e.target as HTMLElement
+    let panelElement: HTMLElement | null = null
+
+    // Traverse up the DOM tree to find the panel element
+    while (target && target !== e.currentTarget) {
+      if (target.dataset?.panelId) {
+        panelElement = target
+        break
+      }
+      target = target.parentElement as HTMLElement
+    }
+
+    // If a panel was right-clicked, register it as active
+    if (panelElement?.dataset?.panelId) {
+      const panelId = panelElement.dataset.panelId
+      console.log('[AnnotationApp] Right-click detected on panel:', panelId)
+      setActivePanelId(panelId)
+    }
+
     setNotesWidgetPosition({ x: e.clientX, y: e.clientY })
     setShowNotesWidget(true)
   }, [])
@@ -209,9 +231,68 @@ function AnnotationAppContent() {
     setShowNotesWidget(false)
   }, [])
 
+  // Track mouse position for keyboard shortcut
+  const mousePositionRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePositionRef.current = { x: e.clientX, y: e.clientY }
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [])
+
+  // Listen for text selection events from editor
+  useEffect(() => {
+    const handleShowToolbarOnSelection = (e: Event) => {
+      const customEvent = e as CustomEvent
+      const { x, y, autoOpenFormat } = customEvent.detail
+
+      setNotesWidgetPosition({ x, y })
+      setShowNotesWidget(true)
+
+      // Auto-open Format panel if requested
+      // This will be handled by FloatingToolbar component
+      if (autoOpenFormat) {
+        // Store in window for FloatingToolbar to pick up
+        ;(window as any).__autoOpenFormatPanel = true
+      }
+    }
+
+    window.addEventListener('show-floating-toolbar-on-selection', handleShowToolbarOnSelection)
+    return () => window.removeEventListener('show-floating-toolbar-on-selection', handleShowToolbarOnSelection)
+  }, [])
+
+  // Keyboard shortcut to open floating toolbar (Cmd+K or Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+
+        // Use last known mouse position
+        const { x, y } = mousePositionRef.current
+
+        setNotesWidgetPosition({ x, y })
+        setShowNotesWidget(true)
+      }
+
+      // Escape to close toolbar
+      if (e.key === 'Escape' && showNotesWidget) {
+        setShowNotesWidget(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showNotesWidget])
+
   // Handle registering active editor (called by panels when they gain focus)
-  const handleRegisterActiveEditor = useCallback((editorRef: any) => {
+  const handleRegisterActiveEditor = useCallback((editorRef: any, panelId: string) => {
+    console.log('[AnnotationApp] Registering active editor for panel:', panelId)
     activeEditorRef.current = editorRef
+    setActivePanelId(panelId)
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
@@ -522,6 +603,7 @@ function AnnotationAppContent() {
           onSelectNote={handleNoteSelect}
           onCreateOverlayPopup={handleCreateOverlayPopup}
           editorRef={activeEditorRef}
+          activePanelId={activePanelId}
         />
       )}
       

@@ -7,7 +7,6 @@ import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { BranchesSection } from "@/components/canvas/branches-section"
-import { createNote } from "@/lib/utils/note-creator"
 
 type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | null
 
@@ -120,9 +119,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [activePanel, setActivePanel] = useState<PanelKey>(null)
-  const panelHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [isHoveringPanel, setIsHoveringPanel] = useState(false)
-  const [isCreatingNote, setIsCreatingNote] = useState(false)
 
   // Debug: Log when activePanelId prop changes
   useEffect(() => {
@@ -594,66 +590,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     setFolderPopups([])
   }
 
-  // Handle button hover
-  const handleButtonHover = (panel: PanelKey) => {
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
-    }
-    setActivePanel(panel)
-  }
-
-  // Handle button hover leave
-  const handleButtonHoverLeave = () => {
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPanel) {
-        setActivePanel(null)
-      }
-    }, 200)
-  }
-
-  // Handle panel hover
-  const handlePanelHover = () => {
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
-    }
-    setIsHoveringPanel(true)
-  }
-
-  // Handle panel hover leave
-  const handlePanelHoverLeave = () => {
-    setIsHoveringPanel(false)
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      setActivePanel(null)
-    }, 200)
-  }
-
-  // Handle creating a new note using shared utility (same as notes-explorer)
-  const handleCreateNewNote = async () => {
-    if (isCreatingNote) return // Prevent double-clicks
-
-    setIsCreatingNote(true)
-    try {
-      // Use shared note creator utility
-      const result = await createNote()
-
-      if (result.success && result.noteId) {
-        // Open the newly created note
-        onSelectNote?.(result.noteId)
-        // Close the toolbar
-        onClose()
-      } else {
-        throw new Error(result.error || 'Failed to create note')
-      }
-    } catch (error) {
-      console.error('[FloatingToolbar] Failed to create note:', error)
-      alert('Failed to create note. Please try again.')
-    } finally {
-      setIsCreatingNote(false)
-    }
-  }
-
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
@@ -675,12 +611,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }, [onClose])
 
   const renderRecentNotes = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Recent notes</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
@@ -718,12 +649,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const flatItems = flattenTree(orgItems)
 
     return (
-      <div
-        className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-        style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-        onMouseEnter={handlePanelHover}
-        onMouseLeave={handlePanelHoverLeave}
-      >
+      <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
           <span>Organization</span>
           <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
@@ -806,19 +732,12 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   const renderToolCategories = () => (
-    <div
-      className="flex items-center gap-2 rounded-2xl border border-white/20 bg-gray-900 px-4 py-3 shadow-xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="flex items-center gap-2 rounded-2xl border border-white/20 bg-gray-900 px-4 py-3 shadow-xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       {TOOL_CATEGORIES.map((cat) => (
         <button
           key={cat.id}
           className="rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 transition hover:bg-blue-500/20 hover:border-blue-400/40"
           onClick={() => setActivePanel(cat.id)}
-          onMouseEnter={() => handleButtonHover(cat.id)}
-          onMouseLeave={handleButtonHoverLeave}
         >
           {cat.label}
         </button>
@@ -827,12 +746,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderLayerPanel = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Layer</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -849,12 +763,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderFormatPanel = () => (
-    <div
-      className="rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)', minWidth: '280px' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)', minWidth: '280px' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Format</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -892,12 +801,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderResizePanel = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Resize</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -973,11 +877,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     // Use BranchesSection component with props
     // Use key prop to force re-mount when panel changes
     return (
-      <div
-        style={{ maxWidth: '300px' }}
-        onMouseEnter={handlePanelHover}
-        onMouseLeave={handlePanelHoverLeave}
-      >
+      <div style={{ maxWidth: '300px' }}>
         <BranchesSection
           key={currentPanelId}
           panelId={currentPanelId}
@@ -989,12 +889,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   const renderActionsPanel = () => (
-    <div
-      className="rounded-2xl border border-white/20 shadow-2xl"
-      style={{ backgroundColor: 'rgba(255, 255, 255, 0.98)', padding: '20px', minWidth: '280px' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="rounded-2xl border border-white/20 shadow-2xl" style={{ backgroundColor: 'rgba(255, 255, 255, 0.98)', padding: '20px', minWidth: '280px' }}>
       <div className="flex items-center justify-between mb-4">
         <span className="text-gray-800 font-semibold text-lg">Create Branch</span>
         <button
@@ -1136,34 +1031,30 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           ⋮
         </div>
         <button
-          className="rounded-full bg-gradient-to-r from-blue-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg hover:from-blue-300 hover:to-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
-          onClick={handleCreateNewNote}
-          disabled={isCreatingNote}
+          className="rounded-full bg-gradient-to-r from-blue-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg hover:from-blue-300 hover:to-blue-400"
+          onClick={() => {
+            onCreateNote?.()
+            onClose()
+          }}
         >
-          {isCreatingNote ? 'Creating...' : '+ Note'}
+          + Note
         </button>
         <div className="flex items-center gap-2">
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "recents" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "recents" ? null : "recents"))}
-            onMouseEnter={() => handleButtonHover("recents")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Recents ▾
           </button>
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "org" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "org" ? null : "org"))}
-            onMouseEnter={() => handleButtonHover("org")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Org ▾
           </button>
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "tools" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "tools" ? null : "tools"))}
-            onMouseEnter={() => handleButtonHover("tools")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Tools ▾
           </button>
@@ -1171,7 +1062,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       </div>
       {activePanel === "recents" && renderRecentNotes()}
       {activePanel === "org" && renderOrg()}
-      {(activePanel === "tools" || activePanel === "layer" || activePanel === "format" || activePanel === "resize" || activePanel === "branches" || activePanel === "actions") && renderToolCategories()}
+      {activePanel === "tools" && renderToolCategories()}
       {activePanel === "layer" && renderLayerPanel()}
       {activePanel === "format" && renderFormatPanel()}
       {activePanel === "resize" && renderResizePanel()}

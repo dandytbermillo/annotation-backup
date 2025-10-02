@@ -6,41 +6,28 @@ import { BranchItem } from "./branch-item"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { useEffect, useState } from "react"
-import type { CanvasState } from "@/types/canvas"
-import type { DataStore } from "@/lib/data-store"
 
 interface BranchesSectionProps {
   panelId: string
   branch: Branch
-  // Optional props for standalone usage (outside canvas context)
-  dataStore?: DataStore
-  state?: CanvasState
-  dispatch?: React.Dispatch<any>
 }
 
-export function BranchesSection({ panelId, branch, dataStore: propDataStore, state: propState, dispatch: propDispatch }: BranchesSectionProps) {
-  // Try to use canvas context if available, otherwise use props
-  const canvasContext = useCanvas ? (() => { try { return useCanvas() } catch { return null } })() : null
-  const state = propState || canvasContext?.state
-  const dispatch = propDispatch || canvasContext?.dispatch
-  const dataStore = propDataStore || canvasContext?.dataStore
-
+export function BranchesSection({ panelId, branch }: BranchesSectionProps) {
+  const { state, dispatch, dataStore } = useCanvas()
   const [, forceUpdate] = useState({})
-
-  const activeFilter = state?.branchFilters?.get(panelId) || "all"
+  
+  const activeFilter = state.branchFilters.get(panelId) || "all"
 
   // Force re-render when state updates
   useEffect(() => {
     forceUpdate({})
-  }, [state?.lastUpdate])
+  }, [state.lastUpdate])
 
   const handleFilterChange = (filterType: string) => {
-    if (dispatch) {
-      dispatch({
-        type: "SET_FILTER",
-        payload: { panelId, filterType },
-      })
-    }
+    dispatch({
+      type: "SET_FILTER",
+      payload: { panelId, filterType },
+    })
   }
 
   const showHelpMessage = () => {
@@ -62,15 +49,13 @@ Features:
   }
 
   const getFilteredBranches = () => {
-    if (!dataStore) return []
-
     // Check if we're in plain mode
     const plainProvider = getPlainProvider()
     const isPlainMode = !!plainProvider
-
+    
     let currentBranch
     let branchesMap
-
+    
     if (isPlainMode) {
       // Plain mode: Get data from dataStore
       currentBranch = dataStore.get(panelId) || branch
@@ -81,7 +66,7 @@ Features:
       branchesMap = provider.getBranchesMap()
       currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
     }
-
+    
     if (!currentBranch.branches || currentBranch.branches.length === 0) return []
 
     return currentBranch.branches.filter((branchId: string) => {
@@ -213,16 +198,7 @@ Features:
               : `No ${activeFilter} branches found.\nTry selecting "All" or create new ${activeFilter} annotations!`}
           </div>
         ) : (
-          filteredBranches.map((branchId: string) => (
-            <BranchItem
-              key={branchId}
-              branchId={branchId}
-              parentId={panelId}
-              dataStore={dataStore}
-              state={state}
-              dispatch={dispatch}
-            />
-          ))
+          filteredBranches.map((branchId: string) => <BranchItem key={branchId} branchId={branchId} parentId={panelId} />)
         )}
       </div>
     </div>

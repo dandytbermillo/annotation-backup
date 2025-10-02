@@ -6,8 +6,6 @@ import { useLayer } from "@/components/canvas/layer-provider"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
-import { BranchesSection } from "@/components/canvas/branches-section"
-import { createNote } from "@/lib/utils/note-creator"
 
 type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | null
 
@@ -19,7 +17,6 @@ type FloatingToolbarProps = {
   onCreateNote?: () => void
   onCreateOverlayPopup?: (popup: OverlayPopup) => void
   editorRef?: React.RefObject<any> // Optional editor ref for format commands
-  activePanelId?: string | null // Currently active panel ID for branches/actions
 }
 
 interface RecentNote {
@@ -116,27 +113,10 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, editorRef, activePanelId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, editorRef }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [activePanel, setActivePanel] = useState<PanelKey>(null)
-  const panelHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const [isHoveringPanel, setIsHoveringPanel] = useState(false)
-  const [isCreatingNote, setIsCreatingNote] = useState(false)
-
-  // Debug: Log when activePanelId prop changes
-  useEffect(() => {
-    console.log('[FloatingToolbar] activePanelId prop changed to:', activePanelId)
-  }, [activePanelId])
-
-  // Auto-open Format panel if triggered by text selection
-  useEffect(() => {
-    const shouldAutoOpen = (window as any).__autoOpenFormatPanel
-    if (shouldAutoOpen) {
-      setActivePanel('format')
-      ;(window as any).__autoOpenFormatPanel = false // Clear flag
-    }
-  }, [])
   const [recentNotes, setRecentNotes] = useState<RecentNote[]>([])
   const [isLoadingRecent, setIsLoadingRecent] = useState(false)
   const [orgItems, setOrgItems] = useState<OrgItem[]>([])
@@ -145,6 +125,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [folderPopups, setFolderPopups] = useState<FolderPopup[]>([]) // Hover tooltips
   const popupIdCounter = useRef(0)
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+
+  // Branches filter state
+  const [branchFilter, setBranchFilter] = useState<'all' | 'note' | 'explore' | 'promote'>('all')
 
   // Layer context for overlay canvas
   const layerContext = useLayer()
@@ -594,66 +577,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     setFolderPopups([])
   }
 
-  // Handle button hover
-  const handleButtonHover = (panel: PanelKey) => {
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
-    }
-    setActivePanel(panel)
-  }
-
-  // Handle button hover leave
-  const handleButtonHoverLeave = () => {
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPanel) {
-        setActivePanel(null)
-      }
-    }, 200)
-  }
-
-  // Handle panel hover
-  const handlePanelHover = () => {
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
-    }
-    setIsHoveringPanel(true)
-  }
-
-  // Handle panel hover leave
-  const handlePanelHoverLeave = () => {
-    setIsHoveringPanel(false)
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      setActivePanel(null)
-    }, 200)
-  }
-
-  // Handle creating a new note using shared utility (same as notes-explorer)
-  const handleCreateNewNote = async () => {
-    if (isCreatingNote) return // Prevent double-clicks
-
-    setIsCreatingNote(true)
-    try {
-      // Use shared note creator utility
-      const result = await createNote()
-
-      if (result.success && result.noteId) {
-        // Open the newly created note
-        onSelectNote?.(result.noteId)
-        // Close the toolbar
-        onClose()
-      } else {
-        throw new Error(result.error || 'Failed to create note')
-      }
-    } catch (error) {
-      console.error('[FloatingToolbar] Failed to create note:', error)
-      alert('Failed to create note. Please try again.')
-    } finally {
-      setIsCreatingNote(false)
-    }
-  }
-
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
@@ -675,12 +598,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }, [onClose])
 
   const renderRecentNotes = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Recent notes</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
@@ -718,12 +636,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const flatItems = flattenTree(orgItems)
 
     return (
-      <div
-        className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-        style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-        onMouseEnter={handlePanelHover}
-        onMouseLeave={handlePanelHoverLeave}
-      >
+      <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
           <span>Organization</span>
           <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
@@ -806,19 +719,12 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   const renderToolCategories = () => (
-    <div
-      className="flex items-center gap-2 rounded-2xl border border-white/20 bg-gray-900 px-4 py-3 shadow-xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="flex items-center gap-2 rounded-2xl border border-white/20 bg-gray-900 px-4 py-3 shadow-xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       {TOOL_CATEGORIES.map((cat) => (
         <button
           key={cat.id}
           className="rounded-xl bg-white/10 px-4 py-2 text-sm text-white/80 transition hover:bg-blue-500/20 hover:border-blue-400/40"
           onClick={() => setActivePanel(cat.id)}
-          onMouseEnter={() => handleButtonHover(cat.id)}
-          onMouseLeave={handleButtonHoverLeave}
         >
           {cat.label}
         </button>
@@ -827,12 +733,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderLayerPanel = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Layer</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -849,12 +750,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderFormatPanel = () => (
-    <div
-      className="rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)', minWidth: '280px' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)', minWidth: '280px' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Format</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -892,12 +788,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderResizePanel = () => (
-    <div
-      className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-      style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Resize</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
@@ -914,87 +805,104 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderBranchesPanel = () => {
-    // Access global dataStore (made available by CanvasProvider)
-    const dataStore = typeof window !== 'undefined' ? (window as any).canvasDataStore : null
-
-    // Use activePanelId if available, otherwise default to 'main'
-    const currentPanelId = activePanelId || 'main'
-
-    console.log('[FloatingToolbar] renderBranchesPanel:', {
-      activePanelId,
-      currentPanelId,
-      hasDataStore: !!dataStore,
-      timestamp: Date.now()
+    // Since floating toolbar is independent of canvases, we fetch branch data independently
+    // For now, show a placeholder until we implement independent data fetching
+    const allBranches: any[] = []
+    const filteredBranches = allBranches.filter((branch: any) => {
+      if (branchFilter === 'all') return true
+      return branch.type === branchFilter
     })
 
-    if (dataStore && currentPanelId) {
-      const currentBranchData = dataStore.get(currentPanelId)
-      console.log('[FloatingToolbar] Current panel data:', {
-        panelId: currentPanelId,
-        hasBranchData: !!currentBranchData,
-        branchesCount: currentBranchData?.branches?.length || 0,
-        branches: currentBranchData?.branches
-      })
-    }
-
-    if (!dataStore) {
-      return (
-        <div style={{
-          width: '300px',
-          borderRadius: '16px',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          padding: '20px',
-        }}>
-          <div style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', fontSize: '14px' }}>
-            No canvas data available
-          </div>
-        </div>
-      )
-    }
-
-    // Get the current branch data
-    const currentBranch = dataStore.get(currentPanelId)
-
-    if (!currentBranch) {
-      return (
-        <div style={{
-          width: '300px',
-          borderRadius: '16px',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          padding: '20px',
-        }}>
-          <div style={{ color: 'rgba(255,255,255,0.7)', textAlign: 'center', fontSize: '14px' }}>
-            No panel selected
-          </div>
-        </div>
-      )
-    }
-
-    // Use BranchesSection component with props
-    // Use key prop to force re-mount when panel changes
     return (
-      <div
-        style={{ maxWidth: '300px' }}
-        onMouseEnter={handlePanelHover}
-        onMouseLeave={handlePanelHoverLeave}
-      >
-        <BranchesSection
-          key={currentPanelId}
-          panelId={currentPanelId}
-          branch={currentBranch}
-          dataStore={dataStore}
-        />
+      <div style={{
+        width: '400px',
+        borderRadius: '16px',
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        padding: '20px',
+        maxHeight: '500px',
+        overflowY: 'auto',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
+      }}>
+        <div style={{
+          color: 'white',
+          fontSize: '16px',
+          fontWeight: 600,
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>📌</span> Branches ({allBranches.length})
+          </div>
+          <button
+            onClick={() => setActivePanel(null)}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              borderRadius: '50%',
+              width: '24px',
+              height: '24px',
+              color: 'white',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Filter buttons */}
+        <div style={{
+          display: 'flex',
+          gap: '6px',
+          marginBottom: '16px',
+          background: 'rgba(255,255,255,0.1)',
+          padding: '4px',
+          borderRadius: '8px',
+        }}>
+          {['All', 'Note', 'Explore', 'Promote'].map((filter) => (
+            <button
+              key={filter}
+              onClick={() => setBranchFilter(filter.toLowerCase() as any)}
+              style={{
+                flex: 1,
+                padding: '6px 12px',
+                border: 'none',
+                borderRadius: '6px',
+                background: branchFilter === filter.toLowerCase() ? 'rgba(255,255,255,0.3)' : 'transparent',
+                color: 'white',
+                fontSize: '13px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              {filter}
+            </button>
+          ))}
+        </div>
+
+        {/* Branch items */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{
+            color: 'rgba(255,255,255,0.7)',
+            textAlign: 'center',
+            fontSize: '14px',
+            marginTop: '20px',
+          }}>
+            Branches panel (coming soon)
+          </div>
+        </div>
       </div>
     )
   }
 
   const renderActionsPanel = () => (
-    <div
-      className="rounded-2xl border border-white/20 shadow-2xl"
-      style={{ backgroundColor: 'rgba(255, 255, 255, 0.98)', padding: '20px', minWidth: '280px' }}
-      onMouseEnter={handlePanelHover}
-      onMouseLeave={handlePanelHoverLeave}
-    >
+    <div className="rounded-2xl border border-white/20 shadow-2xl" style={{ backgroundColor: 'rgba(255, 255, 255, 0.98)', padding: '20px', minWidth: '280px' }}>
       <div className="flex items-center justify-between mb-4">
         <span className="text-gray-800 font-semibold text-lg">Create Branch</span>
         <button
@@ -1136,34 +1044,30 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           ⋮
         </div>
         <button
-          className="rounded-full bg-gradient-to-r from-blue-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg hover:from-blue-300 hover:to-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
-          onClick={handleCreateNewNote}
-          disabled={isCreatingNote}
+          className="rounded-full bg-gradient-to-r from-blue-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg hover:from-blue-300 hover:to-blue-400"
+          onClick={() => {
+            onCreateNote?.()
+            onClose()
+          }}
         >
-          {isCreatingNote ? 'Creating...' : '+ Note'}
+          + Note
         </button>
         <div className="flex items-center gap-2">
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "recents" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "recents" ? null : "recents"))}
-            onMouseEnter={() => handleButtonHover("recents")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Recents ▾
           </button>
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "org" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "org" ? null : "org"))}
-            onMouseEnter={() => handleButtonHover("org")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Org ▾
           </button>
           <button
             className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "tools" ? "bg-white/15" : ""}`}
             onClick={() => setActivePanel((prev) => (prev === "tools" ? null : "tools"))}
-            onMouseEnter={() => handleButtonHover("tools")}
-            onMouseLeave={handleButtonHoverLeave}
           >
             Tools ▾
           </button>
@@ -1171,17 +1075,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       </div>
       {activePanel === "recents" && renderRecentNotes()}
       {activePanel === "org" && renderOrg()}
-      {(activePanel === "tools" || activePanel === "layer" || activePanel === "format" || activePanel === "resize" || activePanel === "branches" || activePanel === "actions") && renderToolCategories()}
+      {activePanel === "tools" && renderToolCategories()}
       {activePanel === "layer" && renderLayerPanel()}
       {activePanel === "format" && renderFormatPanel()}
       {activePanel === "resize" && renderResizePanel()}
       {activePanel === "branches" && renderBranchesPanel()}
       {activePanel === "actions" && renderActionsPanel()}
-      <div className="rounded-full bg-gray-800/90 px-3 py-1 text-xs text-white/60 shadow-lg border border-white/10">
-        Press <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-mono text-[10px]">
-          {typeof window !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform) ? '⌘K' : 'Ctrl+K'}
-        </kbd> to open • <kbd className="mx-1 px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-mono text-[10px]">Esc</kbd> to close
-      </div>
+      <div className="rounded-full bg-blue-500/20 px-3 py-1 text-xs text-blue-200 shadow-lg">Last: Design Sync</div>
 
       {/* Hover tooltip popups - simple fixed divs */}
       {folderPopups.map((popup) => (

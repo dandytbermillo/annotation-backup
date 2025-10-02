@@ -945,12 +945,28 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       onSelectionUpdate: ({ editor }) => {
         const { from, to } = editor.state.selection
         const text = editor.state.doc.textBetween(from, to, ' ')
-        
+
+        // Cancel any pending toolbar show on every selection update
+        // This prevents toolbar from showing while user is still dragging
+        const existingTimeout = (window as any).__toolbarShowTimeout
+        if (existingTimeout) {
+          clearTimeout(existingTimeout)
+          ;(window as any).__toolbarShowTimeout = null
+        }
+
+        // Store current selection info for mouseup handler
+        ;(window as any).__pendingSelection = {
+          text: text.trim(),
+          from,
+          to,
+          length: text.trim().length
+        }
+
         if (text.trim().length > 0 && onSelectionChange) {
           // Create a DOM range for compatibility with existing annotation system
           const view = editor.view
           const domRange = document.createRange()
-          
+
           try {
             const start = view.domAtPos(from)
             const end = view.domAtPos(to)
@@ -1092,7 +1108,104 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         window.removeEventListener('beforeunload', handleBeforeUnload)
       }
     }, [editor, provider, noteId, panelId])
-    
+
+    // Mouse up handler to show toolbar after selection is complete
+    useEffect(() => {
+      if (!editor) return
+
+      const handleMouseUp = () => {
+        const pendingSelection = (window as any).__pendingSelection
+
+        // Only show toolbar if we have a pending selection > 3 characters
+        if (!pendingSelection || pendingSelection.length <= 3) {
+          return
+        }
+
+        const view = editor.view
+
+        try {
+          const start = view.domAtPos(pendingSelection.from)
+          const end = view.domAtPos(pendingSelection.to)
+          const domRange = document.createRange()
+          domRange.setStart(start.node, start.offset)
+          domRange.setEnd(end.node, end.offset)
+
+          // Get selection bounding rect for positioning
+          const rect = domRange.getBoundingClientRect()
+
+          // Mitigation 3: Cancel on keyboard events (copy, cut, typing, etc.)
+          const cancelOnKeyboard = (e: KeyboardEvent) => {
+            // Allow selection navigation keys (arrows, shift)
+            if (e.key === 'Shift' || e.key.startsWith('Arrow')) {
+              return
+            }
+
+            // Cancel toolbar for any other key (including Cmd+C, Cmd+X, typing, etc.)
+            const timeoutId = (window as any).__toolbarShowTimeout
+            if (timeoutId) {
+              clearTimeout(timeoutId)
+              ;(window as any).__toolbarShowTimeout = null
+            }
+
+            // Remove this listener after first key
+            document.removeEventListener('keydown', cancelOnKeyboard)
+          }
+
+          // Mitigation 2: Delay showing toolbar to avoid interference with copy/paste
+          const showToolbarDelayed = setTimeout(() => {
+            // Remove keyboard listener since we're about to show
+            document.removeEventListener('keydown', cancelOnKeyboard)
+
+            // Verify selection still exists and has the same text
+            const currentSelection = editor.state.selection
+            const currentText = editor.state.doc.textBetween(
+              currentSelection.from,
+              currentSelection.to,
+              ' '
+            ).trim()
+
+            if (currentText === pendingSelection.text && currentText.length > 3) {
+              // Dispatch event to show toolbar above selection
+              window.dispatchEvent(new CustomEvent('show-floating-toolbar-on-selection', {
+                detail: {
+                  x: rect.left + rect.width / 2,
+                  y: rect.top - 10, // Position above selection
+                  selectedText: pendingSelection.text,
+                  autoOpenFormat: true // Auto-open format panel
+                },
+                bubbles: true
+              }))
+            }
+
+            // Clear pending selection
+            ;(window as any).__pendingSelection = null
+          }, 200) // Mitigation 2: 200ms delay
+
+          // Store timeout ID to allow cancellation
+          ;(window as any).__toolbarShowTimeout = showToolbarDelayed
+
+          // Add keyboard listener for cancellation
+          document.addEventListener('keydown', cancelOnKeyboard)
+        } catch (error) {
+          console.warn('[TiptapEditorPlain] Could not show toolbar on selection:', error)
+        }
+      }
+
+      // Listen on the editor's DOM element
+      const editorElement = editor.view.dom
+      editorElement.addEventListener('mouseup', handleMouseUp)
+
+      return () => {
+        editorElement.removeEventListener('mouseup', handleMouseUp)
+
+        // Clear any pending timeout
+        const timeoutId = (window as any).__toolbarShowTimeout
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+      }
+    }, [editor])
+
     // REMOVED: Complex note switching cleanup - not needed with simplified approach
     // The provider handles saving through the onUpdate handler with debouncing
 
