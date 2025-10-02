@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
-import { FloatingNotesWidget } from "./floating-notes-widget"
+import { FloatingToolbar } from "./floating-toolbar"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 
@@ -123,13 +123,13 @@ function AnnotationAppContent() {
       className="flex h-screen w-screen overflow-hidden relative"
       onContextMenu={handleContextMenu}
     >
-      {/* Floating Notes Widget */}
+      {/* Floating Toolbar */}
       {showNotesWidget && (
-        <FloatingNotesWidget
-          clickX={notesWidgetPosition.x}
-          clickY={notesWidgetPosition.y}
+        <FloatingToolbar
+          x={notesWidgetPosition.x}
+          y={notesWidgetPosition.y}
           onClose={handleCloseNotesWidget}
-          onNoteSelect={handleNoteSelect}
+          onSelectNote={handleNoteSelect}
         />
       )}
       
