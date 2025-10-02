@@ -1,7 +1,10 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from "react"
 import { Eye } from "lucide-react"
+import { PopupOverlay } from "@/components/canvas/popup-overlay"
+import { useLayer } from "@/components/canvas/layer-provider"
+import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 
 type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | null
 
@@ -39,6 +42,19 @@ interface FolderPopup {
   position: { x: number; y: number }
   children: OrgItem[]
   isLoading: boolean
+}
+
+interface OverlayPopup {
+  id: string
+  folderId: string
+  folderName: string
+  folder: OrgItem | null
+  position: { x: number; y: number }
+  canvasPosition: { x: number; y: number }
+  children: OrgItem[]
+  isLoading: boolean
+  isPersistent: boolean
+  level: number
 }
 
 const TOOL_CATEGORIES = [
@@ -98,9 +114,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote }: F
   const [orgItems, setOrgItems] = useState<OrgItem[]>([])
   const [isLoadingOrg, setIsLoadingOrg] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
-  const [folderPopups, setFolderPopups] = useState<FolderPopup[]>([])
+  const [folderPopups, setFolderPopups] = useState<FolderPopup[]>([]) // Hover tooltips
+  const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([]) // Click-activated overlay popups
   const popupIdCounter = useRef(0)
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+
+  // Layer context for overlay canvas
+  const layerContext = useLayer()
+  const multiLayerEnabled = true
+  const identityTransform = { x: 0, y: 0, scale: 1 }
+  const sharedOverlayTransform = layerContext?.transforms.popups || identityTransform
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -427,10 +450,116 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote }: F
     }
   }
 
+  // Handle eye icon click to activate overlay canvas
+  const handleEyeClick = async (folder: OrgItem, event: React.MouseEvent) => {
+    event.stopPropagation()
+
+    // Close hover tooltips
+    setFolderPopups([])
+
+    // Check if already exists
+    const existingOverlay = overlayPopups.find(p => p.folderId === folder.id)
+    if (existingOverlay) return
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    const spaceRight = window.innerWidth - rect.right
+    let popupPosition = { x: rect.right + 10, y: rect.top }
+
+    if (spaceRight < 320) {
+      popupPosition = { x: rect.left, y: rect.bottom + 10 }
+    }
+
+    const popupId = `overlay-popup-${++popupIdCounter.current}`
+    const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedOverlayTransform)
+    const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedOverlayTransform)
+
+    const newPopup: OverlayPopup = {
+      id: popupId,
+      folderId: folder.id,
+      folderName: folder.name,
+      folder: null,
+      position: screenPosition,
+      canvasPosition: canvasPosition,
+      children: [],
+      isLoading: true,
+      isPersistent: true,
+      level: 0
+    }
+
+    setOverlayPopups(prev => [...prev, newPopup])
+
+    try {
+      const response = await fetch(`/api/items?parentId=${folder.id}`)
+      if (!response.ok) throw new Error('Failed to fetch folder contents')
+
+      const data = await response.json()
+      const children = data.items || []
+
+      const formattedChildren: OrgItem[] = children.map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+        color: item.color,
+        hasChildren: item.type === 'folder',
+        level: folder.level + 1,
+        children: [],
+        parentId: item.parentId
+      }))
+
+      setOverlayPopups(prev =>
+        prev.map(p =>
+          p.id === popupId
+            ? { ...p, children: formattedChildren, isLoading: false, folder: { ...folder, children: formattedChildren } }
+            : p
+        )
+      )
+    } catch (error) {
+      console.error('Error fetching overlay popup contents:', error)
+      setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
+    }
+  }
+
   // Close all folder popups
   const closeAllPopups = () => {
     setFolderPopups([])
+    setOverlayPopups([])
   }
+
+  // Adapt overlay popups for PopupOverlay component
+  const adaptedPopups = useMemo(() => {
+    if (!multiLayerEnabled || !layerContext) return null
+
+    const adapted = new Map()
+    overlayPopups.forEach((popup) => {
+      adapted.set(popup.id, {
+        ...popup,
+        folder: popup.folder || {
+          id: popup.folderId,
+          name: popup.folderName,
+          type: 'folder' as const,
+          children: popup.children
+        },
+        canvasPosition: popup.canvasPosition
+      })
+    })
+    return adapted
+  }, [overlayPopups, multiLayerEnabled])
+
+  // Auto-switch layers based on overlay popup count
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+
+    if (overlayPopups.length > 0) {
+      if (layerContext.activeLayer !== 'popups') {
+        layerContext.setActiveLayer('popups')
+      }
+    } else {
+      if (layerContext.activeLayer !== 'notes') {
+        layerContext.setActiveLayer('notes')
+      }
+    }
+  }, [overlayPopups.length, multiLayerEnabled, layerContext?.activeLayer, layerContext?.setActiveLayer])
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
@@ -546,13 +675,14 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote }: F
                         <span>{item.icon}</span>
                         <span>{item.name}</span>
                       </div>
-                      {/* Eye icon for folders - appears on hover */}
+                      {/* Eye icon for folders - hover shows tooltip, click activates overlay */}
                       {isFolder && (
                         <div
                           onMouseEnter={(e) => handleEyeHover(item, e)}
                           onMouseLeave={() => handleEyeHoverLeave(item.id)}
+                          onClick={(e) => handleEyeClick(item, e)}
                           className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                          title="View folder contents"
+                          title="Hover to preview, click to pin"
                         >
                           <Eye className="w-3.5 h-3.5 text-white/40" />
                         </div>
@@ -720,8 +850,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote }: F
       {activePanel === "actions" && renderActionsPanel()}
       <div className="rounded-full bg-blue-500/20 px-3 py-1 text-xs text-blue-200 shadow-lg">Last: Design Sync</div>
 
-      {/* Folder popups - rendered outside the main toolbar */}
-      {console.log('[FloatingToolbar] Rendering popups, count:', folderPopups.length, folderPopups)}
+      {/* Hover tooltip popups - simple fixed divs */}
       {folderPopups.map((popup) => (
         <div
           key={popup.id}
@@ -780,6 +909,20 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote }: F
           </div>
         </div>
       ))}
+
+      {/* Overlay canvas popups - rendered via PopupOverlay */}
+      {multiLayerEnabled && adaptedPopups && (
+        <PopupOverlay
+          popups={adaptedPopups}
+          draggingPopup={null}
+          onClosePopup={(id) => {
+            setOverlayPopups(prev => prev.filter(p => p.id !== id))
+          }}
+          onHoverFolder={() => {}}
+          onLeaveFolder={() => {}}
+          sidebarOpen={false}
+        />
+      )}
     </div>
   )
 }
