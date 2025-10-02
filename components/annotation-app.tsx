@@ -39,6 +39,8 @@ function AnnotationAppContent() {
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const draggingPopupRef = useRef<string | null>(null)
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
@@ -71,7 +73,8 @@ function AnnotationAppContent() {
           type: 'folder' as const,
           children: popup.children
         },
-        canvasPosition: popup.canvasPosition
+        canvasPosition: popup.canvasPosition,
+        parentId: popup.parentPopupId // Map parentPopupId to parentId for PopupOverlay
       })
     })
     return adapted
@@ -216,6 +219,188 @@ function AnnotationAppContent() {
     setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
   }, [])
 
+  // Handle folder hover inside popup (creates cascading child popups)
+  const handleFolderHover = useCallback(async (folder: OrgItem, event: React.MouseEvent, parentPopupId: string, isPersistent: boolean = false) => {
+    console.log('[handleFolderHover]', { folderName: folder.name, folderId: folder.id, parentPopupId, isPersistent })
+
+    // Check if popup already exists for this folder
+    const existingPopup = overlayPopups.find(p => p.folderId === folder.id)
+
+    if (existingPopup) {
+      // If clicking on a temporary hover popup, make it persistent
+      if (isPersistent && !existingPopup.isPersistent) {
+        console.log('[handleFolderHover] Upgrading temporary popup to persistent')
+        setOverlayPopups(prev =>
+          prev.map(p => p.folderId === folder.id ? { ...p, isPersistent: true } : p)
+        )
+      }
+      return
+    }
+
+    // Capture rect position IMMEDIATELY (before any async/timeout)
+    const rect = event.currentTarget.getBoundingClientRect()
+
+    // For non-persistent (hover) popups, use a timeout
+    const timeoutKey = parentPopupId ? `${parentPopupId}-${folder.id}` : folder.id
+
+    if (!isPersistent) {
+      // Clear any existing timeout for this folder
+      if (hoverTimeoutRef.current.has(timeoutKey)) {
+        clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
+        hoverTimeoutRef.current.delete(timeoutKey)
+      }
+
+      // Set timeout to show hover tooltip after 300ms
+      const timeout = setTimeout(() => {
+        hoverTimeoutRef.current.delete(timeoutKey)
+        // Create temporary hover popup (pass captured rect)
+        createPopup(folder, rect, parentPopupId, false)
+      }, 300)
+
+      hoverTimeoutRef.current.set(timeoutKey, timeout)
+      return
+    }
+
+    // For persistent (click) popups, create immediately
+    createPopup(folder, rect, parentPopupId, true)
+
+    async function createPopup(folder: OrgItem, rect: DOMRect, parentPopupId: string, isPersistent: boolean) {
+      // Check again if popup exists (might have been created during timeout)
+      const currentOverlayPopups = overlayPopups
+      const exists = currentOverlayPopups.some(p => p.folderId === folder.id)
+      if (exists) return
+      const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+
+      // Position child popup to the right of parent
+      const spaceRight = window.innerWidth - rect.right
+      let popupPosition = { x: rect.right + 10, y: rect.top }
+
+      if (spaceRight < 320) {
+        popupPosition = { x: rect.left - 320, y: rect.top }
+      }
+
+      const popupId = `overlay-popup-${Date.now()}-${folder.id}`
+      const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedTransform)
+      const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedTransform)
+
+      const newPopup: OverlayPopup = {
+        id: popupId,
+        folderId: folder.id,
+        folderName: folder.name,
+        folder: null,
+        position: screenPosition,
+        canvasPosition: canvasPosition,
+        children: [],
+        isLoading: true,
+        isPersistent: isPersistent,
+        level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
+        parentPopupId: parentPopupId || undefined
+      }
+
+      setOverlayPopups(prev => [...prev, newPopup])
+
+      // Fetch children
+      try {
+        const response = await fetch(`/api/items?parentId=${folder.id}`)
+        if (!response.ok) throw new Error('Failed to fetch folder contents')
+
+        const data = await response.json()
+        const children = data.items || []
+
+        const formattedChildren: OrgItem[] = children.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color,
+          hasChildren: item.type === 'folder',
+          level: folder.level + 1,
+          children: [],
+          parentId: item.parentId
+        }))
+
+        setOverlayPopups(prev =>
+          prev.map(p =>
+            p.id === popupId
+              ? { ...p, children: formattedChildren, isLoading: false, folder: { ...folder, children: formattedChildren } }
+              : p
+          )
+        )
+      } catch (error) {
+        console.error('Error fetching child popup contents:', error)
+        setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
+      }
+    }
+  }, [overlayPopups, layerContext])
+
+  // Cancel close timeout when hovering the popup itself (keeps it alive)
+  const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
+    console.log('[handlePopupHover] CALLED', { folderId, parentPopupId, hasTimeouts: closeTimeoutRef.current.size })
+
+    // Try multiple possible timeout keys since we might not know the exact parent
+    const possibleKeys = [
+      folderId, // Simple key (no parent)
+      parentPopupId ? `${parentPopupId}-${folderId}` : null, // With known parent
+    ].filter(Boolean) as string[]
+
+    // Also try all keys that end with this folderId
+    closeTimeoutRef.current.forEach((timeout, key) => {
+      if (key.endsWith(folderId) && !possibleKeys.includes(key)) {
+        possibleKeys.push(key)
+      }
+    })
+
+    console.log('[handlePopupHover] Trying timeout keys:', possibleKeys)
+    console.log('[handlePopupHover] Available timeouts:', Array.from(closeTimeoutRef.current.keys()))
+
+    let found = false
+    for (const key of possibleKeys) {
+      const timeout = closeTimeoutRef.current.get(key)
+      if (timeout) {
+        clearTimeout(timeout)
+        closeTimeoutRef.current.delete(key)
+        console.log('[handlePopupHover] ✅ Cancelled close timeout for', key)
+        found = true
+        break
+      }
+    }
+
+    if (!found) {
+      console.log('[handlePopupHover] ❌ No matching timeout found')
+    }
+  }, [])
+
+  // Handle folder hover leave (for temporary tooltips)
+  const handleFolderHoverLeave = useCallback((folderId?: string, parentPopupId?: string) => {
+    console.log('[handleFolderHoverLeave]', { folderId, parentPopupId })
+
+    if (!folderId) return
+
+    // Clear hover timeout if user leaves before tooltip appears
+    const timeoutKey = parentPopupId ? `${parentPopupId}-${folderId}` : folderId
+    if (hoverTimeoutRef.current.has(timeoutKey)) {
+      clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
+      hoverTimeoutRef.current.delete(timeoutKey)
+    }
+
+    // Set close timeout and STORE IT so it can be cancelled when hovering the popup
+    const closeTimeout = setTimeout(() => {
+      closeTimeoutRef.current.delete(timeoutKey)
+      // Close temporary (non-persistent) hover popups for this folder
+      setOverlayPopups(prev =>
+        prev.filter(p => {
+          // Keep popup if it's persistent (clicked) or if it's for a different folder
+          if (p.isPersistent) return true
+          if (p.folderId !== folderId) return true
+          // Remove non-persistent hover popup for this folder
+          return false
+        })
+      )
+    }, 300) // 300ms delay to allow moving to tooltip (same as organization panel)
+
+    closeTimeoutRef.current.set(timeoutKey, closeTimeout)
+  }, [])
+
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
     event.preventDefault()
@@ -341,8 +526,9 @@ function AnnotationAppContent() {
           draggingPopup={draggingPopup}
           onClosePopup={handleCloseOverlayPopup}
           onDragStart={handlePopupDragStart}
-          onHoverFolder={() => {}}
-          onLeaveFolder={() => {}}
+          onHoverFolder={handleFolderHover}
+          onLeaveFolder={handleFolderHoverLeave}
+          onPopupHover={handlePopupHover}
           sidebarOpen={false}
         />
       )}

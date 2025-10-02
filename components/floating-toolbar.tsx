@@ -55,6 +55,7 @@ export interface OverlayPopup {
   isLoading: boolean
   isPersistent: boolean
   level: number
+  parentPopupId?: string
 }
 
 const TOOL_CATEGORIES = [

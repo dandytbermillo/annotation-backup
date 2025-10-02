@@ -54,6 +54,7 @@ interface PopupOverlayProps {
   onDragStart?: (id: string, event: React.MouseEvent) => void;
   onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
   onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
+  onPopupHover?: (folderId: string, parentPopupId?: string) => void; // Cancel close timeout when hovering popup
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
@@ -104,6 +105,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onDragStart,
   onHoverFolder,
   onLeaveFolder,
+  onPopupHover,
   sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
@@ -388,14 +390,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         onMouseEnter={(event) => {
           if (noteLike) {
             triggerPreview();
-          } else {
-            handleFolderHover(event, false);
           }
+          // Removed folder row hover - only eye icon should trigger folder hover
         }}
         onMouseLeave={() => {
-          if (folderLike) {
-            rowLeaveFolder?.(child.id, popupId);
-          }
+          // Removed folder row leave handler - only eye icon controls this
         }}
         onFocus={() => {
           if (noteLike) {
@@ -1334,6 +1333,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               }}
               data-popup-id={popup.id}
               onClick={(e) => e.stopPropagation()}
+              onPointerEnter={() => {
+                // Pass both the folder ID and the parent popup ID to cancel the close timeout
+                if (popup.folder?.id) {
+                  onPopupHover?.(popup.folder.id, popup.parentId)
+                }
+              }}
             >
               {/* Popup Header */}
               <div
