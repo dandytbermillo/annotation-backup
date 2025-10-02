@@ -278,3 +278,4 @@
 {"ts":"2025-10-02T04:10:42.327Z","type":"commit","sha":"e20245f19795655d7ade0190cfb541c75d600ff8","files_changed":3,"message":"fixing the nondraggable popup"}
 {"ts":"2025-10-02T04:26:43.534Z","type":"commit","sha":"77ea8522d1efc83380cd82fa7d57f7ec7f0994ec","files_changed":7,"message":"fixed undraggable popup when open from organization panel"}
 {"ts":"2025-10-02T05:21:38.842Z","type":"commit","sha":"9726e52000bf9d4a2b3605663369fcf7a0dc750e","files_changed":5,"message":"the disappearing tooltip popup fixed"}
+{"ts":"2025-10-02T05:28:12.598Z","type":"commit","sha":"9dfaf2661bc4f28fcef4331dfd1137ba55b01c10","files_changed":3,"message":"cleaned up memory leak"}

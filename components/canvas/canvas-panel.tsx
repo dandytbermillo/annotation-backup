@@ -41,7 +41,7 @@ interface CanvasPanelProps {
 }
 
 export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
-  const { dispatch, state, dataStore, noteId: contextNoteId } = useCanvas()
+  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor } = useCanvas()
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -1342,6 +1342,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }, [isEditing, isContentLoading, isPlainMode, isLayerInteractive])
 
+  // Registration happens in onClick handler above (when panel is clicked)
+
   // Filter branches based on active filter
   // In plain mode, get branches from dataStore; otherwise use provider
   const allBranches = isPlainMode 
@@ -1583,6 +1585,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       className={`panel ${currentBranch.type}`}
       id={`panel-${panelId}`}
       data-panel-id={panelId}
+      onClick={() => {
+        // Register this panel's editor as active when panel is clicked
+        if (editorRef.current && onRegisterActiveEditor) {
+          onRegisterActiveEditor(editorRef.current)
+        }
+      }}
       onMouseEnter={() => {
         if (panelHoverHideTimeoutRef.current) {
           clearTimeout(panelHoverHideTimeoutRef.current)

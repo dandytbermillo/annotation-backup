@@ -14,6 +14,7 @@ type FloatingToolbarProps = {
   onSelectNote?: (noteId: string) => void
   onCreateNote?: () => void
   onCreateOverlayPopup?: (popup: OverlayPopup) => void
+  editorRef?: React.RefObject<any> // Optional editor ref for format commands
 }
 
 interface RecentNote {
@@ -71,22 +72,26 @@ const LAYER_ACTIONS = [
   { label: "Send to Back", desc: "Move panel to bottom" },
 ]
 
-const FORMAT_ACTIONS = [
-  { label: "B", tooltip: "Bold", className: "font-bold" },
-  { label: "I", tooltip: "Italic", className: "italic" },
-  { label: "U", tooltip: "Underline", className: "underline" },
-  { label: "S", tooltip: "Strikethrough" },
-  { label: "{ }", tooltip: "Code" },
-  { label: "H1", tooltip: "Heading 1" },
-  { label: "H2", tooltip: "Heading 2" },
-  { label: "H3", tooltip: "Heading 3" },
-  { label: "• •", tooltip: "Bullet List" },
-  { label: "1 2", tooltip: "Ordered List" },
-  { label: '" "', tooltip: "Blockquote" },
-  { label: "</", tooltip: "Code Block" },
-  { label: "—", tooltip: "Horizontal Rule" },
-  { label: "★", tooltip: "Highlight" },
-  { label: "✕", tooltip: "Clear Format", className: "text-red-400" },
+interface FormatAction {
+  label: string
+  tooltip: string
+  className?: string
+  command?: string
+  value?: any
+}
+
+const FORMAT_ACTIONS: FormatAction[] = [
+  { label: "B", tooltip: "Bold", className: "font-bold", command: "bold" },
+  { label: "I", tooltip: "Italic", className: "italic", command: "italic" },
+  { label: "U", tooltip: "Underline", className: "underline", command: "underline" },
+  { label: "H2", tooltip: "Heading 2", command: "heading", value: 2 },
+  { label: "H3", tooltip: "Heading 3", command: "heading", value: 3 },
+  { label: "•", tooltip: "Bullet List", command: "bulletList" },
+  { label: "1.", tooltip: "Numbered List", command: "orderedList" },
+  { label: '"', tooltip: "Quote", command: "blockquote" },
+  { label: "🖍", tooltip: "Highlight", command: "highlight" },
+  { label: "▦", tooltip: "Block Based", command: "collapsibleBlock" },
+  { label: "✕", tooltip: "Clear Format", command: "removeFormat" },
 ]
 
 const RESIZE_ACTIONS = [
@@ -101,12 +106,12 @@ const BRANCH_ACTIONS = [
 ]
 
 const ACTION_ITEMS = [
-  { label: "📝 Note", desc: "Create note branch" },
-  { label: "🔍 Explore", desc: "Create explore branch" },
-  { label: "⭐ Promote", desc: "Create promote branch" },
+  { label: "📝 Note", desc: "Create note branch", type: "note" as const },
+  { label: "🔍 Explore", desc: "Create explore branch", type: "explore" as const },
+  { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, editorRef }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [activePanel, setActivePanel] = useState<PanelKey>(null)
@@ -124,6 +129,41 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const multiLayerEnabled = true
   const identityTransform = { x: 0, y: 0, scale: 1 }
   const sharedOverlayTransform = layerContext?.transforms.popups || identityTransform
+
+  // Execute editor command
+  const executeCommand = (command: string, value?: any) => {
+    if (!editorRef?.current) {
+      console.warn('[FloatingToolbar] No active editor ref - cannot execute command:', command)
+      return
+    }
+    editorRef.current.executeCommand(command, value)
+  }
+
+  // Insert annotation (note, explore, promote)
+  // This triggers the existing AnnotationToolbar's createAnnotation logic
+  const insertAnnotation = (type: 'note' | 'explore' | 'promote') => {
+    console.log('[FloatingToolbar] Triggering annotation creation:', type)
+
+    // Dispatch the annotation creation event that the AnnotationToolbar listens for
+    // The AnnotationToolbar component has buttons that call createAnnotation(type)
+    // We can trigger the same by clicking the corresponding button programmatically
+    const toolbar = document.getElementById('annotation-toolbar')
+    if (!toolbar) {
+      console.warn('[FloatingToolbar] annotation-toolbar not found in DOM')
+      return
+    }
+
+    // Find and click the appropriate button
+    const buttonSelector = `.annotation-btn.${type}`
+    const button = toolbar.querySelector(buttonSelector) as HTMLButtonElement
+
+    if (button) {
+      console.log('[FloatingToolbar] Clicking annotation button:', type)
+      button.click()
+    } else {
+      console.warn('[FloatingToolbar] Annotation button not found:', buttonSelector)
+    }
+  }
 
   useLayoutEffect(() => {
     const el = containerRef.current
@@ -705,14 +745,36 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderFormatPanel = () => (
-    <div className="w-80 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
+    <div className="rounded-2xl border border-white/20 bg-gray-900 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)', minWidth: '280px' }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
         <span>Format</span>
         <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">×</button>
       </div>
-      <div className="p-3 grid grid-cols-5 gap-2">
+      <div style={{ padding: '12px', display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
         {FORMAT_ACTIONS.map((item) => (
-          <button key={item.label} className={`rounded-xl bg-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-blue-500/30 ${item.className ?? ""}`} title={item.tooltip} onClick={onClose}>
+          <button
+            key={item.label}
+            className={`rounded-lg text-sm transition hover:bg-blue-500/30 ${item.className ?? ""}`}
+            style={{
+              background: 'rgba(255, 255, 255, 0.1)',
+              color: 'rgba(255, 255, 255, 0.8)',
+              width: '42px',
+              height: '42px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+            title={item.tooltip}
+            onClick={() => {
+              if (item.command) {
+                executeCommand(item.command, item.value)
+              }
+              setActivePanel(null)
+              onClose()
+            }}
+          >
             {item.label}
           </button>
         ))}
@@ -762,7 +824,15 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       </div>
       <div className="p-3 space-y-2">
         {ACTION_ITEMS.map((item) => (
-          <button key={item.label} className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40" onClick={onClose}>
+          <button
+            key={item.label}
+            className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
+            onClick={() => {
+              insertAnnotation(item.type)
+              setActivePanel(null)
+              onClose()
+            }}
+          >
             <div className="text-sm font-medium">{item.label}</div>
             <div className="mt-1 text-xs text-white/60">{item.desc}</div>
           </button>
@@ -777,6 +847,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       className="absolute z-[9999] flex flex-col items-center gap-2"
       style={{ left: position.left, top: position.top }}
       onContextMenu={(event) => event.preventDefault()}
+      onMouseDown={(e) => {
+        // Prevent default to preserve editor focus and text selection
+        e.preventDefault()
+      }}
     >
       <div className="flex items-center gap-3 rounded-full border border-white/20 bg-gray-900 px-4 py-3 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
         <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white/60 select-none">

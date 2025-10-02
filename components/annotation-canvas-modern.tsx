@@ -38,6 +38,7 @@ interface ModernAnnotationCanvasProps {
   onCanvasStateChange?: (state: { zoom: number; showConnections: boolean }) => void
   showAddComponentMenu?: boolean
   onToggleAddComponentMenu?: () => void
+  onRegisterActiveEditor?: (editorRef: any) => void
 }
 
 interface CanvasImperativeHandle {
@@ -1024,7 +1025,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => (
   <IsolationProvider config={{ enabled: false }}>
-    <CanvasProvider noteId={props.noteId}>
+    <CanvasProvider noteId={props.noteId} onRegisterActiveEditor={props.onRegisterActiveEditor}>
       <ModernAnnotationCanvasInner {...props} ref={ref} />
     </CanvasProvider>
   </IsolationProvider>

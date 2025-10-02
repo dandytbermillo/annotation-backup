@@ -16,6 +16,7 @@ interface CanvasContextType {
   dataStore: DataStore
   events: EventEmitter
   noteId?: string
+  onRegisterActiveEditor?: (editorRef: any) => void
 }
 
 const CanvasContext = createContext<CanvasContextType | null>(null)
@@ -105,9 +106,10 @@ function canvasReducer(state: CanvasState, action: any): CanvasState {
 interface CanvasProviderProps {
   children: ReactNode
   noteId?: string
+  onRegisterActiveEditor?: (editorRef: any) => void
 }
 
-export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
+export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: CanvasProviderProps) {
   const [state, dispatch] = useReducer(canvasReducer, initialState)
   
   // Create stable instances that survive re-renders
@@ -425,7 +427,7 @@ export function CanvasProvider({ children, noteId }: CanvasProviderProps) {
     }, 100)
   }, [noteId])
 
-  return <CanvasContext.Provider value={{ state, dispatch, dataStore, events, noteId }}>{children}</CanvasContext.Provider>
+  return <CanvasContext.Provider value={{ state, dispatch, dataStore, events, noteId, onRegisterActiveEditor }}>{children}</CanvasContext.Provider>
 }
 
 export function useCanvas() {

@@ -32,6 +32,7 @@ function AnnotationAppContent() {
   // Floating notes widget state
   const [showNotesWidget, setShowNotesWidget] = useState(false)
   const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
+  const activeEditorRef = useRef<any>(null) // Track the currently active editor
 
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
@@ -206,6 +207,11 @@ function AnnotationAppContent() {
   // Handle closing notes widget
   const handleCloseNotesWidget = useCallback(() => {
     setShowNotesWidget(false)
+  }, [])
+
+  // Handle registering active editor (called by panels when they gain focus)
+  const handleRegisterActiveEditor = useCallback((editorRef: any) => {
+    activeEditorRef.current = editorRef
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
@@ -515,6 +521,7 @@ function AnnotationAppContent() {
           onClose={handleCloseNotesWidget}
           onSelectNote={handleNoteSelect}
           onCreateOverlayPopup={handleCreateOverlayPopup}
+          editorRef={activeEditorRef}
         />
       )}
       
@@ -539,6 +546,7 @@ function AnnotationAppContent() {
             onCanvasStateChange={setCanvasState}
             showAddComponentMenu={showAddComponentMenu}
             onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+            onRegisterActiveEditor={handleRegisterActiveEditor}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-950">
