@@ -277,3 +277,4 @@
 {"ts":"2025-10-02T03:54:46.556Z","type":"commit","sha":"7ecfc804803157ceffecce80e8accc66eaf45502","files_changed":4,"message":"making sure the floating toolbar is independent of canvases"}
 {"ts":"2025-10-02T04:10:42.327Z","type":"commit","sha":"e20245f19795655d7ade0190cfb541c75d600ff8","files_changed":3,"message":"fixing the nondraggable popup"}
 {"ts":"2025-10-02T04:26:43.534Z","type":"commit","sha":"77ea8522d1efc83380cd82fa7d57f7ec7f0994ec","files_changed":7,"message":"fixed undraggable popup when open from organization panel"}
+{"ts":"2025-10-02T05:21:38.842Z","type":"commit","sha":"9726e52000bf9d4a2b3605663369fcf7a0dc750e","files_changed":5,"message":"the disappearing tooltip popup fixed"}

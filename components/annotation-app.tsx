@@ -95,6 +95,19 @@ function AnnotationAppContent() {
     }
   }, [overlayPopups.length, multiLayerEnabled, layerContext])
 
+  // Cleanup all timeouts on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all hover timeouts
+      hoverTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
+      hoverTimeoutRef.current.clear()
+
+      // Clear all close timeouts
+      closeTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
+      closeTimeoutRef.current.clear()
+    }
+  }, [])
+
   // Keep draggingPopupRef in sync
   useEffect(() => {
     draggingPopupRef.current = draggingPopup
@@ -216,8 +229,30 @@ function AnnotationAppContent() {
 
   // Handle closing overlay popup
   const handleCloseOverlayPopup = useCallback((popupId: string) => {
+    // Find the popup to get its folderId for timeout cleanup
+    const popup = overlayPopups.find(p => p.id === popupId)
+
+    if (popup) {
+      // Clean up any pending timeouts for this popup
+      const timeoutKey = popup.parentPopupId ? `${popup.parentPopupId}-${popup.folderId}` : popup.folderId
+
+      // Clear hover timeout
+      const hoverTimeout = hoverTimeoutRef.current.get(timeoutKey)
+      if (hoverTimeout) {
+        clearTimeout(hoverTimeout)
+        hoverTimeoutRef.current.delete(timeoutKey)
+      }
+
+      // Clear close timeout
+      const closeTimeout = closeTimeoutRef.current.get(timeoutKey)
+      if (closeTimeout) {
+        clearTimeout(closeTimeout)
+        closeTimeoutRef.current.delete(timeoutKey)
+      }
+    }
+
     setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
-  }, [])
+  }, [overlayPopups])
 
   // Handle folder hover inside popup (creates cascading child popups)
   const handleFolderHover = useCallback(async (folder: OrgItem, event: React.MouseEvent, parentPopupId: string, isPersistent: boolean = false) => {
