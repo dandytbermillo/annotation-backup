@@ -273,3 +273,4 @@
 {"ts":"2025-10-01T19:29:56.453Z","type":"commit","sha":"44ce932e0c55e96d042410cd3ab7d595907b05e1","files_changed":1,"message":"docs(overlay): Phase 3 Implementation Report - Comprehensive report for Phase 3 (FloatingOverlayController) - Document a"}
 {"ts":"2025-10-01T23:01:28.001Z","type":"commit","sha":"599ef51cf45b8c4a3f085756e8e36f0fb8c0948c","files_changed":3,"message":"adding new floating toolbar"}
 {"ts":"2025-10-02T01:20:03.485Z","type":"commit","sha":"515b1a643b4cbc989b0edc158ae29cacd62e4ae0","files_changed":4,"message":"adding folder eye icon click event"}
+{"ts":"2025-10-02T01:57:17.318Z","type":"commit","sha":"a595ef5b36e3be5eb60f9196b7739777c9b285e2","files_changed":3,"message":"fixing the disappearance of the poups in the overlay canvas whlicked"}

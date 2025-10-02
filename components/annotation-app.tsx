@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import dynamic from 'next/dynamic'
 // Phase 1: Using notes explorer with API integration and feature flag
-import { FloatingToolbar } from "./floating-toolbar"
+import { FloatingToolbar, type OverlayPopup, type OrgItem } from "./floating-toolbar"
+import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 
@@ -30,7 +31,10 @@ function AnnotationAppContent() {
   // Floating notes widget state
   const [showNotesWidget, setShowNotesWidget] = useState(false)
   const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
-  
+
+  // Overlay popups state - persists independently of toolbar (like selectedNoteId)
+  const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
+
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
   
@@ -47,6 +51,41 @@ function AnnotationAppContent() {
   // Multi-layer canvas is always enabled
   const multiLayerEnabled = true
   const layerContext = useLayer()
+
+  // Adapt overlay popups for PopupOverlay component
+  const adaptedPopups = useMemo(() => {
+    if (!multiLayerEnabled || !layerContext) return null
+
+    const adapted = new Map()
+    overlayPopups.forEach((popup) => {
+      adapted.set(popup.id, {
+        ...popup,
+        folder: popup.folder || {
+          id: popup.folderId,
+          name: popup.folderName,
+          type: 'folder' as const,
+          children: popup.children
+        },
+        canvasPosition: popup.canvasPosition
+      })
+    })
+    return adapted
+  }, [overlayPopups, multiLayerEnabled, layerContext])
+
+  // Auto-switch layers based on overlay popup count
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+
+    if (overlayPopups.length > 0) {
+      if (layerContext.activeLayer !== 'popups') {
+        layerContext.setActiveLayer('popups')
+      }
+    } else {
+      if (layerContext.activeLayer !== 'notes') {
+        layerContext.setActiveLayer('notes')
+      }
+    }
+  }, [overlayPopups.length, multiLayerEnabled, layerContext])
   
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
@@ -83,6 +122,30 @@ function AnnotationAppContent() {
   // Handle closing notes widget
   const handleCloseNotesWidget = useCallback(() => {
     setShowNotesWidget(false)
+  }, [])
+
+  // Handle creating overlay popup (callback from FloatingToolbar)
+  const handleCreateOverlayPopup = useCallback((popup: OverlayPopup) => {
+    setOverlayPopups(prev => {
+      // Check if popup with same ID already exists (update it)
+      const existingIndex = prev.findIndex(p => p.id === popup.id)
+      if (existingIndex >= 0) {
+        // Update existing popup (e.g., when children are loaded)
+        const updated = [...prev]
+        updated[existingIndex] = popup
+        return updated
+      }
+      // Check if popup with same folder already exists (prevent duplicates)
+      const folderExists = prev.some(p => p.folderId === popup.folderId)
+      if (folderExists) return prev
+      // Add new popup
+      return [...prev, popup]
+    })
+  }, [])
+
+  // Handle closing overlay popup
+  const handleCloseOverlayPopup = useCallback((popupId: string) => {
+    setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
   }, [])
 
   // Navigation control functions
@@ -130,6 +193,7 @@ function AnnotationAppContent() {
           y={notesWidgetPosition.y}
           onClose={handleCloseNotesWidget}
           onSelectNote={handleNoteSelect}
+          onCreateOverlayPopup={handleCreateOverlayPopup}
         />
       )}
       
@@ -168,6 +232,18 @@ function AnnotationAppContent() {
           </div>
         )}
       </div>
+
+      {/* Overlay canvas popups - persists independently of toolbar */}
+      {multiLayerEnabled && adaptedPopups && (
+        <PopupOverlay
+          popups={adaptedPopups}
+          draggingPopup={null}
+          onClosePopup={handleCloseOverlayPopup}
+          onHoverFolder={() => {}}
+          onLeaveFolder={() => {}}
+          sidebarOpen={false}
+        />
+      )}
     </div>
   )
 }
