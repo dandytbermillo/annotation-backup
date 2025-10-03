@@ -8,6 +8,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { BranchesSection } from "@/components/canvas/branches-section"
 import { createNote } from "@/lib/utils/note-creator"
+import { buildMultilinePreview } from "@/lib/utils/branch-preview"
 
 type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | null
 
@@ -48,6 +49,7 @@ interface FolderPopup {
   position: { x: number; y: number }
   children: OrgItem[]
   isLoading: boolean
+  parentFolderId?: string // Track parent folder popup (for nested popups)
 }
 
 export interface OverlayPopup {
@@ -143,6 +145,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [isLoadingOrg, setIsLoadingOrg] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const [folderPopups, setFolderPopups] = useState<FolderPopup[]>([]) // Hover tooltips
+  const folderPopupsRef = useRef<FolderPopup[]>([]) // Ref to access current state in callbacks
   const popupIdCounter = useRef(0)
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
@@ -151,6 +154,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     noteId: string
     content: string
     position: { x: number; y: number }
+    sourceFolderId?: string // Track which folder popup triggered this preview
   } | null>(null)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
   const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -162,6 +166,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const multiLayerEnabled = true
   const identityTransform = { x: 0, y: 0, scale: 1 }
   const sharedOverlayTransform = layerContext?.transforms.popups || identityTransform
+
+  // Keep folderPopupsRef in sync with folderPopups state
+  useEffect(() => {
+    folderPopupsRef.current = folderPopups
+  }, [folderPopups])
 
   // Debug: Log when activeLayer changes
   useEffect(() => {
@@ -467,9 +476,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   // Handle folder eye icon hover to show popup
-  const handleEyeHover = async (folder: OrgItem, event: React.MouseEvent) => {
+  const handleEyeHover = async (folder: OrgItem, event: React.MouseEvent, parentFolderId?: string) => {
     event.stopPropagation()
-    console.log('[handleEyeHover] Called for folder:', folder.name, folder.id)
+    console.log('[handleEyeHover] Called for folder:', folder.name, folder.id, 'parent:', parentFolderId)
 
     // Check if popup already exists for this folder
     const existingPopup = folderPopups.find(p => p.folderId === folder.id)
@@ -503,7 +512,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       folderName: folder.name,
       position: popupPosition,
       children: [],
-      isLoading: true
+      isLoading: true,
+      parentFolderId
     }
 
     setFolderPopups(prev => [...prev, newPopup])
@@ -546,32 +556,87 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   // Handle hover leave to close popup
   const handleEyeHoverLeave = (folderId: string) => {
+    console.log('[handleEyeHoverLeave] Leaving folder popup:', folderId)
+
     // Close popup for this folder after a short delay
     const timeout = setTimeout(() => {
-      setFolderPopups(prev => prev.filter(p => p.folderId !== folderId))
+      console.log('[handleEyeHoverLeave] Timeout fired - closing popup:', folderId)
+      setFolderPopups(prev => {
+        const remaining = prev.filter(p => p.folderId !== folderId)
+        console.log('[handleEyeHoverLeave] Remaining popups:', remaining.length)
+        // Only reset isHoveringPanel if NO popups remain
+        if (remaining.length === 0) {
+          console.log('[handleEyeHoverLeave] No popups left - resetting isHoveringPanel')
+          setIsHoveringPanel(false)
+        }
+        return remaining
+      })
     }, 300) // 300ms delay before closing
 
     hoverTimeoutRef.current.set(folderId, timeout)
 
-    // Also close the panel if not hovering it
-    if (!isHoveringPanel) {
-      panelHoverTimeoutRef.current = setTimeout(() => {
+    // Only schedule panel close if we're leaving ALL popups (not moving to another one)
+    // The timeout will be cancelled if we enter another popup or the panel itself
+    const panelTimeout = setTimeout(() => {
+      console.log('[handleEyeHoverLeave] Panel timeout fired - checking if should close')
+      // Check if there are still popups open before closing panel
+      if (folderPopupsRef.current.length === 0 && !isHoveringPanel) {
+        console.log('[handleEyeHoverLeave] Closing panel - no popups and not hovering')
         setActivePanel(null)
-      }, 200)
+      } else {
+        console.log('[handleEyeHoverLeave] NOT closing panel - popups:', folderPopupsRef.current.length, 'hovering:', isHoveringPanel)
+      }
+    }, 500) // Longer delay to allow moving to another popup or back to panel
+
+    if (panelHoverTimeoutRef.current) {
+      clearTimeout(panelHoverTimeoutRef.current)
     }
+    panelHoverTimeoutRef.current = panelTimeout
   }
 
   // Cancel close timeout when hovering over popup
   const handlePopupHover = (folderId: string) => {
+    console.log('[handlePopupHover] Hovering popup:', folderId, 'Total popups:', folderPopupsRef.current.length)
+
+    // Cancel timeout for this popup
     const timeout = hoverTimeoutRef.current.get(folderId)
     if (timeout) {
+      console.log('[handlePopupHover] Cancelling close timeout for popup:', folderId)
       clearTimeout(timeout)
       hoverTimeoutRef.current.delete(folderId)
     }
-    // Also cancel panel close timeout to keep Organization panel open
+
+    // ALWAYS cancel panel close timeout to keep Organization panel open
     if (panelHoverTimeoutRef.current) {
+      console.log('[handlePopupHover] Cancelling panel close timeout')
       clearTimeout(panelHoverTimeoutRef.current)
       panelHoverTimeoutRef.current = null
+    }
+
+    // Set isHoveringPanel to true to prevent panel from closing
+    // (popups are considered part of the panel hover state)
+    console.log('[handlePopupHover] Setting isHoveringPanel = true')
+    setIsHoveringPanel(true)
+
+    // Find this popup and cancel close timeouts for entire parent chain
+    const currentPopup = folderPopupsRef.current.find(p => p.folderId === folderId)
+    if (currentPopup?.parentFolderId) {
+      console.log('[handlePopupHover] Found parent:', currentPopup.parentFolderId)
+      // Recursively cancel parent timeouts
+      const cancelParentTimeouts = (parentFolderId: string) => {
+        console.log('[handlePopupHover] Cancelling timeout for parent:', parentFolderId)
+        const parentTimeout = hoverTimeoutRef.current.get(parentFolderId)
+        if (parentTimeout) {
+          clearTimeout(parentTimeout)
+          hoverTimeoutRef.current.delete(parentFolderId)
+        }
+        // Check if parent also has a parent
+        const parentPopup = folderPopupsRef.current.find(p => p.folderId === parentFolderId)
+        if (parentPopup?.parentFolderId) {
+          cancelParentTimeouts(parentPopup.parentFolderId)
+        }
+      }
+      cancelParentTimeouts(currentPopup.parentFolderId)
     }
   }
 
@@ -718,7 +783,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   // Handle note preview hover
-  const handleNotePreviewHover = async (noteId: string, event: React.MouseEvent) => {
+  const handleNotePreviewHover = async (noteId: string, event: React.MouseEvent, sourceFolderId?: string) => {
     // Clear existing timeouts
     if (previewTimeoutRef.current) {
       clearTimeout(previewTimeoutRef.current)
@@ -748,28 +813,14 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         const content = data?.item?.content
         const contentText = data?.item?.contentText
 
-        // Extract preview text
-        let previewText = ''
-        if (contentText) {
-          previewText = contentText.substring(0, 200)
-        } else if (typeof content === 'string') {
-          previewText = content.substring(0, 200)
-        } else if (content?.type === 'doc') {
-          // Extract text from ProseMirror JSON
-          const extractText = (node: any): string => {
-            if (node.text) return node.text
-            if (node.content) {
-              return node.content.map(extractText).join(' ')
-            }
-            return ''
-          }
-          previewText = extractText(content).substring(0, 200)
-        }
+        // Extract preview text preserving newlines for multi-line display
+        const previewText = buildMultilinePreview(content, contentText || '', 200)
 
         setNotePreview({
           noteId,
           content: previewText || 'No content yet',
-          position
+          position,
+          sourceFolderId
         })
       } catch (error) {
         console.error('[FloatingToolbar] Failed to fetch note preview:', error)
@@ -803,6 +854,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     if (panelHoverTimeoutRef.current) {
       clearTimeout(panelHoverTimeoutRef.current)
       panelHoverTimeoutRef.current = null
+    }
+    // Set isHoveringPanel to true to prevent panel from closing
+    setIsHoveringPanel(true)
+    // Cancel folder popup close timeout if preview came from a folder popup
+    if (notePreview?.sourceFolderId) {
+      const timeout = hoverTimeoutRef.current.get(notePreview.sourceFolderId)
+      if (timeout) {
+        clearTimeout(timeout)
+        hoverTimeoutRef.current.delete(notePreview.sourceFolderId)
+      }
     }
   }
 
@@ -877,7 +938,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     onClose()
                   }}
                   className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                  title="Hover to preview, click to open"
                 >
                   <Eye className="w-3.5 h-3.5 text-blue-400" />
                 </div>
@@ -1429,25 +1489,54 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
               <div className="text-center py-4 text-white/60 text-sm">Empty folder</div>
             ) : (
               popup.children.map((child) => (
-                <button
-                  key={child.id}
-                  className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
-                  onClick={() => {
-                    if (child.type === 'note') {
-                      onSelectNote?.(child.id)
-                      onClose()
-                      closeAllPopups()
-                    }
-                  }}
-                >
-                  <div className="text-sm font-medium flex items-center gap-2">
-                    <span>{child.icon}</span>
-                    <span>{child.name}</span>
-                  </div>
-                  <div className="mt-1 text-xs text-white/60">
-                    {child.type === 'folder' ? 'Folder' : 'Note'}
-                  </div>
-                </button>
+                <div key={child.id} className="group relative">
+                  <button
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
+                    onDoubleClick={() => {
+                      if (child.type === 'note') {
+                        onSelectNote?.(child.id)
+                        onClose()
+                        closeAllPopups()
+                      }
+                    }}
+                  >
+                    <div className="text-sm font-medium flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <span>{child.icon}</span>
+                        <span className="truncate">{child.name}</span>
+                      </div>
+                      {child.type === 'note' ? (
+                        <div
+                          onMouseEnter={(e) => handleNotePreviewHover(child.id, e, popup.folderId)}
+                          onMouseLeave={handleNotePreviewHoverLeave}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectNote?.(child.id)
+                            onClose()
+                            closeAllPopups()
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
+                          title="Hover to preview, click to open"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-blue-400" />
+                        </div>
+                      ) : child.type === 'folder' ? (
+                        <div
+                          onMouseEnter={(e) => handleEyeHover(child, e, popup.folderId)}
+                          onMouseLeave={() => handleEyeHoverLeave(child.id)}
+                          onClick={(e) => handleEyeClick(child, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
+                          title="Open folder"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-blue-400" />
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 text-xs text-white/60">
+                      {child.type === 'folder' ? 'Folder' : 'Note'}
+                    </div>
+                  </button>
+                </div>
               ))
             )}
           </div>
@@ -1468,7 +1557,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           onMouseLeave={handlePreviewTooltipLeave}
         >
           <div className="text-xs text-blue-400 font-semibold mb-1">Preview</div>
-          <div className="text-sm text-white/90 line-clamp-6">
+          <div className="text-sm text-white/90 whitespace-pre-line leading-relaxed line-clamp-6">
             {isLoadingPreview ? 'Loading...' : notePreview.content}
           </div>
         </div>

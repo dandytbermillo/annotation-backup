@@ -9,7 +9,7 @@ import { useLayer } from '@/components/canvas/layer-provider';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { buildBranchPreview } from '@/lib/utils/branch-preview';
+import { buildMultilinePreview } from '@/lib/utils/branch-preview';
 import { debugLog } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
@@ -55,6 +55,7 @@ interface PopupOverlayProps {
   onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
   onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
   onPopupHover?: (folderId: string, parentPopupId?: string) => void; // Cancel close timeout when hovering popup
+  onSelectNote?: (noteId: string) => void; // Open note on canvas when eye icon clicked or double-clicked
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
@@ -106,6 +107,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onHoverFolder,
   onLeaveFolder,
   onPopupHover,
+  onSelectNote,
   sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
@@ -151,7 +153,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const data = await response.json();
       const content = data?.item?.content ?? null;
       const contentText = data?.item?.contentText ?? '';
-      const previewText = buildBranchPreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
+      const previewText = buildMultilinePreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
 
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_success', {
@@ -401,6 +403,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             triggerPreview();
           }
         }}
+        onDoubleClick={() => {
+          // Double-click on note opens it on canvas
+          if (noteLike && onSelectNote) {
+            onSelectNote(child.id);
+          }
+        }}
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {folderLike ? (
@@ -427,6 +435,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     className="p-1 rounded hover:bg-gray-700 text-gray-300"
                     onMouseEnter={triggerPreview}
                     onFocus={triggerPreview}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectNote) {
+                        onSelectNote(child.id);
+                      }
+                    }}
                   >
                     <Eye className="w-4 h-4" />
                   </button>

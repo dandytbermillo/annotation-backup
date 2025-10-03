@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+import { extractFullText } from '@/lib/utils/branch-preview'
 
 const pool = serverPool
 
@@ -117,10 +118,12 @@ export async function POST(request: NextRequest) {
                 console.warn(`[queue/flush] Non-sequential version (direct op): base=${baseVersion}, version=${version}`)
               }
 
+              const documentText = extractFullText(contentJson)
+
               await pool.query(
-                `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
-                 VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-                [noteKey, panelKey, contentString, version, workspaceId]
+                `INSERT INTO document_saves (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
+                 VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())`,
+                [noteKey, panelKey, contentString, documentText, version, workspaceId]
               )
               results.push({ noteId, panelId, status: 'success', version })
               break
@@ -326,10 +329,12 @@ async function processQueueOperation(client: any, row: any, workspaceId: string)
         console.warn(`[queue/flush] Non-sequential version (queue op): base=${baseVersion}, version=${version}`)
       }
 
+      const documentText = extractFullText(contentJson)
+
       await client.query(
-        `INSERT INTO document_saves (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())`,
-        [noteId, panelId, contentString, version, workspaceId]
+        `INSERT INTO document_saves (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())`,
+        [noteId, panelId, contentString, documentText, version, workspaceId]
       )
       return
     }

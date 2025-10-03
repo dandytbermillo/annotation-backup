@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+import { extractFullText } from '@/lib/utils/branch-preview'
 
 // Deterministic mapping for non-UUID IDs (slugs) → UUID
 const ID_NAMESPACE = '7b6f9e76-0e6f-4a61-8c8b-0c5e583f2b1a' // keep stable across services
@@ -87,12 +88,14 @@ export async function POST(request: NextRequest) {
         console.warn(`[POST /api/postgres-offline/documents] Non-sequential version: base=${resolvedBase}, version=${version}`)
       }
 
+      const documentText = extractFullText(contentJson)
+
       const inserted = await client.query(
-        `INSERT INTO document_saves 
-         (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+        `INSERT INTO document_saves
+         (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())
          RETURNING id`,
-        [noteKey, normalizedPanelId, JSON.stringify(contentJson), version, workspaceId]
+        [noteKey, normalizedPanelId, JSON.stringify(contentJson), documentText, version, workspaceId]
       )
 
       return { skipped: false, id: inserted.rows[0]?.id }

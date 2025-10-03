@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 import { v5 as uuidv5, validate as validateUuid } from 'uuid'
+import { extractFullText } from '@/lib/utils/branch-preview'
 
 // Ensure Node.js runtime (pg requires Node)
 export const runtime = 'nodejs'
@@ -218,12 +219,15 @@ async function handleBatchSave(operations: any[], logLabel: string): Promise<Bat
         console.warn(`[${logLabel}] Non-sequential version: base=${entry.baseVersion}, version=${entry.version}`)
       }
 
+      // Extract plain text from content for search and preview
+      const documentText = extractFullText(entry.contentJson)
+
       const inserted = await client.query(
-        `INSERT INTO document_saves 
-         (note_id, panel_id, content, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, $5, NOW())
+        `INSERT INTO document_saves
+         (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
+         VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())
          RETURNING id`,
-        [entry.noteKey, entry.panelKey, contentString, entry.version, workspaceId]
+        [entry.noteKey, entry.panelKey, contentString, documentText, entry.version, workspaceId]
       )
 
       const operationResult: SaveResult = {

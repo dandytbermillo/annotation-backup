@@ -104,6 +104,23 @@ function AnnotationAppContent() {
     prevPopupCountRef.current = currentCount
   }, [overlayPopups.length, multiLayerEnabled, layerContext])
 
+  // Clear pending hover timeouts when switching TO notes layer (prevent new popups)
+  // But keep existing popups in state so they can be restored when switching back
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+
+    // When user switches to notes layer, clear pending timeouts but keep popup state
+    if (layerContext.activeLayer === 'notes') {
+      console.log('[AnnotationApp] Switched to notes layer, clearing pending hover timeouts')
+
+      // Clear all pending timeouts to prevent new popups from appearing
+      hoverTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
+      hoverTimeoutRef.current.clear()
+      closeTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
+      closeTimeoutRef.current.clear()
+    }
+  }, [layerContext?.activeLayer, multiLayerEnabled, layerContext])
+
   // Cleanup all timeouts on unmount
   useEffect(() => {
     return () => {
@@ -651,8 +668,9 @@ function AnnotationAppContent() {
         )}
       </div>
 
-      {/* Overlay canvas popups - persists independently of toolbar */}
-      {multiLayerEnabled && adaptedPopups && (
+      {/* Overlay canvas popups - only visible when popups layer is active */}
+      {/* Hidden when notes layer is active, but state is preserved for restoration */}
+      {multiLayerEnabled && adaptedPopups && layerContext?.activeLayer === 'popups' && (
         <PopupOverlay
           popups={adaptedPopups}
           draggingPopup={draggingPopup}
@@ -661,6 +679,7 @@ function AnnotationAppContent() {
           onHoverFolder={handleFolderHover}
           onLeaveFolder={handleFolderHoverLeave}
           onPopupHover={handlePopupHover}
+          onSelectNote={handleNoteSelect}
           sidebarOpen={false}
         />
       )}
