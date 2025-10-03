@@ -821,9 +821,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             <button
               key={item.id}
               className="group w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
-              onDoubleClick={() => {
+              onClick={() => {
                 onSelectNote?.(item.id)
-                onClose()
+                onClose() // Close after selection - standard UX pattern
               }}
             >
               <div className="text-sm font-medium flex items-center justify-between gap-2">
@@ -831,13 +831,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 <div
                   onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
                   onMouseLeave={handleNotePreviewHoverLeave}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectNote?.(item.id)
-                    onClose()
-                  }}
+                  onClick={(e) => e.stopPropagation()}
                   className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                  title="Hover to preview, click to open"
+                  title="Hover to preview"
                 >
                   <Eye className="w-3.5 h-3.5 text-blue-400" />
                 </div>
@@ -907,11 +903,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     onClick={() => {
                       if (isFolder) {
                         toggleFolder(item.id)
-                      }
-                      // Single click does nothing for notes (reserved for multi-select)
-                    }}
-                    onDoubleClick={() => {
-                      if (!isFolder) {
+                      } else {
                         onSelectNote?.(item.id)
                         onClose()
                       }
@@ -937,13 +929,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         <div
                           onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
                           onMouseLeave={handleNotePreviewHoverLeave}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onSelectNote?.(item.id)
-                            onClose()
-                          }}
                           className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                          title="Hover to preview, click to open"
+                          title="Hover to preview"
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-400" />
                         </div>

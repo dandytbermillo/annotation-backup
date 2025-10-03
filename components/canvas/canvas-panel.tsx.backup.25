@@ -902,21 +902,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     console.log('[SaveAs] showSaveAsDialog changed to:', showSaveAsDialog)
     if (showSaveAsDialog) {
       console.log('[SaveAs] Loading dialog data...')
-
-      // Generate a fresh name with current timestamp
-      const timestamp = new Date().toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      })
-      const defaultName = `New Note - ${timestamp}`
-
-      setSaveAsNoteName(defaultName)
+      setSaveAsNoteName(currentBranch.title || "Untitled")
       fetchSaveAsFolders()
     }
-  }, [showSaveAsDialog, fetchSaveAsFolders])
+  }, [showSaveAsDialog, currentBranch.title, fetchSaveAsFolders])
 
   // Handle Save As - creates a new note with the branch content
   const createSaveAsNote = async () => {
@@ -954,32 +943,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             })
           })
           console.log('[CanvasPanel] Content copied to new note successfully')
-
-          // Update the current panel to reflect the new note
-          dataStore.update(panelId, {
-            ...currentBranch,
-            title: saveAsNoteName.trim() || "Untitled",
-            noteId: result.noteId
-          })
-
-          // Update the note name in the database so it appears correctly in recent/organization
-          if (currentNoteId) {
-            try {
-              await fetch(`/api/items/${result.noteId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  name: saveAsNoteName.trim() || "Untitled"
-                })
-              })
-              console.log('[CanvasPanel] Note name updated in database')
-            } catch (updateError) {
-              console.error('[CanvasPanel] Failed to update note name in database:', updateError)
-            }
-          }
-
-          // Force re-render to show updated title
-          dispatch({ type: "BRANCH_UPDATED" })
 
           alert(`Note "${saveAsNoteName}" created successfully with content!`)
         } catch (saveError) {

@@ -146,17 +146,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const popupIdCounter = useRef(0)
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
-  // Note preview state
-  const [notePreview, setNotePreview] = useState<{
-    noteId: string
-    content: string
-    position: { x: number; y: number }
-  } | null>(null)
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
-  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const previewCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const isHoveringPreviewRef = useRef(false)
-
   // Layer context for overlay canvas
   const layerContext = useLayer()
   const multiLayerEnabled = true
@@ -512,13 +501,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }, 300) // 300ms delay before closing
 
     hoverTimeoutRef.current.set(folderId, timeout)
-
-    // Also close the panel if not hovering it
-    if (!isHoveringPanel) {
-      panelHoverTimeoutRef.current = setTimeout(() => {
-        setActivePanel(null)
-      }, 200)
-    }
   }
 
   // Cancel close timeout when hovering over popup
@@ -527,11 +509,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     if (timeout) {
       clearTimeout(timeout)
       hoverTimeoutRef.current.delete(folderId)
-    }
-    // Also cancel panel close timeout to keep Organization panel open
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
     }
   }
 
@@ -677,107 +654,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
   }
 
-  // Handle note preview hover
-  const handleNotePreviewHover = async (noteId: string, event: React.MouseEvent) => {
-    // Clear existing timeouts
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-    if (previewCloseTimeoutRef.current) {
-      clearTimeout(previewCloseTimeoutRef.current)
-    }
-
-    // Reset hover state
-    isHoveringPreviewRef.current = false
-
-    // Capture position immediately before async operation
-    const rect = event.currentTarget.getBoundingClientRect()
-    const position = {
-      x: rect.right + 10,
-      y: rect.top
-    }
-
-    // Set timeout to show preview after 500ms
-    previewTimeoutRef.current = setTimeout(async () => {
-      setIsLoadingPreview(true)
-      try {
-        const response = await fetch(`/api/items/${noteId}`)
-        if (!response.ok) throw new Error('Failed to fetch note')
-
-        const data = await response.json()
-        const content = data?.item?.content
-        const contentText = data?.item?.contentText
-
-        // Extract preview text
-        let previewText = ''
-        if (contentText) {
-          previewText = contentText.substring(0, 200)
-        } else if (typeof content === 'string') {
-          previewText = content.substring(0, 200)
-        } else if (content?.type === 'doc') {
-          // Extract text from ProseMirror JSON
-          const extractText = (node: any): string => {
-            if (node.text) return node.text
-            if (node.content) {
-              return node.content.map(extractText).join(' ')
-            }
-            return ''
-          }
-          previewText = extractText(content).substring(0, 200)
-        }
-
-        setNotePreview({
-          noteId,
-          content: previewText || 'No content yet',
-          position
-        })
-      } catch (error) {
-        console.error('[FloatingToolbar] Failed to fetch note preview:', error)
-      } finally {
-        setIsLoadingPreview(false)
-      }
-    }, 500)
-  }
-
-  // Handle note preview hover leave
-  const handleNotePreviewHoverLeave = () => {
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-
-    // Delay closing to allow moving mouse to preview tooltip
-    previewCloseTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPreviewRef.current) {
-        setNotePreview(null)
-      }
-    }, 100)
-  }
-
-  // Handle preview tooltip hover
-  const handlePreviewTooltipEnter = () => {
-    isHoveringPreviewRef.current = true
-    if (previewCloseTimeoutRef.current) {
-      clearTimeout(previewCloseTimeoutRef.current)
-    }
-    // Also cancel panel close timeout to keep Organization panel open
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-      panelHoverTimeoutRef.current = null
-    }
-  }
-
-  // Handle preview tooltip leave
-  const handlePreviewTooltipLeave = () => {
-    isHoveringPreviewRef.current = false
-    setNotePreview(null)
-    // Close the panel after leaving preview tooltip if not hovering panel
-    if (!isHoveringPanel) {
-      panelHoverTimeoutRef.current = setTimeout(() => {
-        setActivePanel(null)
-      }, 200)
-    }
-  }
-
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
@@ -820,28 +696,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           recentNotes.map((item) => (
             <button
               key={item.id}
-              className="group w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
-              onDoubleClick={() => {
+              className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
+              onClick={() => {
                 onSelectNote?.(item.id)
-                onClose()
+                onClose() // Close after selection - standard UX pattern
               }}
             >
-              <div className="text-sm font-medium flex items-center justify-between gap-2">
-                <span className="flex-1">{item.title}</span>
-                <div
-                  onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
-                  onMouseLeave={handleNotePreviewHoverLeave}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectNote?.(item.id)
-                    onClose()
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                  title="Hover to preview, click to open"
-                >
-                  <Eye className="w-3.5 h-3.5 text-blue-400" />
-                </div>
-              </div>
+              <div className="text-sm font-medium">{item.title}</div>
               <div className="mt-1 flex justify-between text-xs text-white/60">
                 <span>{item.metaLeft}</span>
                 <span>{item.metaRight}</span>
@@ -889,7 +750,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                   {/* Chevron for folders */}
                   {isFolder && hasChildren ? (
                     <button
-                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-blue-400 hover:text-blue-300 transition font-bold"
+                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-white/60 hover:text-white transition"
                       onClick={(e) => {
                         e.stopPropagation()
                         toggleFolder(item.id)
@@ -907,11 +768,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     onClick={() => {
                       if (isFolder) {
                         toggleFolder(item.id)
-                      }
-                      // Single click does nothing for notes (reserved for multi-select)
-                    }}
-                    onDoubleClick={() => {
-                      if (!isFolder) {
+                      } else {
                         onSelectNote?.(item.id)
                         onClose()
                       }
@@ -922,8 +779,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         <span>{item.icon}</span>
                         <span>{item.name}</span>
                       </div>
-                      {/* Eye icon - different handlers for folders vs notes */}
-                      {isFolder ? (
+                      {/* Eye icon for folders - hover shows tooltip, click activates overlay */}
+                      {isFolder && (
                         <div
                           onMouseEnter={(e) => handleEyeHover(item, e)}
                           onMouseLeave={() => handleEyeHoverLeave(item.id)}
@@ -932,20 +789,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                           title="Hover to preview, click to pin"
                         >
                           <Eye className="w-3.5 h-3.5 text-white/40" />
-                        </div>
-                      ) : (
-                        <div
-                          onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
-                          onMouseLeave={handleNotePreviewHoverLeave}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onSelectNote?.(item.id)
-                            onClose()
-                          }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                          title="Hover to preview, click to open"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-blue-400" />
                         </div>
                       )}
                     </div>
@@ -1293,7 +1136,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           ⋮
         </div>
         <button
-          className="rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:from-blue-400 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="rounded-full bg-gradient-to-r from-blue-400 to-blue-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-lg hover:from-blue-300 hover:to-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleCreateNewNote}
           disabled={isCreatingNote}
         >
@@ -1399,26 +1242,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           </div>
         </div>
       ))}
-
-      {/* Note preview tooltip */}
-      {notePreview && (
-        <div
-          className="fixed px-4 py-3 rounded-xl border border-blue-500/30 bg-gray-900 shadow-2xl max-w-sm"
-          style={{
-            backgroundColor: 'rgba(17, 24, 39, 0.98)',
-            left: `${notePreview.position.x}px`,
-            top: `${notePreview.position.y}px`,
-            zIndex: 10000
-          }}
-          onMouseEnter={handlePreviewTooltipEnter}
-          onMouseLeave={handlePreviewTooltipLeave}
-        >
-          <div className="text-xs text-blue-400 font-semibold mb-1">Preview</div>
-          <div className="text-sm text-white/90 line-clamp-6">
-            {isLoadingPreview ? 'Loading...' : notePreview.content}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

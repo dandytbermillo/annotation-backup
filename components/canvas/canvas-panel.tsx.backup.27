@@ -962,22 +962,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             noteId: result.noteId
           })
 
-          // Update the note name in the database so it appears correctly in recent/organization
-          if (currentNoteId) {
-            try {
-              await fetch(`/api/items/${result.noteId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  name: saveAsNoteName.trim() || "Untitled"
-                })
-              })
-              console.log('[CanvasPanel] Note name updated in database')
-            } catch (updateError) {
-              console.error('[CanvasPanel] Failed to update note name in database:', updateError)
-            }
-          }
-
           // Force re-render to show updated title
           dispatch({ type: "BRANCH_UPDATED" })
 

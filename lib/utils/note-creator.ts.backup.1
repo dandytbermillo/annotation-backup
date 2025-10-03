@@ -78,11 +78,7 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
 
     // Track the new note as recently accessed
     try {
-      await fetch('/api/items/recent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId: noteId })
-      })
+      await fetch(`/api/items/${noteId}/access`, { method: 'POST' })
     } catch (err) {
       console.warn('[createNote] Failed to track note access:', err)
     }
