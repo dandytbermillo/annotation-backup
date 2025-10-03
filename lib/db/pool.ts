@@ -1,4 +1,9 @@
-import { Pool } from 'pg';
+import { Pool, types } from 'pg';
+
+// Configure pg to parse TIMESTAMP and TIMESTAMPTZ as UTC strings
+// Type 1114 = TIMESTAMP, Type 1184 = TIMESTAMPTZ
+types.setTypeParser(1114, (str) => str); // Return TIMESTAMP as string
+types.setTypeParser(1184, (str) => str); // Return TIMESTAMPTZ as string
 
 /**
  * Shared PostgreSQL connection pool for all server-side operations.

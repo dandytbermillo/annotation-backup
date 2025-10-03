@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-03 05:45Z] 606e67d: added toogle switch for note and overlay popup canvas
 - commit [2025-10-03 04:46Z] 909028d: added preview and view functionality for the files and folders
 - commit [2025-10-03 01:07Z] 6ca5f5e: improving the save as functionality
 - commit [2025-10-02 22:27Z] 2406f26: refining the floating toolbar buttons
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-02 04:26Z] 77ea852: fixed undraggable popup when open from organization panel
 - commit [2025-10-02 04:10Z] e20245f: fixing the nondraggable popup
 - commit [2025-10-02 03:54Z] 7ecfc80: making sure the floating toolbar is independent of canvases
-- commit [2025-10-02 01:57Z] a595ef5: fixing the disappearance of the poups in the overlay canvas whlicked
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-03 04:46Z] 909028d: added preview and view functionality for the files and folders
+- commit [2025-10-03 05:45Z] 606e67d: added toogle switch for note and overlay popup canvas

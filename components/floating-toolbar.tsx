@@ -260,21 +260,23 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
         // Transform API data to match our UI format
         const formattedNotes: RecentNote[] = items.map((item: any) => {
-          const lastAccessed = new Date(item.lastAccessedAt || '')
-          console.log('[FloatingToolbar] Recent note:', {
-            name: item.name,
-            lastAccessedAt: item.lastAccessedAt,
-            parsedDate: lastAccessed,
-            isValid: !isNaN(lastAccessed.getTime()),
-            now: new Date(),
-            timeAgo: Date.now() - lastAccessed.getTime()
-          })
-
-          // Use absolute value to handle timezone issues (future timestamps)
-          const timeAgo = Math.abs(Date.now() - lastAccessed.getTime())
+          // Append 'Z' to force UTC parsing (database returns UTC timestamps without timezone marker)
+          const lastAccessed = new Date(item.lastAccessedAt + 'Z')
+          const now = Date.now()
+          const timeAgo = now - lastAccessed.getTime()
           const minutes = Math.floor(timeAgo / (1000 * 60))
           const hours = Math.floor(minutes / 60)
           const days = Math.floor(hours / 24)
+
+          console.log('[Time Debug]', {
+            name: item.name,
+            lastAccessedAt: item.lastAccessedAt,
+            parsed: lastAccessed.toISOString(),
+            timeAgo_ms: timeAgo,
+            minutes,
+            hours,
+            days
+          })
 
           let timeText = ''
           if (days > 0) {

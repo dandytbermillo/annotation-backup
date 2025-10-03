@@ -188,9 +188,9 @@ export async function POST(request: NextRequest) {
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
       ) 
       ON CONFLICT (workspace_id, path) WHERE deleted_at IS NULL
-      DO UPDATE SET 
-        updated_at = NOW(),
-        last_accessed_at = NOW()
+      DO UPDATE SET
+        updated_at = (NOW() AT TIME ZONE 'UTC'),
+        last_accessed_at = (NOW() AT TIME ZONE 'UTC')
       RETURNING *
     `
     
@@ -259,13 +259,15 @@ export async function GET_RECENT(request: NextRequest) {
     const limit = parseInt(request.nextUrl.searchParams.get('limit') || '10')
     
     const query = `
-      SELECT 
+      SELECT
         id, type, parent_id, path, name, slug, position,
-        metadata, icon, color, last_accessed_at,
-        created_at, updated_at
-      FROM items 
-      WHERE type = 'note' 
-        AND deleted_at IS NULL 
+        metadata, icon, color,
+        last_accessed_at AT TIME ZONE 'UTC' as last_accessed_at,
+        created_at AT TIME ZONE 'UTC' as created_at,
+        updated_at AT TIME ZONE 'UTC' as updated_at
+      FROM items
+      WHERE type = 'note'
+        AND deleted_at IS NULL
         AND last_accessed_at IS NOT NULL
       ORDER BY last_accessed_at DESC
       LIMIT $1

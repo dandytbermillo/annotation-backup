@@ -82,19 +82,26 @@ function AnnotationAppContent() {
     return adapted
   }, [overlayPopups, multiLayerEnabled, layerContext])
 
-  // Auto-switch to popups layer when popups are created
-  // (but don't auto-switch back to notes - let user control manually)
+  // Track previous popup count to detect when NEW popups are added
+  const prevPopupCountRef = useRef(0)
+
+  // Auto-switch to popups layer ONLY when NEW popups are created
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) return
 
-    // Only auto-switch TO popups when popups are created
-    if (overlayPopups.length > 0) {
+    const currentCount = overlayPopups.length
+    const previousCount = prevPopupCountRef.current
+
+    // Only auto-switch when a new popup is ADDED (count increases)
+    if (currentCount > previousCount && currentCount > 0) {
       if (layerContext.activeLayer !== 'popups') {
+        console.log('[AnnotationApp] New popup created, auto-switching to popups layer')
         layerContext.setActiveLayer('popups')
       }
     }
-    // Removed: Don't auto-switch back to notes when popups are closed
-    // This allows manual layer toggle to work properly
+
+    // Update the ref for next comparison
+    prevPopupCountRef.current = currentCount
   }, [overlayPopups.length, multiLayerEnabled, layerContext])
 
   // Cleanup all timeouts on unmount
