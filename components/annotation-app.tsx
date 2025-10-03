@@ -8,6 +8,14 @@ import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
+import {
+  OverlayLayoutAdapter,
+  OverlayLayoutConflictError,
+  OVERLAY_LAYOUT_SCHEMA_VERSION,
+  type OverlayLayoutPayload,
+  type OverlayPopupDescriptor,
+  isOverlayPersistenceEnabled,
+} from "@/lib/adapters/overlay-layout-adapter"
 
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
@@ -44,6 +52,27 @@ function AnnotationAppContent() {
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
+  // Persistence state for overlay layout
+  const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
+  const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
+  const layoutLoadedRef = useRef(false)
+  const layoutRevisionRef = useRef<string | null>(null)
+  const lastSavedLayoutHashRef = useRef<string | null>(null)
+  const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
+  const saveInFlightRef = useRef(false)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Debug: Log persistence state on mount
+  useEffect(() => {
+    console.log('[AnnotationApp] overlayPersistenceEnabled =', overlayPersistenceEnabled)
+  }, [overlayPersistenceEnabled])
+
+  // Initialize overlay adapter
+  useEffect(() => {
+    if (!overlayPersistenceEnabled) return
+    overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey: 'default' })
+  }, [overlayPersistenceEnabled])
+
   // Force re-center trigger - increment to force effect to run
   const [centerTrigger, setCenterTrigger] = useState(0)
   
@@ -62,8 +91,15 @@ function AnnotationAppContent() {
   const layerContext = useLayer()
 
   // Adapt overlay popups for PopupOverlay component
+  // Only show popups when popups layer is active, otherwise pass empty Map
   const adaptedPopups = useMemo(() => {
     if (!multiLayerEnabled || !layerContext) return null
+
+    // When notes layer is active, return empty Map to hide popups
+    // but keep PopupOverlay component mounted to avoid re-initialization
+    if (layerContext.activeLayer === 'notes') {
+      return new Map()
+    }
 
     const adapted = new Map()
     overlayPopups.forEach((popup) => {
@@ -80,7 +116,7 @@ function AnnotationAppContent() {
       })
     })
     return adapted
-  }, [overlayPopups, multiLayerEnabled, layerContext])
+  }, [overlayPopups, multiLayerEnabled, layerContext, layerContext?.activeLayer])
 
   // Track previous popup count to detect when NEW popups are added
   const prevPopupCountRef = useRef(0)
@@ -196,7 +232,290 @@ function AnnotationAppContent() {
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
     }
   }, [draggingPopup, layerContext]) // Stable during drag - only refs used inside
-  
+
+  // Build layout payload from current overlayPopups state
+  const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
+    const descriptors: OverlayPopupDescriptor[] = []
+    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+
+    overlayPopups.forEach(popup => {
+      const canvasPos = popup.canvasPosition
+      if (!canvasPos) return
+
+      const x = Number.isFinite(canvasPos.x) ? canvasPos.x : 0
+      const y = Number.isFinite(canvasPos.y) ? canvasPos.y : 0
+
+      const descriptor: OverlayPopupDescriptor = {
+        id: popup.id,
+        folderId: popup.folderId || null,
+        parentId: popup.parentPopupId || null,
+        canvasPosition: { x, y },
+        level: popup.level || 0,
+      }
+
+      descriptors.push(descriptor)
+    })
+
+    const payload: OverlayLayoutPayload = {
+      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: descriptors,
+      inspectors: [],
+      lastSavedAt: new Date().toISOString(),
+    }
+
+    const hash = JSON.stringify({
+      schemaVersion: payload.schemaVersion,
+      popups: payload.popups,
+      inspectors: payload.inspectors,
+    })
+
+    return { payload, hash }
+  }, [overlayPopups, layerContext?.transforms.popups])
+
+  // Apply layout from database
+  const applyOverlayLayout = useCallback((layout: OverlayLayoutPayload) => {
+    const sanitizedPopups = Array.isArray(layout.popups) ? layout.popups : []
+    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+
+    const coreHash = JSON.stringify({
+      schemaVersion: layout.schemaVersion || OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: sanitizedPopups,
+      inspectors: [],
+    })
+
+    lastSavedLayoutHashRef.current = coreHash
+    layoutLoadedRef.current = true
+
+    if (sanitizedPopups.length === 0) {
+      setOverlayPopups([])
+      return
+    }
+
+    // Convert descriptors back to OverlayPopup objects
+    const restoredPopups: OverlayPopup[] = sanitizedPopups.map(descriptor => {
+      const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, sharedTransform)
+
+      return {
+        id: descriptor.id,
+        folderId: descriptor.folderId || '',
+        folderName: '', // Will be loaded when needed
+        folder: null, // Will be loaded when needed
+        position: screenPosition,
+        canvasPosition: descriptor.canvasPosition,
+        children: [],
+        isLoading: Boolean(descriptor.folderId),
+        isPersistent: true,
+        level: descriptor.level || 0,
+        parentPopupId: descriptor.parentId || undefined,
+      }
+    })
+
+    setOverlayPopups(restoredPopups)
+
+    // Fetch folder data for each popup
+    restoredPopups.forEach(async (popup) => {
+      if (!popup.folderId) return
+
+      try {
+        const response = await fetch(`/api/items/${popup.folderId}`)
+        if (!response.ok) return
+
+        const folderData = await response.json()
+
+        // Fetch children
+        const childrenResponse = await fetch(`/api/items?parentId=${popup.folderId}`)
+        if (!childrenResponse.ok) return
+
+        const childrenData = await childrenResponse.json()
+        const children = (childrenData.items || []).map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color,
+          hasChildren: item.type === 'folder',
+          level: popup.level + 1,
+          children: [],
+          parentId: item.parentId,
+        }))
+
+        setOverlayPopups(prev =>
+          prev.map(p =>
+            p.id === popup.id
+              ? {
+                  ...p,
+                  folderName: folderData.name || '',
+                  folder: {
+                    id: folderData.id,
+                    name: folderData.name,
+                    type: 'folder' as const,
+                    level: popup.level,
+                    children,
+                  },
+                  children,
+                  isLoading: false,
+                }
+              : p
+          )
+        )
+      } catch (error) {
+        console.error(`Failed to load folder ${popup.folderId}:`, error)
+      }
+    })
+  }, [layerContext?.transforms.popups])
+
+  // Flush pending save to database
+  const flushLayoutSave = useCallback(async () => {
+    if (!overlayPersistenceEnabled) return
+
+    const adapter = overlayAdapterRef.current
+    if (!adapter) return
+
+    const pending = pendingLayoutRef.current ?? (() => {
+      const snapshot = buildLayoutPayload()
+      return snapshot.hash === lastSavedLayoutHashRef.current ? null : snapshot
+    })()
+
+    if (!pending) return
+
+    if (saveInFlightRef.current) {
+      pendingLayoutRef.current = pending
+      return
+    }
+
+    pendingLayoutRef.current = null
+    saveInFlightRef.current = true
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+
+    try {
+      const envelope = await adapter.saveLayout({
+        layout: pending.payload,
+        version: pending.payload.schemaVersion,
+        revision: layoutRevisionRef.current,
+      })
+
+      layoutRevisionRef.current = envelope.revision
+      lastSavedLayoutHashRef.current = JSON.stringify({
+        schemaVersion: envelope.layout.schemaVersion,
+        popups: envelope.layout.popups,
+        inspectors: envelope.layout.inspectors,
+      })
+      console.log('[AnnotationApp] Saved overlay layout to database')
+    } catch (error) {
+      if (error instanceof OverlayLayoutConflictError) {
+        const envelope = error.payload
+        layoutRevisionRef.current = envelope.revision
+        lastSavedLayoutHashRef.current = JSON.stringify({
+          schemaVersion: envelope.layout.schemaVersion,
+          popups: envelope.layout.popups,
+          inspectors: envelope.layout.inspectors,
+        })
+        applyOverlayLayout(envelope.layout)
+        console.log('[AnnotationApp] Resolved layout conflict from database')
+      } else {
+        console.error('[AnnotationApp] Failed to save overlay layout:', error)
+        pendingLayoutRef.current = pending
+      }
+    } finally {
+      saveInFlightRef.current = false
+      if (pendingLayoutRef.current) {
+        void flushLayoutSave()
+      }
+    }
+  }, [applyOverlayLayout, buildLayoutPayload, overlayPersistenceEnabled])
+
+  // Schedule save with debounce
+  const scheduleLayoutSave = useCallback(() => {
+    if (!overlayPersistenceEnabled) return
+    if (!overlayAdapterRef.current) return
+
+    const snapshot = buildLayoutPayload()
+
+    if (snapshot.hash === lastSavedLayoutHashRef.current) {
+      pendingLayoutRef.current = null
+      return
+    }
+
+    if (saveInFlightRef.current) {
+      pendingLayoutRef.current = snapshot
+      return
+    }
+
+    pendingLayoutRef.current = snapshot
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      void flushLayoutSave()
+    }, 2500) // 2.5 second debounce
+  }, [buildLayoutPayload, flushLayoutSave, overlayPersistenceEnabled])
+
+  // Load layout from database on mount
+  useEffect(() => {
+    if (!overlayPersistenceEnabled || layoutLoadedRef.current) return
+
+    const adapter = overlayAdapterRef.current
+    if (!adapter) return
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        console.log('[AnnotationApp] Loading overlay layout from database...')
+        const envelope = await adapter.loadLayout()
+        if (cancelled) return
+
+        if (!envelope) {
+          console.log('[AnnotationApp] No saved layout found')
+          layoutLoadedRef.current = true
+          return
+        }
+
+        console.log('[AnnotationApp] Loaded overlay layout from database:', envelope.layout.popups.length, 'popups')
+        layoutRevisionRef.current = envelope.revision
+        lastSavedLayoutHashRef.current = JSON.stringify({
+          schemaVersion: envelope.layout.schemaVersion,
+          popups: envelope.layout.popups,
+          inspectors: envelope.layout.inspectors,
+        })
+        applyOverlayLayout(envelope.layout)
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[AnnotationApp] Failed to load overlay layout:', error)
+        }
+      } finally {
+        if (!cancelled) {
+          layoutLoadedRef.current = true
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [applyOverlayLayout, overlayPersistenceEnabled])
+
+  // Save layout when overlayPopups changes
+  useEffect(() => {
+    console.log('[AnnotationApp] Save effect triggered. overlayPersistenceEnabled =', overlayPersistenceEnabled, 'overlayPopups.length =', overlayPopups.length, 'layoutLoaded =', layoutLoadedRef.current)
+    if (!overlayPersistenceEnabled) {
+      console.log('[AnnotationApp] Save skipped: persistence disabled')
+      return
+    }
+    if (!layoutLoadedRef.current) {
+      console.log('[AnnotationApp] Save skipped: layout not loaded yet')
+      return
+    }
+    console.log('[AnnotationApp] Scheduling save...')
+    scheduleLayoutSave()
+  }, [overlayPopups, overlayPersistenceEnabled, scheduleLayoutSave])
+
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
     if (noteId === selectedNoteId) {
@@ -668,9 +987,9 @@ function AnnotationAppContent() {
         )}
       </div>
 
-      {/* Overlay canvas popups - only visible when popups layer is active */}
-      {/* Hidden when notes layer is active, but state is preserved for restoration */}
-      {multiLayerEnabled && adaptedPopups && layerContext?.activeLayer === 'popups' && (
+      {/* Overlay canvas popups - always mounted to avoid re-initialization */}
+      {/* Shows empty Map when notes layer is active, popups when popups layer is active */}
+      {multiLayerEnabled && adaptedPopups && (
         <PopupOverlay
           popups={adaptedPopups}
           draggingPopup={draggingPopup}

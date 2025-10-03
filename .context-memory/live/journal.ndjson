@@ -285,3 +285,4 @@
 {"ts":"2025-10-03T04:46:57.455Z","type":"commit","sha":"909028dcbebc680603ea53f7094c51367ce721f8","files_changed":14,"message":"added preview and view functionality for the files and folders"}
 {"ts":"2025-10-03T05:45:54.381Z","type":"commit","sha":"606e67d0dc9e683997d049d23d8b61fe05285bb6","files_changed":10,"message":"added toogle switch for note and overlay popup canvas"}
 {"ts":"2025-10-03T18:03:36.226Z","type":"commit","sha":"927f81f0a56a94fbf82397e254d7172fdc7c068b","files_changed":6,"message":"issue about wrong timestamp in recent note section panel fixed"}
+{"ts":"2025-10-03T20:59:44.564Z","type":"commit","sha":"f753d636f31e6480975d1bf2d33df6ebd118caeb","files_changed":11,"message":"refining toggle button in the floating toolbar"}
