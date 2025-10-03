@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-03 04:46Z] 909028d: added preview and view functionality for the files and folders
 - commit [2025-10-03 01:07Z] 6ca5f5e: improving the save as functionality
 - commit [2025-10-02 22:27Z] 2406f26: refining the floating toolbar buttons
 - commit [2025-10-02 18:35Z] 2b8a076: adding branches panel
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-02 04:10Z] e20245f: fixing the nondraggable popup
 - commit [2025-10-02 03:54Z] 7ecfc80: making sure the floating toolbar is independent of canvases
 - commit [2025-10-02 01:57Z] a595ef5: fixing the disappearance of the poups in the overlay canvas whlicked
-- commit [2025-10-02 01:20Z] 515b1a6: adding folder eye icon click event
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-03 01:07Z] 6ca5f5e: improving the save as functionality
+- commit [2025-10-03 04:46Z] 909028d: added preview and view functionality for the files and folders

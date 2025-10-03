@@ -163,28 +163,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const identityTransform = { x: 0, y: 0, scale: 1 }
   const sharedOverlayTransform = layerContext?.transforms.popups || identityTransform
 
-  // Debug: Log when activeLayer changes
-  useEffect(() => {
-    console.log('[FloatingToolbar] Active layer changed to:', layerContext?.activeLayer)
-  }, [layerContext?.activeLayer])
-
-  // Toggle between notes and popups layers (like Tab key)
-  const toggleLayer = () => {
-    console.log('[FloatingToolbar] Toggle layer clicked', {
-      hasLayerContext: !!layerContext,
-      currentLayer: layerContext?.activeLayer,
-      layerContext
-    })
-    if (!layerContext) {
-      console.warn('[FloatingToolbar] No layer context available!')
-      return
-    }
-    const newLayer = layerContext.activeLayer === 'notes' ? 'popups' : 'notes'
-    console.log('[FloatingToolbar] Switching to layer:', newLayer)
-    layerContext.setActiveLayer(newLayer)
-    console.log('[FloatingToolbar] Layer after switch:', layerContext.activeLayer)
-  }
-
   // Execute editor command
   const executeCommand = (command: string, value?: any) => {
     if (!editorRef?.current) {
@@ -247,31 +225,18 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Fetch recent notes from API
   useEffect(() => {
     const fetchRecentNotes = async () => {
-      console.log('=== [FloatingToolbar] Fetching recent notes ===')
       setIsLoadingRecent(true)
       try {
         const response = await fetch('/api/items/recent?limit=5')
         if (!response.ok) throw new Error('Failed to fetch recent notes')
 
         const data = await response.json()
-        console.log('=== [FloatingToolbar] API Response:', data)
         const items = data.items || []
-        console.log('=== [FloatingToolbar] Items count:', items.length)
 
         // Transform API data to match our UI format
         const formattedNotes: RecentNote[] = items.map((item: any) => {
           const lastAccessed = new Date(item.lastAccessedAt || '')
-          console.log('[FloatingToolbar] Recent note:', {
-            name: item.name,
-            lastAccessedAt: item.lastAccessedAt,
-            parsedDate: lastAccessed,
-            isValid: !isNaN(lastAccessed.getTime()),
-            now: new Date(),
-            timeAgo: Date.now() - lastAccessed.getTime()
-          })
-
-          // Use absolute value to handle timezone issues (future timestamps)
-          const timeAgo = Math.abs(Date.now() - lastAccessed.getTime())
+          const timeAgo = Date.now() - lastAccessed.getTime()
           const minutes = Math.floor(timeAgo / (1000 * 60))
           const hours = Math.floor(minutes / 60)
           const days = Math.floor(hours / 24)
@@ -1328,17 +1293,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     >
       {/* Main Toolbar - Fixed position */}
       <div className="flex items-center gap-3 rounded-full border border-white/20 bg-gray-900 px-4 py-3 shadow-2xl" style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}>
-        <button
-          onClick={toggleLayer}
-          className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 select-none transition-all cursor-pointer hover:scale-110"
-          style={{
-            backgroundColor: layerContext?.activeLayer === 'popups' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
-            color: layerContext?.activeLayer === 'popups' ? 'rgb(96, 165, 250)' : 'rgba(255, 255, 255, 0.6)'
-          }}
-          title={`Toggle layer (Tab)\nCurrent: ${layerContext?.activeLayer || 'notes'}`}
-        >
-          {layerContext?.activeLayer === 'popups' ? '🗂️' : '📄'}
-        </button>
+        <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/10 text-white/60 select-none">
+          ⋮
+        </div>
         <button
           className="rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:from-blue-400 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           onClick={handleCreateNewNote}
