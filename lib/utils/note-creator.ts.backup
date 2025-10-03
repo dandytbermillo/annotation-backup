@@ -39,17 +39,13 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     // If no parent specified, try to find "Uncategorized" folder
     if (finalParentId === null || finalParentId === undefined) {
       try {
-        // Fetch all folders and search for Uncategorized (it's nested under Knowledge Base)
-        const foldersResponse = await fetch('/api/items?type=folder')
+        const foldersResponse = await fetch('/api/items?parentId=null')
         if (foldersResponse.ok) {
           const data = await foldersResponse.json()
-          // Search by path since Uncategorized is at /knowledge-base/uncategorized
           const uncategorized = data.items?.find((item: any) =>
-            item.type === 'folder' &&
-            (item.path === '/knowledge-base/uncategorized' || item.name === 'Uncategorized')
+            item.type === 'folder' && item.name === 'Uncategorized'
           )
           finalParentId = uncategorized?.id || null
-          console.log('[createNote] Found Uncategorized folder:', uncategorized?.id, uncategorized?.path)
         }
       } catch (err) {
         console.warn('[createNote] Could not find Uncategorized folder, creating in root')

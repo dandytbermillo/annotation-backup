@@ -1,7 +1,6 @@
 "use client"
 
 import { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
-import { createPortal } from "react-dom"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import dynamic from 'next/dynamic'
@@ -836,38 +835,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     }
   }
 
-  // Fetch available folders with nested structure
+  // Fetch available folders (from notes-explorer)
   const fetchSaveAsFolders = useCallback(async () => {
     try {
-      // Fetch all folders (not just root level)
-      const response = await fetch('/api/items?type=folder')
+      const response = await fetch('/api/items?parentId=null')
       if (!response.ok) return
 
       const data = await response.json()
-      const allFolders = data.items?.filter((item: any) => item.type === 'folder') || []
+      const folders = data.items?.filter((item: any) => item.type === 'folder').map((folder: any) => ({
+        id: folder.id,
+        name: folder.name,
+        path: folder.path || '/',
+        parentId: folder.parentId,
+        depth: 0
+      })) || []
 
-      // Build hierarchy with depth calculation
-      const folderMap = new Map()
-      allFolders.forEach((folder: any) => {
-        folderMap.set(folder.id, folder)
-      })
-
-      // Calculate depth for each folder based on path
-      const foldersWithDepth = allFolders.map((folder: any) => {
-        const pathParts = folder.path.split('/').filter(Boolean)
-        return {
-          id: folder.id,
-          name: folder.name,
-          path: folder.path,
-          parentId: folder.parentId,
-          depth: pathParts.length - 1 // Root folders have depth 0
-        }
-      })
-
-      // Sort by path to maintain hierarchical order
-      foldersWithDepth.sort((a: any, b: any) => a.path.localeCompare(b.path))
-
-      setSaveAsAvailableFolders(foldersWithDepth)
+      setSaveAsAvailableFolders(folders)
     } catch (error) {
       console.error('[CanvasPanel] Failed to fetch folders:', error)
     }
@@ -921,34 +904,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       })
 
       if (result.success && result.noteId) {
-        console.log('[CanvasPanel] Note created, saving content to:', result.noteId)
-
-        // Get current content from editor or branch
-        const currentContent = editorRef.current?.getJSON?.() || currentBranch.content
-
-        if (!currentContent) {
-          console.warn('[CanvasPanel] No content to save')
-        }
-
-        // Copy the content to the new note
-        // Use 'main' as panelId since this is a new standalone note
-        try {
-          await fetch(`/api/postgres-offline/documents/${result.noteId}/main`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              content: currentContent,
-              version: 1,
-              baseVersion: 0
-            })
-          })
-          console.log('[CanvasPanel] Content copied to new note successfully')
-
-          alert(`Note "${saveAsNoteName}" created successfully with content!`)
-        } catch (saveError) {
-          console.error('[CanvasPanel] Failed to save content to new note:', saveError)
-          alert(`Note "${saveAsNoteName}" created, but content copy failed. Please edit the new note manually.`)
-        }
+        // TODO: Save the actual branch content to the note
+        alert(`Note "${saveAsNoteName}" created successfully!`)
 
         // Close dialog and reset
         setShowSaveAsDialog(false)
@@ -1963,57 +1920,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     </div>
 
       {/* Save As Dialog - EXACT copy from notes-explorer (no modifications) */}
-      {showSaveAsDialog && typeof window !== 'undefined' && (() => {
+      {showSaveAsDialog && (() => {
         console.log('[SaveAs] Dialog rendering, showSaveAsDialog =', showSaveAsDialog)
-        console.log('[SaveAs] document.body exists:', !!document.body)
-        setTimeout(() => {
-          const overlays = document.querySelectorAll('[style*="position: fixed"]')
-          console.log('[SaveAs] Found fixed position elements:', overlays.length)
-          overlays.forEach((el, i) => {
-            const style = window.getComputedStyle(el)
-            console.log(`[SaveAs] Overlay ${i}:`, {
-              element: el,
-              zIndex: style.zIndex,
-              display: style.display,
-              position: style.position,
-              visibility: style.visibility,
-              opacity: style.opacity
-            })
-          })
-        }, 100)
-        return createPortal(
-          <div
-            onClick={(e) => {
-              console.log('[SaveAs] Overlay clicked')
-              if (e.target === e.currentTarget) {
-                setShowSaveAsDialog(false)
-              }
-            }}
-            style={{
-              position: 'fixed',
-              inset: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 999999,
-            }}
-          >
-            <div
-              style={{
-                backgroundColor: '#1f2937',
-                borderRadius: '8px',
-                padding: '24px',
-                width: '384px',
-                maxWidth: '90vw',
-                position: 'relative',
-                zIndex: 1000000,
-              }}
-              onMouseDown={(e) => {
-                // Prevent overlay click from closing when clicking inside dialog
-                e.stopPropagation()
-              }}
-            >
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+            <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-[90vw]">
               <h2 className="text-xl font-semibold mb-4 text-white">Save Branch As Note</h2>
 
             {/* Note Name Input */}
@@ -2188,8 +2099,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               </button>
             </div>
           </div>
-        </div>,
-        document.body
+        </div>
         )
       })()}
     </>

@@ -921,34 +921,8 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       })
 
       if (result.success && result.noteId) {
-        console.log('[CanvasPanel] Note created, saving content to:', result.noteId)
-
-        // Get current content from editor or branch
-        const currentContent = editorRef.current?.getJSON?.() || currentBranch.content
-
-        if (!currentContent) {
-          console.warn('[CanvasPanel] No content to save')
-        }
-
-        // Copy the content to the new note
-        // Use 'main' as panelId since this is a new standalone note
-        try {
-          await fetch(`/api/postgres-offline/documents/${result.noteId}/main`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              content: currentContent,
-              version: 1,
-              baseVersion: 0
-            })
-          })
-          console.log('[CanvasPanel] Content copied to new note successfully')
-
-          alert(`Note "${saveAsNoteName}" created successfully with content!`)
-        } catch (saveError) {
-          console.error('[CanvasPanel] Failed to save content to new note:', saveError)
-          alert(`Note "${saveAsNoteName}" created, but content copy failed. Please edit the new note manually.`)
-        }
+        // TODO: Save the actual branch content to the note
+        alert(`Note "${saveAsNoteName}" created successfully!`)
 
         // Close dialog and reset
         setShowSaveAsDialog(false)
