@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-03 21:41Z] e22d4f2: adding popup ovelay persistence in the database
 - commit [2025-10-03 20:59Z] f753d63: refining toggle button in the floating toolbar
 - commit [2025-10-03 18:03Z] 927f81f: issue about wrong timestamp in recent note section panel fixed
 - commit [2025-10-03 05:45Z] 606e67d: added toogle switch for note and overlay popup canvas
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-02 18:35Z] 2b8a076: adding branches panel
 - commit [2025-10-02 05:28Z] 9dfaf26: cleaned up memory leak
 - commit [2025-10-02 05:21Z] 9726e52: the disappearing tooltip popup fixed
-- commit [2025-10-02 04:26Z] 77ea852: fixed undraggable popup when open from organization panel
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-03 20:59Z] f753d63: refining toggle button in the floating toolbar
+- commit [2025-10-03 21:41Z] e22d4f2: adding popup ovelay persistence in the database

@@ -10,7 +10,23 @@ import { BranchesSection } from "@/components/canvas/branches-section"
 import { createNote } from "@/lib/utils/note-creator"
 import { buildMultilinePreview } from "@/lib/utils/branch-preview"
 
-type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | null
+// Helper to derive display name from path when folder.name is empty
+function deriveFromPath(path: string | undefined | null): string | null {
+  if (!path || typeof path !== 'string') return null
+  const trimmed = path.trim()
+  if (!trimmed) return null
+
+  // Remove trailing slashes
+  const normalized = trimmed.replace(/\/+$/, '')
+  if (!normalized) return null
+
+  // Get last segment
+  const segments = normalized.split('/')
+  const lastSegment = segments[segments.length - 1]
+  return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
+type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | "add-component" | null
 
 type FloatingToolbarProps = {
   x: number
@@ -19,6 +35,7 @@ type FloatingToolbarProps = {
   onSelectNote?: (noteId: string) => void
   onCreateNote?: () => void
   onCreateOverlayPopup?: (popup: OverlayPopup) => void
+  onAddComponent?: (type: string, position?: { x: number; y: number }) => void
   editorRef?: React.RefObject<any> // Optional editor ref for format commands
   activePanelId?: string | null // Currently active panel ID for branches/actions
 }
@@ -118,7 +135,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, editorRef, activePanelId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [activePanel, setActivePanel] = useState<PanelKey>(null)
@@ -460,11 +477,21 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     return null
   }
 
-  // Flatten tree for rendering
+  // Flatten tree for rendering (with folders-first sorting)
   const flattenTree = (items: OrgItem[]): OrgItem[] => {
     const result: OrgItem[] = []
     const traverse = (nodes: OrgItem[]) => {
-      for (const node of nodes) {
+      // Sort: folders first, then notes (alphabetically within each group)
+      const sorted = [...nodes].sort((a, b) => {
+        // Folders before notes
+        if (a.type === 'folder' && b.type !== 'folder') return -1
+        if (a.type !== 'folder' && b.type === 'folder') return 1
+
+        // Within same type, sort alphabetically by name
+        return a.name.localeCompare(b.name)
+      })
+
+      for (const node of sorted) {
         result.push(node)
         if (expandedFolders[node.id] && node.children && node.children.length > 0) {
           traverse(node.children)
@@ -662,12 +689,23 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedOverlayTransform)
     const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedOverlayTransform)
 
+    // Derive display name with fallbacks to ensure we always have a usable label
+    const displayName = folder.name?.trim()
+      || deriveFromPath((folder as any).path)
+      || 'Untitled Folder'
+
     // Create initial popup with loading state
     const newPopup: OverlayPopup = {
       id: popupId,
       folderId: folder.id,
-      folderName: folder.name,
-      folder: null,
+      folderName: displayName,
+      folder: {
+        id: folder.id,
+        name: displayName,
+        type: 'folder' as const,
+        level: folder.level || 0,
+        children: []
+      },
       position: screenPosition,
       canvasPosition: canvasPosition,
       children: [],
@@ -702,12 +740,17 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         parentId: item.parentId
       }))
 
-      // Update popup with loaded children
+      // Update popup with loaded children (preserve displayName)
       const updatedPopup: OverlayPopup = {
         ...newPopup,
         children: formattedChildren,
         isLoading: false,
-        folder: { ...folder, children: formattedChildren }
+        folderName: displayName,
+        folder: {
+          ...folder,
+          name: displayName,
+          children: formattedChildren
+        }
       }
 
       onCreateOverlayPopup(updatedPopup)
@@ -1377,6 +1420,50 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     </div>
   )
 
+  const renderAddComponentPanel = () => {
+    const components = [
+      { type: 'calculator', label: 'Calculator', icon: '🔢', color: 'from-blue-500 to-blue-600' },
+      { type: 'timer', label: 'Timer', icon: '⏱️', color: 'from-green-500 to-green-600' },
+      { type: 'sticky-note', label: 'Sticky Note', icon: '📝', color: 'from-yellow-500 to-yellow-600' },
+      { type: 'dragtest', label: 'Drag Test', icon: '🖱️', color: 'from-orange-500 to-orange-600' }
+    ]
+
+    return (
+      <div
+        className="w-80 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+        style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
+        onMouseEnter={handlePanelHover}
+        onMouseLeave={handlePanelHoverLeave}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
+          <span>Add Component</span>
+          <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
+            ×
+          </button>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-3">
+          {components.map((component) => (
+            <button
+              key={component.type}
+              onClick={() => {
+                if (onAddComponent) {
+                  onAddComponent(component.type)
+                  setActivePanel(null)
+                  onClose()
+                }
+              }}
+              className={`bg-gradient-to-br ${component.color} text-white font-semibold rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:scale-105 active:scale-95 transition-transform`}
+              disabled={!onAddComponent}
+            >
+              <span className="text-3xl">{component.icon}</span>
+              <span className="text-sm">{component.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={containerRef}
@@ -1430,6 +1517,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           >
             Tools ▾
           </button>
+          <button
+            className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "add-component" ? "bg-white/15" : ""}`}
+            onClick={() => setActivePanel((prev) => (prev === "add-component" ? null : "add-component"))}
+            onMouseEnter={() => handleButtonHover("add-component")}
+          >
+            + Component ▾
+          </button>
         </div>
       </div>
 
@@ -1443,6 +1537,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         {activePanel === "resize" && renderResizePanel()}
         {activePanel === "branches" && renderBranchesPanel()}
         {activePanel === "actions" && renderActionsPanel()}
+        {activePanel === "add-component" && renderAddComponentPanel()}
       </div>
 
       {/* Help text - Only show when no panel is active */}

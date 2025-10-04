@@ -49,6 +49,11 @@ function normalizePopups(raw: unknown): OverlayPopupDescriptor[] {
       level,
     }
 
+    // Include folderName if present (for display without fetching)
+    if (typeof candidate.folderName === 'string' && candidate.folderName.length > 0) {
+      popup.folderName = candidate.folderName
+    }
+
     const heightValue = coerceNumber(candidate.height)
     if (heightValue !== null) {
       popup.height = heightValue

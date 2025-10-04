@@ -48,6 +48,7 @@ interface CanvasImperativeHandle {
   panBy: (deltaX: number, deltaY: number) => void
   toggleConnections: () => void
   centerOnPanel: (panelId: string) => void
+  addComponent: (type: string, position?: { x: number; y: number }) => void
 }
 
 // Default viewport settings
@@ -616,16 +617,18 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   
   // Handle adding components
   const handleAddComponent = (type: string, position?: { x: number; y: number }) => {
+    console.log('[Canvas] handleAddComponent called with type:', type, 'position:', position)
+
     // Calculate position - center of viewport in world coordinates
     // The canvas translate is the offset, so we need to negate it to get world position
     const viewportCenterX = window.innerWidth / 2
     const viewportCenterY = window.innerHeight / 2
-    
+
     // Convert from screen space to world space
     // World position = (Screen position - Canvas translate) / zoom
     const worldX = (-canvasState.translateX + viewportCenterX) / canvasState.zoom
     const worldY = (-canvasState.translateY + viewportCenterY) / canvasState.zoom
-    
+
     // Center the component (component is ~350px wide, ~300px tall)
     const finalPosition = position || {
       x: worldX - 175,
@@ -637,11 +640,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       y: viewportCenterY - 150
     }
 
+    console.log('[Canvas] Creating component at position:', type === 'sticky-note' ? stickyScreenPosition : finalPosition)
+
     const newComponent = createComponentItem(
       type as 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest',
       type === 'sticky-note' ? stickyScreenPosition : finalPosition
     )
-    
+
+    console.log('[Canvas] Created component:', newComponent)
+    console.log('[Canvas] Adding to canvasItems')
     setCanvasItems(prev => [...prev, newComponent])
   }
   
@@ -869,8 +876,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       }
       
       attemptCenter()
+    },
+    addComponent: (type: string, position?: { x: number; y: number }) => {
+      handleAddComponent(type, position)
     }
-  }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy])
+  }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent])
 
   return (
       <div

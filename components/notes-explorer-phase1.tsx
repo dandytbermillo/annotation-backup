@@ -3024,6 +3024,43 @@ function NotesExplorerContent({
     }
   }
 
+  // Sort tree nodes: folders first, then notes (recursive for all levels)
+  const sortedTreeData = useMemo(() => {
+    const sourceData = usePhase1API ? apiTreeData : treeData
+
+    console.log('[TREE SORT DEBUG] Running sort. Source length:', sourceData.length)
+    console.log('[TREE SORT DEBUG] usePhase1API:', usePhase1API)
+
+    if (sourceData.length === 0) {
+      console.log('[TREE SORT DEBUG] Source data is empty, returning empty array')
+      return []
+    }
+
+    const sortNodes = (nodes: TreeNode[]): TreeNode[] => {
+      return nodes
+        .map(node => ({
+          ...node,
+          // Recursively sort children if they exist
+          children: node.children ? sortNodes(node.children) : node.children
+        }))
+        .sort((a, b) => {
+          // Folders before notes
+          if (a.type === 'folder' && b.type !== 'folder') return -1
+          if (a.type !== 'folder' && b.type === 'folder') return 1
+
+          // Within same type, sort alphabetically by name
+          const nameA = (a.name || a.title || '').toLowerCase()
+          const nameB = (b.name || b.title || '').toLowerCase()
+          return nameA.localeCompare(nameB)
+        })
+    }
+
+    const sorted = sortNodes(sourceData)
+    console.log('[TREE SORT] Before:', sourceData.map(n => `${n.name || n.title} (${n.type})`))
+    console.log('[TREE SORT] After:', sorted.map(n => `${n.name || n.title} (${n.type})`))
+    return sorted
+  }, [apiTreeData, treeData, usePhase1API])
+
   // Render tree node recursively
   const renderTreeNode = (node: TreeNode, depth: number = 0) => {
     const isExpanded = expandedNodes[node.id]
@@ -3322,7 +3359,7 @@ function NotesExplorerContent({
               <div className="p-4 text-center text-gray-500">Loading...</div>
             ) : (
               <div className="mt-1" role="tree" aria-label="Note organization">
-                {(usePhase1API ? apiTreeData : treeData).map(node => {
+                {sortedTreeData.map(node => {
                   return renderTreeNode(node)
                 })}
               </div>

@@ -17,6 +17,22 @@ import {
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 
+// Helper to derive display name from path when folder.name is empty
+function deriveFromPath(path: string | undefined | null): string | null {
+  if (!path || typeof path !== 'string') return null
+  const trimmed = path.trim()
+  if (!trimmed) return null
+
+  // Remove trailing slashes
+  const normalized = trimmed.replace(/\/+$/, '')
+  if (!normalized) return null
+
+  // Get last segment
+  const segments = normalized.split('/')
+  const lastSegment = segments[segments.length - 1]
+  return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
   { 
@@ -245,9 +261,16 @@ function AnnotationAppContent() {
       const x = Number.isFinite(canvasPos.x) ? canvasPos.x : 0
       const y = Number.isFinite(canvasPos.y) ? canvasPos.y : 0
 
+      // Derive display name with fallbacks to ensure we always persist a usable label
+      const displayName = popup.folderName?.trim()
+        || popup.folder?.name?.trim()
+        || deriveFromPath((popup.folder as any)?.path)
+        || 'Untitled Folder'
+
       const descriptor: OverlayPopupDescriptor = {
         id: popup.id,
         folderId: popup.folderId || null,
+        folderName: displayName,
         parentId: popup.parentPopupId || null,
         canvasPosition: { x, y },
         level: popup.level || 0,
@@ -295,10 +318,13 @@ function AnnotationAppContent() {
     const restoredPopups: OverlayPopup[] = sanitizedPopups.map(descriptor => {
       const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, sharedTransform)
 
-      return {
+      // Use stored folder name with fallback to ensure we have a displayable label
+      const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
+
+      const restoredPopup = {
         id: descriptor.id,
         folderId: descriptor.folderId || '',
-        folderName: '', // Will be loaded when needed
+        folderName: displayName,
         folder: null, // Will be loaded when needed
         position: screenPosition,
         canvasPosition: descriptor.canvasPosition,
@@ -308,6 +334,8 @@ function AnnotationAppContent() {
         level: descriptor.level || 0,
         parentPopupId: descriptor.parentId || undefined,
       }
+
+      return restoredPopup
     })
 
     setOverlayPopups(restoredPopups)
@@ -340,23 +368,29 @@ function AnnotationAppContent() {
         }))
 
         setOverlayPopups(prev =>
-          prev.map(p =>
-            p.id === popup.id
-              ? {
-                  ...p,
-                  folderName: folderData.name || '',
-                  folder: {
-                    id: folderData.id,
-                    name: folderData.name,
-                    type: 'folder' as const,
-                    level: popup.level,
-                    children,
-                  },
-                  children,
-                  isLoading: false,
-                }
-              : p
-          )
+          prev.map(p => {
+            if (p.id !== popup.id) return p
+
+            // Derive display name with fallbacks to prevent blank name from wiping cached label
+            const displayName = folderData.name?.trim()
+              || deriveFromPath(folderData.path)
+              || p.folderName?.trim()  // Keep existing cached name if new data has no name
+              || 'Untitled Folder'
+
+            return {
+              ...p,
+              folderName: displayName,
+              folder: {
+                id: folderData.id,
+                name: displayName,
+                type: 'folder' as const,
+                level: popup.level,
+                children,
+              },
+              children,
+              isLoading: false,
+            }
+          })
         )
       } catch (error) {
         console.error(`Failed to load folder ${popup.folderId}:`, error)
@@ -502,6 +536,9 @@ function AnnotationAppContent() {
   }, [applyOverlayLayout, overlayPersistenceEnabled])
 
   // Save layout when overlayPopups changes
+  // Use a ref to track if we need to save, to avoid infinite loops
+  const prevPopupsRef = useRef<OverlayPopup[]>([])
+
   useEffect(() => {
     console.log('[AnnotationApp] Save effect triggered. overlayPersistenceEnabled =', overlayPersistenceEnabled, 'overlayPopups.length =', overlayPopups.length, 'layoutLoaded =', layoutLoadedRef.current)
     if (!overlayPersistenceEnabled) {
@@ -510,11 +547,22 @@ function AnnotationAppContent() {
     }
     if (!layoutLoadedRef.current) {
       console.log('[AnnotationApp] Save skipped: layout not loaded yet')
+      prevPopupsRef.current = overlayPopups
       return
     }
+
+    // Check if popups actually changed (not just re-render)
+    const changed = JSON.stringify(overlayPopups) !== JSON.stringify(prevPopupsRef.current)
+    if (!changed) {
+      console.log('[AnnotationApp] Save skipped: no changes detected')
+      return
+    }
+
     console.log('[AnnotationApp] Scheduling save...')
+    prevPopupsRef.current = overlayPopups
     scheduleLayoutSave()
-  }, [overlayPopups, overlayPersistenceEnabled, scheduleLayoutSave])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayPopups, overlayPersistenceEnabled])
 
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
@@ -636,6 +684,14 @@ function AnnotationAppContent() {
     console.log('[AnnotationApp] Registering active editor for panel:', panelId)
     activeEditorRef.current = editorRef
     setActivePanelId(panelId)
+  }, [])
+
+  // Handle adding component (callback from FloatingToolbar)
+  const handleAddComponentFromToolbar = useCallback((type: string, position?: { x: number; y: number }) => {
+    // Call the canvas's addComponent method directly
+    if (canvasRef.current?.addComponent) {
+      canvasRef.current.addComponent(type, position)
+    }
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
@@ -945,6 +1001,7 @@ function AnnotationAppContent() {
           onClose={handleCloseNotesWidget}
           onSelectNote={handleNoteSelect}
           onCreateOverlayPopup={handleCreateOverlayPopup}
+          onAddComponent={handleAddComponentFromToolbar}
           editorRef={activeEditorRef}
           activePanelId={activePanelId}
         />

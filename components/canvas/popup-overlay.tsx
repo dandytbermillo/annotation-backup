@@ -39,6 +39,7 @@ interface AutoScrollState {
 interface PopupData extends PopupState {
   id: string;
   folder: any; // TreeNode from existing implementation
+  folderName?: string; // Display name for the folder (set immediately, before folder object loads)
   canvasPosition: { x: number; y: number };
   parentId?: string;
   level: number;
@@ -1363,7 +1364,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 <div className="flex items-center gap-2">
                   <Folder className="w-4 h-4 text-blue-400" />
                   <span className="text-sm font-medium text-white truncate">
-                    {popup.folder?.name || 'Loading...'}
+                    {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
                   </span>
                 </div>
                 <button
@@ -1517,7 +1518,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     <div className="flex items-center gap-2">
                       <Folder className="w-4 h-4 text-blue-400" />
                       <span className="text-sm font-medium text-white truncate">
-                        {popup.folder?.name || 'Loading...'}
+                        {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
                       </span>
                     </div>
                     <button

@@ -8,6 +8,7 @@ export interface OverlayCanvasPosition {
 export interface OverlayPopupDescriptor {
   id: string
   folderId: string | null
+  folderName?: string // Folder display name (cached to avoid fetching on load)
   parentId: string | null
   canvasPosition: OverlayCanvasPosition
   overlayPosition?: OverlayCanvasPosition
