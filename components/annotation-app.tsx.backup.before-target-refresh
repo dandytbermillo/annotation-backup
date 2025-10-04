@@ -1065,32 +1065,15 @@ function AnnotationAppContent() {
               }
             }
 
-            // Update target popup: add successfully moved items (prevent duplicates)
-            if (popup.folderId === targetFolderId && popup.folder) {
-              const movedItems = data.movedItems || []
-
-              // Get IDs of existing children to prevent duplicates
-              const existingIds = new Set(popup.children.map(child => child.id))
-
-              // Filter out items that already exist in this popup
-              const newItems = movedItems.filter((item: any) => !existingIds.has(item.id))
-
-              // Append only new items
-              const updatedChildren = [...popup.children, ...newItems]
-
-              return {
-                ...popup,
-                children: updatedChildren,
-                folder: { ...popup.folder, children: updatedChildren }
-              }
-            }
+            // Note: Target popup refresh would happen here if needed
+            // For now, we only update the source popup (items removed)
+            // User can close and reopen target popup to see new items
 
             return popup
           })
         )
 
         console.log('[handleBulkMove] Source popup updated - removed', movedCount, 'moved items')
-        console.log('[handleBulkMove] Target popup auto-refresh applied if popup is open')
       }
 
       // Warn if some moves failed

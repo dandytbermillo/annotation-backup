@@ -69,10 +69,9 @@ export async function POST(request: NextRequest) {
 
       // Process each item
       for (const itemId of itemIds) {
-        // Get item info and validate workspace (select all fields needed for OrgItem)
+        // Get item info and validate workspace
         const itemResult = await client.query(
-          `SELECT id, name, type, path, parent_id, slug, position, metadata, icon, color,
-                  last_accessed_at, created_at, updated_at
+          `SELECT id, name, type, path, parent_id
            FROM items
            WHERE id = $1
            AND workspace_id = $2
@@ -163,39 +162,7 @@ export async function POST(request: NextRequest) {
           )
         }
 
-        // Check if folder has children
-        let hasChildren = false
-        if (item.type === 'folder') {
-          const childrenCheck = await client.query(
-            `SELECT 1 FROM items WHERE parent_id = $1 AND deleted_at IS NULL LIMIT 1`,
-            [itemId]
-          )
-          hasChildren = childrenCheck.rows.length > 0
-        }
-
-        // Calculate level from new path (count non-empty segments)
-        const level = newPath.split('/').filter(Boolean).length
-
-        // Build complete OrgItem-shaped object with all required fields
-        const movedItem = {
-          id: updateResult.rows[0].id,
-          name: item.name,
-          type: item.type,
-          parentId: updateResult.rows[0].parent_id,
-          path: updateResult.rows[0].path,
-          slug: item.slug,
-          position: item.position,
-          metadata: item.metadata,
-          icon: item.icon,
-          color: item.color,
-          level: level,
-          hasChildren: hasChildren,
-          lastAccessedAt: item.last_accessed_at,
-          createdAt: item.created_at,
-          updatedAt: updateResult.rows[0].updated_at
-        }
-
-        movedItems.push(movedItem)
+        movedItems.push(updateResult.rows[0])
       }
 
       // COMMIT TRANSACTION

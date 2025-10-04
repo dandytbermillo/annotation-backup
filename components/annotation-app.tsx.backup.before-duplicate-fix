@@ -1065,19 +1065,10 @@ function AnnotationAppContent() {
               }
             }
 
-            // Update target popup: add successfully moved items (prevent duplicates)
+            // Update target popup: add successfully moved items
             if (popup.folderId === targetFolderId && popup.folder) {
               const movedItems = data.movedItems || []
-
-              // Get IDs of existing children to prevent duplicates
-              const existingIds = new Set(popup.children.map(child => child.id))
-
-              // Filter out items that already exist in this popup
-              const newItems = movedItems.filter((item: any) => !existingIds.has(item.id))
-
-              // Append only new items
-              const updatedChildren = [...popup.children, ...newItems]
-
+              const updatedChildren = [...popup.children, ...movedItems]
               return {
                 ...popup,
                 children: updatedChildren,

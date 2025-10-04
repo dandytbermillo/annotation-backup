@@ -131,7 +131,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set());
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragSourcePopupId, setDragSourcePopupId] = useState<string | null>(null);
-  const [isPopupDropTarget, setIsPopupDropTarget] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -530,56 +529,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     handleDragEnd();
   }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd]);
 
-  // Popup container drop handlers (for dropping on popup background/empty space)
-  const handlePopupDragOver = useCallback((
-    popupId: string,
-    folderId: string,
-    event: React.DragEvent
-  ) => {
-    // Only if dragging is active
-    if (draggedItems.size === 0) return;
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setIsPopupDropTarget(popupId);
-  }, [draggedItems]);
-
-  const handlePopupDragLeave = useCallback((
-    popupId: string,
-    event: React.DragEvent
-  ) => {
-    // Check if really leaving popup (not just entering child)
-    const related = event.relatedTarget as HTMLElement;
-    if (!related || !related.closest(`[data-popup-id="${popupId}"]`)) {
-      setIsPopupDropTarget(null);
-    }
-  }, []);
-
-  const handlePopupDrop = useCallback(async (
-    folderId: string,
-    event: React.DragEvent
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const itemIds = Array.from(draggedItems);
-    if (itemIds.length === 0) return;
-
-    // Don't allow dropping on itself (same guard as handleDrop)
-    if (itemIds.includes(folderId)) {
-      setIsPopupDropTarget(null);
-      return;
-    }
-
-    // Use popup's folderId as target
-    if (onBulkMove && dragSourcePopupId) {
-      await onBulkMove(itemIds, folderId, dragSourcePopupId);
-    }
-
-    setIsPopupDropTarget(null);
-    handleDragEnd();
-  }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd]);
-
   const renderPopupChildRow = (
     popupId: string,
     {
@@ -670,12 +619,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         data-drop-zone={folderLike ? 'true' : undefined}
         onDragStart={(e) => handleDragStart(popupId, child.id, e)}
         onDragEnd={handleDragEnd}
-        onDragOver={(e) => {
-          if (folderLike) {
-            handleDragOver(child.id, folderLike, e);
-            e.stopPropagation(); // Prevent popup container handler from firing
-          }
-        }}
+        onDragOver={(e) => handleDragOver(child.id, folderLike, e)}
         onDragLeave={handleDragLeave}
         onDrop={(e) => folderLike && handleDrop(child.id, e)}
         onMouseEnter={(event) => {
@@ -874,7 +818,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       setDraggedItems(new Set());
       setDropTargetId(null);
       setDragSourcePopupId(null);
-      setIsPopupDropTarget(null);
     }
   }, [popups, dragSourcePopupId]);
 
@@ -1693,9 +1636,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             <div
               key={popup.id}
               id={`popup-${popup.id}`}
-              className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
-                isPopupDropTarget === popup.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900' : ''
-              }`}
+              className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
               style={{
                 left: `${position.x}px`,
                 top: `${position.y}px`,
@@ -1711,15 +1652,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
               }}
               data-popup-id={popup.id}
-              onDragOver={(e) => {
-                const folderId = (popup as any).folderId;
-                folderId && handlePopupDragOver(popup.id, folderId, e);
-              }}
-              onDragLeave={(e) => handlePopupDragLeave(popup.id, e)}
-              onDrop={(e) => {
-                const folderId = (popup as any).folderId;
-                folderId && handlePopupDrop(folderId, e);
-              }}
               onClick={(e) => e.stopPropagation()}
               onPointerEnter={() => {
                 // Pass both the folder ID and the parent popup ID to cancel the close timeout
@@ -1900,9 +1832,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 <div
                   key={popup.id}
                   id={`popup-${popup.id}`}
-                  className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
-                    isPopupDropTarget === popup.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900' : ''
-                  }`}
+                  className="popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto"
                   style={{
                     left: `${position.x}px`,
                     top: `${position.y}px`,
@@ -1916,15 +1846,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     willChange: popup.isDragging || isPanning ? 'transform' : 'auto',
                   }}
                   data-popup-id={popup.id}
-                  onDragOver={(e) => {
-                    const folderId = (popup as any).folderId;
-                    folderId && handlePopupDragOver(popup.id, folderId, e);
-                  }}
-                  onDragLeave={(e) => handlePopupDragLeave(popup.id, e)}
-                  onDrop={(e) => {
-                    const folderId = (popup as any).folderId;
-                    folderId && handlePopupDrop(folderId, e);
-                  }}
                   onClick={(e) => e.stopPropagation()}
                 >
                   {/* Popup Header */}
