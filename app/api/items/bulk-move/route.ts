@@ -1,125 +1,196 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Pool } from 'pg'
+import { serverPool } from '@/lib/db/pool'
+import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev'
-})
+interface SkippedItem {
+  id: string
+  reason: string
+}
 
 export async function POST(request: NextRequest) {
+  const client = await serverPool.connect()
+
   try {
-    const { itemIds, targetFolderId } = await request.json()
-    
+    const body = await request.json()
+    const { itemIds, targetFolderId } = body
+
+    // Validate request
     if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
       return NextResponse.json(
-        { error: 'Invalid item IDs' },
+        { error: 'itemIds array is required' },
         { status: 400 }
       )
     }
-    
-    // Get target folder info (or use root)
-    let targetPath = '/knowledge-base'
-    let actualTargetId = targetFolderId
-    
-    if (targetFolderId) {
-      const folderResult = await pool.query(
-        'SELECT id, path FROM items WHERE id = $1 AND type = $2 AND deleted_at IS NULL',
-        [targetFolderId, 'folder']
+
+    if (!targetFolderId) {
+      return NextResponse.json(
+        { error: 'targetFolderId is required' },
+        { status: 400 }
       )
-      
-      if (folderResult.rows.length === 0) {
+    }
+
+    // Get workspace ID for validation
+    let workspaceId: string
+    try {
+      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
+    } catch (e) {
+      console.error('Failed to get workspace ID:', e)
+      return NextResponse.json(
+        { error: 'Failed to get workspace' },
+        { status: 500 }
+      )
+    }
+
+    // BEGIN TRANSACTION
+    await client.query('BEGIN')
+
+    try {
+      // Validate target folder exists and belongs to workspace
+      const folderCheck = await client.query(
+        `SELECT id, path FROM items
+         WHERE id = $1
+         AND type = $2
+         AND workspace_id = $3
+         AND deleted_at IS NULL`,
+        [targetFolderId, 'folder', workspaceId]
+      )
+
+      if (folderCheck.rows.length === 0) {
+        await client.query('ROLLBACK')
         return NextResponse.json(
-          { error: 'Target folder not found' },
+          { error: 'Target folder not found', targetFolderId },
           { status: 404 }
         )
       }
-      
-      targetPath = folderResult.rows[0].path
-    } else {
-      // If no target specified, move to Knowledge Base root
-      const kbResult = await pool.query(
-        'SELECT id FROM items WHERE path = $1 AND type = $2 AND deleted_at IS NULL',
-        ['/knowledge-base', 'folder']
-      )
-      if (kbResult.rows.length > 0) {
-        actualTargetId = kbResult.rows[0].id
-      }
-    }
-    
-    // Move each item to the new parent
-    const movedItems = []
-    for (const itemId of itemIds) {
-      // Get current item info
-      const itemResult = await pool.query(
-        'SELECT id, name, type, path FROM items WHERE id = $1 AND deleted_at IS NULL',
-        [itemId]
-      )
-      
-      if (itemResult.rows.length === 0) continue
-      
-      const item = itemResult.rows[0]
-      const newPath = `${targetPath}/${item.name}`
-      
-      // Check for potential cycles (don't move a folder into its own descendant)
-      if (item.type === 'folder' && targetFolderId) {
-        const cycleCheck = await pool.query(
-          `SELECT 1 FROM items 
-           WHERE id = $1 
-           AND path LIKE $2
+
+      const targetPath = folderCheck.rows[0].path
+      const movedItems: any[] = []
+      const skippedItems: SkippedItem[] = []
+
+      // Process each item
+      for (const itemId of itemIds) {
+        // Get item info and validate workspace
+        const itemResult = await client.query(
+          `SELECT id, name, type, path, parent_id
+           FROM items
+           WHERE id = $1
+           AND workspace_id = $2
            AND deleted_at IS NULL`,
-          [targetFolderId, `${item.path}/%`]
+          [itemId, workspaceId]
         )
-        
-        if (cycleCheck.rows.length > 0) {
-          console.log(`Skipping ${item.name}: would create cycle`)
+
+        if (itemResult.rows.length === 0) {
+          skippedItems.push({
+            id: itemId,
+            reason: 'Item not found or does not belong to workspace'
+          })
           continue
         }
-      }
-      
-      // Update the item's parent and path
-      // Note: Using a simpler update to avoid trigger issues
-      await pool.query(
-        `UPDATE items 
-         SET parent_id = $1, 
-             path = $2,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $3`,
-        [actualTargetId, newPath, itemId]
-      )
-      
-      // Fetch the updated item
-      const updateResult = await pool.query(
-        'SELECT * FROM items WHERE id = $1',
-        [itemId]
-      )
-      
-      if (updateResult.rows.length > 0) {
-        movedItems.push(updateResult.rows[0])
-        
-        // If this is a folder, update all children's paths
+
+        const item = itemResult.rows[0]
+
+        // Don't allow moving item to its current parent
+        if (item.parent_id === targetFolderId) {
+          skippedItems.push({
+            id: itemId,
+            reason: 'Item already in target folder'
+          })
+          continue
+        }
+
+        // Don't allow moving item to itself
+        if (itemId === targetFolderId) {
+          skippedItems.push({
+            id: itemId,
+            reason: 'Cannot move item to itself'
+          })
+          continue
+        }
+
+        // Check for circular move (folder moved into its own descendant)
         if (item.type === 'folder') {
-          const oldPath = item.path
-          await pool.query(
-            `UPDATE items 
+          const cycleCheck = await client.query(
+            `SELECT 1 FROM items
+             WHERE id = $1
+             AND path LIKE $2
+             AND deleted_at IS NULL`,
+            [targetFolderId, `${item.path}/%`]
+          )
+
+          if (cycleCheck.rows.length > 0) {
+            skippedItems.push({
+              id: itemId,
+              reason: 'Would create circular reference (folder cannot be moved into its own descendant)'
+            })
+            continue
+          }
+        }
+
+        const oldPath = item.path
+        const newPath = `${targetPath}/${item.name}`
+
+        // Update item's parent_id and path
+        const updateResult = await client.query(
+          `UPDATE items
+           SET parent_id = $1,
+               path = $2,
+               updated_at = NOW()
+           WHERE id = $3
+           AND deleted_at IS NULL
+           RETURNING id, parent_id, path, updated_at`,
+          [targetFolderId, newPath, itemId]
+        )
+
+        if (updateResult.rows.length === 0) {
+          skippedItems.push({
+            id: itemId,
+            reason: 'Update failed (item may have been deleted)'
+          })
+          continue
+        }
+
+        // If this is a folder, update all children's paths in the SAME transaction
+        if (item.type === 'folder') {
+          await client.query(
+            `UPDATE items
              SET path = REPLACE(path, $1, $2),
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE path LIKE $3 AND deleted_at IS NULL`,
-            [oldPath, newPath, `${oldPath}/%`]
+                 updated_at = NOW()
+             WHERE path LIKE $3
+             AND workspace_id = $4
+             AND deleted_at IS NULL`,
+            [oldPath, newPath, `${oldPath}/%`, workspaceId]
           )
         }
+
+        movedItems.push(updateResult.rows[0])
       }
+
+      // COMMIT TRANSACTION
+      await client.query('COMMIT')
+
+      // Return detailed response
+      return NextResponse.json({
+        success: true,
+        movedCount: movedItems.length,
+        skippedCount: skippedItems.length,
+        movedItems,
+        skippedItems
+      })
+
+    } catch (error) {
+      // ROLLBACK on any error
+      await client.query('ROLLBACK')
+      throw error
     }
-    
-    return NextResponse.json({ 
-      success: true,
-      movedItems,
-      count: movedItems.length 
-    })
-    
+
   } catch (error) {
-    console.error('Error moving items:', error)
+    console.error('Error in bulk-move:', error)
     return NextResponse.json(
-      { error: 'Failed to move items' },
+      { error: 'Failed to move items', message: String(error) },
       { status: 500 }
     )
+  } finally {
+    // Always release client back to pool
+    client.release()
   }
 }

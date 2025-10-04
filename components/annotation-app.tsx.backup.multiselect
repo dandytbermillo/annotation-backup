@@ -942,82 +942,6 @@ function AnnotationAppContent() {
     closeTimeoutRef.current.set(timeoutKey, closeTimeout)
   }, [])
 
-  // Handle delete selected items from popup
-  const handleDeleteSelected = useCallback(async (popupId: string, selectedIds: Set<string>) => {
-    console.log('[handleDeleteSelected]', { popupId, selectedIds: Array.from(selectedIds) })
-
-    try {
-      // Delete each selected item via API and track which ones succeed
-      const deleteResults = await Promise.all(
-        Array.from(selectedIds).map(async (itemId) => {
-          try {
-            const response = await fetch(`/api/items/${itemId}`, {
-              method: 'DELETE',
-              headers: {
-                'Content-Type': 'application/json'
-              }
-            })
-
-            if (!response.ok && response.status !== 404) {
-              // 404 is ok (already deleted), but other errors should be logged
-              console.error(`Failed to delete item ${itemId}:`, response.status)
-              return { itemId, success: false }
-            }
-
-            console.log(`Successfully deleted item ${itemId}`)
-            return { itemId, success: true }
-          } catch (error) {
-            console.error(`Error deleting item ${itemId}:`, error)
-            return { itemId, success: false }
-          }
-        })
-      )
-
-      // Get IDs of items that were actually deleted successfully
-      const successfullyDeletedIds = new Set(
-        deleteResults.filter(r => r.success).map(r => r.itemId)
-      )
-      const successCount = successfullyDeletedIds.size
-
-      console.log(`Deleted ${successCount}/${selectedIds.size} items`)
-
-      // Only remove items that were successfully deleted
-      if (successCount > 0) {
-        console.log('[handleDeleteSelected] Updating popup to remove successfully deleted items...')
-
-        setOverlayPopups(prev =>
-          prev.map(p => {
-            if (p.id === popupId && p.folder && p.children) {
-              // Filter out ONLY successfully deleted items (safety: failed deletes remain visible)
-              const updatedChildren = p.children.filter(child => !successfullyDeletedIds.has(child.id))
-
-              return {
-                ...p,
-                children: updatedChildren,
-                folder: {
-                  ...p.folder,
-                  children: updatedChildren
-                }
-              }
-            }
-            return p
-          })
-        )
-
-        console.log('[handleDeleteSelected] Popup updated - removed', successCount, 'successfully deleted items')
-      }
-
-      // Warn user if some deletes failed
-      const failedCount = selectedIds.size - successCount
-      if (failedCount > 0) {
-        console.warn(`[handleDeleteSelected] ${failedCount} item(s) failed to delete - they remain visible`)
-        // Could show user notification here
-      }
-    } catch (error) {
-      console.error('[handleDeleteSelected] Error:', error)
-    }
-  }, [overlayPopups])
-
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
     event.preventDefault()
@@ -1152,7 +1076,6 @@ function AnnotationAppContent() {
           onLeaveFolder={handleFolderHoverLeave}
           onPopupHover={handlePopupHover}
           onSelectNote={handleNoteSelect}
-          onDeleteSelected={handleDeleteSelected}
           sidebarOpen={false}
         />
       )}

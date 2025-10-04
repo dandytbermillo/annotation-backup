@@ -1,0 +1,518 @@
+# Feature: Popup Overlay Drag and Drop (popup_drag_drop)
+
+**Feature Slug:** `popup_drag_drop`
+
+**Created:** 2025-10-03
+
+**Status:** Planning
+
+---
+
+## Overview
+
+Add drag and drop functionality to popup overlay items (notes/folders), allowing users to drag items from one popup/folder to another, similar to the existing implementation in `notes-explorer-phase1.tsx`.
+
+---
+
+## Goals
+
+1. **Drag items within and between popups** - Move notes/folders by dragging
+2. **Multi-item drag support** - Drag all selected items together
+3. **Visual drag feedback** - Custom drag preview showing item count
+4. **Folder-only drop targets** - Only folders accept drops
+5. **API integration** - Use `/api/items/bulk-move` endpoint
+6. **Tree consistency** - Update both source and target popups after move
+7. **Integrate with multi-select** - Work seamlessly with existing selection
+
+---
+
+## Scope
+
+### In Scope
+- ✅ Drag state management (per popup or global)
+- ✅ Drag start/end/over/leave/drop handlers
+- ✅ Visual feedback (drag preview, drop target highlight, opacity)
+- ✅ Multi-item drag (if dragged item is selected, drag all selected)
+- ✅ Custom drag image ("X items" badge)
+- ✅ Drop validation (prevent dropping on self, only folders)
+- ✅ API call to bulk-move endpoint
+- ✅ Refresh source and target popups after drop
+- ✅ Auto-expand target folder after drop
+
+### Out of Scope
+- ❌ Drag to canvas (separate feature)
+- ❌ Drag to create new folder (defer)
+- ❌ Drag reordering within same folder (defer)
+- ❌ Keyboard-driven drag (defer)
+- ❌ Undo/redo for moves (defer)
+
+---
+
+## Reference Implementation
+
+**Source:** `components/notes-explorer-phase1.tsx`
+
+### Key Patterns to Adopt
+
+**1. State Management (lines 160-162):**
+```typescript
+const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set())
+const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+```
+
+**2. Drag Start with Multi-Select (lines 2914-2934):**
+```typescript
+const handleDragStart = (e: React.DragEvent, nodeId: string) => {
+  // If the dragged item is selected, drag all selected items
+  const itemsToDrag = selectedItems.has(nodeId) ? selectedItems : new Set([nodeId])
+  setDraggedItems(itemsToDrag)
+
+  // Custom drag image for multiple items
+  if (itemsToDrag.size > 1) {
+    const dragPreview = document.createElement('div')
+    dragPreview.className = 'bg-indigo-600 text-white px-2 py-1 rounded'
+    dragPreview.textContent = `${itemsToDrag.size} items`
+    // ... create and set drag image
+  }
+}
+```
+
+**3. Drop Handler with API Call (lines 2957-3025):**
+```typescript
+const handleDrop = async (e: React.DragEvent, targetId: string) => {
+  const itemIds = Array.from(draggedItems)
+
+  // API call
+  await fetch('/api/items/bulk-move', {
+    method: 'POST',
+    body: JSON.stringify({ itemIds, targetFolderId: targetId })
+  })
+
+  // Auto-expand target
+  setExpandedNodes(prev => ({ ...prev, [targetId]: true }))
+
+  // Reload target folder children
+  await loadNodeChildren(targetId)
+
+  // Find and reload source parent folders
+  // ...
+}
+```
+
+**4. Visual Feedback (lines 3086-3091):**
+```typescript
+className={`... ${
+  isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500' :
+  isDragging ? 'opacity-50' :
+  'hover:bg-gray-700'
+}`}
+```
+
+---
+
+## Technical Approach
+
+### 1. State Management (PopupOverlay Component)
+
+**Add drag state to PopupOverlay:**
+```typescript
+// Drag and drop state
+const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set())
+const [dropTargetId, setDropTargetId] = useState<string | null>(null)
+const [dragSourcePopupId, setDragSourcePopupId] = useState<string | null>(null)
+```
+
+**Considerations:**
+- Track source popup ID to know where items are being dragged from
+- Use existing `popupSelections` for multi-select integration
+- Clear drag state when popups close (add to existing cleanup effect)
+
+### 2. Drag Handlers
+
+**handleDragStart:**
+```typescript
+const handleDragStart = useCallback((
+  popupId: string,
+  childId: string,
+  event: React.DragEvent
+) => {
+  // Get items to drag (selected items or just this one)
+  const selectedInPopup = popupSelections.get(popupId) || new Set()
+  const itemsToDrag = selectedInPopup.has(childId) ? selectedInPopup : new Set([childId])
+
+  setDraggedItems(itemsToDrag)
+  setDragSourcePopupId(popupId)
+
+  // Set drag data
+  event.dataTransfer.effectAllowed = 'move'
+  event.dataTransfer.setData('text/plain', Array.from(itemsToDrag).join(','))
+
+  // Custom drag preview for multiple items
+  if (itemsToDrag.size > 1) {
+    const dragPreview = document.createElement('div')
+    dragPreview.className = 'bg-indigo-600 text-white px-2 py-1 rounded text-sm'
+    dragPreview.textContent = `${itemsToDrag.size} items`
+    dragPreview.style.position = 'absolute'
+    dragPreview.style.top = '-1000px'
+    document.body.appendChild(dragPreview)
+    event.dataTransfer.setDragImage(dragPreview, 0, 0)
+    setTimeout(() => document.body.removeChild(dragPreview), 0)
+  }
+}, [popupSelections])
+```
+
+**handleDragOver:**
+```typescript
+const handleDragOver = useCallback((
+  childId: string,
+  isFolder: boolean,
+  event: React.DragEvent
+) => {
+  if (!isFolder) return // Only folders are drop targets
+
+  event.preventDefault()
+  event.dataTransfer.dropEffect = 'move'
+  setDropTargetId(childId)
+}, [])
+```
+
+**handleDragLeave:**
+```typescript
+const handleDragLeave = useCallback((event: React.DragEvent) => {
+  const related = event.relatedTarget as HTMLElement
+  if (!related || !related.closest('[data-drop-zone]')) {
+    setDropTargetId(null)
+  }
+}, [])
+```
+
+**handleDragEnd:**
+```typescript
+const handleDragEnd = useCallback(() => {
+  setDraggedItems(new Set())
+  setDropTargetId(null)
+  setDragSourcePopupId(null)
+}, [])
+```
+
+**handleDrop (will need onBulkMove prop):**
+```typescript
+const handleDrop = useCallback(async (
+  targetFolderId: string,
+  event: React.DragEvent
+) => {
+  event.preventDefault()
+  event.stopPropagation()
+
+  const itemIds = Array.from(draggedItems)
+  if (itemIds.length === 0) return
+
+  // Don't allow dropping on itself
+  if (itemIds.includes(targetFolderId)) {
+    setDropTargetId(null)
+    return
+  }
+
+  // Call parent callback to handle move
+  await onBulkMove?.(itemIds, targetFolderId, dragSourcePopupId || '')
+
+  // Clear drag state
+  handleDragEnd()
+}, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd])
+```
+
+### 3. Visual Feedback
+
+**Update renderPopupChildRow:**
+```typescript
+const isDragging = draggedItems.has(child.id)
+const isDropTarget = dropTargetId === child.id && folderLike
+
+className={`... ${
+  isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500' :  // Drop target
+  isSelected ? 'bg-indigo-500 bg-opacity-50 text-white' :
+  isDragging ? 'opacity-50' :  // Being dragged
+  isActivePreview ? 'bg-gray-700/70 text-white' : 'text-gray-200'
+}`}
+```
+
+**Visual Priority:**
+1. Drop target (green) - highest
+2. Selected (indigo)
+3. Dragging (opacity 50%)
+4. Preview (gray)
+5. Default
+
+### 4. Drag Attributes on Rows
+
+**Add to row div:**
+```typescript
+draggable={true}  // All items draggable
+onDragStart={(e) => handleDragStart(popupId, child.id, e)}
+onDragEnd={handleDragEnd}
+onDragOver={(e) => handleDragOver(child.id, folderLike, e)}
+onDragLeave={handleDragLeave}
+onDrop={(e) => folderLike && handleDrop(child.id, e)}
+data-drop-zone={folderLike ? 'true' : undefined}
+```
+
+### 5. Parent Component Integration (annotation-app.tsx)
+
+**Add onBulkMove prop to PopupOverlay:**
+```typescript
+interface PopupOverlayProps {
+  // ... existing props
+  onBulkMove?: (itemIds: string[], targetFolderId: string, sourcePopupId: string) => Promise<void>
+}
+```
+
+**Implement handleBulkMove in annotation-app.tsx:**
+```typescript
+const handleBulkMove = useCallback(async (
+  itemIds: string[],
+  targetFolderId: string,
+  sourcePopupId: string
+) => {
+  try {
+    // Call bulk-move API
+    const response = await fetch('/api/items/bulk-move', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemIds, targetFolderId })
+    })
+
+    if (!response.ok) throw new Error('Failed to move items')
+
+    // Find source and target popups
+    const sourcePopup = overlayPopups.find(p => p.id === sourcePopupId)
+    const targetPopup = overlayPopups.find(p => p.folder?.id === targetFolderId)
+
+    // Reload source popup children (remove moved items)
+    if (sourcePopup?.folder) {
+      const sourceResponse = await fetch(`/api/items?parentId=${sourcePopup.folder.id}`)
+      const sourceData = await sourceResponse.json()
+      // Update source popup...
+    }
+
+    // Reload target popup children (add moved items) if popup exists
+    if (targetPopup?.folder) {
+      const targetResponse = await fetch(`/api/items?parentId=${targetFolderId}`)
+      const targetData = await targetResponse.json()
+      // Update target popup...
+    }
+
+    // If target popup doesn't exist, create it (optional - show moved items)
+
+    console.log('Bulk move successful')
+  } catch (error) {
+    console.error('Failed to move items:', error)
+    alert('Failed to move items. Please try again.')
+  }
+}, [overlayPopups])
+```
+
+### 6. Cleanup on Popup Close
+
+**Add to existing cleanup effect (popup-overlay.tsx:523-553):**
+```typescript
+useEffect(() => {
+  const activeIds = new Set<string>();
+  popups.forEach((_, id) => activeIds.add(id));
+
+  // Existing cleanup...
+
+  // Clear drag state if source popup closed
+  setDraggedItems(prev => {
+    if (!dragSourcePopupId || !activeIds.has(dragSourcePopupId)) {
+      return new Set()
+    }
+    return prev
+  })
+
+  if (dragSourcePopupId && !activeIds.has(dragSourcePopupId)) {
+    setDropTargetId(null)
+    setDragSourcePopupId(null)
+  }
+}, [popups, dragSourcePopupId])
+```
+
+---
+
+## Files to Modify
+
+### Primary Changes
+1. **`components/canvas/popup-overlay.tsx`**
+   - Add drag state management
+   - Add drag handlers (start, over, leave, end, drop)
+   - Update visual feedback (add isDragging, isDropTarget)
+   - Add drag attributes to rows
+   - Add cleanup in popup close effect
+   - Add `onBulkMove` prop to interface
+
+2. **`components/annotation-app.tsx`**
+   - Implement `handleBulkMove` callback
+   - Wire `onBulkMove` to PopupOverlay
+   - Handle popup refresh after move
+
+### API Requirements
+- **Endpoint:** `POST /api/items/bulk-move`
+- **Payload:** `{ itemIds: string[], targetFolderId: string }`
+- **Response:** Success/failure status
+
+---
+
+## Testing Strategy
+
+### Manual Testing
+1. Open popup (click folder eye icon)
+2. Drag single item to folder in same popup → verify move
+3. Ctrl/Cmd+Click select multiple items
+4. Drag selected items to folder → verify all move together
+5. Drag items to folder in different popup → verify cross-popup move
+6. Verify drag preview shows "X items" for multiple
+7. Verify drop target highlights green
+8. Verify dragged items show opacity 50%
+9. Verify source popup refreshes (items removed)
+10. Verify target popup refreshes (items added)
+11. Try dropping on non-folder → verify no drop
+12. Try dropping on self → verify prevented
+13. Close popup while dragging → verify cleanup
+
+### Edge Cases
+- [ ] Drag from popup A to folder in popup B
+- [ ] Drag last item from folder (folder becomes empty)
+- [ ] Drag to collapsed folder (should expand?)
+- [ ] Drag while preview is active
+- [ ] Network failure during move
+- [ ] Partial move failure (some items fail)
+
+### Type Check
+```bash
+npm run type-check
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Single item drag works
+- [ ] Multi-item drag works (drags all selected if dragged item is selected)
+- [ ] Custom drag preview shows "X items" badge
+- [ ] Drop target highlights green with ring
+- [ ] Dragged items show opacity 50%
+- [ ] Only folders accept drops
+- [ ] Cannot drop on self
+- [ ] API call to `/api/items/bulk-move` succeeds
+- [ ] Source popup refreshes (moved items removed)
+- [ ] Target popup refreshes (moved items added)
+- [ ] Drag state cleared on drop
+- [ ] Drag state cleared on popup close
+- [ ] Type-check passes
+- [ ] No console errors
+- [ ] Works with existing multi-select
+
+---
+
+## Risks & Considerations
+
+1. **Cross-Popup Complexity**
+   - Need to track source popup ID
+   - Must refresh both source and target popups
+   - Target popup might not exist (create it?)
+
+2. **Drag State Cleanup**
+   - Must clear when popup closes
+   - Must handle drag interruption (Escape key?)
+
+3. **Visual Conflicts**
+   - Drag feedback vs selection highlight
+   - Drop target vs preview highlight
+   - Priority order critical
+
+4. **API Reliability**
+   - Bulk move might partially fail
+   - Need error handling and user feedback
+   - Should we use optimistic UI updates?
+
+5. **Performance**
+   - Dragging large selections might be slow
+   - Creating drag preview DOM element each time
+
+---
+
+## Implementation Steps
+
+1. Create backups: `popup-overlay.tsx.backup.dragdrop`, `annotation-app.tsx.backup.dragdrop`
+2. Add drag state management to PopupOverlay
+3. Implement drag handlers (start, over, leave, end, drop)
+4. Add visual feedback (isDragging, isDropTarget)
+5. Add drag attributes to row rendering
+6. Add cleanup to popup close effect
+7. Add `onBulkMove` prop to PopupOverlay interface
+8. Implement `handleBulkMove` in annotation-app.tsx
+9. Wire callback to PopupOverlay
+10. Test all drag scenarios
+11. Run type-check
+12. Create implementation report
+
+---
+
+## Alternative Approaches
+
+### Option A: Use Existing Multi-Select (Current Plan)
+- ✅ Consistent with notes-explorer
+- ✅ Leverages existing selection state
+- ✅ Users can select then drag
+- ❌ Two-step operation (select, then drag)
+
+### Option B: Drag Without Pre-Selection
+- ✅ One-step operation (just drag)
+- ❌ No visual indication before drag
+- ❌ Less consistent with existing UX
+
+**Decision: Use Option A (multi-select integration)**
+
+---
+
+## References
+
+- **Source Implementation:** `components/notes-explorer-phase1.tsx:2914-3025` (drag handlers), `3070-3100` (visual feedback)
+- **Target Files:** `components/canvas/popup-overlay.tsx`, `components/annotation-app.tsx`
+- **API Endpoint:** `/api/items/bulk-move` (assumed to exist, verify)
+- **CLAUDE.md:** Feature workspace structure, backups, testing requirements
+
+---
+
+## Next Steps After Implementation
+
+1. Add drag to canvas support (drag items to open on canvas)
+2. Add drag to create folder (drag over empty space)
+3. Add drag reordering within same folder
+4. Add undo/redo for move operations
+5. Add keyboard shortcuts for move (Ctrl+X, Ctrl+V)
+6. Add batch move optimization (single API call)
+
+---
+
+## Questions to Resolve
+
+1. **Does `/api/items/bulk-move` endpoint exist?**
+   - If not, create it
+   - Verify expected payload format
+
+2. **Should we create target popup if it doesn't exist?**
+   - Or just refresh if already open?
+   - UX decision needed
+
+3. **Should dragging auto-expand collapsed folders?**
+   - Like in notes-explorer? (yes it does)
+   - Or require manual expand first?
+
+4. **How to handle partial move failures?**
+   - Roll back all?
+   - Show which items failed?
+   - Keep successful moves?
+
+5. **Should we clear selection after move?**
+   - Notes-explorer does (line 3017)
+   - Consistent behavior preferred
