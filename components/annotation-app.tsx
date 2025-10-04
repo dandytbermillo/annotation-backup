@@ -361,6 +361,8 @@ function AnnotationAppContent() {
           type: item.type,
           icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
           color: item.color,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
           hasChildren: item.type === 'folder',
           level: popup.level + 1,
           children: [],
@@ -854,6 +856,8 @@ function AnnotationAppContent() {
           type: item.type,
           icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
           color: item.color,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
           hasChildren: item.type === 'folder',
           level: folder.level + 1,
           children: [],
@@ -1019,6 +1023,28 @@ function AnnotationAppContent() {
   }, [overlayPopups])
 
   // Handle bulk move of items to target folder (drag-drop)
+  const handleFolderCreated = useCallback((popupId: string, newFolder: any) => {
+    console.log('[handleFolderCreated]', { popupId, newFolder })
+
+    // Update the popup's children to include the new folder
+    setOverlayPopups(prev =>
+      prev.map(popup => {
+        if (popup.id === popupId && popup.folder) {
+          // Add new folder to the beginning of children array (folders typically shown first)
+          const updatedChildren = [newFolder, ...popup.children]
+          return {
+            ...popup,
+            children: updatedChildren,
+            folder: { ...popup.folder, children: updatedChildren }
+          }
+        }
+        return popup
+      })
+    )
+
+    console.log('[handleFolderCreated] Popup updated with new folder')
+  }, [])
+
   const handleBulkMove = useCallback(async (
     itemIds: string[],
     targetFolderId: string,
@@ -1242,6 +1268,7 @@ function AnnotationAppContent() {
           onSelectNote={handleNoteSelect}
           onDeleteSelected={handleDeleteSelected}
           onBulkMove={handleBulkMove}
+          onFolderCreated={handleFolderCreated}
           sidebarOpen={false}
         />
       )}

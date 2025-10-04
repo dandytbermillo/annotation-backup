@@ -57,6 +57,8 @@ export interface OrgItem {
   level: number
   children?: OrgItem[]
   parentId?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 interface FolderPopup {

@@ -114,3 +114,17 @@
 .popup-preview-tooltip__body::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.55);
 }
+
+/* Drop target glow effect */
+@keyframes popup-drop-pulse {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(96, 165, 250, 0.6), 0 0 40px rgba(96, 165, 250, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(96, 165, 250, 0.8), 0 0 60px rgba(96, 165, 250, 0.4);
+  }
+}
+
+.popup-card.drop-target-active {
+  animation: popup-drop-pulse 1.5s ease-in-out infinite;
+}

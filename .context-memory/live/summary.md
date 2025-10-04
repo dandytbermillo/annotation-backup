@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-04 19:22Z] 671c417: drag and drop in popup polished
 - commit [2025-10-04 18:49Z] 33872d3: improving drag and drop
 - commit [2025-10-04 04:37Z] ddbbfeb: implementing drag and drop functionality for popup overlay
 - commit [2025-10-04 01:24Z] a2e76f4: popup overlay not displaying 'loading...' when app loaded
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-03 05:45Z] 606e67d: added toogle switch for note and overlay popup canvas
 - commit [2025-10-03 04:46Z] 909028d: added preview and view functionality for the files and folders
 - commit [2025-10-03 01:07Z] 6ca5f5e: improving the save as functionality
-- commit [2025-10-02 22:27Z] 2406f26: refining the floating toolbar buttons
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-04 18:49Z] 33872d3: improving drag and drop
+- commit [2025-10-04 19:22Z] 671c417: drag and drop in popup polished

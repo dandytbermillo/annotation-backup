@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
     
     // Construct path
     const path = parentPath ? `${parentPath}/${name}` : `/${name}`
-    
+
     // Always get workspace_id since database requires it (NOT NULL constraint)
     let workspaceId = null;
     try {
@@ -177,20 +177,32 @@ export async function POST(request: NextRequest) {
         { status: 500 }
       );
     }
-    
+
+    // Check for duplicate name in the same parent folder (case-insensitive)
+    const duplicateCheck = await serverPool.query(
+      `SELECT id, name FROM items
+       WHERE workspace_id = $1
+         AND ${parentId ? 'parent_id = $2' : 'parent_id IS NULL'}
+         AND LOWER(name) = LOWER($${parentId ? '3' : '2'})
+         AND deleted_at IS NULL`,
+      parentId ? [workspaceId, parentId, name] : [workspaceId, name]
+    )
+
+    if (duplicateCheck.rows.length > 0) {
+      return NextResponse.json(
+        { error: `An item named "${name}" already exists in this location` },
+        { status: 409 }
+      )
+    }
+
     // Always include workspace_id in INSERT since it's required
-    // Use ON CONFLICT to return existing item if it already exists
     const query = `
       INSERT INTO items (
-        type, parent_id, path, name, content, 
+        type, parent_id, path, name, content,
         metadata, icon, color, position, workspace_id
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-      ) 
-      ON CONFLICT (workspace_id, path) WHERE deleted_at IS NULL
-      DO UPDATE SET
-        updated_at = (NOW() AT TIME ZONE 'UTC'),
-        last_accessed_at = (NOW() AT TIME ZONE 'UTC')
+      )
       RETURNING *
     `
     

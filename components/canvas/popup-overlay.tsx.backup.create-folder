@@ -59,7 +59,6 @@ interface PopupOverlayProps {
   onSelectNote?: (noteId: string) => void; // Open note on canvas when eye icon clicked or double-clicked
   onDeleteSelected?: (popupId: string, selectedIds: Set<string>) => void; // Delete multiple selected items
   onBulkMove?: (itemIds: string[], targetFolderId: string, sourcePopupId: string) => Promise<void>; // Move multiple items to target folder
-  onFolderCreated?: (popupId: string, newFolder: PopupChildNode) => void; // Called after folder created - parent should update popup children
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
@@ -72,30 +71,7 @@ type PopupChildNode = {
   icon?: string | null;
   color?: string | null;
   hasChildren?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
 };
-
-// Format relative time (e.g., "2h ago", "3d ago")
-function formatRelativeTime(timestamp?: string): string {
-  if (!timestamp) return '';
-
-  const now = new Date();
-  const date = new Date(timestamp);
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffMonths = Math.floor(diffDays / 30);
-  const diffYears = Math.floor(diffDays / 365);
-
-  if (diffMins < 1) return 'now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 30) return `${diffDays}d ago`;
-  if (diffMonths < 12) return `${diffMonths}mo ago`;
-  return `${diffYears}y ago`;
-}
 
 function isFolderNode(node: PopupChildNode | null | undefined): boolean {
   if (!node || !node.type) return false;
@@ -137,7 +113,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onSelectNote,
   onDeleteSelected,
   onBulkMove,
-  onFolderCreated,
   sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
@@ -159,12 +134,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [dragSourcePopupId, setDragSourcePopupId] = useState<string | null>(null);
   const [dragSourceFolderId, setDragSourceFolderId] = useState<string | null>(null); // Track source folder ID
   const [isPopupDropTarget, setIsPopupDropTarget] = useState<string | null>(null);
-
-  // Create folder state
-  const [creatingFolderInPopup, setCreatingFolderInPopup] = useState<string | null>(null);
-  const [newFolderName, setNewFolderName] = useState<string>('');
-  const [folderCreationLoading, setFolderCreationLoading] = useState<string | null>(null);
-  const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -481,127 +450,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       handleClearSelection(popupId);
     }
   }, [popupSelections, onDeleteSelected, handleClearSelection]);
-
-  // Create new folder
-  const handleCreateFolder = useCallback(async (popupId: string, parentFolderId: string) => {
-    const trimmedName = newFolderName.trim();
-
-    // Validation
-    if (!trimmedName) {
-      setFolderCreationError('Folder name cannot be empty');
-      return;
-    }
-
-    if (trimmedName.length > 255) {
-      setFolderCreationError('Folder name is too long (max 255 characters)');
-      return;
-    }
-
-    // Check for duplicate names in current folder
-    const popup = popups.get(popupId);
-    const children = popup?.folder?.children || [];
-    const duplicateName = children.some(
-      (child: PopupChildNode) =>
-        isFolderNode(child) &&
-        child.name?.toLowerCase() === trimmedName.toLowerCase()
-    );
-
-    if (duplicateName) {
-      setFolderCreationError('A folder with this name already exists');
-      return;
-    }
-
-    setFolderCreationLoading(popupId);
-    setFolderCreationError(null);
-
-    try {
-      const response = await fetch('/api/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          type: 'folder',
-          name: trimmedName,
-          parentId: parentFolderId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to create folder: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // Success - clear form and close input
-      setNewFolderName('');
-      setCreatingFolderInPopup(null);
-      setFolderCreationError(null);
-
-      // Notify parent to update popup children with new folder
-      if (onFolderCreated && data.item) {
-        const newFolder: PopupChildNode = {
-          id: data.item.id,
-          type: data.item.type || 'folder',
-          name: data.item.name || trimmedName,
-          parentId: parentFolderId,
-          hasChildren: false,
-        };
-        onFolderCreated(popupId, newFolder);
-
-        // Highlight the newly created folder
-        setPopupSelections(prev => {
-          const next = new Map(prev);
-          next.set(popupId, new Set([data.item.id]));
-          return next;
-        });
-
-        // Set as last selected for shift-click range selection
-        setLastSelectedIds(prev => {
-          const next = new Map(prev);
-          next.set(popupId, data.item.id);
-          return next;
-        });
-      }
-
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'folder_created', {
-          popupId,
-          parentFolderId,
-          newFolderId: data.item?.id,
-          name: trimmedName,
-        });
-      });
-
-    } catch (error: any) {
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'folder_creation_error', {
-          popupId,
-          parentFolderId,
-          error: error?.message || 'Unknown error',
-        });
-      });
-      setFolderCreationError(error?.message || 'Failed to create folder');
-    } finally {
-      setFolderCreationLoading(null);
-    }
-  }, [newFolderName, popups]);
-
-  // Cancel folder creation
-  const handleCancelCreateFolder = useCallback(() => {
-    setCreatingFolderInPopup(null);
-    setNewFolderName('');
-    setFolderCreationError(null);
-  }, []);
-
-  // Start folder creation
-  const handleStartCreateFolder = useCallback((popupId: string) => {
-    setCreatingFolderInPopup(popupId);
-    setNewFolderName('');
-    setFolderCreationError(null);
-  }, []);
 
   // Drag and drop handlers
 
@@ -953,14 +801,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           )}
           <span className="truncate">{child.name}</span>
         </div>
-        {/* Timestamp: visible by default, hidden on hover */}
-        {(child.updatedAt || child.createdAt) && (
-          <div className="flex items-center gap-1 text-xs text-gray-500 flex-shrink-0 transition-opacity opacity-100 group-hover:opacity-0">
-            <span>·</span>
-            <span>{formatRelativeTime(child.updatedAt || child.createdAt)}</span>
-          </div>
-        )}
-        {/* Eye icon: hidden by default, visible on hover */}
         <div className={`flex items-center gap-1 transition-opacity ${iconVisibilityClass}`}>
           {noteLike && (
             <TooltipProvider delayDuration={150}>
@@ -1916,7 +1756,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               key={popup.id}
               id={`popup-${popup.id}`}
               className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
-                isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
+                isPopupDropTarget === popup.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900' : ''
               }`}
               style={{
                 left: `${position.x}px`,
@@ -2027,73 +1867,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   </div>
                 );
               })()}
-              {/* Create Folder Section */}
-              <div className="border-t border-gray-700">
-                {creatingFolderInPopup === popup.id ? (
-                  <div className="px-3 py-2 bg-gray-800">
-                    <div className="flex flex-col gap-2">
-                      <input
-                        type="text"
-                        value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const folderId = (popup as any).folderId;
-                            if (folderId) {
-                              handleCreateFolder(popup.id, folderId);
-                            }
-                          } else if (e.key === 'Escape') {
-                            handleCancelCreateFolder();
-                          }
-                        }}
-                        placeholder="New folder name"
-                        className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        autoFocus
-                        disabled={folderCreationLoading === popup.id}
-                      />
-                      {folderCreationError && (
-                        <p className="text-xs text-red-400">{folderCreationError}</p>
-                      )}
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCancelCreateFolder();
-                          }}
-                          className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={folderCreationLoading === popup.id}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const folderId = (popup as any).folderId;
-                            if (folderId) {
-                              handleCreateFolder(popup.id, folderId);
-                            }
-                          }}
-                          className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={folderCreationLoading === popup.id || !newFolderName.trim()}
-                        >
-                          {folderCreationLoading === popup.id ? 'Creating...' : 'Create'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStartCreateFolder(popup.id);
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white hover:bg-gray-750 transition-colors"
-                  >
-                    + New Folder
-                  </button>
-                )}
-              </div>
               {/* Popup Footer - also droppable for easy access */}
               <div
                 className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
@@ -2204,7 +1977,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   key={popup.id}
                   id={`popup-${popup.id}`}
                   className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
-                    isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
+                    isPopupDropTarget === popup.id ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-gray-900' : ''
                   }`}
                   style={{
                     left: `${position.x}px`,
@@ -2307,73 +2080,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       </div>
                     );
                   })()}
-                  {/* Create Folder Section */}
-                  <div className="border-t border-gray-700">
-                    {creatingFolderInPopup === popup.id ? (
-                      <div className="px-3 py-2 bg-gray-800">
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="text"
-                            value={newFolderName}
-                            onChange={(e) => setNewFolderName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                const folderId = (popup as any).folderId;
-                                if (folderId) {
-                                  handleCreateFolder(popup.id, folderId);
-                                }
-                              } else if (e.key === 'Escape') {
-                                handleCancelCreateFolder();
-                              }
-                            }}
-                            placeholder="New folder name"
-                            className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            autoFocus
-                            disabled={folderCreationLoading === popup.id}
-                          />
-                          {folderCreationError && (
-                            <p className="text-xs text-red-400">{folderCreationError}</p>
-                          )}
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCancelCreateFolder();
-                              }}
-                              className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={folderCreationLoading === popup.id}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const folderId = (popup as any).folderId;
-                                if (folderId) {
-                                  handleCreateFolder(popup.id, folderId);
-                                }
-                              }}
-                              className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={folderCreationLoading === popup.id || !newFolderName.trim()}
-                            >
-                              {folderCreationLoading === popup.id ? 'Creating...' : 'Create'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStartCreateFolder(popup.id);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white hover:bg-gray-750 transition-colors"
-                      >
-                        + New Folder
-                      </button>
-                    )}
-                  </div>
                   {/* Popup Footer - also droppable for easy access */}
                   <div
                     className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
