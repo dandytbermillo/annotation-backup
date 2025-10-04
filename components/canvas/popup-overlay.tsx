@@ -130,7 +130,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Drag and drop state
   const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set());
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [invalidDropTargetId, setInvalidDropTargetId] = useState<string | null>(null); // For red visual feedback
   const [dragSourcePopupId, setDragSourcePopupId] = useState<string | null>(null);
+  const [dragSourceFolderId, setDragSourceFolderId] = useState<string | null>(null); // Track source folder ID
   const [isPopupDropTarget, setIsPopupDropTarget] = useState<string | null>(null);
 
   useEffect(() => {
@@ -463,6 +465,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setDraggedItems(itemsToDrag);
     setDragSourcePopupId(popupId);
 
+    // Track source folder ID to prevent dropping into same folder
+    const sourcePopup = popups.get(popupId);
+    const sourceFolderId = sourcePopup ? (sourcePopup as any).folderId : null;
+    setDragSourceFolderId(sourceFolderId);
+
     // Set drag data
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', Array.from(itemsToDrag).join(','));
@@ -478,7 +485,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       event.dataTransfer.setDragImage(dragPreview, 0, 0);
       setTimeout(() => document.body.removeChild(dragPreview), 0);
     }
-  }, [popupSelections]);
+  }, [popupSelections, popups]);
 
   const handleDragOver = useCallback((
     childId: string,
@@ -488,21 +495,37 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (!isFolder) return; // Only folders are drop targets
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setDropTargetId(childId);
-  }, []);
+
+    // Check if this is an invalid drop:
+    // 1. Dropping folder into itself (childId in draggedItems)
+    // 2. Dropping items back into their source folder (childId === dragSourceFolderId)
+    const isInvalid = draggedItems.has(childId) || childId === dragSourceFolderId;
+
+    if (isInvalid) {
+      event.dataTransfer.dropEffect = 'none';
+      setInvalidDropTargetId(childId);
+      setDropTargetId(null);
+    } else {
+      event.dataTransfer.dropEffect = 'move';
+      setDropTargetId(childId);
+      setInvalidDropTargetId(null);
+    }
+  }, [draggedItems, dragSourceFolderId]);
 
   const handleDragLeave = useCallback((event: React.DragEvent) => {
     const related = event.relatedTarget as HTMLElement;
     if (!related || !related.closest('[data-drop-zone]')) {
       setDropTargetId(null);
+      setInvalidDropTargetId(null);
     }
   }, []);
 
   const handleDragEnd = useCallback(() => {
     setDraggedItems(new Set());
     setDropTargetId(null);
+    setInvalidDropTargetId(null);
     setDragSourcePopupId(null);
+    setDragSourceFolderId(null);
   }, []);
 
   const handleDrop = useCallback(async (
@@ -521,14 +544,36 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
 
+    // Find target popup ID (popup that contains this folder)
+    let targetPopupId: string | null = null;
+    popups.forEach((popup, popupId) => {
+      if ((popup as any).folderId === targetFolderId) {
+        targetPopupId = popupId;
+      }
+    });
+
     // Call parent callback to handle move
     if (onBulkMove && dragSourcePopupId) {
       await onBulkMove(itemIds, targetFolderId, dragSourcePopupId);
     }
 
+    // Clear selection from source popup and set in target popup
+    setPopupSelections(prev => {
+      const next = new Map(prev);
+      // Clear source popup selection
+      if (dragSourcePopupId) {
+        next.delete(dragSourcePopupId);
+      }
+      // Set moved items as selected in target popup
+      if (targetPopupId) {
+        next.set(targetPopupId, new Set(itemIds));
+      }
+      return next;
+    });
+
     // Clear drag state
     handleDragEnd();
-  }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd]);
+  }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd, popups]);
 
   // Popup container drop handlers (for dropping on popup background/empty space)
   const handlePopupDragOver = useCallback((
@@ -557,6 +602,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   const handlePopupDrop = useCallback(async (
     folderId: string,
+    popupId: string,
     event: React.DragEvent
   ) => {
     event.preventDefault();
@@ -575,6 +621,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (onBulkMove && dragSourcePopupId) {
       await onBulkMove(itemIds, folderId, dragSourcePopupId);
     }
+
+    // Clear selection from source popup and set in target popup
+    setPopupSelections(prev => {
+      const next = new Map(prev);
+      // Clear source popup selection
+      if (dragSourcePopupId) {
+        next.delete(dragSourcePopupId);
+      }
+      // Set moved items as selected in target popup
+      next.set(popupId, new Set(itemIds));
+      return next;
+    });
 
     setIsPopupDropTarget(null);
     handleDragEnd();
@@ -604,6 +662,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Drag and drop states
     const isDragging = draggedItems.has(child.id);
     const isDropTarget = dropTargetId === child.id && folderLike;
+    const isInvalidDropTarget = invalidDropTargetId === child.id && folderLike;
 
     const triggerPreview = () => {
       if (rowIsPanning || !noteLike) return;
@@ -661,6 +720,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         key={child.id}
         draggable={true}
         className={`group px-3 py-2 cursor-pointer flex items-center justify-between text-sm transition-colors ${
+          isInvalidDropTarget ? 'bg-red-600 bg-opacity-50 ring-2 ring-red-500 text-white cursor-not-allowed' :
           isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500 text-white' :
           isDragging ? 'opacity-50' :
           isSelected ? 'bg-indigo-500 bg-opacity-50 text-white' :
@@ -873,7 +933,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (dragSourcePopupId && !activeIds.has(dragSourcePopupId)) {
       setDraggedItems(new Set());
       setDropTargetId(null);
+      setInvalidDropTargetId(null);
       setDragSourcePopupId(null);
+      setDragSourceFolderId(null);
       setIsPopupDropTarget(null);
     }
   }, [popups, dragSourcePopupId]);
@@ -1718,7 +1780,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               onDragLeave={(e) => handlePopupDragLeave(popup.id, e)}
               onDrop={(e) => {
                 const folderId = (popup as any).folderId;
-                folderId && handlePopupDrop(folderId, e);
+                folderId && handlePopupDrop(folderId, popup.id, e);
               }}
               onClick={(e) => e.stopPropagation()}
               onPointerEnter={() => {
@@ -1750,7 +1812,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </button>
               </div>
               {/* Popup Content with virtualization for large lists */}
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
+              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>
                 {popup.isLoading ? (
                   <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                 ) : popup.folder?.children && popup.folder.children.length > 0 ? (
@@ -1805,8 +1867,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   </div>
                 );
               })()}
-              {/* Popup Footer */}
-              <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+              {/* Popup Footer - also droppable for easy access */}
+              <div
+                className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
+                onDragOver={(e) => {
+                  const folderId = (popup as any).folderId;
+                  if (folderId && draggedItems.size > 0) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setIsPopupDropTarget(popup.id);
+                  }
+                }}
+                onDrop={(e) => {
+                  const folderId = (popup as any).folderId;
+                  folderId && handlePopupDrop(folderId, popup.id, e);
+                }}
+              >
                 Level {popup.level} • {popup.folder?.children?.length || 0} items
               </div>
             </div>
@@ -1923,7 +1999,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   onDragLeave={(e) => handlePopupDragLeave(popup.id, e)}
                   onDrop={(e) => {
                     const folderId = (popup as any).folderId;
-                    folderId && handlePopupDrop(folderId, e);
+                    folderId && handlePopupDrop(folderId, popup.id, e);
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -1949,7 +2025,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     </button>
                   </div>
                   {/* Popup Content */}
-                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const }}>
+                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>
                     {popup.isLoading ? (
                       <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                     ) : popup.folder?.children && popup.folder.children.length > 0 ? (
@@ -2004,8 +2080,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       </div>
                     );
                   })()}
-                  {/* Popup Footer */}
-                  <div className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500">
+                  {/* Popup Footer - also droppable for easy access */}
+                  <div
+                    className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
+                    onDragOver={(e) => {
+                      const folderId = (popup as any).folderId;
+                      if (folderId && draggedItems.size > 0) {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        setIsPopupDropTarget(popup.id);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      const folderId = (popup as any).folderId;
+                      folderId && handlePopupDrop(folderId, popup.id, e);
+                    }}
+                  >
                     Level {popup.level} • {popup.folder?.children?.length || 0} items
                   </div>
                 </div>

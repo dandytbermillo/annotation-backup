@@ -2,7 +2,7 @@
 
 **Feature Slug:** `popup_drag_drop`
 
-**Status:** ✅ COMPLETE - Production Ready
+**Status:** ✅ COMPLETE - Production Ready (with Post-Production Enhancements)
 
 ---
 
@@ -60,6 +60,11 @@ Add drag-and-drop functionality to popup overlay items, allowing users to move n
 - **[Phase 2: Testing Prep](./reports/2025-10-03-phase2-testing-prep-complete.md)** - Manual testing preparation complete
 - **[Phase 2: Manual Testing PASSED](./reports/2025-10-03-phase2-manual-testing-complete.md)** - ✅ All critical tests passed, feature production-ready
 
+### Post-Production Enhancements (2025-10-04)
+- **[Addendum: Popup Container Drop Zone](./2025-10-04-addendum-popup-container-drop-zone.md)** - Enhancement to allow drops on popup background/empty space
+- **[Container Drop Implementation](./reports/2025-10-04-container-drop-final-report.md)** - Initial implementation with correct property (`popup.folderId`)
+- **[Post-Implementation Fixes](./reports/2025-10-04-post-implementation-fixes.md)** - ✅ Fixed 3 UX issues: single folder padding, invalid drop feedback, footer droppable
+
 ### Testing Guides
 - **[Manual Testing Guide](./test_pages/MANUAL_TESTING_GUIDE.md)** - Comprehensive 30+ test scenarios (35 min)
 - **[Quick Test Checklist](./test_pages/QUICK_TEST_CHECKLIST.md)** - Critical path tests (5 min)
@@ -98,12 +103,13 @@ See [API_REQUIREMENTS.md](./supporting_files/API_REQUIREMENTS.md) for full speci
 
 ### Visual States
 
-| State | Appearance |
-|-------|------------|
-| **Dragging** | Item shows 50% opacity |
-| **Drop target** | Folder shows green background with ring |
-| **Multi-drag** | Badge shows "X items" |
-| **Invalid drop** | No drop allowed on non-folders or self |
+| State | Appearance | When |
+|-------|------------|------|
+| **Dragging** | Item shows 50% opacity | Item being dragged |
+| **Valid folder drop** | 🟢 Green background with ring | Dragging over different folder |
+| **Invalid drop** | 🔴 Red background with ring | Dragging into source folder (self-drop) |
+| **Popup container drop** | 🔵 Blue ring around popup | Dragging over popup empty space/footer |
+| **Multi-drag** | Badge shows "X items" | Multiple items selected and dragging |
 
 ---
 

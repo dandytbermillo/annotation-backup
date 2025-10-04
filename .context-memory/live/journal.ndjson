@@ -289,3 +289,4 @@
 {"ts":"2025-10-03T21:41:07.275Z","type":"commit","sha":"e22d4f2a2629f2ccbf1b995edcf3d68088509e2a","files_changed":3,"message":"adding popup ovelay persistence in the database"}
 {"ts":"2025-10-04T01:24:18.883Z","type":"commit","sha":"a2e76f4e8beb36fbcd1425675139ed3f6fffa24f","files_changed":9,"message":"popup overlay not displaying 'loading...' when app loaded"}
 {"ts":"2025-10-04T04:37:57.148Z","type":"commit","sha":"ddbbfebd988655cd26415291d8321475fe6f4745","files_changed":20,"message":"implementing drag and drop functionality for popup overlay"}
+{"ts":"2025-10-04T18:49:54.301Z","type":"commit","sha":"33872d3a22e1549467304dd80fdd1baf6f049ed6","files_changed":23,"message":"improving drag and drop"}

@@ -18,12 +18,20 @@
   - ✅ Documented `event.stopPropagation()` requirement in folder row `onDragOver` handler
   - ✅ Fixed inconsistent wording: "content container" → "outer popup card container" throughout
   - ✅ Added explicit notes about event propagation preventing visual conflicts
-- 2025-10-04: **IMPLEMENTATION CORRECTION** (Post-Testing):
+- 2025-10-04: **IMPLEMENTATION CORRECTION** (Post-Testing Round 1):
   - ❌ **Round 2 was WRONG**: `popup.folder?.id` does NOT exist at runtime
   - ✅ **ACTUAL FIX**: Use `(popup as any).folderId` - this property exists and works
   - ✅ Runtime investigation revealed PopupData has `folderId` property (not in types)
   - ✅ Implementation tested and verified working with correct property
   - 📄 See: `reports/2025-10-04-container-drop-final-report.md` for full details
+- 2025-10-04: **POST-IMPLEMENTATION FIXES** (User Testing Issues):
+  - ✅ **Issue 1**: Popups with single folder had no droppable space
+  - ✅ **Fix**: Added 40px bottom padding + made footer droppable
+  - ✅ **Issue 2**: Invalid drops (self-drop) showed green instead of red
+  - ✅ **Fix**: Track source folder ID, detect invalid drops, show red visual feedback
+  - ✅ **Issue 3**: Footer should be droppable for better UX
+  - ✅ **Fix**: Added drop handlers to footer with blue ring feedback
+  - 📄 See: `reports/2025-10-04-post-implementation-fixes.md` for complete details
 
 ---
 
@@ -324,10 +332,16 @@ onDrop={(e) => {
 
 **Before Fix**:
 - [x] Cannot drop into popup with no folders ❌ (ISSUE CONFIRMED)
+- [x] Popups with single folder have no droppable space ❌ (ISSUE CONFIRMED)
+- [x] Invalid drops (self-drop) show green instead of red ❌ (ISSUE CONFIRMED)
 
 **After Fix** (✅ IMPLEMENTED AND TESTED):
 - [x] Can drop on empty space → moves into popup's folder ✅
 - [x] Can drop on note rows → moves into popup's folder ✅
+- [x] Can drop on footer → moves into popup's folder ✅ (NEW)
+- [x] Popups with single folder have 40px padding → droppable ✅ (NEW)
+- [x] Invalid drops (self-drop) show RED visual feedback ✅ (NEW)
+- [x] Valid drops show GREEN visual feedback ✅
 - [x] Folder row drops still work (higher priority) ✅
 - [x] Visual feedback clear (blue ring for container) ✅
 - [x] No console errors ✅
@@ -390,12 +404,23 @@ If issues arise:
 - [x] Root cause analyzed
 - [x] Solution designed
 - [x] Implementation complete ✅
-- [x] Testing complete ✅
+- [x] Post-implementation issues fixed ✅
+- [x] Testing complete (all scenarios) ✅
 - [x] Documentation updated ✅
 
 ---
 
 **Implementation Date**: 2025-10-04
 **Testing Date**: 2025-10-04
-**Status**: ✅ **COMPLETE AND WORKING**
-**Final Report**: `reports/2025-10-04-container-drop-final-report.md`
+**Status**: ✅ **COMPLETE - ALL ISSUES RESOLVED**
+
+**Reports**:
+- Initial implementation: `reports/2025-10-04-container-drop-final-report.md`
+- Post-fixes: `reports/2025-10-04-post-implementation-fixes.md`
+
+**Features Delivered**:
+1. ✅ Popup container drop zone (blue ring)
+2. ✅ Footer droppable area (40px always accessible)
+3. ✅ Bottom padding for single-folder popups
+4. ✅ Invalid drop visual feedback (red for self-drops)
+5. ✅ Valid drop visual feedback (green for folders)
