@@ -61,41 +61,102 @@
   will-change: auto;
 }
 
-.popup-preview-tooltip {
-  background: rgba(15, 23, 42, 0.97);
-  border: 1px solid rgba(71, 85, 105, 0.65);
-  border-radius: 10px;
-  box-shadow: 0 24px 48px -12px rgba(15, 23, 42, 0.55);
-  padding: 0;
-  max-width: 360px;
-  color: #e5e7eb;
-  overflow: hidden;
+/* EXACT match for Recent Notes preview tooltip - className="fixed px-4 py-3 rounded-xl border border-blue-500/30 bg-gray-900 shadow-2xl max-w-sm" */
+.popup-preview-tooltip,
+[data-radix-popper-content-wrapper] .popup-preview-tooltip {
+  /* Layout */
+  max-width: 24rem !important; /* max-w-sm = 384px */
+  width: auto !important;
+  min-width: 0 !important;
+  z-index: 50000 !important; /* Always on top of all popups */
+
+  /* Spacing - EXACT: px-4 py-3 */
+  padding: 0.75rem 1rem !important; /* py-3 = 0.75rem, px-4 = 1rem */
+  padding-top: 0.75rem !important;
+  padding-bottom: 0.75rem !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+
+  /* Background - EXACT: bg-gray-900 with inline rgba(17, 24, 39, 0.98) */
+  background: rgba(17, 24, 39, 0.98) !important;
+  background-color: rgba(17, 24, 39, 0.98) !important;
+
+  /* Border - WHITE/LIGHT as shown in actual Recent notes preview */
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-width: 1px !important;
+  border-style: solid !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+
+  /* Border radius - EXACT: rounded-xl = 0.75rem */
+  border-radius: 0.75rem !important;
+
+  /* Shadow - EXACT: shadow-2xl */
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+
+  /* Text fallback */
+  color: rgba(255, 255, 255, 0.9) !important;
+
+  /* Override all Radix defaults */
+  overflow: visible !important;
+  animation: none !important;
+  transform: none !important;
+
+  /* Font settings */
+  font-family: inherit !important;
+  line-height: normal !important;
 }
 
-.popup-preview-tooltip__header {
-  padding: 10px 14px 8px;
-  border-bottom: 1px solid rgba(71, 85, 105, 0.65);
+/* Title - EXACT: className="text-xs text-blue-400 font-semibold mb-1" */
+.popup-preview-tooltip__title,
+.popup-preview-tooltip p.popup-preview-tooltip__title {
+  margin: 0 !important;
+  margin-bottom: 0.25rem !important; /* mb-1 = 0.25rem */
+  padding: 0 !important;
+  font-size: 0.75rem !important; /* text-xs = 0.75rem */
+  font-weight: 600 !important; /* font-semibold = 600 */
+  color: #60a5fa !important; /* text-blue-400 = #60a5fa */
+  line-height: 1rem !important; /* text-xs default */
 }
 
-.popup-preview-tooltip__title {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: #f1f5f9;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Body - EXACT: className="text-sm text-white/90 whitespace-pre-line leading-relaxed line-clamp-6" */
+.popup-preview-tooltip__body,
+.popup-preview-tooltip div.popup-preview-tooltip__body {
+  padding: 0 !important;
+  margin: 0 !important;
+  font-size: 0.875rem !important; /* text-sm = 0.875rem */
+  line-height: 1.625 !important; /* leading-relaxed = 1.625 */
+  color: rgba(255, 255, 255, 0.9) !important; /* text-white/90 */
+  white-space: pre-line !important; /* whitespace-pre-line */
+
+  /* Line clamp - EXACT: line-clamp-6 */
+  display: -webkit-box !important;
+  -webkit-line-clamp: 6 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+
+  /* Scrollbar styling */
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(148, 163, 184, 0.6) transparent !important;
 }
 
-.popup-preview-tooltip__body {
-  padding: 10px 14px 12px;
-  font-size: 12px;
-  line-height: 1.45;
-  max-height: 220px;
-  overflow-y: auto;
-  color: #cbd5f5;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.6) transparent;
+.popup-preview-tooltip__body p {
+  margin: 0 !important;
+}
+
+.popup-preview-tooltip__hint {
+  display: block !important;
+  margin-top: 0.5rem !important;
+  font-size: 0.7rem !important;
+  color: rgba(148, 163, 184, 0.7) !important;
+}
+
+.popup-preview-tooltip__placeholder {
+  color: rgba(148, 163, 184, 0.75) !important;
+}
+
+.popup-preview-tooltip__error {
+  color: #f87171 !important;
 }
 
 .popup-preview-tooltip__body::-webkit-scrollbar {

@@ -148,17 +148,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     previewStateRef.current = previewState;
   }, [previewState]);
 
-  // Note preview tooltip state (plain div like Recent Notes)
-  const [activePreviewTooltip, setActivePreviewTooltip] = useState<{
-    noteId: string;
-    content: string;
-    position: { x: number; y: number };
-    status: 'loading' | 'ready' | 'error';
-  } | null>(null);
-  const previewTooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const previewTooltipCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isHoveringPreviewTooltipRef = useRef(false);
-
   // Multi-select state (per popup)
   const [popupSelections, setPopupSelections] = useState<Map<string, Set<string>>>(new Map());
   const [lastSelectedIds, setLastSelectedIds] = useState<Map<string, string>>(new Map());
@@ -614,88 +603,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setFolderCreationError(null);
   }, []);
 
-  // Preview tooltip handlers (plain div like Recent Notes)
-  const handlePreviewTooltipHover = useCallback(async (noteId: string, event: React.MouseEvent) => {
-    // Clear existing timeouts
-    if (previewTooltipTimeoutRef.current) {
-      clearTimeout(previewTooltipTimeoutRef.current);
-    }
-    if (previewTooltipCloseTimeoutRef.current) {
-      clearTimeout(previewTooltipCloseTimeoutRef.current);
-    }
-
-    isHoveringPreviewTooltipRef.current = false;
-
-    // Capture position immediately
-    const rect = event.currentTarget.getBoundingClientRect();
-    const position = {
-      x: rect.right + 10, // 10px right of eye icon
-      y: rect.top
-    };
-
-    // Show preview after 500ms (same as Recent Notes)
-    previewTooltipTimeoutRef.current = setTimeout(async () => {
-      setActivePreviewTooltip({
-        noteId,
-        content: '',
-        position,
-        status: 'loading'
-      });
-
-      try {
-        const response = await fetch(`/api/items/${noteId}`);
-        if (!response.ok) throw new Error('Failed to fetch note');
-
-        const data = await response.json();
-        const content = data?.item?.content;
-        const contentText = data?.item?.contentText;
-
-        // Extract preview text
-        const previewText = buildMultilinePreview(content, contentText || '', 200);
-
-        setActivePreviewTooltip({
-          noteId,
-          content: previewText || 'No content yet',
-          position,
-          status: 'ready'
-        });
-      } catch (error) {
-        console.error('[PopupOverlay] Failed to fetch preview:', error);
-        setActivePreviewTooltip({
-          noteId,
-          content: 'Failed to load preview',
-          position,
-          status: 'error'
-        });
-      }
-    }, 500);
-  }, []);
-
-  const handlePreviewTooltipLeave = useCallback(() => {
-    if (previewTooltipTimeoutRef.current) {
-      clearTimeout(previewTooltipTimeoutRef.current);
-    }
-
-    // Delay closing to allow moving mouse to tooltip
-    previewTooltipCloseTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPreviewTooltipRef.current) {
-        setActivePreviewTooltip(null);
-      }
-    }, 100);
-  }, []);
-
-  const handlePreviewTooltipEnter = useCallback(() => {
-    isHoveringPreviewTooltipRef.current = true;
-    if (previewTooltipCloseTimeoutRef.current) {
-      clearTimeout(previewTooltipCloseTimeoutRef.current);
-    }
-  }, []);
-
-  const handlePreviewTooltipMouseLeave = useCallback(() => {
-    isHoveringPreviewTooltipRef.current = false;
-    setActivePreviewTooltip(null);
-  }, []);
-
   // Drag and drop handlers
 
   const handleDragStart = useCallback((
@@ -919,7 +826,39 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       rowHoverFolder?.(child, event, popupId, persistent);
     };
 
-    // Note: Preview is now handled by plain div tooltip, no longer using previewEntry state
+    const childPreviewEntry = noteLike ? previewEntry?.entries?.[child.id] : undefined;
+    const tooltipStatus = childPreviewEntry?.status
+      ?? (isActivePreview ? activePreview?.status : undefined)
+      ?? 'idle';
+    const tooltipError = childPreviewEntry?.error
+      ?? (isActivePreview ? activePreview?.error : undefined);
+    const previewText = childPreviewEntry?.previewText
+      ?? (isActivePreview ? activePreview?.previewText : undefined)
+      ?? '';
+
+    let tooltipBody: React.ReactNode;
+    if (tooltipStatus === 'error') {
+      tooltipBody = (
+        <span className="popup-preview-tooltip__error">
+          {tooltipError ?? 'Failed to load preview.'}
+        </span>
+      );
+    } else if (previewText) {
+      tooltipBody = (
+        <>
+          <p>{previewText}</p>
+          {tooltipStatus === 'loading' ? (
+            <span className="popup-preview-tooltip__hint">Refreshing preview…</span>
+          ) : null}
+        </>
+      );
+    } else if (tooltipStatus === 'loading') {
+      tooltipBody = <span className="popup-preview-tooltip__placeholder">Loading preview…</span>;
+    } else if (tooltipStatus === 'ready') {
+      tooltipBody = <span className="popup-preview-tooltip__placeholder">No content yet</span>;
+    } else {
+      tooltipBody = <span className="popup-preview-tooltip__placeholder">Hover to preview</span>;
+    }
 
     // Selection takes precedence over preview for icon visibility
     const iconVisibilityClass = isSelected || isActivePreview
@@ -1022,21 +961,48 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         {/* Eye icon: hidden by default, visible on hover */}
         <div className={`flex items-center gap-1 transition-opacity ${iconVisibilityClass}`}>
           {noteLike && (
-            <button
-              type="button"
-              aria-label="Preview note"
-              className="p-1 rounded hover:bg-gray-700 text-gray-300"
-              onMouseEnter={(e) => handlePreviewTooltipHover(child.id, e)}
-              onMouseLeave={handlePreviewTooltipLeave}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onSelectNote) {
-                  onSelectNote(child.id);
-                }
-              }}
-            >
-              <Eye className="w-4 h-4" />
-            </button>
+            <TooltipProvider delayDuration={150}>
+              <Tooltip
+                onOpenChange={(open) => {
+                  if (open) {
+                    triggerPreview();
+                  }
+                }}
+              >
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Preview note"
+                    className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                    onMouseEnter={triggerPreview}
+                    onFocus={triggerPreview}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onSelectNote) {
+                        onSelectNote(child.id);
+                      }
+                    }}
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                        <TooltipPortal>
+                          <TooltipContent
+                            side="right"
+                            align="center"
+                            sideOffset={14}
+                            collisionPadding={24}
+                            avoidCollisions={true}
+                            className="popup-preview-tooltip"
+                          >
+                            <p className="popup-preview-tooltip__title">Preview</p>
+                            <div className="popup-preview-tooltip__body">
+                              {tooltipBody}
+                            </div>
+                          </TooltipContent>
+                        </TooltipPortal>
+              </Tooltip>
+            </TooltipProvider>
           )}
           {folderLike && (
                     <TooltipProvider delayDuration={150}>
@@ -2161,43 +2127,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [overlayContainer, popups.size, usingFallbackHost]);
 
-  // Tooltip portal (separate from overlay to avoid transform issues)
-  const tooltipPortal = activePreviewTooltip && createPortal(
-    <div
-      className="fixed px-4 py-3 rounded-xl border border-white/15 bg-gray-900 shadow-2xl max-w-sm"
-      style={{
-        backgroundColor: 'rgba(17, 24, 39, 0.98)',
-        left: `${activePreviewTooltip.position.x}px`,
-        top: `${activePreviewTooltip.position.y}px`,
-        zIndex: 50000
-      }}
-      onMouseEnter={handlePreviewTooltipEnter}
-      onMouseLeave={handlePreviewTooltipMouseLeave}
-    >
-      <p className="text-xs text-blue-400 font-semibold mb-1">Preview</p>
-      <div className="text-sm text-white/90 whitespace-pre-line leading-relaxed line-clamp-6">
-        {activePreviewTooltip.status === 'loading' && 'Loading...'}
-        {activePreviewTooltip.status === 'error' && (
-          <span className="text-red-400">Failed to load preview</span>
-        )}
-        {activePreviewTooltip.status === 'ready' && activePreviewTooltip.content}
-      </div>
-    </div>,
-    document.body
-  );
-
   // Render strategy:
   // 1. If canvas-container exists, portal into it (scoped to canvas area)
   // 2. Otherwise, render as fixed overlay on document.body (for floating notes widget when no note is open)
   if (typeof window !== 'undefined') {
     if (overlayContainer) {
       // Preferred: portal into canvas container
-      return (
-        <>
-          {createPortal(overlayInner, overlayContainer)}
-          {tooltipPortal}
-        </>
-      );
+      return createPortal(overlayInner, overlayContainer);
     } else if (popups.size > 0) {
       // Fallback: render as fixed overlay when canvas doesn't exist but popups do
       // This handles the case where floating notes widget is open but no note is selected
@@ -2456,17 +2392,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           </div>
         </div>
       );
-      return (
-        <>
-          {createPortal(fallbackOverlay, document.body)}
-          {tooltipPortal}
-        </>
-      );
+      return createPortal(fallbackOverlay, document.body);
     }
   }
 
-  // Even if overlay is not rendered, show tooltip if active
-  return tooltipPortal || null;
+  return null;
 };
 
 // Export for use in other components
