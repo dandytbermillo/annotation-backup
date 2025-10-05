@@ -816,15 +816,41 @@ function AnnotationAppContent() {
     const existingPopup = overlayPopups.find(p => p.folderId === folder.id)
 
     if (existingPopup) {
-      // If clicking on a temporary hover popup, make it persistent
-      if (isPersistent && !existingPopup.isPersistent) {
-        console.log('[handleFolderHover] Upgrading temporary popup to persistent')
+      console.log('[handleFolderHover] ✅ EXISTING POPUP FOUND:', existingPopup.folderName, 'existing.isPersistent:', existingPopup.isPersistent, 'click.isPersistent:', isPersistent)
+
+      if (isPersistent) {
+        const alreadyPersistent = existingPopup.isPersistent
+
+        console.log(alreadyPersistent
+          ? '[handleFolderHover] 🌟 Already persistent - HIGHLIGHTING'
+          : '[handleFolderHover] ⬆️ Upgrading hover preview to persistent (no highlight)')
+
         setOverlayPopups(prev =>
-          prev.map(p => p.folderId === folder.id ? { ...p, isPersistent: true } : p)
+          prev.map(p =>
+            p.folderId === folder.id
+              ? {
+                  ...p,
+                  isPersistent: true,
+                  isHighlighted: alreadyPersistent, // only flash if this popup had been pinned before
+                }
+              : p
+          )
         )
+
+        if (alreadyPersistent) {
+          setTimeout(() => {
+            setOverlayPopups(prev =>
+              prev.map(p =>
+                p.folderId === folder.id ? { ...p, isHighlighted: false } : p
+              )
+            )
+          }, 2000)
+        }
       }
       return
     }
+
+    console.log('[handleFolderHover] ❌ NO EXISTING POPUP - creating new one with isHighlighted=false')
 
     // Capture rect position IMMEDIATELY (before any async/timeout)
     const rect = event.currentTarget.getBoundingClientRect()
@@ -882,10 +908,12 @@ function AnnotationAppContent() {
         children: [],
         isLoading: true,
         isPersistent: isPersistent,
+        isHighlighted: false, // Never glow on first creation
         level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
         parentPopupId: parentPopupId || undefined
       }
 
+      console.log('[createPopup] 📦 Creating NEW popup:', folder.name, 'isHighlighted:', newPopup.isHighlighted)
       setOverlayPopups(prev => [...prev, newPopup])
 
       // Fetch children

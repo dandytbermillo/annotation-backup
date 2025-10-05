@@ -293,3 +293,4 @@
 {"ts":"2025-10-04T19:22:10.749Z","type":"commit","sha":"671c417515c03130c8379344a30bafe32d3b4dad","files_changed":7,"message":"drag and drop in popup polished"}
 {"ts":"2025-10-04T21:17:36.208Z","type":"commit","sha":"790b41ff207108e7f2c0287b78ba135b9fb35945","files_changed":8,"message":"added folder add functionality"}
 {"ts":"2025-10-04T23:20:07.571Z","type":"commit","sha":"6b32c771b8eaacec4b3b3e5659e7a82669722cdf","files_changed":6,"message":"popup overlay preview styled"}
+{"ts":"2025-10-05T00:10:23.814Z","type":"commit","sha":"947ea6a060b221d4b5d1d10daed11508671ec296","files_changed":6,"message":"popup glow when user tried to reopened it"}

@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-05 00:10Z] 947ea6a: popup glow when user tried to reopened it
 - commit [2025-10-04 23:20Z] 6b32c77: popup overlay preview styled
 - commit [2025-10-04 21:17Z] 790b41f: added folder add functionality
 - commit [2025-10-04 19:22Z] 671c417: drag and drop in popup polished
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-03 21:41Z] e22d4f2: adding popup ovelay persistence in the database
 - commit [2025-10-03 20:59Z] f753d63: refining toggle button in the floating toolbar
 - commit [2025-10-03 18:03Z] 927f81f: issue about wrong timestamp in recent note section panel fixed
-- commit [2025-10-03 05:45Z] 606e67d: added toogle switch for note and overlay popup canvas
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-04 23:20Z] 6b32c77: popup overlay preview styled
+- commit [2025-10-05 00:10Z] 947ea6a: popup glow when user tried to reopened it

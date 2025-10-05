@@ -1507,33 +1507,68 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           {isCreatingNote ? 'Creating...' : '+ Note'}
         </button>
         <div className="flex items-center gap-2" onMouseLeave={handleButtonHoverLeave}>
+          {/* Recents - Dock style */}
           <button
-            className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "recents" ? "bg-white/15" : ""}`}
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "recents"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
             onClick={() => setActivePanel((prev) => (prev === "recents" ? null : "recents"))}
             onMouseEnter={() => handleButtonHover("recents")}
+            data-tooltip="Recent Notes"
           >
-            Recents ▾
+            <span className="text-xl">🕒</span>
+            <span className="text-[10px] text-white/90 font-medium">Recent</span>
           </button>
+
+          {/* Org - Dock style */}
           <button
-            className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "org" ? "bg-white/15" : ""}`}
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "org"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
             onClick={() => setActivePanel((prev) => (prev === "org" ? null : "org"))}
             onMouseEnter={() => handleButtonHover("org")}
+            data-tooltip="Organization"
           >
-            Org ▾
+            <span className="text-xl">📁</span>
+            <span className="text-[10px] text-white/90 font-medium">Org</span>
           </button>
+
+          {/* Tools - Dock style */}
           <button
-            className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "tools" ? "bg-white/15" : ""}`}
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "tools"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
             onClick={() => setActivePanel((prev) => (prev === "tools" ? null : "tools"))}
             onMouseEnter={() => handleButtonHover("tools")}
+            data-tooltip="Tools & Actions"
           >
-            Tools ▾
+            <span className="text-xl">🛠️</span>
+            <span className="text-[10px] text-white/90 font-medium">Tools</span>
           </button>
+
+          {/* Add Component - Dock style */}
           <button
-            className={`rounded-full border border-white/10 px-3 py-2 text-sm text-white/80 transition hover:bg-white/15 ${activePanel === "add-component" ? "bg-white/15" : ""}`}
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "add-component"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
             onClick={() => setActivePanel((prev) => (prev === "add-component" ? null : "add-component"))}
             onMouseEnter={() => handleButtonHover("add-component")}
+            data-tooltip="Add Component"
           >
-            + Component ▾
+            <span className="text-xl">➕</span>
+            <span className="text-[10px] text-white/90 font-medium">Component</span>
           </button>
         </div>
       </div>
