@@ -54,6 +54,11 @@ function normalizePopups(raw: unknown): OverlayPopupDescriptor[] {
       popup.folderName = candidate.folderName
     }
 
+    // Include folderColor if present (for inherited colors)
+    if (typeof candidate.folderColor === 'string' && candidate.folderColor.length > 0) {
+      popup.folderColor = candidate.folderColor
+    }
+
     const heightValue = coerceNumber(candidate.height)
     if (heightValue !== null) {
       popup.height = heightValue
@@ -272,7 +277,7 @@ export async function PUT(
         [workspaceId, userId]
       )
 
-      if (existing.rowCount > 0) {
+      if (existing.rowCount && existing.rowCount > 0) {
         const row = existing.rows[0]
         if (!bodyRevision || bodyRevision !== row.revision) {
           await client.query('ROLLBACK')

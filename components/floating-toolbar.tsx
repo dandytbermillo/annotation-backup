@@ -78,6 +78,7 @@ export interface OrgItem {
   type: "folder" | "note"
   icon?: string
   color?: string
+  path?: string
   hasChildren?: boolean
   level: number
   children?: OrgItem[]
@@ -497,6 +498,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 type: item.type,
                 icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
                 color: item.color,
+                path: item.path,
                 hasChildren: item.type === 'folder',
                 level: 1,
                 children: [],
@@ -692,6 +694,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
               type: item.type,
               icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
               color: item.color,
+              path: item.path,
               hasChildren: item.type === 'folder',
               level: 1,
               children: [],
@@ -818,6 +821,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
         // Inherit parent's color if child doesn't have one
         color: item.color || (item.type === 'folder' ? folder.color : undefined),
+        path: item.path,
         hasChildren: item.type === 'folder',
         level: folder.level + 1,
         children: [],
@@ -957,6 +961,22 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       || deriveFromPath((folder as any).path)
       || 'Untitled Folder'
 
+    // Fetch inherited color if folder has none
+    let effectiveColor = folder.color
+    if (!effectiveColor && folder.parentId) {
+      try {
+        const parentResponse = await fetch(`/api/items/${folder.parentId}`)
+        if (parentResponse.ok) {
+          const parentData = await parentResponse.json()
+          const parent = parentData.item || parentData
+          effectiveColor = parent.color
+          console.log('[handleEyeClick] Inherited color from parent:', parent.name, 'color:', effectiveColor)
+        }
+      } catch (e) {
+        console.warn('[handleEyeClick] Failed to fetch parent color:', e)
+      }
+    }
+
     // Create initial popup with loading state
     const newPopup: OverlayPopup = {
       id: popupId,
@@ -967,7 +987,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         name: displayName,
         type: 'folder' as const,
         level: folder.level || 0,
-        color: folder.color,
+        color: effectiveColor,
+        path: (folder as any).path,
         children: []
       },
       position: screenPosition,
@@ -1001,6 +1022,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
         // Inherit parent's color if child doesn't have one
         color: item.color || (item.type === 'folder' ? folder.color : undefined),
+        path: item.path,
         hasChildren: item.type === 'folder',
         level: folder.level + 1,
         children: [],

@@ -6,7 +6,7 @@ import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
-import { X, Folder, FileText, Eye } from 'lucide-react';
+import { X, Folder, FileText, Eye, Home, ChevronRight } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
@@ -34,6 +34,19 @@ const FOLDER_COLORS = [
 const getFolderColorTheme = (colorName: string | null | undefined) => {
   if (!colorName) return null
   return FOLDER_COLORS.find(c => c.name === colorName) || null
+}
+
+// Parse breadcrumb from folder path (e.g., "/knowledge-base/documents/drafts" → ["Documents", "Drafts"])
+const parseBreadcrumb = (path: string | undefined | null, currentName: string): string[] => {
+  if (!path) return [currentName]
+
+  const parts = path.split('/').filter(p => p.trim())
+  if (parts.length === 0) return [currentName]
+
+  // Convert kebab-case to Title Case for display, skip "knowledge-base" (represented by home icon)
+  return parts
+    .filter(part => part !== 'knowledge-base')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
 }
 
 // Auto-scroll configuration - all values are configurable, not hardcoded
@@ -1998,33 +2011,79 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 }
               }}
             >
-              {/* Popup Header */}
+              {/* Popup Header with Breadcrumb */}
               <div
                 className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
                 onMouseDown={(e) => onDragStart?.(popup.id, e)}
                 style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
                   {(() => {
                     const folderColor = popup.folder?.color
                     const colorTheme = getFolderColorTheme(folderColor)
-                    return colorTheme ? (
-                      <div
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: colorTheme.bg }}
-                      />
-                    ) : (
-                      <Folder className="w-4 h-4 text-gray-400" />
+                    const folderPath = (popup.folder as any)?.path || (popup as any).folder?.path
+                    const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'
+                    const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId
+
+                    // Child popups: show just badge + name (parent relationship shown by connecting line)
+                    if (isChildPopup) {
+                      return (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {colorTheme ? (
+                            <div
+                              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: colorTheme.bg }}
+                            />
+                          ) : (
+                            <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-white truncate">{folderName}</span>
+                        </div>
+                      )
+                    }
+
+                    // Root popups: show full breadcrumb
+                    const breadcrumbs = parseBreadcrumb(folderPath, folderName)
+                    return (
+                      <>
+                        {/* Home icon */}
+                        <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+
+                        {/* Breadcrumb trail */}
+                        {breadcrumbs.map((crumb, index) => (
+                          <React.Fragment key={index}>
+                            {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+
+                            {index === breadcrumbs.length - 1 ? (
+                              // Last item: show color badge + name
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {colorTheme ? (
+                                  <div
+                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: colorTheme.bg }}
+                                  />
+                                ) : (
+                                  <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                )}
+                                <span className="text-sm font-medium text-white truncate">{crumb}</span>
+                              </div>
+                            ) : breadcrumbs.length > 2 && index === 0 ? (
+                              // Collapse earlier levels only if more than 2 levels
+                              <span className="text-xs text-gray-500 flex-shrink-0">...</span>
+                            ) : index >= breadcrumbs.length - 2 ? (
+                              // Show parent level(s)
+                              <span className="text-xs text-gray-400 flex-shrink-0">{crumb}</span>
+                            ) : null}
+                          </React.Fragment>
+                        ))}
+                      </>
                     )
                   })()}
-                  <span className="text-sm font-medium text-white truncate">
-                    {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
-                  </span>
                 </div>
                 <button
                   onClick={() => onClosePopup(popup.id)}
                   onMouseDown={(e) => e.stopPropagation()}
-                  className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                  className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
                   aria-label="Close popup"
                 >
                   <X className="w-4 h-4 text-gray-400" />
@@ -2319,33 +2378,79 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Popup Header */}
+                  {/* Popup Header with Breadcrumb */}
                   <div
                     className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
                     onMouseDown={(e) => onDragStart?.(popup.id, e)}
                     style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0">
                       {(() => {
                         const folderColor = popup.folder?.color
                         const colorTheme = getFolderColorTheme(folderColor)
-                        return colorTheme ? (
-                          <div
-                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: colorTheme.bg }}
-                          />
-                        ) : (
-                          <Folder className="w-4 h-4 text-gray-400" />
+                        const folderPath = (popup.folder as any)?.path || (popup as any).folder?.path
+                        const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'
+                        const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId
+
+                        // Child popups: show just badge + name (parent relationship shown by connecting line)
+                        if (isChildPopup) {
+                          return (
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              {colorTheme ? (
+                                <div
+                                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                  style={{ backgroundColor: colorTheme.bg }}
+                                />
+                              ) : (
+                                <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                              )}
+                              <span className="text-sm font-medium text-white truncate">{folderName}</span>
+                            </div>
+                          )
+                        }
+
+                        // Root popups: show full breadcrumb
+                        const breadcrumbs = parseBreadcrumb(folderPath, folderName)
+                        return (
+                          <>
+                            {/* Home icon */}
+                            <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+
+                            {/* Breadcrumb trail */}
+                            {breadcrumbs.map((crumb, index) => (
+                              <React.Fragment key={index}>
+                                {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+
+                                {index === breadcrumbs.length - 1 ? (
+                                  // Last item: show color badge + name
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    {colorTheme ? (
+                                      <div
+                                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: colorTheme.bg }}
+                                      />
+                                    ) : (
+                                      <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                    )}
+                                    <span className="text-sm font-medium text-white truncate">{crumb}</span>
+                                  </div>
+                                ) : breadcrumbs.length > 2 && index === 0 ? (
+                                  // Collapse earlier levels only if more than 2 levels
+                                  <span className="text-xs text-gray-500 flex-shrink-0">...</span>
+                                ) : index >= breadcrumbs.length - 2 ? (
+                                  // Show parent level(s)
+                                  <span className="text-xs text-gray-400 flex-shrink-0">{crumb}</span>
+                                ) : null}
+                              </React.Fragment>
+                            ))}
+                          </>
                         )
                       })()}
-                      <span className="text-sm font-medium text-white truncate">
-                        {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
-                      </span>
                     </div>
                     <button
                       onClick={() => onClosePopup(popup.id)}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
                       aria-label="Close popup"
                     >
                       <X className="w-4 h-4 text-gray-400" />

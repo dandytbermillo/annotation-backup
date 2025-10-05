@@ -277,6 +277,7 @@ function AnnotationAppContent() {
         level: popup.level || 0,
       }
 
+      console.log('[Save] Saving popup:', displayName, '- color:', popup.folder?.color, '- descriptor:', JSON.stringify(descriptor))
       descriptors.push(descriptor)
     })
 
@@ -323,6 +324,12 @@ function AnnotationAppContent() {
       // Use stored folder name with fallback to ensure we have a displayable label
       const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
 
+      console.log('[Restore] Descriptor for', displayName, ':', {
+        folderId: descriptor.folderId,
+        folderColor: descriptor.folderColor,
+        parentId: descriptor.parentId
+      })
+
       const restoredPopup = {
         id: descriptor.id,
         folderId: descriptor.folderId || '',
@@ -344,6 +351,8 @@ function AnnotationAppContent() {
         parentPopupId: descriptor.parentId || undefined,
       }
 
+      console.log('[Restore] Initial popup.folder.color for', displayName, ':', restoredPopup.folder?.color)
+
       return restoredPopup
     })
 
@@ -361,9 +370,36 @@ function AnnotationAppContent() {
         }
 
         const responseData = await response.json()
-        const folderData = responseData.item || responseData // Handle both { item: {...} } and direct response
+        const folderData = responseData.item || responseData
 
-        console.log('[Popup Restore] Fetched folder data for:', folderData.name, 'color:', folderData.color)
+        // Get the cached color from the descriptor
+        const cachedColor = popup.folder?.color
+
+        console.log('[Restore] Processing', folderData.name, '- DB color:', folderData.color, ', cached:', cachedColor)
+
+        // Start with folder's own color, fall back to cached
+        let effectiveColor = folderData.color || cachedColor
+
+        // Only fetch parent if we have no color at all (neither DB nor cache)
+        if (!effectiveColor) {
+          const parentId = folderData.parentId ?? folderData.parent_id
+          console.log('[Restore] No color for', folderData.name, '- fetching parent:', parentId)
+          if (parentId) {
+            try {
+              const parentResponse = await fetch(`/api/items/${parentId}`)
+              if (parentResponse.ok) {
+                const parentData = await parentResponse.json()
+                const parent = parentData.item || parentData
+                effectiveColor = parent.color
+                console.log('[Restore] Parent fetch result for', folderData.name, '- parent color:', effectiveColor)
+              }
+            } catch (e) {
+              console.warn('[Popup Restore] Failed to fetch parent color:', e)
+            }
+          }
+        }
+
+        console.log('[Restore] Final effectiveColor for', folderData.name, ':', effectiveColor)
 
         // Fetch children
         const childrenResponse = await fetch(`/api/items?parentId=${popup.folderId}`)
@@ -376,6 +412,7 @@ function AnnotationAppContent() {
           type: item.type,
           icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
           color: item.color,
+          path: item.path,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
           hasChildren: item.type === 'folder',
@@ -394,8 +431,6 @@ function AnnotationAppContent() {
               || p.folderName?.trim()  // Keep existing cached name if new data has no name
               || 'Untitled Folder'
 
-            console.log('[Popup Restore] Updating popup:', displayName, 'with color:', folderData.color)
-
             return {
               ...p,
               folderName: displayName,
@@ -404,7 +439,8 @@ function AnnotationAppContent() {
                 name: displayName,
                 type: 'folder' as const,
                 level: p.level,
-                color: folderData.color,
+                color: effectiveColor,
+                path: folderData.path,
                 children,
               },
               children,
@@ -905,6 +941,23 @@ function AnnotationAppContent() {
       if (exists) return
       const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
 
+      // Inherit color from parent if current folder has no color
+      let inheritedColor = folder.color
+      const parentId = folder.parentId ?? (folder as any).parent_id
+      if (!inheritedColor && parentId) {
+        try {
+          const parentResponse = await fetch(`/api/items/${parentId}`)
+          if (parentResponse.ok) {
+            const parentData = await parentResponse.json()
+            const parent = parentData.item || parentData
+            inheritedColor = parent.color
+            console.log('[createPopup] Inherited color from parent:', parent.name, 'color:', inheritedColor)
+          }
+        } catch (e) {
+          console.warn('[createPopup] Failed to fetch parent for color inheritance:', e)
+        }
+      }
+
       // Position child popup to the right of parent
       const spaceRight = window.innerWidth - rect.right
       let popupPosition = { x: rect.right + 10, y: rect.top }
@@ -926,7 +979,8 @@ function AnnotationAppContent() {
           name: folder.name,
           type: 'folder' as const,
           level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
-          color: folder.color,
+          color: inheritedColor,
+          path: (folder as any).path,
           children: []
         },
         position: screenPosition,
@@ -939,7 +993,7 @@ function AnnotationAppContent() {
         parentPopupId: parentPopupId || undefined
       }
 
-      console.log('[createPopup] 📦 Creating NEW popup:', folder.name, 'isHighlighted:', newPopup.isHighlighted)
+      console.log('[createPopup] 📦 Creating NEW popup:', folder.name, 'color:', inheritedColor, 'isHighlighted:', newPopup.isHighlighted)
       setOverlayPopups(prev => [...prev, newPopup])
 
       // Fetch children
@@ -956,6 +1010,7 @@ function AnnotationAppContent() {
           type: item.type,
           icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
           color: item.color,
+          path: item.path,
           createdAt: item.createdAt,
           updatedAt: item.updatedAt,
           hasChildren: item.type === 'folder',
