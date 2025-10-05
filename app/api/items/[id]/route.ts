@@ -159,6 +159,14 @@ export async function PUT(
   }
 }
 
+// PATCH /api/items/[id] - Partial update (alias to PUT for RESTful compliance)
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return PUT(request, { params })
+}
+
 // DELETE /api/items/[id] - Soft delete item
 export async function DELETE(
   request: NextRequest,
@@ -166,23 +174,23 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params
-    
+
     const query = `
-      UPDATE items 
+      UPDATE items
       SET deleted_at = NOW()
       WHERE id = $1 AND deleted_at IS NULL
       RETURNING id
     `
-    
+
     const result = await pool.query(query, [id])
-    
+
     if (result.rows.length === 0) {
       return NextResponse.json(
         { error: 'Item not found' },
         { status: 404 }
       )
     }
-    
+
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('Error deleting item:', error)

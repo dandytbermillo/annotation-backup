@@ -10,30 +10,6 @@ import { BranchesSection } from "@/components/canvas/branches-section"
 import { createNote } from "@/lib/utils/note-creator"
 import { buildMultilinePreview } from "@/lib/utils/branch-preview"
 
-// Folder color palette - similar to sticky notes pattern
-const FOLDER_COLORS = [
-  { name: 'blue', bg: '#3b82f6', border: '#60a5fa', text: '#ffffff', light: 'rgba(59, 130, 246, 0.1)' },
-  { name: 'violet', bg: '#8b5cf6', border: '#a78bfa', text: '#ffffff', light: 'rgba(139, 92, 246, 0.1)' },
-  { name: 'amber', bg: '#f59e0b', border: '#fbbf24', text: '#ffffff', light: 'rgba(245, 158, 11, 0.1)' },
-  { name: 'emerald', bg: '#10b981', border: '#34d399', text: '#ffffff', light: 'rgba(16, 185, 129, 0.1)' },
-  { name: 'red', bg: '#ef4444', border: '#f87171', text: '#ffffff', light: 'rgba(239, 68, 68, 0.1)' },
-  { name: 'pink', bg: '#ec4899', border: '#f472b6', text: '#ffffff', light: 'rgba(236, 72, 153, 0.1)' },
-  { name: 'cyan', bg: '#06b6d4', border: '#22d3ee', text: '#ffffff', light: 'rgba(6, 182, 212, 0.1)' },
-  { name: 'gray', bg: '#6b7280', border: '#9ca3af', text: '#ffffff', light: 'rgba(107, 114, 128, 0.1)' },
-]
-
-// Helper to get color theme by name (from database color field)
-function getFolderColorTheme(colorName: string | undefined | null) {
-  if (!colorName) return null
-  const color = FOLDER_COLORS.find(c => c.name === colorName.toLowerCase())
-  return color || null
-}
-
-// Get auto-assigned color for a folder (cycling through palette)
-function getAutoFolderColor(index: number): string {
-  return FOLDER_COLORS[index % FOLDER_COLORS.length].name
-}
-
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
   if (!path || typeof path !== 'string') return null
@@ -93,7 +69,6 @@ interface FolderPopup {
   children: OrgItem[]
   isLoading: boolean
   parentFolderId?: string // Track parent folder popup (for nested popups)
-  folderColor?: string // Color name from database for header styling
 }
 
 export interface OverlayPopup {
@@ -214,9 +189,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [newOrgFolderName, setNewOrgFolderName] = useState('')
   const [orgFolderCreationError, setOrgFolderCreationError] = useState<string | null>(null)
   const [orgFolderCreationLoading, setOrgFolderCreationLoading] = useState(false)
-
-  // Edit mode state for Knowledge Base panel
-  const [isEditMode, setIsEditMode] = useState(false)
 
   // Layer context for overlay canvas
   const layerContext = useLayer()
@@ -502,65 +474,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     fetchOrgTree()
   }, [])
 
-  // Color cycling handler for folders (in edit mode)
-  const handleCycleFolderColor = async (folderId: string, currentColor: string | undefined) => {
-    // Find current color index
-    const currentIndex = FOLDER_COLORS.findIndex(c => c.name === currentColor?.toLowerCase())
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % FOLDER_COLORS.length : 0
-    const nextColor = FOLDER_COLORS[nextIndex]
-
-    // Optimistic UI update
-    setOrgItems(prevItems => {
-      const updateItemColor = (items: OrgItem[]): OrgItem[] => {
-        return items.map(item => {
-          if (item.id === folderId) {
-            return { ...item, color: nextColor.name }
-          }
-          if (item.children && item.children.length > 0) {
-            return { ...item, children: updateItemColor(item.children) }
-          }
-          return item
-        })
-      }
-      return updateItemColor(prevItems)
-    })
-
-    // Update database
-    try {
-      const response = await fetch(`/api/items/${folderId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          color: nextColor.name,
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to update folder color')
-      }
-    } catch (error) {
-      console.error('Failed to update folder color:', error)
-      // Revert optimistic update on error
-      setOrgItems(prevItems => {
-        const revertItemColor = (items: OrgItem[]): OrgItem[] => {
-          return items.map(item => {
-            if (item.id === folderId) {
-              return { ...item, color: currentColor }
-            }
-            if (item.children && item.children.length > 0) {
-              return { ...item, children: revertItemColor(item.children) }
-            }
-            return item
-          })
-        }
-        return revertItemColor(prevItems)
-      })
-    }
-  }
-
   // Folder creation handlers for Organization panel
   const handleStartCreateFolderInOrg = () => {
     setCreatingFolderInOrg(true)
@@ -759,8 +672,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       position: popupPosition,
       children: [],
       isLoading: true,
-      parentFolderId,
-      folderColor: folder.color // Pass color for header styling
+      parentFolderId
     }
 
     setFolderPopups(prev => [...prev, newPopup])
@@ -779,8 +691,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         name: item.name,
         type: item.type,
         icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
-        // Inherit parent's color if child doesn't have one
-        color: item.color || (item.type === 'folder' ? folder.color : undefined),
+        color: item.color,
         hasChildren: item.type === 'folder',
         level: folder.level + 1,
         children: [],
@@ -961,8 +872,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         name: item.name,
         type: item.type,
         icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
-        // Inherit parent's color if child doesn't have one
-        color: item.color || (item.type === 'folder' ? folder.color : undefined),
+        color: item.color,
         hasChildren: item.type === 'folder',
         level: folder.level + 1,
         children: [],
@@ -1244,21 +1154,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
           <span>Knowledge Base</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsEditMode(!isEditMode)}
-              className="px-2 py-1 text-xs font-medium rounded transition-colors"
-              style={{
-                backgroundColor: isEditMode ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
-                color: isEditMode ? '#60a5fa' : 'rgba(255, 255, 255, 0.6)',
-              }}
-            >
-              {isEditMode ? 'Done' : 'Edit'}
-            </button>
-            <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
-              ×
-            </button>
-          </div>
+          <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
+            ×
+          </button>
         </div>
         <div className="max-h-64 overflow-x-auto overflow-y-auto p-3 space-y-1">
           {isLoadingOrg ? (
@@ -1268,40 +1166,15 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           ) : (
             flatItems.map((item) => {
               const isFolder = item.type === 'folder'
-              const colorTheme = isFolder ? getFolderColorTheme(item.color) : null
 
               return (
                 <div
                   key={item.id}
                   className="flex items-center gap-1"
                 >
-                  {/* Item container */}
-                  <div
-                    className="group flex-1 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-white/90 transition cursor-pointer"
-                    style={colorTheme ? {
-                      borderLeftWidth: '3px',
-                      borderLeftColor: colorTheme.bg,
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)'
-                    } : {}}
-                    onMouseEnter={(e) => {
-                      if (colorTheme) {
-                        e.currentTarget.style.backgroundColor = colorTheme.light
-                        e.currentTarget.style.borderColor = colorTheme.border
-                      } else {
-                        e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.2)'
-                        e.currentTarget.style.borderColor = 'rgba(96, 165, 250, 0.4)'
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (colorTheme) {
-                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'
-                        e.currentTarget.style.borderLeftColor = colorTheme.bg
-                      } else {
-                        e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
-                        e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'
-                      }
-                    }}
+                  {/* Item button */}
+                  <button
+                    className="group flex-1 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
                     onClick={() => {
                       // Single click does nothing - reserved for future selection/navigation
                     }}
@@ -1317,59 +1190,37 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         <span>{item.icon}</span>
                         <span>{item.name}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        {/* Color cycle button - only in edit mode for folders */}
-                        {isEditMode && isFolder && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleCycleFolderColor(item.id, item.color)
-                            }}
-                            className="flex items-center gap-1 px-2 py-1 rounded transition-all hover:bg-white/10"
-                            title="Click to cycle color"
-                          >
-                            <div
-                              className="w-3 h-3 rounded-full border border-white/30"
-                              style={{ backgroundColor: colorTheme?.bg || '#6b7280' }}
-                            />
-                            <span className="text-white/60 text-xs">→</span>
-                          </button>
-                        )}
-                        {/* Eye icon - always visible, different handlers for folders vs notes */}
-                        {isFolder ? (
-                          <button
-                            onMouseEnter={(e) => handleEyeHover(item, e)}
-                            onMouseLeave={() => handleEyeHoverLeave(item.id)}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleEyeClick(item, e)
-                            }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                            title="Hover to preview, click to pin"
-                          >
-                            <Eye className="w-3.5 h-3.5 text-white/40" />
-                          </button>
-                        ) : (
-                          <button
-                            onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
-                            onMouseLeave={handleNotePreviewHoverLeave}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onSelectNote?.(item.id)
-                              onClose()
-                            }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                            title="Hover to preview, click to open"
-                          >
-                            <Eye className="w-3.5 h-3.5 text-blue-400" />
-                          </button>
-                        )}
-                      </div>
+                      {/* Eye icon - different handlers for folders vs notes */}
+                      {isFolder ? (
+                        <div
+                          onMouseEnter={(e) => handleEyeHover(item, e)}
+                          onMouseLeave={() => handleEyeHoverLeave(item.id)}
+                          onClick={(e) => handleEyeClick(item, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
+                          title="Hover to preview, click to pin"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-white/40" />
+                        </div>
+                      ) : (
+                        <div
+                          onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
+                          onMouseLeave={handleNotePreviewHoverLeave}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectNote?.(item.id)
+                            onClose()
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
+                          title="Hover to preview, click to open"
+                        >
+                          <Eye className="w-3.5 h-3.5 text-blue-400" />
+                        </div>
+                      )}
                     </div>
                     <div className="mt-1 text-xs text-white/60">
                       {item.type === 'folder' ? 'Folder' : 'Note'}
                     </div>
-                  </div>
+                  </button>
                 </div>
               )
             })
@@ -1936,46 +1787,31 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       )}
 
       {/* Hover tooltip popups - simple fixed divs */}
-      {folderPopups.map((popup) => {
-        const popupColorTheme = getFolderColorTheme(popup.folderColor)
-
-        return (
-          <div
-            key={popup.id}
-            className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-            style={{
-              backgroundColor: 'rgba(17, 24, 39, 0.98)',
-              left: `${popup.position.x}px`,
-              top: `${popup.position.y}px`,
-              zIndex: 10000
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onMouseEnter={() => handlePopupHover(popup.folderId)}
-            onMouseLeave={() => handleEyeHoverLeave(popup.folderId)}
-          >
-            {/* Header */}
-            <div
-              className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
-              style={popupColorTheme ? {
-                backgroundColor: popupColorTheme.bg,
-                color: popupColorTheme.text,
-                borderBottomColor: popupColorTheme.border
-              } : {
-                backgroundColor: 'transparent',
-                color: 'rgba(255, 255, 255, 0.8)',
-                borderBottomColor: 'rgba(255, 255, 255, 0.1)'
-              }}
+      {folderPopups.map((popup) => (
+        <div
+          key={popup.id}
+          className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+          style={{
+            backgroundColor: 'rgba(17, 24, 39, 0.98)',
+            left: `${popup.position.x}px`,
+            top: `${popup.position.y}px`,
+            zIndex: 10000
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseEnter={() => handlePopupHover(popup.folderId)}
+          onMouseLeave={() => handleEyeHoverLeave(popup.folderId)}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
+            <span>{popup.folderName}</span>
+            <button
+              className="text-white/60 hover:text-white"
+              onClick={() => setFolderPopups(prev => prev.filter(p => p.id !== popup.id))}
+              aria-label="Close popup"
             >
-              <span>{popup.folderName}</span>
-              <button
-                className="hover:opacity-80 transition-opacity"
-                style={{ color: popupColorTheme ? popupColorTheme.text : 'rgba(255, 255, 255, 0.6)' }}
-                onClick={() => setFolderPopups(prev => prev.filter(p => p.id !== popup.id))}
-                aria-label="Close popup"
-              >
-                ×
-              </button>
-            </div>
+              ×
+            </button>
+          </div>
 
           {/* Content */}
           <div className="max-h-64 overflow-y-auto p-3 space-y-1">
@@ -2037,8 +1873,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             )}
           </div>
         </div>
-        )
-      })}
+      ))}
 
       {/* Note preview tooltip */}
       {notePreview && (
