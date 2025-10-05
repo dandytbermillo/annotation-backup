@@ -9,6 +9,7 @@ export interface OverlayPopupDescriptor {
   id: string
   folderId: string | null
   folderName?: string // Folder display name (cached to avoid fetching on load)
+  folderColor?: string | null // Folder color (cached to show badge immediately on load)
   parentId: string | null
   canvasPosition: OverlayCanvasPosition
   overlayPosition?: OverlayCanvasPosition

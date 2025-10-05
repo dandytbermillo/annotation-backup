@@ -17,6 +17,25 @@ import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from '@/lib/utils
 
 const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
 
+// Folder color themes
+const FOLDER_COLORS = [
+  { name: 'red', bg: '#ef4444', text: '#fff', border: '#dc2626' },
+  { name: 'orange', bg: '#f97316', text: '#fff', border: '#ea580c' },
+  { name: 'yellow', bg: '#eab308', text: '#000', border: '#ca8a04' },
+  { name: 'amber', bg: '#f59e0b', text: '#000', border: '#d97706' },
+  { name: 'green', bg: '#22c55e', text: '#fff', border: '#16a34a' },
+  { name: 'emerald', bg: '#10b981', text: '#fff', border: '#059669' },
+  { name: 'blue', bg: '#3b82f6', text: '#fff', border: '#2563eb' },
+  { name: 'indigo', bg: '#6366f1', text: '#fff', border: '#4f46e5' },
+  { name: 'purple', bg: '#a855f7', text: '#fff', border: '#9333ea' },
+  { name: 'pink', bg: '#ec4899', text: '#fff', border: '#db2777' }
+]
+
+const getFolderColorTheme = (colorName: string | null | undefined) => {
+  if (!colorName) return null
+  return FOLDER_COLORS.find(c => c.name === colorName) || null
+}
+
 // Auto-scroll configuration - all values are configurable, not hardcoded
 const AUTO_SCROLL_CONFIG = {
   ENABLED: process.env.NEXT_PUBLIC_DISABLE_AUTOSCROLL !== 'true', // Feature flag
@@ -1986,7 +2005,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
               >
                 <div className="flex items-center gap-2">
-                  <Folder className="w-4 h-4 text-blue-400" />
+                  {(() => {
+                    const folderColor = popup.folder?.color
+                    const colorTheme = getFolderColorTheme(folderColor)
+                    return colorTheme ? (
+                      <div
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: colorTheme.bg }}
+                      />
+                    ) : (
+                      <Folder className="w-4 h-4 text-gray-400" />
+                    )
+                  })()}
                   <span className="text-sm font-medium text-white truncate">
                     {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
                   </span>
@@ -2296,7 +2326,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
                   >
                     <div className="flex items-center gap-2">
-                      <Folder className="w-4 h-4 text-blue-400" />
+                      {(() => {
+                        const folderColor = popup.folder?.color
+                        const colorTheme = getFolderColorTheme(folderColor)
+                        return colorTheme ? (
+                          <div
+                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: colorTheme.bg }}
+                          />
+                        ) : (
+                          <Folder className="w-4 h-4 text-gray-400" />
+                        )
+                      })()}
                       <span className="text-sm font-medium text-white truncate">
                         {popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'}
                       </span>

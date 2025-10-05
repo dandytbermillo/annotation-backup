@@ -297,3 +297,4 @@
 {"ts":"2025-10-05T02:11:43.447Z","type":"commit","sha":"9931ace68bd1956ed493ae80777fe43a92c5afbd","files_changed":6,"message":"glowing effect when popup first created fixed"}
 {"ts":"2025-10-05T03:04:02.875Z","type":"commit","sha":"f0f5c35133ddedae644b550559638054c82d6b0c","files_changed":12,"message":"made only one roog directory(kb) and added folder creation in g"}
 {"ts":"2025-10-05T04:11:16.486Z","type":"commit","sha":"9ca2087dfcee20a3098c40eed3be3301e2ab2e0c","files_changed":8,"message":"the knowledge base panel improved"}
+{"ts":"2025-10-05T04:48:28.122Z","type":"commit","sha":"5b2be235f8f5ae1a61067508763df184b331c0bf","files_changed":6,"message":"added color coding for the folders"}

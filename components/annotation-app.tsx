@@ -271,6 +271,7 @@ function AnnotationAppContent() {
         id: popup.id,
         folderId: popup.folderId || null,
         folderName: displayName,
+        folderColor: popup.folder?.color || null,
         parentId: popup.parentPopupId || null,
         canvasPosition: { x, y },
         level: popup.level || 0,
@@ -326,7 +327,14 @@ function AnnotationAppContent() {
         id: descriptor.id,
         folderId: descriptor.folderId || '',
         folderName: displayName,
-        folder: null, // Will be loaded when needed
+        folder: descriptor.folderId ? {
+          id: descriptor.folderId,
+          name: displayName,
+          type: 'folder' as const,
+          level: descriptor.level || 0,
+          color: descriptor.folderColor || undefined,
+          children: []
+        } : null, // Will be loaded when needed
         position: screenPosition,
         canvasPosition: descriptor.canvasPosition,
         children: [],
@@ -341,15 +349,21 @@ function AnnotationAppContent() {
 
     setOverlayPopups(restoredPopups)
 
-    // Fetch folder data for each popup
+    // Fetch folder data for each popup (needed to get color if not cached)
     restoredPopups.forEach(async (popup) => {
       if (!popup.folderId) return
 
       try {
         const response = await fetch(`/api/items/${popup.folderId}`)
-        if (!response.ok) return
+        if (!response.ok) {
+          console.error('[Popup Restore] Failed to fetch folder:', popup.folderId, 'status:', response.status)
+          return
+        }
 
-        const folderData = await response.json()
+        const responseData = await response.json()
+        const folderData = responseData.item || responseData // Handle both { item: {...} } and direct response
+
+        console.log('[Popup Restore] Fetched folder data for:', folderData.name, 'color:', folderData.color)
 
         // Fetch children
         const childrenResponse = await fetch(`/api/items?parentId=${popup.folderId}`)
@@ -370,8 +384,8 @@ function AnnotationAppContent() {
           parentId: item.parentId,
         }))
 
-        setOverlayPopups(prev =>
-          prev.map(p => {
+        setOverlayPopups(prev => {
+          const updated = prev.map(p => {
             if (p.id !== popup.id) return p
 
             // Derive display name with fallbacks to prevent blank name from wiping cached label
@@ -380,6 +394,8 @@ function AnnotationAppContent() {
               || p.folderName?.trim()  // Keep existing cached name if new data has no name
               || 'Untitled Folder'
 
+            console.log('[Popup Restore] Updating popup:', displayName, 'with color:', folderData.color)
+
             return {
               ...p,
               folderName: displayName,
@@ -387,14 +403,17 @@ function AnnotationAppContent() {
                 id: folderData.id,
                 name: displayName,
                 type: 'folder' as const,
-                level: popup.level,
+                level: p.level,
+                color: folderData.color,
                 children,
               },
               children,
               isLoading: false,
             }
           })
-        )
+
+          return updated
+        })
       } catch (error) {
         console.error(`Failed to load folder ${popup.folderId}:`, error)
       }
@@ -902,7 +921,14 @@ function AnnotationAppContent() {
         id: popupId,
         folderId: folder.id,
         folderName: folder.name,
-        folder: null,
+        folder: {
+          id: folder.id,
+          name: folder.name,
+          type: 'folder' as const,
+          level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
+          color: folder.color,
+          children: []
+        },
         position: screenPosition,
         canvasPosition: canvasPosition,
         children: [],
