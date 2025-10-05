@@ -310,6 +310,7 @@ function AnnotationAppContent() {
     layoutLoadedRef.current = true
 
     if (sanitizedPopups.length === 0) {
+      console.log('[Layout Restoration] No saved popups, clearing overlay popups')
       setOverlayPopups([])
       return
     }
@@ -716,22 +717,67 @@ function AnnotationAppContent() {
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
-  const handleCreateOverlayPopup = useCallback((popup: OverlayPopup) => {
+  const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
+    console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
     setOverlayPopups(prev => {
-      // Check if popup with same ID already exists (update it)
+      console.log('[handleCreateOverlayPopup] Current popups:', prev.length, prev.map(p => p.folderName));
+
+      // Check if popup with same ID already exists
       const existingIndex = prev.findIndex(p => p.id === popup.id)
       if (existingIndex >= 0) {
-        // Update existing popup (e.g., when children are loaded)
+        console.log('[handleCreateOverlayPopup] Popup already exists at index', existingIndex);
+
+        // If shouldHighlight is true, just highlight - don't replace data or position
+        if (shouldHighlight) {
+          console.log('[handleCreateOverlayPopup] Just highlighting existing popup IN PLACE, not moving');
+          console.log('[handleCreateOverlayPopup] Setting isHighlighted to TRUE for popup:', prev[existingIndex].folderName);
+          const updated = [...prev]
+          // Only update isHighlighted flag, keep existing position and data
+          updated[existingIndex] = { ...updated[existingIndex], isHighlighted: true }
+          console.log('[handleCreateOverlayPopup] Updated popup isHighlighted:', updated[existingIndex].isHighlighted);
+          return updated
+        }
+
+        // Otherwise update popup data (e.g., when children are loaded)
+        // Preserve position when just updating children
+        console.log('[handleCreateOverlayPopup] Updating existing popup data, preserving position');
         const updated = [...prev]
-        updated[existingIndex] = popup
+        updated[existingIndex] = {
+          ...popup,
+          // Preserve existing position - don't move popup when updating children
+          position: updated[existingIndex].position,
+          canvasPosition: updated[existingIndex].canvasPosition,
+          isHighlighted: updated[existingIndex].isHighlighted
+        }
         return updated
       }
-      // Check if popup with same folder already exists (prevent duplicates)
+
+      // Check if popup with same folder already exists (shouldn't happen with deterministic IDs, but keep as safety)
       const folderExists = prev.some(p => p.folderId === popup.folderId)
-      if (folderExists) return prev
+      if (folderExists) {
+        console.log('[handleCreateOverlayPopup] Popup for this folder already exists (different ID), highlighting it');
+        return prev.map(p =>
+          p.folderId === popup.folderId
+            ? { ...p, isHighlighted: true }
+            : p
+        )
+      }
+
       // Add new popup
+      console.log('[handleCreateOverlayPopup] Adding new popup. New count will be:', prev.length + 1);
       return [...prev, popup]
     })
+
+    // If highlighting, clear the highlight after animation (2 seconds)
+    if (shouldHighlight) {
+      setTimeout(() => {
+        setOverlayPopups(prev =>
+          prev.map(p =>
+            p.id === popup.id ? { ...p, isHighlighted: false } : p
+          )
+        )
+      }, 2000)
+    }
   }, [])
 
   // Handle closing overlay popup

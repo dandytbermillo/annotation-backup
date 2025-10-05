@@ -189,3 +189,19 @@
 .popup-card.drop-target-active {
   animation: popup-drop-pulse 1.5s ease-in-out infinite;
 }
+
+/* Highlight glow effect (when clicking already-open popup) */
+@keyframes popup-highlight-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(234, 179, 8, 0);
+    border-color: rgb(55, 65, 81);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(234, 179, 8, 0.8), 0 0 80px rgba(234, 179, 8, 0.4);
+    border-color: rgb(234, 179, 8);
+  }
+}
+
+.popup-card.highlighted {
+  animation: popup-highlight-glow 2s ease-in-out;
+}

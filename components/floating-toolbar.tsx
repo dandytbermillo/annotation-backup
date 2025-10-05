@@ -34,7 +34,7 @@ type FloatingToolbarProps = {
   onClose: () => void
   onSelectNote?: (noteId: string) => void
   onCreateNote?: () => void
-  onCreateOverlayPopup?: (popup: OverlayPopup) => void
+  onCreateOverlayPopup?: (popup: OverlayPopup, shouldHighlight?: boolean) => void
   onAddComponent?: (type: string, position?: { x: number; y: number }) => void
   editorRef?: React.RefObject<any> // Optional editor ref for format commands
   activePanelId?: string | null // Currently active panel ID for branches/actions
@@ -83,6 +83,7 @@ export interface OverlayPopup {
   isPersistent: boolean
   level: number
   parentPopupId?: string
+  isHighlighted?: boolean
 }
 
 const TOOL_CATEGORIES = [
@@ -673,6 +674,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const handleEyeClick = async (folder: OrgItem, event: React.MouseEvent) => {
     event.stopPropagation()
 
+    console.log('[handleEyeClick] Clicked folder:', folder.name, 'ID:', folder.id)
+
     // Close hover tooltips
     setFolderPopups([])
 
@@ -687,7 +690,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       popupPosition = { x: rect.left, y: rect.bottom + 10 }
     }
 
-    const popupId = `overlay-popup-${++popupIdCounter.current}`
+    // Use folder ID as popup ID to prevent duplicates (same folder = same popup)
+    const popupId = `overlay-popup-${folder.id}`
+    console.log('[handleEyeClick] Generated popup ID:', popupId)
+
     const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedOverlayTransform)
     const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedOverlayTransform)
 
@@ -716,8 +722,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       level: 0
     }
 
+    console.log('[handleEyeClick] Calling onCreateOverlayPopup with shouldHighlight=true')
     // Call callback to create popup in parent (annotation-app)
-    onCreateOverlayPopup(newPopup)
+    // Always pass shouldHighlight=true to trigger glow if already exists
+    onCreateOverlayPopup(newPopup, true)
 
     // Close toolbar after creating popup (same pattern as selecting a note)
     onClose()
@@ -755,7 +763,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         }
       }
 
-      onCreateOverlayPopup(updatedPopup)
+      // Pass false for shouldHighlight when just updating children data
+      onCreateOverlayPopup(updatedPopup, false)
     } catch (error) {
       console.error('Error fetching overlay popup contents:', error)
       // Could add error handling callback here if needed

@@ -1945,7 +1945,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               id={`popup-${popup.id}`}
               className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
                 isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
-              }`}
+              } ${(popup as any).isHighlighted ? 'highlighted' : ''}`}
               style={{
                 left: `${position.x}px`,
                 top: `${position.y}px`,
@@ -2263,7 +2263,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   id={`popup-${popup.id}`}
                   className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
                     isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
-                  }`}
+                  } ${(popup as any).isHighlighted ? 'highlighted' : ''}`}
                   style={{
                     left: `${position.x}px`,
                     top: `${position.y}px`,
