@@ -295,21 +295,6 @@ Migration hygiene:
 - `document_saves` (Option A): note_id, panel_id, content (json/jsonb or text for HTML), version, created_at
 - `snapshots` (Option B): id, note_id, snapshot (bytea), created_at
 - `presence` (Option B): **NOT persisted** (awareness is ephemeral)
-- `items`: id, type (folder/note), parent_id, path, name, slug, position, content, metadata, icon, color, last_accessed_at, created_at, updated_at, deleted_at
-
-### Items Table - Organization Tree Constraint (MANDATORY)
-**CRITICAL**: In the organization section panel (accessed via floating toolbar's org button), the "Knowledge Base" folder (`/knowledge-base`) MUST be the **ONLY** root directory displayed.
-
-**Enforcement rules**:
-1. **Database-level**: "Knowledge Base" folder (`path = '/knowledge-base'`, `parent_id IS NULL`) is the canonical root.
-2. **Application-level**: All new notes and folders created by users MUST be placed under `/knowledge-base` or its descendants. The application MUST NOT create items with `parent_id IS NULL` except for system folders.
-3. **UI-level**: The organization tree view MUST filter to show only items where `path` starts with `/knowledge-base` or `path = '/knowledge-base'`.
-4. **Migration requirement**: Any existing items at root level (except Knowledge Base) should be migrated to `/knowledge-base/uncategorized` or appropriate subdirectories.
-
-**Notes**:
-- The "Recent" folder was removed in migration 013 because recent notes are shown in a dedicated RECENT section (separate from the organization tree).
-- Recent notes may exist at various paths but are displayed separately from the organization tree view.
-- Path uniqueness enforced by: `UNIQUE INDEX ux_items_path ON items(path) WHERE deleted_at IS NULL`
 
 ---
 

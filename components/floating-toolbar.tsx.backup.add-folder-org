@@ -181,12 +181,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const previewCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isHoveringPreviewRef = useRef(false)
 
-  // Folder creation state for Organization panel
-  const [creatingFolderInOrg, setCreatingFolderInOrg] = useState(false)
-  const [newOrgFolderName, setNewOrgFolderName] = useState('')
-  const [orgFolderCreationError, setOrgFolderCreationError] = useState<string | null>(null)
-  const [orgFolderCreationLoading, setOrgFolderCreationLoading] = useState(false)
-
   // Layer context for overlay canvas
   const layerContext = useLayer()
   const multiLayerEnabled = true
@@ -472,128 +466,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       ...prev,
       [folderId]: isExpanding
     }))
-  }
-
-  // Folder creation handlers for Organization panel
-  const handleStartCreateFolderInOrg = () => {
-    setCreatingFolderInOrg(true)
-    setNewOrgFolderName('')
-    setOrgFolderCreationError(null)
-  }
-
-  const handleCancelCreateFolderInOrg = () => {
-    setCreatingFolderInOrg(false)
-    setNewOrgFolderName('')
-    setOrgFolderCreationError(null)
-  }
-
-  const handleCreateFolderInOrg = async () => {
-    const trimmedName = newOrgFolderName.trim()
-
-    // Validation
-    if (!trimmedName) {
-      setOrgFolderCreationError('Folder name cannot be empty')
-      return
-    }
-
-    if (trimmedName.length > 255) {
-      setOrgFolderCreationError('Folder name is too long (max 255 characters)')
-      return
-    }
-
-    setOrgFolderCreationLoading(true)
-    setOrgFolderCreationError(null)
-
-    try {
-      // Find Knowledge Base folder ID
-      const knowledgeBase = orgItems.find(item => item.name === 'Knowledge Base')
-
-      const response = await fetch('/api/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify({
-          type: 'folder',
-          name: trimmedName,
-          parentId: knowledgeBase?.id || null,
-        }),
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || `Failed to create folder: ${response.status}`)
-      }
-
-      // Success - clear form
-      setNewOrgFolderName('')
-      setCreatingFolderInOrg(false)
-      setOrgFolderCreationError(null)
-
-      // Refresh the org items to show the new folder
-      // Re-fetch the organization tree
-      const treeResponse = await fetch('/api/items?parentId=null')
-      if (treeResponse.ok) {
-        const treeData = await treeResponse.json()
-        const items = treeData.items || []
-
-        const formattedItems: OrgItem[] = items.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          type: item.type,
-          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
-          color: item.color,
-          hasChildren: item.type === 'folder',
-          level: 0,
-          children: [],
-          parentId: item.parentId
-        }))
-
-        setOrgItems(formattedItems)
-
-        // Re-expand and fetch children for Knowledge Base
-        const knowledgeBase = formattedItems.find(item =>
-          item.name.toLowerCase() === 'knowledge base' && item.type === 'folder'
-        )
-        if (knowledgeBase) {
-          setExpandedFolders({ [knowledgeBase.id]: true })
-
-          const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
-          if (childResponse.ok) {
-            const childData = await childResponse.json()
-            const children = childData.items || []
-
-            const formattedChildren: OrgItem[] = children.map((item: any) => ({
-              id: item.id,
-              name: item.name,
-              type: item.type,
-              icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
-              color: item.color,
-              hasChildren: item.type === 'folder',
-              level: 1,
-              children: [],
-              parentId: item.parentId
-            }))
-
-            setOrgItems(prevItems =>
-              prevItems.map(item =>
-                item.id === knowledgeBase.id
-                  ? { ...item, children: formattedChildren }
-                  : item
-              )
-            )
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to create folder:', error)
-      setOrgFolderCreationError(
-        error instanceof Error ? error.message : 'Failed to create folder'
-      )
-    } finally {
-      setOrgFolderCreationLoading(false)
-    }
   }
 
   // Helper to find item by id in tree
@@ -1238,66 +1110,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 </div>
               )
             })
-          )}
-        </div>
-
-        {/* Add Folder Button */}
-        <div className="px-3 pb-3 border-t border-white/10 pt-2">
-          {creatingFolderInOrg ? (
-            <div>
-              <input
-                type="text"
-                value={newOrgFolderName}
-                onChange={(e) => setNewOrgFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleCreateFolderInOrg()
-                  } else if (e.key === 'Escape') {
-                    handleCancelCreateFolderInOrg()
-                  }
-                }}
-                placeholder="New folder name"
-                className="w-full px-3 py-2 text-sm bg-gray-800 text-white placeholder-gray-500 rounded-lg border border-white/20 focus:outline-none focus:border-blue-400/60"
-                autoFocus
-                disabled={orgFolderCreationLoading}
-              />
-              {orgFolderCreationError && (
-                <div className="mt-2 text-xs text-red-400">{orgFolderCreationError}</div>
-              )}
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleCreateFolderInOrg()
-                  }}
-                  disabled={orgFolderCreationLoading}
-                  className="flex-1 px-3 py-2 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors text-white font-medium"
-                >
-                  {orgFolderCreationLoading ? 'Creating...' : '✓ Create'}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleCancelCreateFolderInOrg()
-                  }}
-                  disabled={orgFolderCreationLoading}
-                  className="flex-1 px-3 py-2 text-xs bg-white/10 hover:bg-white/20 disabled:cursor-not-allowed rounded-lg transition-colors text-white/80"
-                >
-                  ✗ Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handleStartCreateFolderInOrg()
-              }}
-              className="w-full px-3 py-2 text-left text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded-lg transition-colors font-medium"
-            >
-              + New Folder
-            </button>
           )}
         </div>
       </div>
