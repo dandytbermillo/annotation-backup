@@ -167,6 +167,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [isLoadingRecent, setIsLoadingRecent] = useState(false)
   const [orgItems, setOrgItems] = useState<OrgItem[]>([])
   const [isLoadingOrg, setIsLoadingOrg] = useState(false)
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const [folderPopups, setFolderPopups] = useState<FolderPopup[]>([]) // Hover tooltips
   const folderPopupsRef = useRef<FolderPopup[]>([]) // Ref to access current state in callbacks
   const popupIdCounter = useRef(0)
@@ -428,11 +429,14 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
         setOrgItems(formattedItems)
 
-        // Fetch and display children of "Knowledge Base" folder (always show first level)
+        // Auto-expand "Knowledge Base" folder
         const knowledgeBase = formattedItems.find(item =>
           item.name.toLowerCase() === 'knowledge base' && item.type === 'folder'
         )
         if (knowledgeBase) {
+          setExpandedFolders({ [knowledgeBase.id]: true })
+
+          // Fetch children for Knowledge Base
           try {
             const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
             if (childResponse.ok) {
@@ -473,6 +477,61 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     fetchOrgTree()
   }, [])
+
+  // Toggle folder expansion and load children if needed
+  const toggleFolder = async (folderId: string) => {
+    const isExpanding = !expandedFolders[folderId]
+
+    // If expanding and children not loaded yet, fetch them
+    if (isExpanding) {
+      const folder = findItemById(folderId, orgItems)
+      if (folder && folder.type === 'folder' && (!folder.children || folder.children.length === 0)) {
+        try {
+          const response = await fetch(`/api/items?parentId=${folderId}`)
+          if (!response.ok) throw new Error('Failed to fetch folder children')
+
+          const data = await response.json()
+          const children = data.items || []
+
+          // Transform children
+          const formattedChildren: OrgItem[] = children.map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+            color: item.color,
+            hasChildren: item.type === 'folder',
+            level: folder.level + 1,
+            children: [],
+            parentId: item.parentId
+          }))
+
+          // Update the tree with children
+          const updateTree = (items: OrgItem[]): OrgItem[] => {
+            return items.map(item => {
+              if (item.id === folderId) {
+                return { ...item, children: formattedChildren }
+              }
+              if (item.children && item.children.length > 0) {
+                return { ...item, children: updateTree(item.children) }
+              }
+              return item
+            })
+          }
+
+          setOrgItems(updateTree(orgItems))
+        } catch (error) {
+          console.error('Error fetching folder children:', error)
+        }
+      }
+    }
+
+    // Toggle expansion state
+    setExpandedFolders(prev => ({
+      ...prev,
+      [folderId]: isExpanding
+    }))
+  }
 
   // Folder creation handlers for Organization panel
   const handleStartCreateFolderInOrg = () => {
@@ -552,11 +611,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
         setOrgItems(formattedItems)
 
-        // Re-fetch and display children of Knowledge Base
+        // Re-expand and fetch children for Knowledge Base
         const knowledgeBase = formattedItems.find(item =>
           item.name.toLowerCase() === 'knowledge base' && item.type === 'folder'
         )
         if (knowledgeBase) {
+          setExpandedFolders({ [knowledgeBase.id]: true })
+
           const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
           if (childResponse.ok) {
             const childData = await childResponse.json()
@@ -607,11 +668,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   // Flatten tree for rendering (with folders-first sorting)
-  // Show only Knowledge Base children (not the Knowledge Base folder itself)
   const flattenTree = (items: OrgItem[]): OrgItem[] => {
-    // Sort: folders first, then notes (alphabetically within each group)
-    const sortItems = (itemsToSort: OrgItem[]) => {
-      return [...itemsToSort].sort((a, b) => {
+    const result: OrgItem[] = []
+    const traverse = (nodes: OrgItem[]) => {
+      // Sort: folders first, then notes (alphabetically within each group)
+      const sorted = [...nodes].sort((a, b) => {
         // Folders before notes
         if (a.type === 'folder' && b.type !== 'folder') return -1
         if (a.type !== 'folder' && b.type === 'folder') return 1
@@ -619,19 +680,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         // Within same type, sort alphabetically by name
         return a.name.localeCompare(b.name)
       })
+
+      for (const node of sorted) {
+        result.push(node)
+        if (expandedFolders[node.id] && node.children && node.children.length > 0) {
+          traverse(node.children)
+        }
+      }
     }
-
-    // Find Knowledge Base folder
-    const knowledgeBase = items.find(item =>
-      item.name === 'Knowledge Base' && item.type === 'folder'
-    )
-
-    // Return only its children (sorted)
-    if (knowledgeBase && knowledgeBase.children) {
-      return sortItems(knowledgeBase.children)
-    }
-
-    return []
+    traverse(items)
+    return result
   }
 
   // Handle folder eye icon hover to show popup
@@ -1153,7 +1211,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         onMouseLeave={handlePanelHoverLeave}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
-          <span>Knowledge Base</span>
+          <span>Organization</span>
           <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
             ×
           </button>
@@ -1165,18 +1223,39 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             <div className="text-center py-4 text-white/60 text-sm">No items</div>
           ) : (
             flatItems.map((item) => {
+              const isExpanded = expandedFolders[item.id]
               const isFolder = item.type === 'folder'
+              const hasChildren = item.hasChildren
 
               return (
                 <div
                   key={item.id}
                   className="flex items-center gap-1"
+                  style={{ paddingLeft: `${item.level * 16}px` }}
                 >
+                  {/* Chevron for folders */}
+                  {isFolder && hasChildren ? (
+                    <button
+                      className="flex-shrink-0 w-5 h-5 flex items-center justify-center text-blue-400 hover:text-blue-300 transition font-bold"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleFolder(item.id)
+                      }}
+                    >
+                      {isExpanded ? '▼' : '▶'}
+                    </button>
+                  ) : (
+                    <div className="w-5 h-5 flex-shrink-0" />
+                  )}
+
                   {/* Item button */}
                   <button
                     className="group flex-1 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
                     onClick={() => {
-                      // Single click does nothing - reserved for future selection/navigation
+                      if (isFolder) {
+                        toggleFolder(item.id)
+                      }
+                      // Single click does nothing for notes (reserved for multi-select)
                     }}
                     onDoubleClick={() => {
                       if (!isFolder) {
@@ -1191,7 +1270,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         <span>{item.name}</span>
                       </div>
                       {/* Eye icon - different handlers for folders vs notes */}
-                      {isFolder ? (
+                      {/* Skip eye icon for Knowledge Base folder */}
+                      {isFolder && item.name !== 'Knowledge Base' ? (
                         <div
                           onMouseEnter={(e) => handleEyeHover(item, e)}
                           onMouseLeave={() => handleEyeHoverLeave(item.id)}
@@ -1201,7 +1281,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         >
                           <Eye className="w-3.5 h-3.5 text-white/40" />
                         </div>
-                      ) : (
+                      ) : !isFolder ? (
                         <div
                           onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
                           onMouseLeave={handleNotePreviewHoverLeave}
@@ -1215,7 +1295,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-400" />
                         </div>
-                      )}
+                      ) : null}
                     </div>
                     <div className="mt-1 text-xs text-white/60">
                       {item.type === 'folder' ? 'Folder' : 'Note'}

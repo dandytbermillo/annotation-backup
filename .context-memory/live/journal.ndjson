@@ -295,3 +295,4 @@
 {"ts":"2025-10-04T23:20:07.571Z","type":"commit","sha":"6b32c771b8eaacec4b3b3e5659e7a82669722cdf","files_changed":6,"message":"popup overlay preview styled"}
 {"ts":"2025-10-05T00:10:23.814Z","type":"commit","sha":"947ea6a060b221d4b5d1d10daed11508671ec296","files_changed":6,"message":"popup glow when user tried to reopened it"}
 {"ts":"2025-10-05T02:11:43.447Z","type":"commit","sha":"9931ace68bd1956ed493ae80777fe43a92c5afbd","files_changed":6,"message":"glowing effect when popup first created fixed"}
+{"ts":"2025-10-05T03:04:02.875Z","type":"commit","sha":"f0f5c35133ddedae644b550559638054c82d6b0c","files_changed":12,"message":"made only one roog directory(kb) and added folder creation in g"}
