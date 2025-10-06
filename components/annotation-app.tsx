@@ -271,7 +271,7 @@ function AnnotationAppContent() {
         id: popup.id,
         folderId: popup.folderId || null,
         folderName: displayName,
-        folderColor: popup.folder?.color || null,
+        folderColor: null,  // Don't cache colors - always fetch fresh from DB on restore
         parentId: popup.parentPopupId || null,
         canvasPosition: { x, y },
         level: popup.level || 0,
@@ -380,21 +380,39 @@ function AnnotationAppContent() {
         // Start with folder's own color, fall back to cached
         let effectiveColor = folderData.color || cachedColor
 
-        // Only fetch parent if we have no color at all (neither DB nor cache)
+        // Walk up ancestor chain if we have no color at all (neither DB nor cache)
         if (!effectiveColor) {
-          const parentId = folderData.parentId ?? folderData.parent_id
-          console.log('[Restore] No color for', folderData.name, '- fetching parent:', parentId)
-          if (parentId) {
+          const initialParentId = folderData.parentId ?? folderData.parent_id
+          console.log('[Restore] No color for', folderData.name, '- walking ancestor chain from:', initialParentId)
+          if (initialParentId) {
             try {
-              const parentResponse = await fetch(`/api/items/${parentId}`)
-              if (parentResponse.ok) {
+              let currentParentId = initialParentId
+              let depth = 0
+              const maxDepth = 10 // Prevent infinite loops
+
+              while (currentParentId && !effectiveColor && depth < maxDepth) {
+                const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                if (!parentResponse.ok) break
+
                 const parentData = await parentResponse.json()
                 const parent = parentData.item || parentData
-                effectiveColor = parent.color
-                console.log('[Restore] Parent fetch result for', folderData.name, '- parent color:', effectiveColor)
+
+                if (parent.color) {
+                  effectiveColor = parent.color
+                  console.log('[Restore] Inherited color from ancestor:', parent.name, 'color:', effectiveColor, 'depth:', depth + 1)
+                  break
+                }
+
+                // Move up to next parent
+                currentParentId = parent.parentId ?? parent.parent_id
+                depth++
+              }
+
+              if (!effectiveColor) {
+                console.log('[Restore] No color found in ancestor chain after', depth, 'levels')
               }
             } catch (e) {
-              console.warn('[Popup Restore] Failed to fetch parent color:', e)
+              console.warn('[Popup Restore] Failed to fetch ancestor color:', e)
             }
           }
         }
@@ -941,20 +959,51 @@ function AnnotationAppContent() {
       if (exists) return
       const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
 
-      // Inherit color from parent if current folder has no color
+      // Inherit color from parent popup (already open) - FAST, no API call needed!
       let inheritedColor = folder.color
-      const parentId = folder.parentId ?? (folder as any).parent_id
-      if (!inheritedColor && parentId) {
-        try {
-          const parentResponse = await fetch(`/api/items/${parentId}`)
-          if (parentResponse.ok) {
-            const parentData = await parentResponse.json()
-            const parent = parentData.item || parentData
-            inheritedColor = parent.color
-            console.log('[createPopup] Inherited color from parent:', parent.name, 'color:', inheritedColor)
+      if (!inheritedColor && parentPopupId) {
+        const parentPopup = currentOverlayPopups.find(p => p.id === parentPopupId)
+
+        // If parent popup has color in folder object, use it
+        if (parentPopup?.folder?.color) {
+          inheritedColor = parentPopup.folder.color
+          console.log('[createPopup] ⚡ Inherited color from parent popup folder:', parentPopup.folderName, 'color:', inheritedColor)
+        }
+        // If parent is still loading but we have folder data with color, use that
+        else if (parentPopup?.isLoading && folder.color) {
+          inheritedColor = folder.color
+          console.log('[createPopup] ⚡ Using folder own color (parent still loading):', inheritedColor)
+        }
+        // Last resort: walk up ancestor chain via API
+        else if (!parentPopup?.isLoading) {
+          console.log('[createPopup] Parent popup has no color and not loading, checking ancestors via API')
+          const initialParentId = folder.parentId ?? (folder as any).parent_id
+          if (initialParentId) {
+            try {
+              let currentParentId = initialParentId
+              let depth = 0
+              const maxDepth = 10
+
+              while (currentParentId && !inheritedColor && depth < maxDepth) {
+                const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                if (!parentResponse.ok) break
+
+                const parentData = await parentResponse.json()
+                const parent = parentData.item || parentData
+
+                if (parent.color) {
+                  inheritedColor = parent.color
+                  console.log('[createPopup] Inherited color from ancestor via API:', parent.name, 'color:', inheritedColor, 'depth:', depth + 1)
+                  break
+                }
+
+                currentParentId = parent.parentId ?? parent.parent_id
+                depth++
+              }
+            } catch (e) {
+              console.warn('[createPopup] Failed to fetch ancestor color:', e)
+            }
           }
-        } catch (e) {
-          console.warn('[createPopup] Failed to fetch parent for color inheritance:', e)
         }
       }
 
@@ -1022,7 +1071,15 @@ function AnnotationAppContent() {
         setOverlayPopups(prev =>
           prev.map(p =>
             p.id === popupId
-              ? { ...p, children: formattedChildren, isLoading: false, folder: { ...folder, children: formattedChildren } }
+              ? {
+                  ...p,
+                  children: formattedChildren,
+                  isLoading: false,
+                  folder: {
+                    ...p.folder,  // Preserve existing folder object (has inherited color)
+                    children: formattedChildren
+                  }
+                }
               : p
           )
         )

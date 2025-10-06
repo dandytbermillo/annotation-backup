@@ -961,19 +961,37 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       || deriveFromPath((folder as any).path)
       || 'Untitled Folder'
 
-    // Fetch inherited color if folder has none
+    // Fetch inherited color by walking up ancestor chain
     let effectiveColor = folder.color
     if (!effectiveColor && folder.parentId) {
       try {
-        const parentResponse = await fetch(`/api/items/${folder.parentId}`)
-        if (parentResponse.ok) {
+        let currentParentId = folder.parentId
+        let depth = 0
+        const maxDepth = 10 // Prevent infinite loops
+
+        while (currentParentId && !effectiveColor && depth < maxDepth) {
+          const parentResponse = await fetch(`/api/items/${currentParentId}`)
+          if (!parentResponse.ok) break
+
           const parentData = await parentResponse.json()
           const parent = parentData.item || parentData
-          effectiveColor = parent.color
-          console.log('[handleEyeClick] Inherited color from parent:', parent.name, 'color:', effectiveColor)
+
+          if (parent.color) {
+            effectiveColor = parent.color
+            console.log('[handleEyeClick] Inherited color from ancestor:', parent.name, 'color:', effectiveColor, 'depth:', depth + 1)
+            break
+          }
+
+          // Move up to next parent
+          currentParentId = parent.parentId || parent.parent_id
+          depth++
+        }
+
+        if (!effectiveColor) {
+          console.log('[handleEyeClick] No color found in ancestor chain after', depth, 'levels')
         }
       } catch (e) {
-        console.warn('[handleEyeClick] Failed to fetch parent color:', e)
+        console.warn('[handleEyeClick] Failed to fetch ancestor color:', e)
       }
     }
 

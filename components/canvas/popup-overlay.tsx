@@ -2025,6 +2025,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'
                     const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId
 
+                    // Debug: log color info for child popups
+                    if (isChildPopup && folderName === 'sample') {
+                      console.log('[PopupHeader] sample popup - folder.color:', folderColor, 'colorTheme:', colorTheme, 'popup.folder:', popup.folder)
+                    }
+
                     // Child popups: show just badge + name (parent relationship shown by connecting line)
                     if (isChildPopup) {
                       return (
