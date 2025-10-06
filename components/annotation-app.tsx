@@ -1481,6 +1481,7 @@ function AnnotationAppContent() {
           onDeleteSelected={handleDeleteSelected}
           onBulkMove={handleBulkMove}
           onFolderCreated={handleFolderCreated}
+          onPopupCardClick={handleCloseNotesWidget}
           sidebarOpen={false}
         />
       )}

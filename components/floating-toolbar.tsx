@@ -864,23 +864,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     hoverTimeoutRef.current.set(folderId, timeout)
 
-    // Only schedule panel close if we're leaving ALL popups (not moving to another one)
-    // The timeout will be cancelled if we enter another popup or the panel itself
-    const panelTimeout = setTimeout(() => {
-      console.log('[handleEyeHoverLeave] Panel timeout fired - checking if should close')
-      // Check if there are still popups open before closing panel
-      if (folderPopupsRef.current.length === 0 && !isHoveringPanel) {
-        console.log('[handleEyeHoverLeave] Closing panel - no popups and not hovering')
-        setActivePanel(null)
-      } else {
-        console.log('[handleEyeHoverLeave] NOT closing panel - popups:', folderPopupsRef.current.length, 'hovering:', isHoveringPanel)
-      }
-    }, 500) // Longer delay to allow moving to another popup or back to panel
-
-    if (panelHoverTimeoutRef.current) {
-      clearTimeout(panelHoverTimeoutRef.current)
-    }
-    panelHoverTimeoutRef.current = panelTimeout
+    // Panels now stay open - no auto-close on hover leave
+    // Panel only closes via explicit dismiss (click outside or close button)
   }
 
   // Cancel close timeout when hovering over popup
@@ -1084,14 +1069,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   // Handle button hover leave
   const handleButtonHoverLeave = () => {
-    // Don't close panel during drag, when palette is open, or right after color selection
-    if (isDragging || openPaletteFolderId || justSelectedColorRef.current) return
-
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPanel) {
-        setActivePanel(null)
-      }
-    }, 1000)
+    // Panels now stay open when hovering away - only close via explicit dismiss
+    // No timeout logic needed
   }
 
   // Handle panel hover
@@ -1105,13 +1084,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   // Handle panel hover leave
   const handlePanelHoverLeave = () => {
-    // Don't close panel during drag, when palette is open, or right after color selection
-    if (isDragging || openPaletteFolderId || justSelectedColorRef.current) return
-
+    // Panels now stay open when hovering away - only close via explicit dismiss
     setIsHoveringPanel(false)
-    panelHoverTimeoutRef.current = setTimeout(() => {
-      setActivePanel(null)
-    }, 1000)
   }
 
   // Handle creating a new note using shared utility (same as notes-explorer)
@@ -1228,21 +1202,18 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const handlePreviewTooltipLeave = () => {
     isHoveringPreviewRef.current = false
     setNotePreview(null)
-    // Close the panel after leaving preview tooltip if not hovering panel
-    if (!isHoveringPanel) {
-      panelHoverTimeoutRef.current = setTimeout(() => {
-        setActivePanel(null)
-      }, 667)
-    }
+    // Panels now stay open - no auto-close on hover leave
   }
 
 
   useEffect(() => {
     const handleClickAway = (event: MouseEvent) => {
-      const target = event.target as Node
+      const target = event.target as HTMLElement
       // Don't close if clicking inside toolbar/panel or color palette
       if (containerRef.current?.contains(target)) return
       if (paletteRef.current?.contains(target)) return
+      // Don't close if clicking inside folder popups or note preview
+      if (target.closest('[data-toolbar-resident]')) return
       onClose()
     }
 
@@ -2043,6 +2014,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         return (
           <div
             key={popup.id}
+            data-toolbar-resident="true"
             className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
             style={{
               backgroundColor: 'rgba(17, 24, 39, 0.98)',
@@ -2148,6 +2120,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       {/* Note preview tooltip */}
       {notePreview && (
         <div
+          data-toolbar-resident="true"
           className="fixed px-4 py-3 rounded-xl border border-blue-500/30 bg-gray-900 shadow-2xl max-w-sm"
           style={{
             backgroundColor: 'rgba(17, 24, 39, 0.98)',

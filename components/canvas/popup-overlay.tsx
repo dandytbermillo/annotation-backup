@@ -93,6 +93,7 @@ interface PopupOverlayProps {
   onDeleteSelected?: (popupId: string, selectedIds: Set<string>) => void; // Delete multiple selected items
   onBulkMove?: (itemIds: string[], targetFolderId: string, sourcePopupId: string) => Promise<void>; // Move multiple items to target folder
   onFolderCreated?: (popupId: string, newFolder: PopupChildNode) => void; // Called after folder created - parent should update popup children
+  onPopupCardClick?: () => void; // Called when clicking on popup card - used to close floating toolbar
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
 }
 
@@ -107,6 +108,9 @@ type PopupChildNode = {
   hasChildren?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  path?: string; // Full path for breadcrumb ancestors
+  level?: number; // Depth level in tree
+  children?: PopupChildNode[]; // Child nodes
 };
 
 // Format relative time (e.g., "2h ago", "3d ago")
@@ -171,6 +175,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onDeleteSelected,
   onBulkMove,
   onFolderCreated,
+  onPopupCardClick,
   sidebarOpen, // Accept sidebar state
 }) => {
   const multiLayerEnabled = true;
@@ -209,6 +214,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [newFolderName, setNewFolderName] = useState<string>('');
   const [folderCreationLoading, setFolderCreationLoading] = useState<string | null>(null);
   const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
+
+  // Breadcrumb dropdown state
+  const [breadcrumbDropdownOpen, setBreadcrumbDropdownOpen] = useState<string | null>(null); // popup ID
+  const [ancestorCache, setAncestorCache] = useState<Map<string, PopupChildNode[]>>(new Map());
+  const [loadingAncestors, setLoadingAncestors] = useState<Set<string>>(new Set());
+
+  // Breadcrumb folder preview tooltip state
+  const [breadcrumbFolderPreview, setBreadcrumbFolderPreview] = useState<{
+    folderId: string;
+    folderName: string;
+    folderColor?: string;
+    position: { x: number; y: number };
+    children: PopupChildNode[];
+    isLoading: boolean;
+  } | null>(null);
+  const breadcrumbPreviewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     return () => {
@@ -645,6 +666,189 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setCreatingFolderInPopup(popupId);
     setNewFolderName('');
     setFolderCreationError(null);
+  }, []);
+
+  // Fetch ancestor chain for breadcrumb dropdown
+  const fetchAncestors = useCallback(async (folderId: string, popupId: string): Promise<PopupChildNode[]> => {
+    // Check cache first
+    const cached = ancestorCache.get(folderId);
+    if (cached) {
+      console.log('[fetchAncestors] Using cached ancestors for', folderId);
+      return cached;
+    }
+
+    console.log('[fetchAncestors] Fetching ancestors for folder:', folderId);
+    setLoadingAncestors(prev => new Set(prev).add(popupId));
+
+    try {
+      const ancestors: PopupChildNode[] = [];
+      let currentId = folderId;
+      let depth = 0;
+      const maxDepth = 10;
+
+      while (currentId && depth < maxDepth) {
+        const response = await fetch(`/api/items/${currentId}`);
+        if (!response.ok) {
+          console.error('[fetchAncestors] Failed to fetch folder:', currentId, response.status);
+          break;
+        }
+
+        const data = await response.json();
+        const folder = data.item || data;
+
+        // Add to front (reverse order so root is first)
+        ancestors.unshift({
+          id: folder.id,
+          name: folder.name,
+          type: 'folder' as const,
+          icon: folder.icon || '📁',
+          color: folder.color,
+          path: folder.path,
+          createdAt: folder.createdAt,
+          updatedAt: folder.updatedAt,
+          hasChildren: true,
+          level: depth,
+          children: [],
+          parentId: folder.parentId
+        });
+
+        console.log('[fetchAncestors] Added ancestor:', folder.name, 'path:', folder.path);
+
+        // Stop at Knowledge Base root
+        if (!folder.parentId || folder.path === '/knowledge-base') {
+          console.log('[fetchAncestors] Reached root');
+          break;
+        }
+
+        currentId = folder.parentId;
+        depth++;
+      }
+
+      console.log('[fetchAncestors] Fetched', ancestors.length, 'ancestors');
+
+      // Cache the result
+      setAncestorCache(prev => new Map(prev).set(folderId, ancestors));
+
+      return ancestors;
+    } catch (error) {
+      console.error('[fetchAncestors] Error fetching ancestors:', error);
+      return [];
+    } finally {
+      setLoadingAncestors(prev => {
+        const next = new Set(prev);
+        next.delete(popupId);
+        return next;
+      });
+    }
+  }, [ancestorCache]);
+
+  // Toggle breadcrumb dropdown
+  const handleToggleBreadcrumbDropdown = useCallback(async (popup: PopupData) => {
+    const isOpen = breadcrumbDropdownOpen === popup.id;
+
+    if (isOpen) {
+      // Close dropdown
+      console.log('[BreadcrumbDropdown] Closing dropdown for', popup.folderName);
+      setBreadcrumbDropdownOpen(null);
+    } else {
+      // Open dropdown and fetch ancestors
+      console.log('[BreadcrumbDropdown] Opening dropdown for', popup.folderName);
+      setBreadcrumbDropdownOpen(popup.id);
+
+      if (popup.folder?.id) {
+        await fetchAncestors(popup.folder.id, popup.id);
+      }
+    }
+  }, [breadcrumbDropdownOpen, fetchAncestors]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!breadcrumbDropdownOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if click is outside dropdown and not on the toggle button
+      if (!target.closest('[data-breadcrumb-dropdown]') && !target.closest('[data-breadcrumb-toggle]')) {
+        setBreadcrumbDropdownOpen(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [breadcrumbDropdownOpen]);
+
+  // Breadcrumb folder preview hover handler
+  const handleBreadcrumbFolderHover = useCallback(async (ancestor: PopupChildNode, event: React.MouseEvent) => {
+    event.stopPropagation();
+
+    // Clear any pending timeout
+    if (breadcrumbPreviewTimeoutRef.current) {
+      clearTimeout(breadcrumbPreviewTimeoutRef.current);
+      breadcrumbPreviewTimeoutRef.current = null;
+    }
+
+    // Get button position
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    // Calculate popup position - prefer right side
+    const spaceRight = window.innerWidth - rect.right;
+    let position = { x: 0, y: 0 };
+
+    if (spaceRight > 320) {
+      position.x = rect.right + 10;
+      position.y = rect.top;
+    } else {
+      position.x = rect.left;
+      position.y = rect.bottom + 10;
+    }
+
+    // Create preview with loading state
+    setBreadcrumbFolderPreview({
+      folderId: ancestor.id,
+      folderName: ancestor.name || 'Untitled',
+      folderColor: ancestor.color || undefined,
+      position,
+      children: [],
+      isLoading: true
+    });
+
+    // Fetch folder children
+    try {
+      const response = await fetch(`/api/items?parentId=${ancestor.id}`);
+      if (!response.ok) throw new Error('Failed to fetch folder contents');
+
+      const data = await response.json();
+      const children = data.items || [];
+
+      const formattedChildren: PopupChildNode[] = children.map((item: any) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+        color: item.color || ancestor.color,
+        hasChildren: item.type === 'folder'
+      }));
+
+      setBreadcrumbFolderPreview(prev => prev ? { ...prev, children: formattedChildren, isLoading: false } : null);
+    } catch (error) {
+      console.error('[BreadcrumbPreview] Error fetching folder contents:', error);
+      setBreadcrumbFolderPreview(null);
+    }
+  }, []);
+
+  // Breadcrumb folder preview hover leave handler
+  const handleBreadcrumbFolderHoverLeave = useCallback(() => {
+    breadcrumbPreviewTimeoutRef.current = setTimeout(() => {
+      setBreadcrumbFolderPreview(null);
+    }, 300); // 300ms delay before closing
+  }, []);
+
+  // Cancel close timeout when hovering preview
+  const handleBreadcrumbPreviewHover = useCallback(() => {
+    if (breadcrumbPreviewTimeoutRef.current) {
+      clearTimeout(breadcrumbPreviewTimeoutRef.current);
+      breadcrumbPreviewTimeoutRef.current = null;
+    }
   }, []);
 
   // Preview tooltip handlers (plain div like Recent Notes)
@@ -1938,6 +2142,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       onPointerCancel={handlePointerEnd}
       onPointerEnter={() => setIsOverlayHovered(true)}
       onPointerLeave={() => setIsOverlayHovered(false)}
+      onClick={(e) => {
+        // Close floating toolbar when clicking on empty space (not on popup cards)
+        if (isOverlayEmptySpace(e as any)) {
+          onPopupCardClick?.();
+        }
+      }}
     >
       {/* Transform container - applies pan/zoom to all children */}
       <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
@@ -2003,7 +2213,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 const folderId = (popup as any).folderId;
                 folderId && handlePopupDrop(folderId, popup.id, e);
               }}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPopupCardClick?.(); // Close floating toolbar when clicking popup card
+              }}
               onPointerEnter={() => {
                 // Pass both the folder ID and the parent popup ID to cancel the close timeout
                 if (popup.folder?.id) {
@@ -2049,10 +2262,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
                     // Root popups: show full breadcrumb
                     const breadcrumbs = parseBreadcrumb(folderPath, folderName)
+                    const isDropdownOpen = breadcrumbDropdownOpen === popup.id
+
                     return (
-                      <>
-                        {/* Home icon */}
-                        <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                      <div className="relative flex items-center gap-1.5 flex-1 min-w-0">
+                        {/* Home icon with dropdown */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleToggleBreadcrumbDropdown(popup)
+                          }}
+                          className="flex items-center gap-0.5 hover:bg-gray-700 rounded px-1 py-0.5 transition-colors"
+                          title="Show full path"
+                          data-breadcrumb-toggle
+                        >
+                          <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                          <ChevronRight className={`w-3 h-3 text-gray-500 transition-transform ${isDropdownOpen ? 'rotate-90' : ''}`} />
+                        </button>
 
                         {/* Breadcrumb trail */}
                         {breadcrumbs.map((crumb, index) => (
@@ -2081,7 +2307,78 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                             ) : null}
                           </React.Fragment>
                         ))}
-                      </>
+
+                        {/* Breadcrumb Dropdown */}
+                        {isDropdownOpen && popup.folder?.id && (
+                          <div
+                            className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-2 px-3 min-w-[200px]"
+                            style={{ zIndex: 9999 }}
+                            data-breadcrumb-dropdown
+                          >
+                            <div className="text-xs text-gray-400 mb-2">Full path:</div>
+                            {(() => {
+                              const ancestors = ancestorCache.get(popup.folder.id) || []
+                              const isLoading = loadingAncestors.has(popup.id)
+
+                              if (isLoading) {
+                                return <div className="text-sm text-gray-500">Loading...</div>
+                              }
+
+                              if (ancestors.length === 0) {
+                                return <div className="text-sm text-gray-500">No path available</div>
+                              }
+
+                              return (
+                                <div className="space-y-1">
+                                  {ancestors.map((ancestor, idx) => {
+                                    const isLast = idx === ancestors.length - 1;
+                                    return (
+                                      <div
+                                        key={ancestor.id}
+                                        className={`group flex items-center justify-between gap-2 text-sm ${isLast ? 'text-white font-medium' : 'text-gray-300 hover:bg-gray-700/50'} rounded px-1 py-0.5 transition-colors`}
+                                        style={{ paddingLeft: `${idx * 12}px` }}
+                                      >
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                          {isLast && colorTheme ? (
+                                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
+                                          ) : (
+                                            <span className="flex-shrink-0">{ancestor.icon || '📁'}</span>
+                                          )}
+                                          <span className="truncate">{ancestor.name}</span>
+                                          {isLast && <span className="text-gray-500 ml-1 flex-shrink-0">✓</span>}
+                                        </div>
+                                        {!isLast && ancestor.type === 'folder' && ancestor.name !== 'Knowledge Base' && (
+                                          <button
+                                            className="flex-shrink-0 p-0.5 opacity-0 group-hover:opacity-100 hover:bg-gray-600 rounded transition-all"
+                                            onMouseEnter={(e) => {
+                                              // Find inherited color from closest ancestor with color
+                                              let inheritedColor = ancestor.color;
+                                              if (!inheritedColor) {
+                                                for (let i = idx - 1; i >= 0; i--) {
+                                                  if (ancestors[i].color) {
+                                                    inheritedColor = ancestors[i].color;
+                                                    break;
+                                                  }
+                                                }
+                                              }
+                                              const ancestorWithColor = { ...ancestor, color: inheritedColor };
+                                              handleBreadcrumbFolderHover(ancestorWithColor, e);
+                                            }}
+                                            onMouseLeave={handleBreadcrumbFolderHoverLeave}
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <Eye className="w-3.5 h-3.5 text-blue-400" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )
+                            })()}
+                          </div>
+                        )}
+                      </div>
                     )
                   })()}
                 </div>
@@ -2264,7 +2561,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         backgroundColor: 'rgba(17, 24, 39, 0.98)',
         left: `${activePreviewTooltip.position.x}px`,
         top: `${activePreviewTooltip.position.y}px`,
-        zIndex: 50000
+        zIndex: 2147483647, // Maximum 32-bit integer - absolutely highest possible
+        position: 'fixed', // Ensure it's in its own stacking context
+        isolation: 'isolate' // Create new stacking context
       }}
       onMouseEnter={handlePreviewTooltipEnter}
       onMouseLeave={handlePreviewTooltipMouseLeave}
@@ -2281,6 +2580,62 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     document.body
   );
 
+  // Breadcrumb folder popup portal
+  const breadcrumbFolderPopupPortal = breadcrumbFolderPreview && createPortal(
+    <div
+      key={breadcrumbFolderPreview.folderId}
+      className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+      style={{
+        backgroundColor: 'rgba(17, 24, 39, 0.98)',
+        left: `${breadcrumbFolderPreview.position.x}px`,
+        top: `${breadcrumbFolderPreview.position.y}px`,
+        zIndex: 10000
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseEnter={handleBreadcrumbPreviewHover}
+      onMouseLeave={handleBreadcrumbFolderHoverLeave}
+    >
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-white/10">
+        <div className="flex items-center gap-2">
+          {(() => {
+            const colorTheme = breadcrumbFolderPreview.folderColor
+              ? getFolderColorTheme(breadcrumbFolderPreview.folderColor)
+              : null;
+            return colorTheme ? (
+              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
+            ) : (
+              <span className="flex-shrink-0">📁</span>
+            );
+          })()}
+          <span className="font-medium text-white text-sm truncate">{breadcrumbFolderPreview.folderName}</span>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-3 max-h-80 overflow-y-auto">
+        {breadcrumbFolderPreview.isLoading ? (
+          <div className="text-center text-gray-500 text-sm py-4">Loading...</div>
+        ) : breadcrumbFolderPreview.children.length === 0 ? (
+          <div className="text-center text-gray-500 text-sm py-4">Empty folder</div>
+        ) : (
+          <div className="space-y-1">
+            {breadcrumbFolderPreview.children.map((child) => (
+              <div
+                key={child.id}
+                className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/5 rounded text-sm transition-colors"
+              >
+                <span className="flex-shrink-0">{child.icon || (child.type === 'folder' ? '📁' : '📄')}</span>
+                <span className="truncate text-gray-200">{child.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+
   // Render strategy:
   // 1. If canvas-container exists, portal into it (scoped to canvas area)
   // 2. Otherwise, render as fixed overlay on document.body (for floating notes widget when no note is open)
@@ -2291,6 +2646,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         <>
           {createPortal(overlayInner, overlayContainer)}
           {tooltipPortal}
+          {breadcrumbFolderPopupPortal}
         </>
       );
     } else if (popups.size > 0) {
@@ -2319,6 +2675,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           onPointerCancel={handlePointerEnd}
           onPointerEnter={() => setIsOverlayHovered(true)}
           onPointerLeave={() => setIsOverlayHovered(false)}
+          onClick={(e) => {
+            // Close floating toolbar when clicking on empty space (not on popup cards)
+            if (isOverlayEmptySpace(e as any)) {
+              onPopupCardClick?.();
+            }
+          }}
         >
           {/* Transform container - applies pan/zoom to all children */}
           <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
@@ -2381,7 +2743,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     const folderId = (popup as any).folderId;
                     folderId && handlePopupDrop(folderId, popup.id, e);
                   }}
-                  onClick={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPopupCardClick?.(); // Close floating toolbar when clicking popup card
+                  }}
                 >
                   {/* Popup Header with Breadcrumb */}
                   <div
@@ -2612,13 +2977,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         <>
           {createPortal(fallbackOverlay, document.body)}
           {tooltipPortal}
+          {breadcrumbFolderPopupPortal}
         </>
       );
     }
   }
 
   // Even if overlay is not rendered, show tooltip if active
-  return tooltipPortal || null;
+  return (
+    <>
+      {tooltipPortal}
+      {breadcrumbFolderPopupPortal}
+    </>
+  ) || null;
 };
 
 // Export for use in other components
