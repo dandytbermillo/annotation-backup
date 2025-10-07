@@ -305,3 +305,4 @@
 {"ts":"2025-10-07T00:20:15.626Z","type":"commit","sha":"31ffa530055da69adff572c47b3d705cd4b5c96b","files_changed":5,"message":"renaming folder fixed"}
 {"ts":"2025-10-07T00:59:50.231Z","type":"commit","sha":"7d4cb4562bb1198892d5c5806ee2c9d0c5c227ce","files_changed":7,"message":"added smart connection line for popup overlay"}
 {"ts":"2025-10-07T02:09:04.532Z","type":"commit","sha":"14286cc625109bc95d0f4887a2e47300c9752534","files_changed":6,"message":"added renaming functionality in the popup overlay"}
+{"ts":"2025-10-07T04:47:45.891Z","type":"commit","sha":"d292cb0709919d9853e7e77ec88485726747984c","files_changed":5,"message":"added cascade-close behavior for popup with pinning functionality"}

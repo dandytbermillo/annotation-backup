@@ -2867,7 +2867,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 )}
               </div>
               {/* Pin Button Bar (shown when highlighted during close mode) */}
-              {popup.isHighlighted && (
+              {/* Only show pin button if highlighted AND there's a parent in closing mode */}
+              {popup.isHighlighted && (() => {
+                // Check if any popup (likely a parent) is in closing mode
+                const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
+                return hasParentClosing
+              })() && (
                 <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
                   <button
                     onClick={(e) => {
@@ -3493,7 +3498,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     )}
                   </div>
                   {/* Pin Button Bar (shown when highlighted during close mode) */}
-                  {popup.isHighlighted && (
+                  {/* Only show pin button if highlighted AND there's a parent in closing mode */}
+                  {popup.isHighlighted && (() => {
+                    // Check if any popup (likely a parent) is in closing mode
+                    const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
+                    return hasParentClosing
+                  })() && (
                     <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
                       <button
                         onClick={(e) => {
