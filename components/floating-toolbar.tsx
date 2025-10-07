@@ -51,7 +51,7 @@ function deriveFromPath(path: string | undefined | null): string | null {
   return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
 }
 
-type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | "add-component" | null
+type PanelKey = "recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | "add-component" | "display" | null
 
 type FloatingToolbarProps = {
   x: number
@@ -63,6 +63,8 @@ type FloatingToolbarProps = {
   onAddComponent?: (type: string, position?: { x: number; y: number }) => void
   editorRef?: React.RefObject<any> // Optional editor ref for format commands
   activePanelId?: string | null // Currently active panel ID for branches/actions
+  onBackdropStyleChange?: (style: string) => void // Callback when backdrop style changes
+  onFolderRenamed?: (folderId: string, newName: string) => void // Callback when folder is renamed - updates open popups
 }
 
 interface RecentNote {
@@ -165,7 +167,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
   const [activePanel, setActivePanel] = useState<PanelKey>(null)
@@ -220,12 +222,36 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Edit mode state for Knowledge Base panel
   const [isEditMode, setIsEditMode] = useState(false)
 
+  // Inline rename state for folders in edit mode
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renamingFolderName, setRenamingFolderName] = useState('')
+  const [renamingFolderError, setRenamingFolderError] = useState<string | null>(null)
+  const [renamingFolderLoading, setRenamingFolderLoading] = useState(false)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
   // Color palette popup state
   const [openPaletteFolderId, setOpenPaletteFolderId] = useState<string | null>(null)
   const [palettePosition, setPalettePosition] = useState<{ x: number; y: number } | null>(null)
   const paletteRef = useRef<HTMLDivElement>(null)
   const colorButtonRef = useRef<HTMLButtonElement>(null)
   const justSelectedColorRef = useRef(false) // Prevent panel close immediately after color selection
+
+  // Backdrop style preference (persistent)
+  const [backdropStyle, setBackdropStyle] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('backdropStyle') || 'none'
+    }
+    return 'none'
+  })
+
+  // Save backdrop style to localStorage whenever it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('backdropStyle', backdropStyle)
+    }
+    // Notify parent component about backdrop style change
+    onBackdropStyleChange?.(backdropStyle)
+  }, [backdropStyle, onBackdropStyleChange])
 
   // Close palette on click outside
   useEffect(() => {
@@ -718,6 +744,115 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       )
     } finally {
       setOrgFolderCreationLoading(false)
+    }
+  }
+
+  // === Inline Folder Rename Handlers ===
+
+  // Start renaming a folder (triggered by double-click in edit mode)
+  const handleStartRenameFolder = (folder: OrgItem) => {
+    setRenamingFolderId(folder.id)
+    setRenamingFolderName(folder.name)
+    setRenamingFolderError(null)
+    // Focus input after React renders it
+    setTimeout(() => {
+      if (renameInputRef.current) {
+        renameInputRef.current.focus()
+        renameInputRef.current.select()
+      }
+    }, 0)
+  }
+
+  // Cancel rename without saving
+  const handleCancelRenameFolder = () => {
+    setRenamingFolderId(null)
+    setRenamingFolderName('')
+    setRenamingFolderError(null)
+  }
+
+  // Save renamed folder
+  const handleSaveRenameFolder = async () => {
+    if (!renamingFolderId) return
+
+    const trimmedName = renamingFolderName.trim()
+
+    // Validation
+    if (!trimmedName) {
+      setRenamingFolderError('Folder name cannot be empty')
+      return
+    }
+
+    // Check if name actually changed
+    const currentFolder = findItemById(renamingFolderId, orgItems)
+    if (currentFolder && currentFolder.name === trimmedName) {
+      // No change, just cancel
+      handleCancelRenameFolder()
+      return
+    }
+
+    // Check for duplicate names in the same parent
+    if (currentFolder) {
+      const parent = currentFolder.parentId
+        ? findItemById(currentFolder.parentId, orgItems)
+        : null
+      const siblings = parent?.children || orgItems.filter(item => !item.parentId)
+      const duplicate = siblings.find(
+        item => item.id !== renamingFolderId && item.name.toLowerCase() === trimmedName.toLowerCase()
+      )
+      if (duplicate) {
+        setRenamingFolderError('A folder with this name already exists')
+        return
+      }
+    }
+
+    setRenamingFolderLoading(true)
+    setRenamingFolderError(null)
+
+    try {
+      // Update folder name via API
+      const response = await fetch(`/api/items/${renamingFolderId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ name: trimmedName }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to rename folder')
+      }
+
+      // Update local state optimistically
+      const updateItemName = (items: OrgItem[]): OrgItem[] => {
+        return items.map(item => {
+          if (item.id === renamingFolderId) {
+            return { ...item, name: trimmedName }
+          }
+          if (item.children) {
+            return { ...item, children: updateItemName(item.children) }
+          }
+          return item
+        })
+      }
+
+      setOrgItems(updateItemName(orgItems))
+
+      // Notify parent to update any open popups showing this folder
+      console.log('[FloatingToolbar] Calling onFolderRenamed:', renamingFolderId, '→', trimmedName)
+      onFolderRenamed?.(renamingFolderId, trimmedName)
+
+      // Success - clear rename state
+      handleCancelRenameFolder()
+
+    } catch (error) {
+      console.error('Failed to rename folder:', error)
+      setRenamingFolderError(
+        error instanceof Error ? error.message : 'Failed to rename folder'
+      )
+    } finally {
+      setRenamingFolderLoading(false)
     }
   }
 
@@ -1356,17 +1491,71 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     onClick={() => {
                       // Single click does nothing - reserved for future selection/navigation
                     }}
-                    onDoubleClick={() => {
-                      if (!isFolder) {
+                    onDoubleClick={(e) => {
+                      if (isFolder && isEditMode) {
+                        // In edit mode: double-click folder to rename
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleStartRenameFolder(item)
+                      } else if (!isFolder) {
+                        // Not in edit mode: double-click note to open
                         onSelectNote?.(item.id)
                         onClose()
                       }
                     }}
                   >
                     <div className="text-sm font-medium flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
                         <span>{item.icon}</span>
-                        <span>{item.name}</span>
+                        {/* Show input when renaming this folder, otherwise show name */}
+                        {renamingFolderId === item.id ? (
+                          <div className="flex-1 min-w-0">
+                            <input
+                              ref={renameInputRef}
+                              type="text"
+                              value={renamingFolderName}
+                              onChange={(e) => setRenamingFolderName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  handleSaveRenameFolder()
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  handleCancelRenameFolder()
+                                }
+                              }}
+                              onBlur={() => {
+                                // Save on blur unless there's an error showing
+                                if (!renamingFolderError) {
+                                  handleSaveRenameFolder()
+                                }
+                              }}
+                              onClick={(e) => {
+                                // Prevent click from bubbling to parent
+                                e.stopPropagation()
+                              }}
+                              onDoubleClick={(e) => {
+                                // Prevent double-click from bubbling
+                                e.stopPropagation()
+                              }}
+                              disabled={renamingFolderLoading}
+                              className="w-full px-2 py-1 text-sm bg-gray-800 text-white rounded border border-blue-400/60 focus:outline-none focus:border-blue-400 disabled:opacity-50"
+                              style={{ minWidth: '100px' }}
+                            />
+                            {renamingFolderError && (
+                              <div className="text-xs text-red-400 mt-1">{renamingFolderError}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <span
+                            className={isEditMode && isFolder ? 'cursor-text' : ''}
+                            title={isEditMode && isFolder ? 'Double-click to rename' : undefined}
+                          >
+                            {item.name}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1 relative">
                         {/* Color picker button - only in edit mode for folders */}
@@ -1870,6 +2059,57 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     )
   }
 
+  const renderDisplaySettingsPanel = () => {
+    const backdropOptions = [
+      { value: 'none', label: 'None', desc: 'No backdrop overlay' },
+      { value: 'subtle', label: 'Subtle', desc: 'Light overlay + slight blur' },
+      { value: 'moderate', label: 'Moderate', desc: 'Medium overlay + blur' },
+      { value: 'strong', label: 'Strong', desc: 'Dark overlay + heavy blur' },
+      { value: 'blur-only', label: 'Blur Only', desc: 'No overlay, blur only' },
+      { value: 'vignette', label: 'Vignette', desc: 'Radial fade from center' },
+      { value: 'dark', label: 'Dark', desc: 'Dark overlay, no blur' },
+      { value: 'light', label: 'Light', desc: 'Light overlay, no blur' },
+    ]
+
+    return (
+      <div
+        className="w-80 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+        style={{ backgroundColor: 'rgba(17, 24, 39, 0.98)' }}
+        onMouseEnter={handlePanelHover}
+        onMouseLeave={handlePanelHoverLeave}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 text-sm text-white/80">
+          <span>Display Settings</span>
+          <button className="text-white/60 hover:text-white" onClick={() => setActivePanel(null)} aria-label="Close panel">
+            ×
+          </button>
+        </div>
+        <div className="p-4">
+          <div className="text-xs text-white/60 font-medium mb-3">Popup Overlay Backdrop</div>
+          <div className="space-y-2">
+            {backdropOptions.map((option) => (
+              <button
+                key={option.value}
+                onClick={() => setBackdropStyle(option.value)}
+                className={`w-full px-3 py-2.5 rounded-lg text-left transition-all ${
+                  backdropStyle === option.value
+                    ? 'bg-blue-500/30 border-2 border-blue-400/60 text-white shadow-md'
+                    : 'bg-white/5 border border-white/10 text-white/80 hover:bg-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className="font-medium text-sm">{option.label}</div>
+                <div className="text-xs text-white/60 mt-0.5">{option.desc}</div>
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 pt-4 border-t border-white/10 text-xs text-white/50">
+            Style is saved automatically and persists across sessions.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={containerRef}
@@ -1982,6 +2222,22 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             <span className="text-xl">➕</span>
             <span className="text-[10px] text-white/90 font-medium">Component</span>
           </button>
+
+          {/* Display Settings - Dock style */}
+          <button
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "display"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
+            onClick={() => setActivePanel((prev) => (prev === "display" ? null : "display"))}
+            onMouseEnter={() => handleButtonHover("display")}
+            data-tooltip="Display Settings"
+          >
+            <span className="text-xl">🎨</span>
+            <span className="text-[10px] text-white/90 font-medium">Display</span>
+          </button>
         </div>
       </div>
 
@@ -1996,6 +2252,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         {activePanel === "branches" && renderBranchesPanel()}
         {activePanel === "actions" && renderActionsPanel()}
         {activePanel === "add-component" && renderAddComponentPanel()}
+        {activePanel === "display" && renderDisplaySettingsPanel()}
       </div>
 
       {/* Help text - Only show when no panel is active */}

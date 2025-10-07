@@ -44,9 +44,16 @@ const parseBreadcrumb = (path: string | undefined | null, currentName: string): 
   if (parts.length === 0) return [currentName]
 
   // Convert kebab-case to Title Case for display, skip "knowledge-base" (represented by home icon)
-  return parts
+  const breadcrumbs = parts
     .filter(part => part !== 'knowledge-base')
     .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+
+  // Replace last segment with current name if provided (handles renames without path update)
+  if (currentName?.trim() && breadcrumbs.length > 0) {
+    breadcrumbs[breadcrumbs.length - 1] = currentName.trim()
+  }
+
+  return breadcrumbs
 }
 
 // Auto-scroll configuration - all values are configurable, not hardcoded
@@ -95,6 +102,7 @@ interface PopupOverlayProps {
   onFolderCreated?: (popupId: string, newFolder: PopupChildNode) => void; // Called after folder created - parent should update popup children
   onPopupCardClick?: () => void; // Called when clicking on popup card - used to close floating toolbar
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
+  backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
 
 type PopupChildNode = {
@@ -177,6 +185,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onFolderCreated,
   onPopupCardClick,
   sidebarOpen, // Accept sidebar state
+  backdropStyle = 'none', // Backdrop style preference (default to 'none')
 }) => {
   const multiLayerEnabled = true;
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
@@ -185,6 +194,29 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   useEffect(() => {
     previewStateRef.current = previewState;
   }, [previewState]);
+
+  const getBackdropStyle = (style: string) => {
+    switch (style) {
+      case 'none':
+        return {};
+      case 'subtle':
+        return { backgroundColor: 'rgba(0, 0, 0, 0.2)', backdropFilter: 'blur(1px)', WebkitBackdropFilter: 'blur(1px)' };
+      case 'moderate':
+        return { backgroundColor: 'rgba(0, 0, 0, 0.4)', backdropFilter: 'blur(2px)', WebkitBackdropFilter: 'blur(2px)' };
+      case 'strong':
+        return { backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' };
+      case 'blur-only':
+        return { backdropFilter: 'blur(4px) brightness(0.8)', WebkitBackdropFilter: 'blur(4px) brightness(0.8)' };
+      case 'vignette':
+        return { background: 'radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.5) 100%)' };
+      case 'dark':
+        return { backgroundColor: 'rgba(0, 0, 0, 0.7)' };
+      case 'light':
+        return { backgroundColor: 'rgba(0, 0, 0, 0.15)' };
+      default:
+        return {};
+    }
+  };
 
   // Note preview tooltip state (plain div like Recent Notes)
   const [activePreviewTooltip, setActivePreviewTooltip] = useState<{
@@ -2134,6 +2166,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         visibility: (popups.size > 0) ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
         clipPath: !usingFallbackHost && pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
+        ...getBackdropStyle(backdropStyle), // TEMPORARY: Apply backdrop style
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -2667,6 +2700,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             opacity: (popups.size > 0) ? 1 : 0,
             visibility: (popups.size > 0) ? 'visible' : 'hidden',
             contain: 'layout paint' as const,
+            ...getBackdropStyle(backdropStyle), // TEMPORARY: Apply backdrop style
           }}
           data-layer="popups"
           onPointerDown={handlePointerDown}

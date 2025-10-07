@@ -59,6 +59,9 @@ function AnnotationAppContent() {
   const activeEditorRef = useRef<any>(null) // Track the currently active editor
   const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
 
+  // Display settings state (backdrop style preference)
+  const [backdropStyle, setBackdropStyle] = useState<string>('none')
+
   // Overlay popups state - persists independently of toolbar (like selectedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
@@ -109,6 +112,7 @@ function AnnotationAppContent() {
   // Adapt overlay popups for PopupOverlay component
   // Only show popups when popups layer is active, otherwise pass empty Map
   const adaptedPopups = useMemo(() => {
+    console.log('[AnnotationApp] useMemo: Recalculating adaptedPopups, overlayPopups.length:', overlayPopups.length)
     if (!multiLayerEnabled || !layerContext) return null
 
     // When notes layer is active, return empty Map to hide popups
@@ -119,7 +123,7 @@ function AnnotationAppContent() {
 
     const adapted = new Map()
     overlayPopups.forEach((popup) => {
-      adapted.set(popup.id, {
+      const adaptedPopup = {
         ...popup,
         folder: popup.folder || {
           id: popup.folderId,
@@ -129,8 +133,11 @@ function AnnotationAppContent() {
         },
         canvasPosition: popup.canvasPosition,
         parentId: popup.parentPopupId // Map parentPopupId to parentId for PopupOverlay
-      })
+      }
+      console.log('[AnnotationApp] useMemo: Adapting popup:', popup.folderId, 'folder.name:', adaptedPopup.folder?.name)
+      adapted.set(popup.id, adaptedPopup)
     })
+    console.log('[AnnotationApp] useMemo: Created adapted Map with', adapted.size, 'entries')
     return adapted
   }, [overlayPopups, multiLayerEnabled, layerContext, layerContext?.activeLayer])
 
@@ -789,6 +796,47 @@ function AnnotationAppContent() {
     }
   }, [])
 
+  // Handle backdrop style change (callback from FloatingToolbar)
+  const handleBackdropStyleChange = useCallback((style: string) => {
+    setBackdropStyle(style)
+  }, [])
+
+  // Handle folder renamed (callback from FloatingToolbar)
+  const handleFolderRenamed = useCallback((folderId: string, newName: string) => {
+    console.log('[AnnotationApp] Folder renamed - folderId:', folderId, 'newName:', newName)
+    setOverlayPopups(prev => {
+      console.log('[AnnotationApp] Current popups:', prev.map(p => ({
+        id: p.id,
+        folderId: p.folderId,
+        folderName: p.folderName,
+        'folder.name': p.folder?.name
+      })))
+
+      const updated = prev.map(popup => {
+        if (popup.folderId === folderId) {
+          console.log('[AnnotationApp] ✅ MATCH! Updating popup:', popup.folderName, '→', newName)
+          // Update both folderName AND folder.name (title reads from folder.name)
+          return {
+            ...popup,
+            folderName: newName,
+            folder: popup.folder ? { ...popup.folder, name: newName } : null
+          }
+        }
+        console.log('[AnnotationApp] ❌ NO MATCH for popup folderId:', popup.folderId, 'vs', folderId)
+        return popup
+      })
+
+      console.log('[AnnotationApp] Updated popups:', updated.map(p => ({
+        id: p.id,
+        folderId: p.folderId,
+        folderName: p.folderName,
+        'folder.name': p.folder?.name
+      })))
+
+      return updated
+    })
+  }, [])
+
   // Handle creating overlay popup (callback from FloatingToolbar)
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
@@ -1426,6 +1474,8 @@ function AnnotationAppContent() {
           onAddComponent={handleAddComponentFromToolbar}
           editorRef={activeEditorRef}
           activePanelId={activePanelId}
+          onBackdropStyleChange={handleBackdropStyleChange}
+          onFolderRenamed={handleFolderRenamed}
         />
       )}
       
@@ -1483,6 +1533,7 @@ function AnnotationAppContent() {
           onFolderCreated={handleFolderCreated}
           onPopupCardClick={handleCloseNotesWidget}
           sidebarOpen={false}
+          backdropStyle={backdropStyle}
         />
       )}
     </div>
