@@ -6,7 +6,7 @@ import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
-import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil } from 'lucide-react';
+import { X, Folder, FileText, Eye, Home, ChevronRight } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
@@ -100,7 +100,6 @@ interface PopupOverlayProps {
   onDeleteSelected?: (popupId: string, selectedIds: Set<string>) => void; // Delete multiple selected items
   onBulkMove?: (itemIds: string[], targetFolderId: string, sourcePopupId: string) => Promise<void>; // Move multiple items to target folder
   onFolderCreated?: (popupId: string, newFolder: PopupChildNode) => void; // Called after folder created - parent should update popup children
-  onFolderRenamed?: (folderId: string, newName: string) => void; // Called after folder renamed - parent should sync state
   onPopupCardClick?: () => void; // Called when clicking on popup card - used to close floating toolbar
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
@@ -184,7 +183,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onDeleteSelected,
   onBulkMove,
   onFolderCreated,
-  onFolderRenamed,
   onPopupCardClick,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'none', // Backdrop style preference (default to 'none')
@@ -248,17 +246,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [newFolderName, setNewFolderName] = useState<string>('');
   const [folderCreationLoading, setFolderCreationLoading] = useState<string | null>(null);
   const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
-
-  // Inline rename state
-  const [popupEditMode, setPopupEditMode] = useState<Map<string, boolean>>(new Map()); // Edit mode per popup
-  const [renamingTitle, setRenamingTitle] = useState<string | null>(null); // Popup ID being renamed (title)
-  const [renamingTitleName, setRenamingTitleName] = useState('');
-  const [renamingListFolder, setRenamingListFolder] = useState<{popupId: string, folderId: string} | null>(null); // Folder in list being renamed
-  const [renamingListFolderName, setRenamingListFolderName] = useState('');
-  const [renameError, setRenameError] = useState<string | null>(null);
-  const [renameLoading, setRenameLoading] = useState(false);
-  const renameTitleInputRef = useRef<HTMLInputElement>(null);
-  const renameListInputRef = useRef<HTMLInputElement>(null);
 
   // Breadcrumb dropdown state
   const [breadcrumbDropdownOpen, setBreadcrumbDropdownOpen] = useState<string | null>(null); // popup ID
@@ -711,200 +698,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setCreatingFolderInPopup(popupId);
     setNewFolderName('');
     setFolderCreationError(null);
-  }, []);
-
-  // === Inline Rename Handlers ===
-
-  // Toggle edit mode for a popup
-  const handleToggleEditMode = useCallback((popupId: string) => {
-    setPopupEditMode(prev => {
-      const newMap = new Map(prev);
-      newMap.set(popupId, !prev.get(popupId));
-      return newMap;
-    });
-  }, []);
-
-  // Start renaming popup title
-  const handleStartRenameTitle = useCallback((popupId: string, currentName: string) => {
-    setRenamingTitle(popupId);
-    setRenamingTitleName(currentName);
-    setRenameError(null);
-    setTimeout(() => renameTitleInputRef.current?.select(), 0);
-  }, []);
-
-  // Save renamed popup title
-  const handleSaveRenameTitle = useCallback(async () => {
-    if (!renamingTitle) return;
-
-    const trimmedName = renamingTitleName.trim();
-
-    // Empty check
-    if (!trimmedName) {
-      setRenameError('Folder name cannot be empty');
-      return;
-    }
-
-    // Find current folder
-    const popup = popups.get(renamingTitle);
-    if (!popup?.folder) {
-      setRenameError('Folder not found');
-      return;
-    }
-
-    // No-change check
-    if (popup.folder.name === trimmedName) {
-      handleCancelRenameTitle();
-      return;
-    }
-
-    // Duplicate check - check siblings
-    const parentId = popup.folder.parent_id;
-    const siblings = Array.from(popups.values())
-      .map(p => p.folder)
-      .filter(f => f && f.parent_id === parentId);
-
-    const duplicate = siblings.find(f =>
-      f && f.id !== popup.folder!.id &&
-      f.name.toLowerCase() === trimmedName.toLowerCase()
-    );
-
-    if (duplicate) {
-      setRenameError('A folder with this name already exists');
-      return;
-    }
-
-    // Save to API
-    setRenameLoading(true);
-    setRenameError(null);
-
-    try {
-      const response = await fetch(`/api/items/${popup.folder.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmedName })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to rename folder');
-      }
-
-      // Update local popup folder name immediately (optimistic update)
-      popup.folder.name = trimmedName;
-
-      // Notify parent of rename (for syncing with org panel and other popups)
-      if (onFolderRenamed) {
-        onFolderRenamed(popup.folder.id, trimmedName);
-      }
-
-      handleCancelRenameTitle();
-    } catch (error) {
-      console.error('Failed to rename folder:', error);
-      setRenameError(error instanceof Error ? error.message : 'Failed to rename');
-    } finally {
-      setRenameLoading(false);
-    }
-  }, [renamingTitle, renamingTitleName, popups, onFolderRenamed]);
-
-  // Cancel renaming popup title
-  const handleCancelRenameTitle = useCallback(() => {
-    setRenamingTitle(null);
-    setRenamingTitleName('');
-    setRenameError(null);
-  }, []);
-
-  // Start renaming folder in list
-  const handleStartRenameListFolder = useCallback((popupId: string, folderId: string, currentName: string) => {
-    setRenamingListFolder({ popupId, folderId });
-    setRenamingListFolderName(currentName);
-    setRenameError(null);
-    setTimeout(() => renameListInputRef.current?.select(), 0);
-  }, []);
-
-  // Save renamed list folder
-  const handleSaveRenameListFolder = useCallback(async () => {
-    if (!renamingListFolder) return;
-
-    const trimmedName = renamingListFolderName.trim();
-
-    // Empty check
-    if (!trimmedName) {
-      setRenameError('Folder name cannot be empty');
-      return;
-    }
-
-    // Find current folder
-    const popup = popups.get(renamingListFolder.popupId);
-    if (!popup?.folder?.children) {
-      setRenameError('Folder not found');
-      return;
-    }
-
-    const currentFolder = popup.folder.children.find((c: PopupChildNode) => c.id === renamingListFolder.folderId);
-    if (!currentFolder) {
-      setRenameError('Folder not found');
-      return;
-    }
-
-    // No-change check
-    if (currentFolder.name === trimmedName) {
-      handleCancelRenameListFolder();
-      return;
-    }
-
-    // Duplicate check - check siblings in same popup
-    const duplicate = popup.folder.children.find((c: PopupChildNode) =>
-      c.id !== renamingListFolder.folderId &&
-      c.name?.toLowerCase() === trimmedName.toLowerCase()
-    );
-
-    if (duplicate) {
-      setRenameError('A folder with this name already exists');
-      return;
-    }
-
-    // Save to API
-    setRenameLoading(true);
-    setRenameError(null);
-
-    try {
-      const response = await fetch(`/api/items/${renamingListFolder.folderId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmedName })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to rename folder');
-      }
-
-      // Update local popup children immediately (optimistic update)
-      popup.folder.children = popup.folder.children.map((child: PopupChildNode) =>
-        child.id === renamingListFolder.folderId
-          ? { ...child, name: trimmedName }
-          : child
-      );
-
-      // Notify parent of rename (for syncing with org panel and other popups)
-      if (onFolderRenamed) {
-        onFolderRenamed(renamingListFolder.folderId, trimmedName);
-      }
-
-      handleCancelRenameListFolder();
-    } catch (error) {
-      console.error('Failed to rename folder:', error);
-      setRenameError(error instanceof Error ? error.message : 'Failed to rename');
-    } finally {
-      setRenameLoading(false);
-    }
-  }, [renamingListFolder, renamingListFolderName, popups, onFolderRenamed]);
-
-  // Cancel renaming list folder
-  const handleCancelRenameListFolder = useCallback(() => {
-    setRenamingListFolder(null);
-    setRenamingListFolderName('');
-    setRenameError(null);
   }, []);
 
   // Fetch ancestor chain for breadcrumb dropdown
@@ -1457,11 +1250,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           handleItemSelect(popupId, child.id, children, event);
         }}
         onDoubleClick={() => {
-          // In edit mode, double-click on folder triggers rename
-          if (popupEditMode.get(popupId) && folderLike) {
-            handleStartRenameListFolder(popupId, child.id, child.name || '');
-            return;
-          }
           // Double-click on note opens it on canvas
           if (noteLike && onSelectNote) {
             onSelectNote(child.id);
@@ -1491,35 +1279,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           ) : (
             <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
           )}
-          {/* Conditional render: inline input when renaming, span otherwise */}
-          {renamingListFolder?.popupId === popupId && renamingListFolder?.folderId === child.id ? (
-            <div className="flex-1 min-w-0 flex flex-col gap-1">
-              <input
-                ref={renameListInputRef}
-                type="text"
-                value={renamingListFolderName}
-                onChange={(e) => setRenamingListFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleSaveRenameListFolder()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    handleCancelRenameListFolder()
-                  }
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                disabled={renameLoading}
-              />
-              {renameError && (
-                <span className="text-xs text-red-400">{renameError}</span>
-              )}
-            </div>
-          ) : (
-            <span className="truncate">{child.name}</span>
-          )}
+          <span className="truncate">{child.name}</span>
         </div>
         {/* Timestamp: visible by default, hidden on hover */}
         {(child.updatedAt || child.createdAt) && (
@@ -2546,9 +2306,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
                     // Child popups: show just badge + name (parent relationship shown by connecting line)
                     if (isChildPopup) {
-                      const isRenaming = renamingTitle === popup.id
                       return (
-                        <div className="flex items-center gap-1.5 min-w-0 group">
+                        <div className="flex items-center gap-1.5 min-w-0">
                           {colorTheme ? (
                             <div
                               className="w-2.5 h-2.5 rounded-full flex-shrink-0"
@@ -2557,49 +2316,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                           ) : (
                             <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                           )}
-                          {isRenaming ? (
-                            /* Inline rename input */
-                            <div className="flex-1 min-w-0 flex flex-col gap-1">
-                              <input
-                                ref={renameTitleInputRef}
-                                type="text"
-                                value={renamingTitleName}
-                                onChange={(e) => setRenamingTitleName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault()
-                                    handleSaveRenameTitle()
-                                  } else if (e.key === 'Escape') {
-                                    e.preventDefault()
-                                    handleCancelRenameTitle()
-                                  }
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                                className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                disabled={renameLoading}
-                              />
-                              {renameError && (
-                                <span className="text-xs text-red-400">{renameError}</span>
-                              )}
-                            </div>
-                          ) : (
-                            <>
-                              <span className="text-sm font-medium text-white truncate">{folderName}</span>
-                              {/* Hover pencil icon for quick rename */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleStartRenameTitle(popup.id, folderName)
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                aria-label="Rename folder"
-                              >
-                                <Pencil className="w-3 h-3 text-gray-400" />
-                              </button>
-                            </>
-                          )}
+                          <span className="text-sm font-medium text-white truncate">{folderName}</span>
                         </div>
                       )
                     }
@@ -2630,65 +2347,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                             {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
 
                             {index === breadcrumbs.length - 1 ? (
-                              // Last item: show color badge + name (or inline rename input)
-                              (() => {
-                                const isRenaming = renamingTitle === popup.id
-                                return (
-                                  <div className="flex items-center gap-1.5 min-w-0 group">
-                                    {colorTheme ? (
-                                      <div
-                                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                        style={{ backgroundColor: colorTheme.bg }}
-                                      />
-                                    ) : (
-                                      <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                                    )}
-                                    {isRenaming ? (
-                                      /* Inline rename input */
-                                      <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                        <input
-                                          ref={renameTitleInputRef}
-                                          type="text"
-                                          value={renamingTitleName}
-                                          onChange={(e) => setRenamingTitleName(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault()
-                                              handleSaveRenameTitle()
-                                            } else if (e.key === 'Escape') {
-                                              e.preventDefault()
-                                              handleCancelRenameTitle()
-                                            }
-                                          }}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                          disabled={renameLoading}
-                                        />
-                                        {renameError && (
-                                          <span className="text-xs text-red-400">{renameError}</span>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <span className="text-sm font-medium text-white truncate">{crumb}</span>
-                                        {/* Hover pencil icon for quick rename */}
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            handleStartRenameTitle(popup.id, crumb)
-                                          }}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                          aria-label="Rename folder"
-                                        >
-                                          <Pencil className="w-3 h-3 text-gray-400" />
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
-                                )
-                              })()
+                              // Last item: show color badge + name
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                {colorTheme ? (
+                                  <div
+                                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: colorTheme.bg }}
+                                  />
+                                ) : (
+                                  <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                )}
+                                <span className="text-sm font-medium text-white truncate">{crumb}</span>
+                              </div>
                             ) : breadcrumbs.length > 2 && index === 0 ? (
                               // Collapse earlier levels only if more than 2 levels
                               <span className="text-xs text-gray-500 flex-shrink-0">...</span>
@@ -2773,34 +2443,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     )
                   })()}
                 </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {/* Edit/Done toggle button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleToggleEditMode(popup.id)
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto"
-                    style={{
-                      backgroundColor: popupEditMode.get(popup.id) ? '#3b82f6' : 'transparent',
-                      color: popupEditMode.get(popup.id) ? '#fff' : '#9ca3af',
-                      border: `1px solid ${popupEditMode.get(popup.id) ? '#3b82f6' : '#4b5563'}`
-                    }}
-                    aria-label={popupEditMode.get(popup.id) ? "Exit edit mode" : "Enter edit mode"}
-                  >
-                    {popupEditMode.get(popup.id) ? 'Done' : 'Edit'}
-                  </button>
-                  {/* Close button */}
-                  <button
-                    onClick={() => onClosePopup(popup.id)}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                    aria-label="Close popup"
-                  >
-                    <X className="w-4 h-4 text-gray-400" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => onClosePopup(popup.id)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
+                  aria-label="Close popup"
+                >
+                  <X className="w-4 h-4 text-gray-400" />
+                </button>
               </div>
               {/* Popup Content with virtualization for large lists */}
               <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>
@@ -3204,9 +2854,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
                         // Child popups: show just badge + name (parent relationship shown by connecting line)
                         if (isChildPopup) {
-                          const isRenaming = renamingTitle === popup.id
                           return (
-                            <div className="flex items-center gap-1.5 min-w-0 group">
+                            <div className="flex items-center gap-1.5 min-w-0">
                               {colorTheme ? (
                                 <div
                                   className="w-2.5 h-2.5 rounded-full flex-shrink-0"
@@ -3215,49 +2864,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                               ) : (
                                 <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
                               )}
-                              {isRenaming ? (
-                                /* Inline rename input */
-                                <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                  <input
-                                    ref={renameTitleInputRef}
-                                    type="text"
-                                    value={renamingTitleName}
-                                    onChange={(e) => setRenamingTitleName(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault()
-                                        handleSaveRenameTitle()
-                                      } else if (e.key === 'Escape') {
-                                        e.preventDefault()
-                                        handleCancelRenameTitle()
-                                      }
-                                    }}
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    disabled={renameLoading}
-                                  />
-                                  {renameError && (
-                                    <span className="text-xs text-red-400">{renameError}</span>
-                                  )}
-                                </div>
-                              ) : (
-                                <>
-                                  <span className="text-sm font-medium text-white truncate">{folderName}</span>
-                                  {/* Hover pencil icon for quick rename */}
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleStartRenameTitle(popup.id, folderName)
-                                    }}
-                                    onMouseDown={(e) => e.stopPropagation()}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                    aria-label="Rename folder"
-                                  >
-                                    <Pencil className="w-3 h-3 text-gray-400" />
-                                  </button>
-                                </>
-                              )}
+                              <span className="text-sm font-medium text-white truncate">{folderName}</span>
                             </div>
                           )
                         }
@@ -3275,65 +2882,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                                 {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
 
                                 {index === breadcrumbs.length - 1 ? (
-                                  // Last item: show color badge + name (or inline rename input)
-                                  (() => {
-                                    const isRenaming = renamingTitle === popup.id
-                                    return (
-                                      <div className="flex items-center gap-1.5 min-w-0 group">
-                                        {colorTheme ? (
-                                          <div
-                                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: colorTheme.bg }}
-                                          />
-                                        ) : (
-                                          <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                                        )}
-                                        {isRenaming ? (
-                                          /* Inline rename input */
-                                          <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                            <input
-                                              ref={renameTitleInputRef}
-                                              type="text"
-                                              value={renamingTitleName}
-                                              onChange={(e) => setRenamingTitleName(e.target.value)}
-                                              onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                  e.preventDefault()
-                                                  handleSaveRenameTitle()
-                                                } else if (e.key === 'Escape') {
-                                                  e.preventDefault()
-                                                  handleCancelRenameTitle()
-                                                }
-                                              }}
-                                              onMouseDown={(e) => e.stopPropagation()}
-                                              onClick={(e) => e.stopPropagation()}
-                                              className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                              disabled={renameLoading}
-                                            />
-                                            {renameError && (
-                                              <span className="text-xs text-red-400">{renameError}</span>
-                                            )}
-                                          </div>
-                                        ) : (
-                                          <>
-                                            <span className="text-sm font-medium text-white truncate">{crumb}</span>
-                                            {/* Hover pencil icon for quick rename */}
-                                            <button
-                                              onClick={(e) => {
-                                                e.stopPropagation()
-                                                handleStartRenameTitle(popup.id, crumb)
-                                              }}
-                                              onMouseDown={(e) => e.stopPropagation()}
-                                              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                              aria-label="Rename folder"
-                                            >
-                                              <Pencil className="w-3 h-3 text-gray-400" />
-                                            </button>
-                                          </>
-                                        )}
-                                      </div>
-                                    )
-                                  })()
+                                  // Last item: show color badge + name
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    {colorTheme ? (
+                                      <div
+                                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: colorTheme.bg }}
+                                      />
+                                    ) : (
+                                      <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                    )}
+                                    <span className="text-sm font-medium text-white truncate">{crumb}</span>
+                                  </div>
                                 ) : breadcrumbs.length > 2 && index === 0 ? (
                                   // Collapse earlier levels only if more than 2 levels
                                   <span className="text-xs text-gray-500 flex-shrink-0">...</span>
@@ -3347,34 +2907,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                         )
                       })()}
                     </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {/* Edit/Done toggle button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleToggleEditMode(popup.id)
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto"
-                        style={{
-                          backgroundColor: popupEditMode.get(popup.id) ? '#3b82f6' : 'transparent',
-                          color: popupEditMode.get(popup.id) ? '#fff' : '#9ca3af',
-                          border: `1px solid ${popupEditMode.get(popup.id) ? '#3b82f6' : '#4b5563'}`
-                        }}
-                        aria-label={popupEditMode.get(popup.id) ? "Exit edit mode" : "Enter edit mode"}
-                      >
-                        {popupEditMode.get(popup.id) ? 'Done' : 'Edit'}
-                      </button>
-                      {/* Close button */}
-                      <button
-                        onClick={() => onClosePopup(popup.id)}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                        aria-label="Close popup"
-                      >
-                        <X className="w-4 h-4 text-gray-400" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => onClosePopup(popup.id)}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
+                      aria-label="Close popup"
+                    >
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
                   </div>
                   {/* Popup Content */}
                   <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>

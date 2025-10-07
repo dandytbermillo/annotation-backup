@@ -117,6 +117,23 @@ export function WidgetStudioConnections({ canvasItems }: WidgetStudioConnections
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+
+        {/* Arrow marker for connection end points */}
+        <marker
+          id="widget-arrow"
+          markerWidth="8"
+          markerHeight="8"
+          refX="7"
+          refY="4"
+          orient="auto"
+          markerUnits="strokeWidth"
+        >
+          <path
+            d="M 0 0 L 8 4 L 0 8 z"
+            fill="rgba(148, 163, 184, 0.8)"
+            stroke="none"
+          />
+        </marker>
       </defs>
 
       {connections.map((connection) => {
@@ -136,6 +153,7 @@ export function WidgetStudioConnections({ canvasItems }: WidgetStudioConnections
               className="transition-all duration-200 hover:stroke-[3px] hover:opacity-100"
               style={{ opacity: 0.6 }}
               filter="url(#connection-shadow)"
+              markerEnd="url(#widget-arrow)"
             />
 
             {/* Connection point dots */}

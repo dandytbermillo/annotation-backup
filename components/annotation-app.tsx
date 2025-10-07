@@ -1515,6 +1515,7 @@ function AnnotationAppContent() {
           onDeleteSelected={handleDeleteSelected}
           onBulkMove={handleBulkMove}
           onFolderCreated={handleFolderCreated}
+          onFolderRenamed={handleFolderRenamed}
           onPopupCardClick={handleCloseNotesWidget}
           sidebarOpen={false}
           backdropStyle={backdropStyle}
