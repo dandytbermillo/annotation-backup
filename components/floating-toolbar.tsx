@@ -65,6 +65,8 @@ type FloatingToolbarProps = {
   activePanelId?: string | null // Currently active panel ID for branches/actions
   onBackdropStyleChange?: (style: string) => void // Callback when backdrop style changes
   onFolderRenamed?: (folderId: string, newName: string) => void // Callback when folder is renamed - updates open popups
+  activePanel?: PanelKey // Controlled active panel state from parent
+  onActivePanelChange?: (panel: PanelKey) => void // Callback when active panel changes
 }
 
 interface RecentNote {
@@ -167,10 +169,22 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
-  const [activePanel, setActivePanel] = useState<PanelKey>(null)
+
+  // Use controlled activePanel from parent if provided, otherwise use internal state
+  const [internalActivePanel, setInternalActivePanel] = useState<PanelKey>(null)
+  const activePanel = activePanelProp !== undefined ? activePanelProp : internalActivePanel
+  const setActivePanel = (panel: PanelKey | ((prev: PanelKey) => PanelKey)) => {
+    const newPanel = typeof panel === 'function' ? panel(activePanel) : panel
+    if (onActivePanelChange) {
+      onActivePanelChange(newPanel)
+    } else {
+      setInternalActivePanel(newPanel)
+    }
+  }
+
   const panelHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [isHoveringPanel, setIsHoveringPanel] = useState(false)
   const [isCreatingNote, setIsCreatingNote] = useState(false)
@@ -228,6 +242,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [renamingFolderError, setRenamingFolderError] = useState<string | null>(null)
   const [renamingFolderLoading, setRenamingFolderLoading] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
+
+  // Selected folder state for deletion in edit mode
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
 
   // Color palette popup state
   const [openPaletteFolderId, setOpenPaletteFolderId] = useState<string | null>(null)
@@ -840,7 +857,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       setOrgItems(updateItemName(orgItems))
 
       // Notify parent to update any open popups showing this folder
-      console.log('[FloatingToolbar] Calling onFolderRenamed:', renamingFolderId, '→', trimmedName)
       onFolderRenamed?.(renamingFolderId, trimmedName)
 
       // Success - clear rename state
@@ -853,6 +869,48 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       )
     } finally {
       setRenamingFolderLoading(false)
+    }
+  }
+
+  // Handle deleting selected folder
+  const handleDeleteSelectedFolder = async () => {
+    if (!selectedFolderId) return
+
+    const folderToDelete = findItemById(selectedFolderId, orgItems)
+    if (!folderToDelete) return
+
+    // Confirm deletion
+    const confirmMsg = folderToDelete.children && folderToDelete.children.length > 0
+      ? `Delete "${folderToDelete.name}" and all its contents?`
+      : `Delete "${folderToDelete.name}"?`
+
+    if (!confirm(confirmMsg)) return
+
+    try {
+      const response = await fetch(`/api/items/${selectedFolderId}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete folder')
+      }
+
+      // Remove from orgItems
+      const removeItem = (items: OrgItem[]): OrgItem[] => {
+        return items
+          .filter(item => item.id !== selectedFolderId)
+          .map(item => ({
+            ...item,
+            children: item.children ? removeItem(item.children) : []
+          }))
+      }
+
+      setOrgItems(removeItem(orgItems))
+      setSelectedFolderId(null)
+
+    } catch (error) {
+      console.error('Failed to delete folder:', error)
+      alert(error instanceof Error ? error.message : 'Failed to delete folder')
     }
   }
 
@@ -1432,7 +1490,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           <span>Knowledge Base</span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsEditMode(!isEditMode)}
+              onClick={() => {
+                setIsEditMode(!isEditMode)
+                // Clear selection when exiting edit mode
+                if (isEditMode) {
+                  setSelectedFolderId(null)
+                }
+              }}
               className="px-2 py-1 text-xs font-medium rounded transition-colors"
               style={{
                 backgroundColor: isEditMode ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
@@ -1455,6 +1519,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             flatItems.map((item) => {
               const isFolder = item.type === 'folder'
               const colorTheme = isFolder ? getFolderColorTheme(item.color) : null
+              const isSelected = selectedFolderId === item.id
 
               return (
                 <div
@@ -1464,12 +1529,23 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                   {/* Item container */}
                   <div
                     className="group flex-1 rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-white/90 transition cursor-pointer"
-                    style={colorTheme ? {
-                      borderLeftWidth: '3px',
-                      borderLeftColor: colorTheme.bg,
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)'
-                    } : {}}
+                    style={
+                      isSelected ? {
+                        borderLeftWidth: '3px',
+                        borderLeftColor: 'rgba(239, 68, 68, 0.8)',
+                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                        borderColor: 'rgba(239, 68, 68, 0.4)'
+                      } : colorTheme ? {
+                        borderLeftWidth: '3px',
+                        borderLeftColor: colorTheme.bg,
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)'
+                      } : {}
+                    }
                     onMouseEnter={(e) => {
+                      if (isSelected) {
+                        // Keep selected styling on hover
+                        return
+                      }
                       if (colorTheme) {
                         e.currentTarget.style.backgroundColor = colorTheme.light
                         e.currentTarget.style.borderColor = colorTheme.border
@@ -1479,6 +1555,14 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                       }
                     }}
                     onMouseLeave={(e) => {
+                      if (isSelected) {
+                        // Restore selected styling
+                        e.currentTarget.style.borderLeftWidth = '3px'
+                        e.currentTarget.style.borderLeftColor = 'rgba(239, 68, 68, 0.8)'
+                        e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'
+                        e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.4)'
+                        return
+                      }
                       if (colorTheme) {
                         e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.05)'
                         e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)'
@@ -1489,7 +1573,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                       }
                     }}
                     onClick={() => {
-                      // Single click does nothing - reserved for future selection/navigation
+                      // In edit mode: single click folder to select/deselect for deletion
+                      if (isFolder && isEditMode) {
+                        setSelectedFolderId(prev => prev === item.id ? null : item.id)
+                      }
                     }}
                     onDoubleClick={(e) => {
                       if (isFolder && isEditMode) {
@@ -1683,6 +1770,30 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                   ✗ Cancel
                 </button>
               </div>
+            </div>
+          ) : isEditMode ? (
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleStartCreateFolderInOrg()
+                }}
+                className="flex-1 px-3 py-2 text-left text-sm text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded-lg transition-colors font-medium"
+              >
+                + New Folder
+              </button>
+              {selectedFolderId && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleDeleteSelectedFolder()
+                  }}
+                  className="px-3 py-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors font-medium"
+                  title="Delete selected folder"
+                >
+                  🗑️ Delete
+                </button>
+              )}
             </div>
           ) : (
             <button

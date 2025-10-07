@@ -14,7 +14,7 @@ import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 // import { CanvasControls } from "./canvas/canvas-controls" // Removed per user request
 import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
-import { ConnectionLines } from "./canvas/connection-lines"
+import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 import { panToPanel } from "@/lib/canvas/pan-animations"
 import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
@@ -986,9 +986,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
               transformStyle: 'preserve-3d' as const,
             }}
           >
-            {/* Connection Lines */}
+            {/* Connection Lines - Widget Studio Style */}
             {canvasState.showConnections && (
-              <ConnectionLines canvasItems={canvasItems} />
+              <WidgetStudioConnections canvasItems={canvasItems} />
             )}
 
             {/* Panels */}

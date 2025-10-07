@@ -46,48 +46,47 @@ export class ConnectionLineAdapter {
       // LOD: if a visibility set is provided, only draw lines for visible nodes
       if (visibleIds && !visibleIds.has(popup.id)) return;
       if (!popup.parentId) return;
-      
+
       const parent = popups.get(popup.parentId);
       if (!parent) return;
       if (visibleIds && !visibleIds.has(parent.id)) return;
-      
-      // Use canvas positions if available, fallback to screen positions
-      const startPos = this.getPopupPosition(parent);
-      const endPos = this.getPopupPosition(popup);
-      
-      if (!startPos || !endPos) return;
-      
+
+      // Smart connection: choose best edges based on relative positions
+      const connectionPoints = this.getSmartConnectionPoints(parent, popup);
+      if (!connectionPoints) return;
+
       // Calculate bezier path
       const pathString = this.calculateBezierPath(
-        startPos,
-        endPos,
-        Boolean(popup.isDragging || parent.isDragging)
+        connectionPoints.start,
+        connectionPoints.end
       );
       
-      // Determine styling based on motion state
-      // While global motion (isDragging) is true, prefer lighter, cheaper strokes.
-      // If a specific popup is being dragged, slightly emphasize that link.
+      // Widget Studio styling - subtle, clean
+      // Light gray base color with slight emphasis on active connections
       const popupActive = Boolean(popup.isDragging || parent.isDragging);
       if (isDragging) {
+        // During drag: lightest weight for performance
         paths.push({
           d: pathString,
-          stroke: 'rgba(59, 130, 246, 0.65)',
-          strokeWidth: 1.25,
-          opacity: 0.85,
+          stroke: 'rgba(148, 163, 184, 0.5)', // Slate-400 at 50%
+          strokeWidth: 1.5,
+          opacity: 0.7,
         });
       } else if (popupActive) {
+        // Active connection: slightly emphasized
         paths.push({
           d: pathString,
-          stroke: 'rgba(59, 130, 246, 1)',
-          strokeWidth: 3,
+          stroke: 'rgba(148, 163, 184, 0.9)', // Slate-400 at 90%
+          strokeWidth: 2.5,
           opacity: 1,
         });
       } else {
+        // Default: subtle Widget Studio style
         paths.push({
           d: pathString,
-          stroke: 'rgba(59, 130, 246, 0.75)',
+          stroke: 'rgba(148, 163, 184, 0.6)', // Slate-400 at 60%
           strokeWidth: 2,
-          opacity: 0.9,
+          opacity: 0.8,
         });
       }
     });
@@ -97,59 +96,148 @@ export class ConnectionLineAdapter {
   
   /**
    * Get popup position (canvas or screen)
+   * Returns the CENTER point of the popup for reference
    */
   private static getPopupPosition(popup: PopupState): Point | null {
-    // Prefer canvas position for multi-layer mode
     if (!popup.canvasPosition) {
       return null;
     }
 
+    // Popup dimensions (from popup-overlay.tsx)
+    const POPUP_WIDTH = 300;
+    const POPUP_HEIGHT = 200; // Approximate center point (max is 400, but most are smaller)
+
     return {
-      x: popup.canvasPosition.x + 150,
-      y: popup.canvasPosition.y + 40,
+      x: popup.canvasPosition.x,
+      y: popup.canvasPosition.y,
     };
+  }
+
+  /**
+   * Get smart connection points based on relative positions
+   * Returns { start, end } where start is the exit point from parent
+   * and end is the entry point to child
+   */
+  private static getSmartConnectionPoints(
+    parent: PopupState,
+    child: PopupState
+  ): { start: Point; end: Point } | null {
+    const parentPos = this.getPopupPosition(parent);
+    const childPos = this.getPopupPosition(child);
+
+    if (!parentPos || !childPos) return null;
+
+    const POPUP_WIDTH = 300;
+    const POPUP_HEIGHT = 200;
+
+    // Calculate relative position
+    const dx = childPos.x - parentPos.x;
+    const dy = childPos.y - parentPos.y;
+
+    let start: Point;
+    let end: Point;
+
+    // Determine which edges to use based on relative position
+    // Prioritize horizontal connections (left/right) over vertical (top/bottom)
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal connection (child is mostly to the left or right)
+      if (dx > 0) {
+        // Child is to the RIGHT of parent
+        start = {
+          x: parentPos.x + POPUP_WIDTH,    // Exit from right edge
+          y: parentPos.y + POPUP_HEIGHT / 2
+        };
+        end = {
+          x: childPos.x,                    // Enter from left edge
+          y: childPos.y + POPUP_HEIGHT / 2
+        };
+      } else {
+        // Child is to the LEFT of parent
+        start = {
+          x: parentPos.x,                   // Exit from left edge
+          y: parentPos.y + POPUP_HEIGHT / 2
+        };
+        end = {
+          x: childPos.x + POPUP_WIDTH,      // Enter from right edge
+          y: childPos.y + POPUP_HEIGHT / 2
+        };
+      }
+    } else {
+      // Vertical connection (child is mostly above or below)
+      if (dy > 0) {
+        // Child is BELOW parent
+        start = {
+          x: parentPos.x + POPUP_WIDTH / 2,
+          y: parentPos.y + POPUP_HEIGHT      // Exit from bottom edge
+        };
+        end = {
+          x: childPos.x + POPUP_WIDTH / 2,
+          y: childPos.y                       // Enter from top edge
+        };
+      } else {
+        // Child is ABOVE parent
+        start = {
+          x: parentPos.x + POPUP_WIDTH / 2,
+          y: parentPos.y                      // Exit from top edge
+        };
+        end = {
+          x: childPos.x + POPUP_WIDTH / 2,
+          y: childPos.y + POPUP_HEIGHT        // Enter from bottom edge
+        };
+      }
+    }
+
+    return { start, end };
   }
   
   /**
    * Calculate bezier curve path between two points
+   * Widget Studio style: smooth S-curves with smart direction handling
    */
   private static calculateBezierPath(
     start: Point,
-    end: Point,
-    isDragging: boolean
+    end: Point
   ): string {
-    // Adjust end point to top of child popup
-    const adjustedEnd = {
-      x: end.x,
-      y: end.y - 40, // Connect to top of child
-    };
-    
-    // Calculate control points for smooth curve
-    const dx = adjustedEnd.x - start.x;
-    const dy = adjustedEnd.y - start.y;
-    
-    // Determine curve style based on relative positions
-    if (Math.abs(dx) < 50 && dy > 0) {
-      // Vertical connection - straight line
-      return `M ${start.x} ${start.y} L ${adjustedEnd.x} ${adjustedEnd.y}`;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+
+    // Determine if this is a horizontal or vertical connection
+    const isHorizontal = Math.abs(dx) > Math.abs(dy);
+
+    let cp1: Point;
+    let cp2: Point;
+
+    if (isHorizontal) {
+      // Horizontal S-curve (left-right or right-left)
+      // Control points extend horizontally with 40% offset
+      const controlPointOffset = Math.abs(dx) * 0.4;
+
+      cp1 = {
+        x: start.x + (dx > 0 ? controlPointOffset : -controlPointOffset),
+        y: start.y,
+      };
+
+      cp2 = {
+        x: end.x - (dx > 0 ? controlPointOffset : -controlPointOffset),
+        y: end.y,
+      };
+    } else {
+      // Vertical S-curve (top-bottom or bottom-top)
+      // Control points extend vertically with 40% offset
+      const controlPointOffset = Math.abs(dy) * 0.4;
+
+      cp1 = {
+        x: start.x,
+        y: start.y + (dy > 0 ? controlPointOffset : -controlPointOffset),
+      };
+
+      cp2 = {
+        x: end.x,
+        y: end.y - (dy > 0 ? controlPointOffset : -controlPointOffset),
+      };
     }
-    
-    // Bezier curve for diagonal connections
-    const controlPointOffset = Math.min(Math.abs(dx) * 0.5, 100);
-    const midY = (start.y + adjustedEnd.y) / 2;
-    
-    // Create smooth S-curve
-    const cp1 = {
-      x: start.x + (dx > 0 ? controlPointOffset : -controlPointOffset),
-      y: start.y,
-    };
-    
-    const cp2 = {
-      x: adjustedEnd.x - (dx > 0 ? controlPointOffset : -controlPointOffset),
-      y: adjustedEnd.y,
-    };
-    
-    return `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${adjustedEnd.x} ${adjustedEnd.y}`;
+
+    return `M ${start.x},${start.y} C ${cp1.x},${cp1.y} ${cp2.x},${cp2.y} ${end.x},${end.y}`;
   }
   
   /**
