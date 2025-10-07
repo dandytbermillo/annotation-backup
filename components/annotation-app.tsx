@@ -802,18 +802,39 @@ function AnnotationAppContent() {
     setBackdropStyle(style)
   }, [])
 
-  // Handle folder renamed (callback from FloatingToolbar)
+  // Handle folder renamed (callback from FloatingToolbar and PopupOverlay)
   const handleFolderRenamed = useCallback((folderId: string, newName: string) => {
     setOverlayPopups(prev => {
       return prev.map(popup => {
+        // Case 1: This popup IS the renamed folder - update its title
         if (popup.folderId === folderId) {
-          // Update both folderName AND folder.name (title reads from folder.name)
           return {
             ...popup,
             folderName: newName,
             folder: popup.folder ? { ...popup.folder, name: newName } : null
+          } as OverlayPopup
+        }
+
+        // Case 2: This popup CONTAINS the renamed folder in its children array
+        // Update the child entry so parent's list shows the new name
+        if (popup.folder?.children) {
+          const hasMatchingChild = popup.folder.children.some((child: OrgItem) => child.id === folderId)
+          if (hasMatchingChild) {
+            return {
+              ...popup,
+              folder: {
+                ...popup.folder,
+                children: popup.folder.children.map((child: OrgItem) =>
+                  child.id === folderId
+                    ? { ...child, name: newName }
+                    : child
+                )
+              }
+            } as OverlayPopup
           }
         }
+
+        // Case 3: Unrelated popup - return unchanged
         return popup
       })
     })
@@ -883,13 +904,46 @@ function AnnotationAppContent() {
     }
   }, [])
 
-  // Handle closing overlay popup
-  const handleCloseOverlayPopup = useCallback((popupId: string) => {
-    // Find the popup to get its folderId for timeout cleanup
-    const popup = overlayPopups.find(p => p.id === popupId)
+  // Helper: Get all descendants of a popup (recursive)
+  const getAllDescendants = useCallback((popupId: string): string[] => {
+    const descendants: string[] = []
+    const findChildren = (parentId: string) => {
+      overlayPopups.forEach(p => {
+        if (p.parentPopupId === parentId) {
+          descendants.push(p.id)
+          findChildren(p.id) // Recurse
+        }
+      })
+    }
+    findChildren(popupId)
+    return descendants
+  }, [overlayPopups])
 
-    if (popup) {
-      // Clean up any pending timeouts for this popup
+  // Handle closing overlay popup with cascade (closes all children recursively)
+  // Used for immediate close without interactive mode
+  const handleCloseOverlayPopup = useCallback((popupId: string) => {
+    // Build set of all popups to close (parent + all descendants)
+    const toClose = new Set<string>([popupId])
+
+    // Recursively find all children of a given popup
+    const findChildren = (parentId: string) => {
+      overlayPopups.forEach(p => {
+        if (p.parentPopupId === parentId && !toClose.has(p.id)) {
+          toClose.add(p.id)
+          findChildren(p.id) // Recurse for grandchildren, great-grandchildren, etc.
+        }
+      })
+    }
+
+    findChildren(popupId)
+
+    console.log(`[Cascade Close] Closing popup ${popupId} and ${toClose.size - 1} descendants`)
+
+    // Clean up timeouts for all popups being closed
+    toClose.forEach(id => {
+      const popup = overlayPopups.find(p => p.id === id)
+      if (!popup) return
+
       const timeoutKey = popup.parentPopupId ? `${popup.parentPopupId}-${popup.folderId}` : popup.folderId
 
       // Clear hover timeout
@@ -905,11 +959,107 @@ function AnnotationAppContent() {
         clearTimeout(closeTimeout)
         closeTimeoutRef.current.delete(timeoutKey)
       }
+    })
+
+    // Remove all popups in the cascade
+    setOverlayPopups(prev => prev.filter(p => !toClose.has(p.id)))
+    // Save will be triggered automatically by the save effect with immediate save
+  }, [overlayPopups, getAllDescendants])
+
+  // Handle toggle pin (prevent cascade-close)
+  const handleTogglePin = useCallback((popupId: string) => {
+    setOverlayPopups(prev =>
+      prev.map(p =>
+        p.id === popupId ? { ...p, isPinned: !p.isPinned } : p
+      )
+    )
+  }, [])
+
+  // Handle initiate close (enter interactive close mode)
+  const handleInitiateClose = useCallback((popupId: string) => {
+    const descendants = getAllDescendants(popupId)
+
+    // If no descendants, close immediately (no need for interactive mode)
+    if (descendants.length === 0) {
+      handleCloseOverlayPopup(popupId)
+      return
     }
 
-    setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
-    // Save will be triggered automatically by the save effect with immediate save
-  }, [overlayPopups])
+    // Enter close mode: highlight descendants and show pin buttons
+    setOverlayPopups(prev =>
+      prev.map(p => {
+        if (p.id === popupId) {
+          return { ...p, closeMode: 'closing' as const }
+        }
+        if (descendants.includes(p.id)) {
+          return { ...p, isHighlighted: true }
+        }
+        return p
+      })
+    )
+  }, [getAllDescendants, handleCloseOverlayPopup])
+
+  // Handle confirm close (user clicked Done - close parent and unpinned children)
+  const handleConfirmClose = useCallback((parentId: string) => {
+    const descendants = getAllDescendants(parentId)
+    const toClose = new Set<string>([parentId])
+
+    // Add unpinned descendants to close list
+    descendants.forEach(descId => {
+      const popup = overlayPopups.find(p => p.id === descId)
+      if (popup && !popup.isPinned) {
+        toClose.add(descId)
+      }
+    })
+
+    console.log(`[Confirm Close] Closing parent and ${toClose.size - 1} unpinned descendants`)
+
+    // Clean up timeouts for all closing popups
+    toClose.forEach(id => {
+      const popup = overlayPopups.find(p => p.id === id)
+      if (!popup) return
+
+      const timeoutKey = popup.parentPopupId ? `${popup.parentPopupId}-${popup.folderId}` : popup.folderId
+      const hoverTimeout = hoverTimeoutRef.current.get(timeoutKey)
+      if (hoverTimeout) {
+        clearTimeout(hoverTimeout)
+        hoverTimeoutRef.current.delete(timeoutKey)
+      }
+      const closeTimeout = closeTimeoutRef.current.get(timeoutKey)
+      if (closeTimeout) {
+        clearTimeout(closeTimeout)
+        closeTimeoutRef.current.delete(timeoutKey)
+      }
+    })
+
+    // Remove closing popups and clear highlights/close mode from survivors
+    setOverlayPopups(prev =>
+      prev
+        .filter(p => !toClose.has(p.id))
+        .map(p => ({
+          ...p,
+          isHighlighted: false,
+          closeMode: undefined
+        }))
+    )
+  }, [getAllDescendants, overlayPopups])
+
+  // Handle cancel close (user cancelled - revert to normal mode)
+  const handleCancelClose = useCallback((parentId: string) => {
+    const descendants = getAllDescendants(parentId)
+
+    setOverlayPopups(prev =>
+      prev.map(p => {
+        if (p.id === parentId) {
+          return { ...p, closeMode: undefined }
+        }
+        if (descendants.includes(p.id)) {
+          return { ...p, isHighlighted: false }
+        }
+        return p
+      })
+    )
+  }, [getAllDescendants])
 
   // Handle folder hover inside popup (creates cascading child popups)
   const handleFolderHover = useCallback(async (folder: OrgItem, event: React.MouseEvent, parentPopupId: string, isPersistent: boolean = false) => {
@@ -1507,6 +1657,10 @@ function AnnotationAppContent() {
           popups={adaptedPopups}
           draggingPopup={draggingPopup}
           onClosePopup={handleCloseOverlayPopup}
+          onInitiateClose={handleInitiateClose}
+          onConfirmClose={handleConfirmClose}
+          onCancelClose={handleCancelClose}
+          onTogglePin={handleTogglePin}
           onDragStart={handlePopupDragStart}
           onHoverFolder={handleFolderHover}
           onLeaveFolder={handleFolderHoverLeave}

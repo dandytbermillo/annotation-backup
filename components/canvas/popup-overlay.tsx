@@ -85,6 +85,8 @@ interface PopupData extends PopupState {
   isDragging?: boolean;
   isLoading?: boolean;
   isHighlighted?: boolean; // For golden glow animation when clicking already-open popup
+  closeMode?: 'normal' | 'closing'; // NEW: Interactive close mode
+  isPinned?: boolean; // NEW: Pin to prevent cascade-close
   height?: number;
 }
 
@@ -92,6 +94,10 @@ interface PopupOverlayProps {
   popups: Map<string, PopupData>;
   draggingPopup: string | null;
   onClosePopup: (id: string) => void;
+  onInitiateClose?: (popupId: string) => void; // NEW: Enter interactive close mode
+  onConfirmClose?: (parentId: string) => void; // NEW: Confirm close and remove unpinned children
+  onCancelClose?: (parentId: string) => void; // NEW: Cancel close mode
+  onTogglePin?: (popupId: string) => void; // NEW: Toggle pin state
   onDragStart?: (id: string, event: React.MouseEvent) => void;
   onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
   onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
@@ -176,6 +182,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   popups,
   draggingPopup,
   onClosePopup,
+  onInitiateClose,
+  onConfirmClose,
+  onCancelClose,
+  onTogglePin,
   onDragStart,
   onHoverFolder,
   onLeaveFolder,
@@ -2791,15 +2801,47 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   >
                     {popupEditMode.get(popup.id) ? 'Done' : 'Edit'}
                   </button>
-                  {/* Close button */}
-                  <button
-                    onClick={() => onClosePopup(popup.id)}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                    aria-label="Close popup"
-                  >
-                    <X className="w-4 h-4 text-gray-400" />
-                  </button>
+                  {/* Close button or Close mode controls */}
+                  {popup.closeMode === 'closing' ? (
+                    <>
+                      {/* Done button (confirm close) */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onConfirmClose?.(popup.id)
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto bg-green-600 hover:bg-green-500 text-white"
+                        aria-label="Confirm close"
+                      >
+                        ✓ Done
+                      </button>
+                      {/* Cancel button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onCancelClose?.(popup.id)
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto hover:bg-gray-700 text-gray-400"
+                        aria-label="Cancel close"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onInitiateClose?.(popup.id)
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                      aria-label="Close popup"
+                    >
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
+                  )}
                 </div>
               </div>
               {/* Popup Content with virtualization for large lists */}
@@ -2824,6 +2866,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
+              {/* Pin Button Bar (shown when highlighted during close mode) */}
+              {popup.isHighlighted && (
+                <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onTogglePin?.(popup.id)
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
+                      popup.isPinned
+                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                        : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    }`}
+                    aria-label={popup.isPinned ? "Pinned - will stay open" : "Pin to keep open"}
+                  >
+                    {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
+                  </button>
+                </div>
+              )}
               {/* Multi-select Actions Bar */}
               {(() => {
                 const selectedIds = popupSelections.get(popup.id);
@@ -3365,15 +3427,47 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       >
                         {popupEditMode.get(popup.id) ? 'Done' : 'Edit'}
                       </button>
-                      {/* Close button */}
-                      <button
-                        onClick={() => onClosePopup(popup.id)}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                        aria-label="Close popup"
-                      >
-                        <X className="w-4 h-4 text-gray-400" />
-                      </button>
+                      {/* Close button or Close mode controls */}
+                      {popup.closeMode === 'closing' ? (
+                        <>
+                          {/* Done button (confirm close) */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onConfirmClose?.(popup.id)
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto bg-green-600 hover:bg-green-500 text-white"
+                            aria-label="Confirm close"
+                          >
+                            ✓ Done
+                          </button>
+                          {/* Cancel button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onCancelClose?.(popup.id)
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto hover:bg-gray-700 text-gray-400"
+                            aria-label="Cancel close"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onInitiateClose?.(popup.id)
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+                          aria-label="Close popup"
+                        >
+                          <X className="w-4 h-4 text-gray-400" />
+                        </button>
+                      )}
                     </div>
                   </div>
                   {/* Popup Content */}
@@ -3398,6 +3492,26 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                     )}
                   </div>
+                  {/* Pin Button Bar (shown when highlighted during close mode) */}
+                  {popup.isHighlighted && (
+                    <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onTogglePin?.(popup.id)
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
+                          popup.isPinned
+                            ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                            : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                        }`}
+                        aria-label={popup.isPinned ? "Pinned - will stay open" : "Pin to keep open"}
+                      >
+                        {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
+                      </button>
+                    </div>
+                  )}
                   {/* Multi-select Actions Bar */}
                   {(() => {
                     const selectedIds = popupSelections.get(popup.id);
