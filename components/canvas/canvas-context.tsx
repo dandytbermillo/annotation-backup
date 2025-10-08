@@ -154,6 +154,25 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
       // Initialize main panel in dataStore
       const persistPlainBranchSnapshot = () => {
         if (typeof window === 'undefined' || !noteId) return
+
+        // Check for invalidation tombstone with timestamp expiry (5 seconds)
+        const tombstoneKey = `note-data-${noteId}:invalidated`
+        const tombstoneValue = window.localStorage.getItem(tombstoneKey)
+
+        if (tombstoneValue) {
+          const tombstoneAge = Date.now() - parseInt(tombstoneValue, 10)
+
+          if (tombstoneAge < 5000) {
+            // Tombstone is fresh - skip persistence
+            console.log('[CanvasProvider] Skipping snapshot persist - cache invalidated')
+            return
+          } else {
+            // Tombstone expired - clean it up and continue
+            window.localStorage.removeItem(tombstoneKey)
+            console.log('[CanvasProvider] Tombstone expired, resuming cache persistence')
+          }
+        }
+
         const snapshot: Record<string, any> = {}
         dataStore.forEach((value, key) => {
           snapshot[key] = {

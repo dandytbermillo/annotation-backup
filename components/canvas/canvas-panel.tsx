@@ -24,7 +24,7 @@ import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { createNote } from "@/lib/utils/note-creator"
-import { Save } from "lucide-react"
+import { Save, Pencil } from "lucide-react"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -65,6 +65,122 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [isPanelHovered, setIsPanelHovered] = useState(false)
   const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Rename state
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [titleValue, setTitleValue] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Request cancellation for race condition prevention
+  //
+  // CRITICAL: Prevents rapid-rename race conditions where:
+  //   User types: A → B → C
+  //   Without cancellation:
+  //     t0: Request A→B starts
+  //     t1: Request B→C starts
+  //     t2: Response B→C arrives → dataStore = "C" ✓
+  //     t3: Response A→B arrives → dataStore = "B" ❌ (overwrites C!)
+  //   With cancellation:
+  //     t0: Request A→B starts
+  //     t1: Request B→C starts + Request A→B cancelled
+  //     t2: Response B→C arrives → dataStore = "C" ✓
+  //     t3: Cancelled response ignored
+  //
+  // Result: Only the LATEST rename wins, user's final input is preserved
+  const renameAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Load panel title from database on mount - force re-fetch on every mount
+  useEffect(() => {
+    if (!noteId) return
+
+    let isMounted = true
+
+    const loadPanelTitle = async () => {
+      try {
+        // Add timestamp to prevent caching during rapid reloads
+        const timestamp = Date.now()
+        const response = await fetch(`/api/postgres-offline/panels?note_id=${encodeURIComponent(noteId)}&_t=${timestamp}`)
+        if (response.ok && isMounted) {
+          const panels = await response.json()
+          const panel = panels.find((p: any) => p.panel_id === panelId)
+          if (panel?.title && panel.title !== currentBranch.title) {
+            // Only update if title actually changed (prevent re-render loops)
+            dataStore.update(panelId, { title: panel.title })
+            console.log('[CanvasPanel] Loaded title from DB:', panel.title)
+          }
+        }
+      } catch (error) {
+        console.error('[CanvasPanel] Failed to load panel title:', error)
+      }
+    }
+
+    // Load immediately on mount
+    loadPanelTitle()
+
+    return () => {
+      isMounted = false
+      // Cancel any in-flight rename requests on unmount
+      if (renameAbortControllerRef.current) {
+        renameAbortControllerRef.current.abort()
+        renameAbortControllerRef.current = null
+      }
+    }
+  }, [noteId, panelId]) // Only re-run when noteId or panelId changes
+
+  // Listen for rename events from other components (e.g., popup overlay)
+  // CRITICAL: Defensive validation prevents crashes from malformed events
+  useEffect(() => {
+    if (!noteId) return
+
+    const handleNoteRenamed = (event: Event) => {
+      try {
+        // Validate event structure before accessing properties
+        const customEvent = event as CustomEvent<{ noteId: string; newTitle: string }>
+
+        // Guard: Ensure detail object exists
+        if (!customEvent.detail) {
+          console.warn('[CanvasPanel] Received note-renamed event with no detail object')
+          return
+        }
+
+        const { noteId: renamedNoteId, newTitle } = customEvent.detail
+
+        // Guard: Validate required fields
+        if (!renamedNoteId || typeof renamedNoteId !== 'string') {
+          console.warn('[CanvasPanel] Received note-renamed event with invalid noteId:', renamedNoteId)
+          return
+        }
+
+        if (!newTitle || typeof newTitle !== 'string' || !newTitle.trim()) {
+          console.warn('[CanvasPanel] Received note-renamed event with invalid newTitle:', newTitle)
+          return
+        }
+
+        // Only update if this panel is showing the renamed note
+        if (renamedNoteId === noteId) {
+          console.log('[CanvasPanel] Received rename event for this panel:', newTitle.trim())
+
+          // Guard: Ensure dataStore.update doesn't throw
+          try {
+            dataStore.update(panelId, { title: newTitle.trim() })
+            dispatch({ type: "BRANCH_UPDATED" })
+          } catch (updateError) {
+            console.error('[CanvasPanel] Failed to update panel title:', updateError)
+            // Non-critical: Don't crash the app, just log the error
+          }
+        }
+      } catch (error) {
+        // Catch-all: Prevent event handler errors from crashing the app
+        console.error('[CanvasPanel] Error handling note-renamed event:', error)
+      }
+    }
+
+    window.addEventListener('note-renamed', handleNoteRenamed)
+    return () => {
+      window.removeEventListener('note-renamed', handleNoteRenamed)
+    }
+  }, [noteId, panelId, dataStore, dispatch])
 
   const [panelHeight, setPanelHeight] = useState<number>(500)
   const previousPanelHeightRef = useRef<number>(500)
@@ -749,6 +865,139 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
   const panelTitle = getPanelTitle()
   const showPanelTitle = Boolean(panelTitle)
+
+  // Rename handlers
+  const handleStartRename = () => {
+    setIsRenaming(true)
+    setTitleValue(currentBranch.title || '')
+    setTimeout(() => titleInputRef.current?.select(), 0)
+  }
+
+  const handleSaveRename = async () => {
+    const trimmed = titleValue.trim()
+    if (trimmed && trimmed !== currentBranch.title) {
+      const oldTitle = currentBranch.title // For rollback on error
+
+      // Race condition prevention: Cancel any in-flight rename request
+      // This ensures only the LATEST rename wins, preventing "A→B→C" bugs
+      // where the slower "B" request might overwrite the faster "C" result
+      if (renameAbortControllerRef.current) {
+        console.log('[CanvasPanel] Cancelling previous rename request')
+        renameAbortControllerRef.current.abort()
+      }
+
+      // Create new AbortController for this request
+      const abortController = new AbortController()
+      renameAbortControllerRef.current = abortController
+
+      // Show saving indicator to user
+      setIsSaving(true)
+
+      // Optimistic update in-memory dataStore
+      dataStore.update(panelId, { title: trimmed })
+      dispatch({ type: "BRANCH_UPDATED" })
+
+      // Persist to database via atomic transaction endpoint
+      if (noteId) {
+        try {
+          const response = await fetch(`/api/panels/${encodeURIComponent(panelId)}/rename`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              noteId,
+              newTitle: trimmed
+            }),
+            signal: abortController.signal // Attach abort signal
+          })
+
+          if (!response.ok) {
+            const error = await response.json()
+            throw new Error(error.details || 'Failed to rename panel')
+          }
+
+          const result = await response.json()
+          console.log('[CanvasPanel] Rename succeeded:', result)
+
+          // CRITICAL: Clear isSaving BEFORE nulling the ref
+          // Otherwise finally block's guard (renameAbortControllerRef === abortController) fails
+          // and isSaving stays true forever, leaving input permanently disabled
+          if (renameAbortControllerRef.current === abortController) {
+            setIsSaving(false)
+            renameAbortControllerRef.current = null
+          }
+
+          // Update dataStore with confirmed server value (in case server modified it)
+          dataStore.update(panelId, { title: result.title })
+
+          // Invalidate localStorage cache IMMEDIATELY with timestamped tombstone
+          if (typeof window !== 'undefined') {
+            try {
+              const cachedKey = `note-data-${noteId}`
+
+              // 1. Delete cache immediately
+              window.localStorage.removeItem(cachedKey)
+
+              // 2. Set timestamped tombstone (self-expires after 5 seconds)
+              window.localStorage.setItem(`${cachedKey}:invalidated`, Date.now().toString())
+
+              // 3. Emit event for live components (e.g., popup overlay) to refresh
+              window.dispatchEvent(new CustomEvent('note-renamed', {
+                detail: { noteId, newTitle: result.title }
+              }))
+
+              console.log('[CanvasPanel] Invalidated localStorage cache with tombstone')
+            } catch (cacheError) {
+              // Non-critical: localStorage may be disabled/full, or event dispatch may fail
+              // Don't let this prevent the rename from succeeding
+              console.warn('[CanvasPanel] Failed to invalidate cache or emit event:', cacheError)
+            }
+          }
+
+          // Note: No dispatch needed - setIsRenaming(false) triggers re-render
+
+        } catch (error) {
+          // Check if this was an intentional abort (race condition prevention)
+          if (error instanceof Error && error.name === 'AbortError') {
+            console.log('[CanvasPanel] Rename request was cancelled (superseded by newer request)')
+            // Don't rollback or show error - this is expected behavior
+            // The newer request will handle the update
+            return
+          }
+
+          console.error('[CanvasPanel] Rename failed, rolling back:', error)
+
+          // CRITICAL: Clear isSaving BEFORE nulling the ref (same reason as success path)
+          if (renameAbortControllerRef.current === abortController) {
+            setIsSaving(false)
+            renameAbortControllerRef.current = null
+          }
+
+          // Rollback optimistic update
+          dataStore.update(panelId, { title: oldTitle })
+          dispatch({ type: "BRANCH_UPDATED" })
+
+          // Show error to user
+          alert(`Failed to rename: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+      }
+    }
+    setIsRenaming(false)
+  }
+
+  const handleCancelRename = () => {
+    // CRITICAL: Cancel any in-flight rename request
+    // Without this, a slow network response can complete after user cancels,
+    // violating user intent (they cancelled, but rename happens anyway)
+    if (renameAbortControllerRef.current) {
+      console.log('[CanvasPanel] Aborting rename due to user cancel')
+      renameAbortControllerRef.current.abort()
+      renameAbortControllerRef.current = null
+    }
+
+    setIsRenaming(false)
+    setIsSaving(false)
+    setTitleValue(currentBranch.title || '')
+  }
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
@@ -1668,7 +1917,39 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             >
               {isIsolated ? '🔓' : '🔒'}
             </button>
-            
+
+            {/* Edit/Rename button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                handleStartRename()
+              }}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '50%',
+                width: '24px',
+                height: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                color: 'white',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                e.currentTarget.style.transform = 'scale(1.1)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                e.currentTarget.style.transform = 'scale(1)'
+              }}
+              title="Rename panel"
+            >
+              <Pencil size={12} />
+            </button>
+
             {onClose && (
               <button
                 className="panel-close"
@@ -1711,12 +1992,46 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               overflow: 'hidden',
               flex: 1,
             }}>
-              <span style={{
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                maxWidth: '300px',
-              }}>{panelTitle}</span>
+              {isRenaming ? (
+                <input
+                  ref={titleInputRef}
+                  type="text"
+                  value={titleValue}
+                  disabled={isSaving}
+                  onChange={(e) => setTitleValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveRename()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      handleCancelRename()
+                    }
+                  }}
+                  onBlur={handleSaveRename}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: isSaving ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.9)',
+                    color: isSaving ? '#95a5a6' : '#2c3e50',
+                    border: '2px solid rgba(255,255,255,0.5)',
+                    borderRadius: '6px',
+                    padding: '4px 8px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    outline: 'none',
+                    width: '250px',
+                    cursor: isSaving ? 'wait' : 'text',
+                    opacity: isSaving ? 0.7 : 1,
+                  }}
+                />
+              ) : (
+                <span style={{
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '300px',
+                }}>{panelTitle}</span>
+              )}
               {isIsolated && currentBranch.type !== 'main' && (
                 <span style={{
                   background: '#ef4444',

@@ -202,6 +202,7 @@
   }
 }
 
+/* IMPORTANT: Duration must match HOVER_HIGHLIGHT_DURATION_MS in popup-overlay.tsx */
 .popup-card.highlighted {
   animation: popup-highlight-glow 2s ease-in-out;
 }

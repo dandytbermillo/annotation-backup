@@ -967,13 +967,33 @@ function AnnotationAppContent() {
   }, [overlayPopups, getAllDescendants])
 
   // Handle toggle pin (prevent cascade-close)
+  // Cascades pin state to all descendants automatically
   const handleTogglePin = useCallback((popupId: string) => {
-    setOverlayPopups(prev =>
-      prev.map(p =>
-        p.id === popupId ? { ...p, isPinned: !p.isPinned } : p
-      )
-    )
-  }, [])
+    setOverlayPopups(prev => {
+      // Find the popup being toggled
+      const targetPopup = prev.find(p => p.id === popupId)
+      if (!targetPopup) return prev
+
+      // Determine new pin state (toggle)
+      const newPinState = !targetPopup.isPinned
+
+      // Get all descendants of this popup
+      const descendants = getAllDescendants(popupId)
+
+      console.log(`[Toggle Pin] Setting pin=${newPinState} for popup ${targetPopup.folderName} and ${descendants.length} descendants`)
+
+      // Update target popup and all its descendants with the new pin state
+      return prev.map(p => {
+        if (p.id === popupId) {
+          return { ...p, isPinned: newPinState }
+        }
+        if (descendants.includes(p.id)) {
+          return { ...p, isPinned: newPinState }
+        }
+        return p
+      })
+    })
+  }, [getAllDescendants])
 
   // Handle initiate close (enter interactive close mode)
   const handleInitiateClose = useCallback((popupId: string) => {

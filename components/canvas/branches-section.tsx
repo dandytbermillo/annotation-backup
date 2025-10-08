@@ -8,6 +8,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { useEffect, useState } from "react"
 import type { CanvasState } from "@/types/canvas"
 import type { DataStore } from "@/lib/data-store"
+import { Pencil } from "lucide-react"
 
 interface BranchesSectionProps {
   panelId: string
@@ -26,6 +27,7 @@ export function BranchesSection({ panelId, branch, dataStore: propDataStore, sta
   const dataStore = propDataStore || canvasContext?.dataStore
 
   const [, forceUpdate] = useState({})
+  const [editMode, setEditMode] = useState(false)
 
   const activeFilter = state?.branchFilters?.get(panelId) || "all"
 
@@ -118,33 +120,65 @@ Features:
         }}
       >
         📚 Branches
-        <button
-          onClick={showHelpMessage}
-          style={{
-            background: "rgba(255,255,255,0.2)",
-            color: "white",
-            border: "1px solid rgba(255,255,255,0.3)",
-            padding: "6px 12px",
-            borderRadius: "16px",
-            cursor: "pointer",
-            fontSize: "12px",
-            fontWeight: 500,
-            marginLeft: "auto",
-            transition: "all 0.3s ease",
-          }}
-          onMouseEnter={(e) => {
-            const target = e.target as HTMLElement
-            target.style.background = "rgba(255,255,255,0.3)"
-            target.style.transform = "translateY(-1px)"
-          }}
-          onMouseLeave={(e) => {
-            const target = e.target as HTMLElement
-            target.style.background = "rgba(255,255,255,0.2)"
-            target.style.transform = "translateY(0)"
-          }}
-        >
-          + Add
-        </button>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "8px" }}>
+          <button
+            onClick={() => setEditMode(!editMode)}
+            style={{
+              background: editMode ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.2)",
+              color: "white",
+              border: editMode ? "1px solid rgba(255,255,255,0.5)" : "1px solid rgba(255,255,255,0.3)",
+              padding: "6px 10px",
+              borderRadius: "16px",
+              cursor: "pointer",
+              fontSize: "12px",
+              fontWeight: 500,
+              transition: "all 0.3s ease",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+            }}
+            onMouseEnter={(e) => {
+              const target = e.currentTarget
+              target.style.background = "rgba(255,255,255,0.3)"
+              target.style.transform = "translateY(-1px)"
+            }}
+            onMouseLeave={(e) => {
+              const target = e.currentTarget
+              target.style.background = editMode ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.2)"
+              target.style.transform = "translateY(0)"
+            }}
+            title={editMode ? "Exit edit mode" : "Enter edit mode"}
+          >
+            <Pencil style={{ width: "14px", height: "14px" }} />
+            {editMode ? "Done" : "Edit"}
+          </button>
+          <button
+            onClick={showHelpMessage}
+            style={{
+              background: "rgba(255,255,255,0.2)",
+              color: "white",
+              border: "1px solid rgba(255,255,255,0.3)",
+              padding: "6px 12px",
+              borderRadius: "16px",
+              cursor: "pointer",
+              fontSize: "12px",
+              fontWeight: 500,
+              transition: "all 0.3s ease",
+            }}
+            onMouseEnter={(e) => {
+              const target = e.target as HTMLElement
+              target.style.background = "rgba(255,255,255,0.3)"
+              target.style.transform = "translateY(-1px)"
+            }}
+            onMouseLeave={(e) => {
+              const target = e.target as HTMLElement
+              target.style.background = "rgba(255,255,255,0.2)"
+              target.style.transform = "translateY(0)"
+            }}
+          >
+            + Add
+          </button>
+        </div>
       </div>
 
       <div
@@ -221,6 +255,7 @@ Features:
               dataStore={dataStore}
               state={state}
               dispatch={dispatch}
+              editMode={editMode}
             />
           ))
         )}

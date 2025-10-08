@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Save } from "lucide-react"
+import { useState, useRef, useEffect } from "react"
+import { Save, Pencil } from "lucide-react"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import { NoteCreationDialog } from "@/components/shared/note-creation-dialog"
@@ -15,6 +15,16 @@ interface PanelHeaderProps {
 export function PanelHeader({ panelId, branch }: PanelHeaderProps) {
   const { dispatch, dataStore } = useCanvas()
   const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [titleValue, setTitleValue] = useState(branch.title || '')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Update titleValue when branch.title changes
+  useEffect(() => {
+    if (!isRenaming) {
+      setTitleValue(branch.title || '')
+    }
+  }, [branch.title, isRenaming])
 
   const handleClose = () => {
     // Update parent's branches list
@@ -62,14 +72,67 @@ export function PanelHeader({ panelId, branch }: PanelHeaderProps) {
     }
   }
 
+  // Handle rename
+  const handleStartRename = () => {
+    setIsRenaming(true)
+    setTitleValue(branch.title || '')
+    setTimeout(() => inputRef.current?.select(), 0)
+  }
+
+  const handleSaveRename = () => {
+    const trimmed = titleValue.trim()
+    if (trimmed && trimmed !== branch.title) {
+      dataStore.update(panelId, { title: trimmed })
+    }
+    setIsRenaming(false)
+  }
+
+  const handleCancelRename = () => {
+    setIsRenaming(false)
+    setTitleValue(branch.title || '')
+  }
+
   return (
     <>
       <div
         className="panel-header relative bg-white/5 text-indigo-600 p-3 border-b border-indigo-200 text-sm font-semibold flex justify-between items-center cursor-grab select-none"
         style={{ userSelect: "none" }}
       >
-        <span>{branch.title}</span>
+        {isRenaming ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={titleValue}
+            onChange={(e) => setTitleValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleSaveRename()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                handleCancelRename()
+              }
+            }}
+            onBlur={handleSaveRename}
+            onClick={(e) => e.stopPropagation()}
+            className="flex-1 px-2 py-1 text-sm border-2 border-blue-500 rounded bg-white text-indigo-800 outline-none"
+            style={{ cursor: 'text' }}
+          />
+        ) : (
+          <span>{branch.title}</span>
+        )}
         <div className="flex items-center gap-2">
+          {/* Edit button */}
+          <button
+            className="bg-gray-100 border border-gray-300 text-gray-600 w-6 h-6 rounded-full cursor-pointer text-xs flex items-center justify-center transition-all duration-200 hover:bg-gray-200 hover:border-gray-500"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleStartRename()
+            }}
+            title="Rename branch"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
           {/* Save As button */}
           <button
             className="bg-blue-100 border border-blue-300 text-blue-600 px-3 h-6 rounded-full cursor-pointer text-xs flex items-center gap-1 transition-all duration-200 hover:bg-blue-200 hover:border-blue-500"

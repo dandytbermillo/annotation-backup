@@ -13,18 +13,34 @@ export async function POST(request: Request) {
     // Generate a panel_id if not provided
     const actualPanelId = panel_id || `panel_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
+    // Get workspace_id from the note
+    const noteResult = await pool.query(
+      'SELECT workspace_id FROM notes WHERE id = $1',
+      [note_id]
+    );
+
+    if (noteResult.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Note not found' },
+        { status: 404 }
+      );
+    }
+
+    const workspace_id = noteResult.rows[0].workspace_id;
+
     const result = await pool.query(
-      `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, title, type, last_accessed) 
-       VALUES (gen_random_uuid(), $1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, NOW()) 
+      `INSERT INTO panels (id, note_id, panel_id, position, dimensions, state, title, type, workspace_id, last_accessed)
+       VALUES (gen_random_uuid(), $1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8, NOW())
        RETURNING *`,
       [
-        note_id, 
+        note_id,
         actualPanelId,
-        JSON.stringify(position || { x: 0, y: 0 }), 
-        JSON.stringify(dimensions || { width: 400, height: 300 }), 
+        JSON.stringify(position || { x: 0, y: 0 }),
+        JSON.stringify(dimensions || { width: 400, height: 300 }),
         state || 'active',
         title || null,
-        type || 'editor'
+        type || 'editor',
+        workspace_id
       ]
     );
 
@@ -42,23 +58,101 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const noteId = searchParams.get('note_id');
-    
+
     let query = 'SELECT * FROM panels';
     const params: string[] = [];
-    
+
     if (noteId) {
       query += ' WHERE note_id = $1';
       params.push(noteId);
     }
-    
+
     query += ' ORDER BY last_accessed DESC';
-    
+
     const result = await pool.query(query, params);
     return NextResponse.json(result.rows);
   } catch (error) {
     console.error('Error fetching panels:', error);
     return NextResponse.json(
       { error: 'Failed to fetch panels' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const panelId = searchParams.get('panel_id');
+    const noteId = searchParams.get('note_id');
+
+    if (!panelId || !noteId) {
+      return NextResponse.json(
+        { error: 'panel_id and note_id are required' },
+        { status: 400 }
+      );
+    }
+
+    const body = await request.json();
+    const { title, position, dimensions, state } = body;
+
+    const updates: string[] = [];
+    const values: any[] = [noteId, panelId];
+    let paramIndex = 3;
+
+    if (title !== undefined) {
+      updates.push(`title = $${paramIndex}`);
+      values.push(title);
+      paramIndex++;
+    }
+
+    if (position !== undefined) {
+      updates.push(`position = $${paramIndex}::jsonb`);
+      values.push(JSON.stringify(position));
+      paramIndex++;
+    }
+
+    if (dimensions !== undefined) {
+      updates.push(`dimensions = $${paramIndex}::jsonb`);
+      values.push(JSON.stringify(dimensions));
+      paramIndex++;
+    }
+
+    if (state !== undefined) {
+      updates.push(`state = $${paramIndex}`);
+      values.push(state);
+      paramIndex++;
+    }
+
+    if (updates.length === 0) {
+      return NextResponse.json(
+        { error: 'No fields to update' },
+        { status: 400 }
+      );
+    }
+
+    updates.push('updated_at = NOW()');
+
+    const result = await pool.query(
+      `UPDATE panels
+       SET ${updates.join(', ')}
+       WHERE note_id = $1 AND panel_id = $2
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return NextResponse.json(
+        { error: 'Panel not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating panel:', error);
+    return NextResponse.json(
+      { error: 'Failed to update panel' },
       { status: 500 }
     );
   }

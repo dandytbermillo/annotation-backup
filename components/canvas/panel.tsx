@@ -1,9 +1,10 @@
 "use client"
 
-import { useRef } from "react"
+import { useRef, useState } from "react"
 import { useCanvas } from "./canvas-context"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { usePanelDragging } from "@/hooks/use-panel-dragging"
+import { Pencil } from "lucide-react"
 
 interface PanelProps {
   panelId: string
@@ -13,7 +14,11 @@ interface PanelProps {
 export function Panel({ panelId, panelData }: PanelProps) {
   const { dataStore, dispatch, state } = useCanvas()
   const panelRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const branch = dataStore.get(panelId)
+
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [titleValue, setTitleValue] = useState(branch?.title || '')
 
   usePanelDragging(panelRef, panelId)
 
@@ -43,6 +48,25 @@ export function Panel({ panelId, panelData }: PanelProps) {
       type: "REMOVE_PANEL",
       payload: { id: panelId },
     })
+  }
+
+  const handleStartRename = () => {
+    setIsRenaming(true)
+    setTitleValue(branch.title || '')
+    setTimeout(() => inputRef.current?.select(), 0)
+  }
+
+  const handleSaveRename = () => {
+    const trimmed = titleValue.trim()
+    if (trimmed && trimmed !== branch.title) {
+      dataStore.update(panelId, { title: trimmed })
+    }
+    setIsRenaming(false)
+  }
+
+  const handleCancelRename = () => {
+    setIsRenaming(false)
+    setTitleValue(branch.title || '')
   }
 
   const showHelpMessage = () => {
@@ -155,28 +179,85 @@ export function Panel({ panelId, panelData }: PanelProps) {
         }}
         className="panel-header"
       >
-        <span>{branch.title}</span>
-        {panelId !== "main" && (
-          <button
-            onClick={handleClose}
+        {isRenaming ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={titleValue}
+            onChange={(e) => setTitleValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleSaveRename()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                handleCancelRename()
+              }
+            }}
+            onBlur={handleSaveRename}
+            onClick={(e) => e.stopPropagation()}
             style={{
-              background: "rgba(255, 71, 87, 0.1)",
-              border: "1px solid rgba(255, 71, 87, 0.3)",
-              color: "#ff4757",
-              width: "24px",
-              height: "24px",
+              flex: 1,
+              padding: "6px 10px",
+              fontSize: "14px",
+              border: "2px solid #667eea",
+              borderRadius: "6px",
+              background: "white",
+              color: "#2c3e50",
+              outline: "none",
+              cursor: "text",
+              fontWeight: 600,
+            }}
+          />
+        ) : (
+          <span>{branch.title}</span>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {/* Edit button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              handleStartRename()
+            }}
+            style={{
+              background: "rgba(102, 126, 234, 0.1)",
+              border: "1px solid rgba(102, 126, 234, 0.3)",
+              color: "#667eea",
+              width: "28px",
+              height: "28px",
               borderRadius: "50%",
               cursor: "pointer",
-              fontSize: "14px",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               transition: "all 0.2s ease",
             }}
+            title="Rename panel"
           >
-            ×
+            <Pencil size={14} />
           </button>
-        )}
+          {panelId !== "main" && (
+            <button
+              onClick={handleClose}
+              style={{
+                background: "rgba(255, 71, 87, 0.1)",
+                border: "1px solid rgba(255, 71, 87, 0.3)",
+                color: "#ff4757",
+                width: "24px",
+                height: "24px",
+                borderRadius: "50%",
+                cursor: "pointer",
+                fontSize: "14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.2s ease",
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Content Area */}
@@ -396,7 +477,7 @@ export function Panel({ panelId, panelData }: PanelProps) {
                   : `No ${activeFilter} branches found.\nTry selecting "All" or create new ${activeFilter} annotations!`}
               </div>
             ) : (
-              filteredBranches.map((branchId) => {
+              filteredBranches.map((branchId: string) => {
                 const childBranch = dataStore.get(branchId)
                 if (!childBranch) return null
 

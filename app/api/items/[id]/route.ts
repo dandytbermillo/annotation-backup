@@ -93,19 +93,23 @@ export async function GET(
 }
 
 // PUT /api/items/[id] - Update item
+// CRITICAL: Uses atomic transaction to update items, notes, AND panels tables
+// This prevents data divergence where different tables have different titles
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const client = await pool.connect()
+
   try {
     const { id } = await params
     const body = await request.json()
     const { name, content, metadata, icon, color, position } = body
-    
+
     const updates = []
     const values = []
     let valueIndex = 1
-    
+
     if (name !== undefined) {
       updates.push(`name = $${valueIndex++}`)
       values.push(name)
@@ -130,32 +134,85 @@ export async function PUT(
       updates.push(`position = $${valueIndex++}`)
       values.push(position)
     }
-    
+
     values.push(id)
-    
+
     const query = `
-      UPDATE items 
+      UPDATE items
       SET ${updates.join(', ')}, updated_at = NOW()
       WHERE id = $${valueIndex} AND deleted_at IS NULL
       RETURNING *
     `
-    
-    const result = await pool.query(query, values)
-    
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        { error: 'Item not found' },
-        { status: 404 }
-      )
+
+    // BEGIN TRANSACTION - ensure atomic updates across all tables
+    // Without this, partial failures leave items/notes/panels out of sync
+    await client.query('BEGIN')
+
+    try {
+      // 1. Update items table (knowledge tree/popup overlay)
+      const result = await client.query(query, values)
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK')
+        return NextResponse.json(
+          { error: 'Item not found' },
+          { status: 404 }
+        )
+      }
+
+      const updatedItem = result.rows[0]
+
+      // 2. If this is a note-type item and name was updated, sync to notes and panels tables
+      // This ensures consistency across all three tables for note items
+      // Non-note items (folders) only exist in items table, so this is skipped for them
+      if (updatedItem.type === 'note' && name !== undefined) {
+        // Update notes table (canonical source for canvas panels on load)
+        const notesResult = await client.query(
+          'UPDATE notes SET title = $1, updated_at = NOW() WHERE id = $2 RETURNING id',
+          [name, id]
+        )
+
+        // CRITICAL: Fail transaction if note doesn't exist in notes table
+        // This indicates data integrity violation - item says it's a note but no note exists
+        // Continuing would cause divergence: items has new name, notes has old/missing name
+        if (notesResult.rows.length === 0) {
+          console.error(`[PUT /api/items/${id}] INTEGRITY ERROR: Note ${id} exists in items table but not in notes table`)
+          throw new Error(`Data integrity violation: note ${id} not found in notes table`)
+        }
+
+        // Update panels table (layout/state for all panel instances)
+        // Note: Multiple panels can show the same note, so this updates ALL of them
+        await client.query(
+          'UPDATE panels SET title = $1, updated_at = NOW() WHERE note_id = $2',
+          [name, id]
+        )
+
+        console.log(`[PUT /api/items/${id}] Synced note title across all tables:`, name)
+      }
+
+      // COMMIT - all updates succeeded atomically
+      // If any update failed, transaction would have been rolled back
+      await client.query('COMMIT')
+
+      return NextResponse.json({ item: updatedItem })
+
+    } catch (txError) {
+      // ROLLBACK on any error - ensure no partial updates
+      // This prevents data divergence where some tables update and others don't
+      await client.query('ROLLBACK')
+      console.error(`[PUT /api/items/${id}] Transaction failed, rolled back:`, txError)
+      throw txError
     }
-    
-    return NextResponse.json({ item: result.rows[0] })
+
   } catch (error) {
     console.error('Error updating item:', error)
     return NextResponse.json(
       { error: 'Failed to update item' },
       { status: 500 }
     )
+  } finally {
+    // Always release connection back to pool
+    client.release()
   }
 }
 

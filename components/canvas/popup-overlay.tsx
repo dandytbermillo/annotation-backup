@@ -17,6 +17,10 @@ import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from '@/lib/utils
 
 const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
 
+// Hover highlight animation duration (must match CSS animation in popup-overlay.css)
+// CSS: .popup-card.highlighted { animation: popup-highlight-glow 2s ease-in-out; }
+const HOVER_HIGHLIGHT_DURATION_MS = 2000;
+
 // Folder color themes
 const FOLDER_COLORS = [
   { name: 'red', bg: '#ef4444', text: '#fff', border: '#dc2626' },
@@ -207,6 +211,47 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     previewStateRef.current = previewState;
   }, [previewState]);
 
+  // Listen for note rename events - delegate to parent for state updates
+  const onFolderRenamedRef = useRef(onFolderRenamed);
+
+  // Keep ref in sync with current callback
+  useEffect(() => {
+    onFolderRenamedRef.current = onFolderRenamed;
+  }, [onFolderRenamed]);
+
+  useEffect(() => {
+    const handleNoteRenamed = (event: Event) => {
+      try {
+        const customEvent = event as CustomEvent<{ noteId: string; newTitle: string }>;
+        const { noteId, newTitle } = customEvent.detail;
+
+        if (!noteId || !newTitle) {
+          console.warn('[PopupOverlay] Invalid rename event data:', { noteId, newTitle });
+          return;
+        }
+
+        console.log('[PopupOverlay] Note renamed event received:', noteId, newTitle);
+
+        // Delegate to parent - parent owns the state, parent updates it
+        // This follows React's unidirectional data flow principle
+        if (onFolderRenamedRef.current) {
+          onFolderRenamedRef.current(noteId, newTitle);
+          console.log('[PopupOverlay] Delegated rename to parent callback');
+        } else {
+          console.warn('[PopupOverlay] No parent callback available for rename');
+        }
+      } catch (error) {
+        console.error('[PopupOverlay] Error handling note rename event:', error);
+        // Don't let event handler errors crash the app
+      }
+    };
+
+    window.addEventListener('note-renamed', handleNoteRenamed);
+    return () => {
+      window.removeEventListener('note-renamed', handleNoteRenamed);
+    };
+  }, []); // Empty deps - listener stays stable, uses ref for callback
+
   const getBackdropStyle = (style: string) => {
     switch (style) {
       case 'none':
@@ -243,6 +288,20 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   // Multi-select state (per popup)
   const [popupSelections, setPopupSelections] = useState<Map<string, Set<string>>>(new Map());
+
+  // Hover-highlight state - temporarily glow child popup when parent folder eye icon is hovered
+  const [hoverHighlightedPopup, setHoverHighlightedPopup] = useState<string | null>(null);
+  const hoverHighlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup hover highlight timeout on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (hoverHighlightTimeoutRef.current) {
+        clearTimeout(hoverHighlightTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const [lastSelectedIds, setLastSelectedIds] = useState<Map<string, string>>(new Map());
 
   // Drag and drop state
@@ -729,10 +788,30 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const handleToggleEditMode = useCallback((popupId: string) => {
     setPopupEditMode(prev => {
       const newMap = new Map(prev);
-      newMap.set(popupId, !prev.get(popupId));
+      const wasInEditMode = prev.get(popupId);
+      newMap.set(popupId, !wasInEditMode);
+
+      // CRITICAL: When exiting edit mode (Done button clicked), cancel any active rename operations
+      // This ensures input fields are unfocused and rename state is cleared
+      if (wasInEditMode) {
+        // Cancel popup title rename if active
+        if (renamingTitle === popupId) {
+          setRenamingTitle(null);
+          setRenamingTitleName('');
+          setRenameError(null);
+        }
+
+        // Cancel list folder/file rename if active in this popup
+        if (renamingListFolder?.popupId === popupId) {
+          setRenamingListFolder(null);
+          setRenamingListFolderName('');
+          setRenameError(null);
+        }
+      }
+
       return newMap;
     });
-  }, []);
+  }, [renamingTitle, renamingListFolder]);
 
   // Start renaming popup title
   const handleStartRenameTitle = useCallback((popupId: string, currentName: string) => {
@@ -899,6 +978,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       // Notify parent of rename (for syncing with org panel and other popups)
       if (onFolderRenamed) {
         onFolderRenamed(renamingListFolder.folderId, trimmedName);
+      }
+
+      // Emit event for canvas panels to update in real-time
+      // CRITICAL: Wrapped in try/catch to prevent rare dispatch failures from breaking rename flow
+      // Database is already committed at this point, so event dispatch is non-critical
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('note-renamed', {
+            detail: { noteId: renamingListFolder.folderId, newTitle: trimmedName }
+          }));
+          console.log('[PopupOverlay] Emitted note-renamed event:', renamingListFolder.folderId, trimmedName);
+        } catch (dispatchError) {
+          // Non-critical: Event dispatch failed, but database update succeeded
+          // Canvas panels will get the correct title on next load/reload
+          console.error('[PopupOverlay] Failed to dispatch note-renamed event:', dispatchError);
+        }
       }
 
       handleCancelRenameListFolder();
@@ -1400,9 +1495,40 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       requestPreview(popupId, child);
     };
 
-    const handleFolderHover = (event: React.MouseEvent, persistent = false) => {
-      if (rowIsPanning || !folderLike) return;
-      rowHoverFolder?.(child, event, popupId, persistent);
+    const handleFolderHover = (
+      event: React.MouseEvent | React.FocusEvent,
+      persistent = false
+    ) => {
+      if (rowIsPanning || !folderLike) {
+        return;
+      }
+
+      // Trigger folder popup preview
+      rowHoverFolder?.(child, event as React.MouseEvent, popupId, persistent);
+
+      // ENHANCEMENT: If child popup is already open, highlight it temporarily
+      // This provides visual feedback showing which popup belongs to the hovered folder
+      // Works on BOTH hover (persistent=false) AND click (persistent=true)
+      const allPopups = Array.from(popups.values());
+      const childPopup = allPopups.find(p =>
+        p.folder?.id === child.id || (p as any).folderId === child.id
+      );
+
+      if (childPopup) {
+        // Clear any existing highlight timeout to prevent race conditions
+        if (hoverHighlightTimeoutRef.current) {
+          clearTimeout(hoverHighlightTimeoutRef.current);
+        }
+
+        // Temporarily set hover-highlight state
+        setHoverHighlightedPopup(childPopup.id);
+
+        // Auto-remove highlight after animation completes
+        hoverHighlightTimeoutRef.current = setTimeout(() => {
+          setHoverHighlightedPopup(null);
+          hoverHighlightTimeoutRef.current = null;
+        }, HOVER_HIGHLIGHT_DURATION_MS);
+      }
     };
 
     // Note: Preview is now handled by plain div tooltip, no longer using previewEntry state
@@ -1412,17 +1538,33 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       ? 'opacity-100'
       : 'opacity-0 group-hover:opacity-100';
 
+    // Build classes and log for debugging
+    const conditionalClasses = isInvalidDropTarget ? 'bg-red-600 bg-opacity-50 ring-2 ring-red-500 text-white cursor-not-allowed' :
+      isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500 text-white' :
+      isDragging ? 'opacity-50' :
+      isSelected ? 'bg-indigo-500 bg-opacity-50 text-white' :
+      isActivePreview ? 'bg-gray-700/70 text-white' :
+      'text-gray-200 hover:bg-gray-700/30';
+
+    const rowClasses = `group px-3 py-2 cursor-pointer flex items-center justify-between text-sm transition-colors ${conditionalClasses}`;
+
+    console.log(`[PopupRow] ${child.name}:`, {
+      folderLike,
+      noteLike,
+      type: child.type,
+      isSelected,
+      isActivePreview,
+      isDragging,
+      conditionalClasses,
+      hasBlueHover: conditionalClasses.includes('hover:bg-blue-900'),
+      hasGrayHover: conditionalClasses.includes('hover:bg-gray-700')
+    });
+
     return (
       <div
         key={child.id}
         draggable={true}
-        className={`group px-3 py-2 cursor-pointer flex items-center justify-between text-sm transition-colors ${
-          isInvalidDropTarget ? 'bg-red-600 bg-opacity-50 ring-2 ring-red-500 text-white cursor-not-allowed' :
-          isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500 text-white' :
-          isDragging ? 'opacity-50' :
-          isSelected ? 'bg-indigo-500 bg-opacity-50 text-white' :
-          isActivePreview ? 'bg-gray-700/70 text-white' : 'text-gray-200'
-        }`}
+        className={rowClasses}
         style={{ transition: rowIsPanning ? 'none' : 'background-color 0.2s' }}
         data-drop-zone={folderLike ? 'true' : undefined}
         onDragStart={(e) => handleDragStart(popupId, child.id, e)}
@@ -1438,8 +1580,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         onMouseEnter={(event) => {
           if (noteLike) {
             triggerPreview();
+          } else if (folderLike) {
+            // Clear preview when hovering over folder
+            requestPreview(popupId, null);
           }
-          // Removed folder row hover - only eye icon should trigger folder hover
         }}
         onMouseLeave={() => {
           // Removed folder row leave handler - only eye icon controls this
@@ -1467,12 +1611,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           handleItemSelect(popupId, child.id, children, event);
         }}
         onDoubleClick={() => {
-          // In edit mode, double-click on folder triggers rename
-          if (popupEditMode.get(popupId) && folderLike) {
-            handleStartRenameListFolder(popupId, child.id, child.name || '');
-            return;
+          // In edit mode, double-click triggers rename for both folders and notes
+          if (popupEditMode.get(popupId)) {
+            if (folderLike || noteLike) {
+              handleStartRenameListFolder(popupId, child.id, child.name || '');
+              return;
+            }
           }
-          // Double-click on note opens it on canvas
+          // In view mode, double-click on note opens it on canvas
           if (noteLike && onSelectNote) {
             onSelectNote(child.id);
           }
@@ -1497,7 +1643,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       >
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {folderLike ? (
-            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0 fill-blue-400" />
           ) : (
             <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
           )}
@@ -1528,7 +1674,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               )}
             </div>
           ) : (
-            <span className="truncate">{child.name}</span>
+            <span className={`truncate ${folderLike ? 'font-semibold text-blue-100' : ''}`}>{child.name}</span>
           )}
         </div>
         {/* Timestamp: visible by default, hidden on hover */}
@@ -1554,34 +1700,38 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 }
               }}
             >
-              <Eye className="w-4 h-4" />
+              <Eye className="w-4 h-4 text-white" />
             </button>
           )}
           {folderLike && (
-                    <TooltipProvider delayDuration={150}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            aria-label="Open folder"
-                            className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                            onMouseEnter={(event) => handleFolderHover(event, false)}
-                            onFocus={(event) => handleFolderHover(event, false)}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              handleFolderHover(event, true);
-                            }}
-                            onMouseLeave={() => rowLeaveFolder?.(child.id, popupId)}
-                            onBlur={() => rowLeaveFolder?.(child.id, popupId)}
-                          >
-                            <Eye className="w-4 h-4" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipPortal>
-                          <TooltipContent side="right">Open folder</TooltipContent>
-                        </TooltipPortal>
-                      </Tooltip>
-                    </TooltipProvider>
+                    <div
+                      onMouseEnter={(event) => handleFolderHover(event, false)}
+                      onMouseLeave={() => rowLeaveFolder?.(child.id, popupId)}
+                      className="inline-block"
+                    >
+                      <TooltipProvider delayDuration={150}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="Open folder"
+                              className="p-1 rounded hover:bg-gray-700 text-gray-300"
+                              onFocus={(event) => handleFolderHover(event, false)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleFolderHover(event, true);
+                              }}
+                              onBlur={() => rowLeaveFolder?.(child.id, popupId)}
+                            >
+                              <Eye className="w-4 h-4 text-blue-400" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipPortal>
+                            <TooltipContent side="right">Open folder</TooltipContent>
+                          </TooltipPortal>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1651,12 +1801,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     popups.forEach((popup, id) => {
       const entry = previewStateRef.current[id];
       const children = (popup.folder?.children ?? []) as PopupChildNode[];
-      const firstNote = children.find(child => isNoteLikeNode(child));
 
       if (!entry) {
-        if (firstNote) {
-          requestPreview(id, firstNote);
-        }
+        // Removed auto-preview on mount - only highlight on hover
         return;
       }
 
@@ -1665,9 +1812,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         return;
       }
 
-      if (firstNote) {
-        requestPreview(id, firstNote);
-      } else if (activeChildId !== null) {
+      // Clear any stale activeChildId if no longer valid
+      if (activeChildId !== null) {
         setPreviewState(prev => {
           const current = prev[id];
           if (!current) return prev;
@@ -2497,9 +2643,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             <div
               key={popup.id}
               id={`popup-${popup.id}`}
-              className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
+              className={`popup-card absolute bg-gray-800 rounded-lg shadow-xl pointer-events-auto flex flex-col ${
+                popupEditMode.get(popup.id)
+                  ? 'border-2 border-blue-500 ring-2 ring-blue-400/30'
+                  : 'border border-gray-700'
+              } ${
                 isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
-              } ${popup.isHighlighted ? 'highlighted' : ''}`}
+              } ${popup.isHighlighted || hoverHighlightedPopup === popup.id ? 'highlighted' : ''}`}
               style={{
                 left: `${position.x}px`,
                 top: `${position.y}px`,
@@ -2537,9 +2687,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             >
               {/* Popup Header with Breadcrumb */}
               <div
-                className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+                className={`px-3 py-2 border-b flex items-center justify-between cursor-grab active:cursor-grabbing ${
+                  popupEditMode.get(popup.id)
+                    ? 'border-blue-600 bg-blue-600/20'
+                    : 'border-gray-700'
+                }`}
                 onMouseDown={(e) => onDragStart?.(popup.id, e)}
-                style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
+                style={{
+                  backgroundColor: popup.isDragging
+                    ? '#374151'
+                    : popupEditMode.get(popup.id)
+                    ? 'rgba(37, 99, 235, 0.15)'
+                    : 'transparent'
+                }}
               >
                 <div className="flex items-center gap-1.5 flex-1 min-w-0">
                   {(() => {
@@ -2845,7 +3005,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </div>
               </div>
               {/* Popup Content with virtualization for large lists */}
-              <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>
+              <div className="overflow-y-auto flex-1" style={{
+                contain: 'content',
+                contentVisibility: 'auto' as const,
+                paddingBottom: '40px',
+                minHeight: 0  // Required for flex child to scroll properly
+              }}>
                 {popup.isLoading ? (
                   <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                 ) : popup.folder?.children && popup.folder.children.length > 0 ? (
@@ -2866,9 +3031,21 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
+              {/* Edit Mode Badge Bar - Shows when in edit mode (replaces pin location) */}
+              {popupEditMode.get(popup.id) && (
+                <div className="px-3 py-2 bg-blue-900/20 border-t border-blue-600/50 flex items-center justify-center">
+                  <div className="px-3 py-1.5 text-sm font-semibold rounded bg-blue-600 text-white flex items-center gap-2 pointer-events-none">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                      <path d="m15 5 4 4"/>
+                    </svg>
+                    Edit Mode
+                  </div>
+                </div>
+              )}
               {/* Pin Button Bar (shown when highlighted during close mode) */}
               {/* Only show pin button if highlighted AND there's a parent in closing mode */}
-              {popup.isHighlighted && (() => {
+              {!popupEditMode.get(popup.id) && popup.isHighlighted && (() => {
                 // Check if any popup (likely a parent) is in closing mode
                 const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
                 return hasParentClosing
@@ -3225,9 +3402,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 <div
                   key={popup.id}
                   id={`popup-${popup.id}`}
-                  className={`popup-card absolute bg-gray-800 border border-gray-700 rounded-lg shadow-xl pointer-events-auto ${
+                  className={`popup-card absolute bg-gray-800 rounded-lg shadow-xl pointer-events-auto flex flex-col ${
+                    popupEditMode.get(popup.id)
+                      ? 'border-2 border-blue-500 ring-2 ring-blue-400/30'
+                      : 'border border-gray-700'
+                  } ${
                     isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
-                  } ${popup.isHighlighted ? 'highlighted' : ''}`}
+                  } ${popup.isHighlighted || hoverHighlightedPopup === popup.id ? 'highlighted' : ''}`}
                   style={{
                     left: `${position.x}px`,
                     top: `${position.y}px`,
@@ -3257,9 +3438,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 >
                   {/* Popup Header with Breadcrumb */}
                   <div
-                    className="px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-grab active:cursor-grabbing"
+                    className={`px-3 py-2 border-b flex items-center justify-between cursor-grab active:cursor-grabbing ${
+                      popupEditMode.get(popup.id)
+                        ? 'border-blue-600 bg-blue-600/20'
+                        : 'border-gray-700'
+                    }`}
                     onMouseDown={(e) => onDragStart?.(popup.id, e)}
-                    style={{ backgroundColor: popup.isDragging ? '#374151' : 'transparent' }}
+                    style={{
+                      backgroundColor: popup.isDragging
+                        ? '#374151'
+                        : popupEditMode.get(popup.id)
+                        ? 'rgba(37, 99, 235, 0.15)'
+                        : 'transparent'
+                    }}
                   >
                     <div className="flex items-center gap-1.5 flex-1 min-w-0">
                       {(() => {
@@ -3476,7 +3667,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     </div>
                   </div>
                   {/* Popup Content */}
-                  <div className="overflow-y-auto" style={{ maxHeight: 'calc(400px - 100px)', contain: 'content', contentVisibility: 'auto' as const, paddingBottom: '40px' }}>
+                  <div className="overflow-y-auto flex-1" style={{
+                    contain: 'content',
+                    contentVisibility: 'auto' as const,
+                    paddingBottom: '40px',
+                    minHeight: 0  // Required for flex child to scroll properly
+                  }}>
                     {popup.isLoading ? (
                       <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                     ) : popup.folder?.children && popup.folder.children.length > 0 ? (
@@ -3497,9 +3693,21 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                     )}
                   </div>
+                  {/* Edit Mode Badge Bar - Shows when in edit mode (replaces pin location) */}
+                  {popupEditMode.get(popup.id) && (
+                    <div className="px-3 py-2 bg-blue-900/20 border-t border-blue-600/50 flex items-center justify-center">
+                      <div className="px-3 py-1.5 text-sm font-semibold rounded bg-blue-600 text-white flex items-center gap-2 pointer-events-none">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
+                          <path d="m15 5 4 4"/>
+                        </svg>
+                        Edit Mode
+                      </div>
+                    </div>
+                  )}
                   {/* Pin Button Bar (shown when highlighted during close mode) */}
                   {/* Only show pin button if highlighted AND there's a parent in closing mode */}
-                  {popup.isHighlighted && (() => {
+                  {!popupEditMode.get(popup.id) && popup.isHighlighted && (() => {
                     // Check if any popup (likely a parent) is in closing mode
                     const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
                     return hasParentClosing

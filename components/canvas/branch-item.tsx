@@ -15,9 +15,10 @@ interface BranchItemProps {
   dataStore?: DataStore
   state?: CanvasState
   dispatch?: React.Dispatch<any>
+  editMode?: boolean
 }
 
-export function BranchItem({ branchId, parentId, dataStore: propDataStore, state: propState, dispatch: propDispatch }: BranchItemProps) {
+export function BranchItem({ branchId, parentId, dataStore: propDataStore, state: propState, dispatch: propDispatch, editMode }: BranchItemProps) {
   // Try to use canvas context if available, otherwise use props
   const canvasContext = useCanvas ? (() => { try { return useCanvas() } catch { return null } })() : null
   const dataStore = propDataStore || canvasContext?.dataStore
@@ -27,6 +28,11 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   // State for preview functionality
   const [isPreview, setIsPreview] = useState(false)
   const previewTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
+
+  // State for rename functionality
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renamingValue, setRenamingValue] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
 
   // Early return if dataStore is not available
   if (!dataStore) return null
@@ -205,6 +211,32 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   const borderColor = branch.type === 'note' ? '#3498db' :
                       branch.type === 'explore' ? '#f39c12' : '#27ae60'
 
+  // Rename handlers
+  const handleStartRename = () => {
+    setIsRenaming(true)
+    setRenamingValue(branch.title || '')
+    setTimeout(() => renameInputRef.current?.select(), 0)
+  }
+
+  const handleSaveRename = () => {
+    const trimmed = renamingValue.trim()
+    if (trimmed && trimmed !== branch.title && dataStore) {
+      dataStore.update(branchId, { title: trimmed })
+    }
+    setIsRenaming(false)
+  }
+
+  const handleCancelRename = () => {
+    setIsRenaming(false)
+    setRenamingValue('')
+  }
+
+  const handleDoubleClick = () => {
+    if (editMode) {
+      handleStartRename()
+    }
+  }
+
   return (
     <div
       style={{
@@ -233,25 +265,59 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       <div
         style={{
           flex: 1,
-          cursor: 'pointer',
+          cursor: editMode && !isRenaming ? 'pointer' : 'default',
         }}
-        onClick={handleClick}
+        onClick={isRenaming ? undefined : handleClick}
+        onDoubleClick={handleDoubleClick}
       >
-        <div style={{
-          fontSize: '14px',
-          fontWeight: 600,
-          color: '#2c3e50',
-          marginBottom: '4px',
-        }}>
-          {getTypeIcon(branch.type)} {branch.title}
-        </div>
-        <div style={{
-          fontSize: '12px',
-          color: '#7f8c8d',
-          lineHeight: 1.4,
-        }}>
-          {preview || 'Click to open'}
-        </div>
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            type="text"
+            value={renamingValue}
+            onChange={(e) => setRenamingValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleSaveRename()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                handleCancelRename()
+              }
+            }}
+            onBlur={handleSaveRename}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#2c3e50',
+              padding: '4px 8px',
+              border: '2px solid #3498db',
+              borderRadius: '4px',
+              outline: 'none',
+              background: 'white',
+            }}
+          />
+        ) : (
+          <>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#2c3e50',
+              marginBottom: '4px',
+            }}>
+              {getTypeIcon(branch.type)} {branch.title}
+            </div>
+            <div style={{
+              fontSize: '12px',
+              color: '#7f8c8d',
+              lineHeight: 1.4,
+            }}>
+              {preview || 'Click to open'}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Eye/View button */}
