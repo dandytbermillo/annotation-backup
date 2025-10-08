@@ -1918,38 +1918,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               {isIsolated ? '🔓' : '🔒'}
             </button>
 
-            {/* Edit/Rename button */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                handleStartRename()
-              }}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: 'none',
-                borderRadius: '50%',
-                width: '24px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                color: 'white',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                e.currentTarget.style.transform = 'scale(1.1)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                e.currentTarget.style.transform = 'scale(1)'
-              }}
-              title="Rename panel"
-            >
-              <Pencil size={12} />
-            </button>
-
             {onClose && (
               <button
                 className="panel-close"
@@ -2025,12 +1993,51 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                   }}
                 />
               ) : (
-                <span style={{
+                <div className="group" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
-                  textOverflow: 'ellipsis',
                   maxWidth: '300px',
-                }}>{panelTitle}</span>
+                }}>
+                  <span style={{
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>{panelTitle}</span>
+                  {/* Hover pencil icon for quick rename - inline with title */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleStartRename()
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '20px',
+                      height: '20px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      color: 'white',
+                      padding: 0,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                    }}
+                    title="Rename panel"
+                  >
+                    <Pencil size={11} />
+                  </button>
+                </div>
               )}
               {isIsolated && currentBranch.type !== 'main' && (
                 <span style={{

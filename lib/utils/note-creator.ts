@@ -1,6 +1,6 @@
 /**
- * Shared note creation utility
- * Used by both FloatingToolbar and NotesExplorer to ensure consistent behavior
+ * Shared note utilities
+ * Used across the app for consistent note creation, tracking, and recent notes management
  */
 
 interface CreateNoteOptions {
@@ -13,6 +13,45 @@ interface CreateNoteResult {
   success: boolean
   noteId?: string
   error?: string
+}
+
+/**
+ * Track note access in recent notes (database-only)
+ * Extracted from notes-explorer-phase1.tsx for reuse across active components
+ * @throws Error if tracking fails (non-2xx response or network error)
+ */
+export async function trackNoteAccess(noteId: string): Promise<void> {
+  try {
+    const response = await fetch('/api/items/recent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId: noteId })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to track note access: ${response.status} ${response.statusText}`)
+    }
+  } catch (error) {
+    console.error('Failed to track note access:', error)
+    throw error // Re-throw so .then() doesn't execute on failure
+  }
+}
+
+/**
+ * Fetch recent notes from API
+ * Extracted from notes-explorer-phase1.tsx for reuse across active components
+ */
+export async function fetchRecentNotes(limit: number = 5): Promise<any[]> {
+  try {
+    const response = await fetch(`/api/items/recent?limit=${limit}`)
+    if (!response.ok) throw new Error('Failed to fetch recent items')
+
+    const data = await response.json()
+    return data.items || []
+  } catch (error) {
+    console.error('Error fetching recent notes:', error)
+    return []
+  }
 }
 
 /**
@@ -77,15 +116,7 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     const noteId = data.item.id
 
     // Track the new note as recently accessed
-    try {
-      await fetch('/api/items/recent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId: noteId })
-      })
-    } catch (err) {
-      console.warn('[createNote] Failed to track note access:', err)
-    }
+    await trackNoteAccess(noteId)
 
     return {
       success: true,

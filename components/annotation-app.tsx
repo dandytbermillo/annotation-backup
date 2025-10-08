@@ -2,10 +2,10 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import dynamic from 'next/dynamic'
-// Phase 1: Using notes explorer with API integration and feature flag
 import { FloatingToolbar, type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
+import { trackNoteAccess } from "@/lib/utils/note-creator"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
@@ -62,6 +62,9 @@ function AnnotationAppContent() {
   // Toolbar active panel state - persists across toolbar close/reopen
   // When user closes toolbar and reopens it, the last opened panel will be restored
   const [toolbarActivePanel, setToolbarActivePanel] = useState<"recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | "add-component" | "display" | null>(null)
+
+  // Recent notes refresh counter - incremented when note is accessed to refresh toolbar's recent notes list
+  const [recentNotesRefreshTrigger, setRecentNotesRefreshTrigger] = useState(0)
 
   // Display settings state (backdrop style preference)
   const [backdropStyle, setBackdropStyle] = useState<string>('none')
@@ -669,6 +672,18 @@ function AnnotationAppContent() {
 
   // Handle note selection with force re-center support
   const handleNoteSelect = (noteId: string) => {
+    // Track note access in recent notes and refresh toolbar's recent notes list
+    // Only refresh if tracking succeeds (promise resolves)
+    trackNoteAccess(noteId)
+      .then(() => {
+        // Increment refresh trigger after tracking completes to update toolbar's recent notes
+        setRecentNotesRefreshTrigger(prev => prev + 1)
+      })
+      .catch(() => {
+        // Error already logged by trackNoteAccess, silently skip refresh
+        // Note will still open, just won't appear in recent notes
+      })
+
     if (noteId === selectedNoteId) {
       // Same note clicked - force re-center by incrementing trigger
       setCenterTrigger(prev => prev + 1)
@@ -1606,8 +1621,6 @@ function AnnotationAppContent() {
     }
   }
 
-  // Feature flag for Phase 1 API (can be toggled via environment variable or UI)
-  const usePhase1API = process.env.NEXT_PUBLIC_USE_PHASE1_API === 'true' || false
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
   return (
@@ -1630,6 +1643,7 @@ function AnnotationAppContent() {
           onFolderRenamed={handleFolderRenamed}
           activePanel={toolbarActivePanel}
           onActivePanelChange={setToolbarActivePanel}
+          refreshRecentNotes={recentNotesRefreshTrigger}
         />
       )}
       

@@ -8,7 +8,7 @@ import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { BranchesSection } from "@/components/canvas/branches-section"
-import { createNote } from "@/lib/utils/note-creator"
+import { createNote, fetchRecentNotes } from "@/lib/utils/note-creator"
 import { buildMultilinePreview } from "@/lib/utils/branch-preview"
 
 // Folder color palette - similar to sticky notes pattern
@@ -67,6 +67,7 @@ type FloatingToolbarProps = {
   onFolderRenamed?: (folderId: string, newName: string) => void // Callback when folder is renamed - updates open popups
   activePanel?: PanelKey // Controlled active panel state from parent
   onActivePanelChange?: (panel: PanelKey) => void // Callback when active panel changes
+  refreshRecentNotes?: number // Increment this counter to trigger recent notes refresh (fixes stale list when toolbar stays open)
 }
 
 interface RecentNote {
@@ -171,7 +172,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
@@ -436,17 +437,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }, [x, y])
 
   // Fetch recent notes from API
+  // Refreshes on mount and when refreshRecentNotes counter changes
   useEffect(() => {
-    const fetchRecentNotes = async () => {
+    const loadRecentNotes = async () => {
       console.log('=== [FloatingToolbar] Fetching recent notes ===')
       setIsLoadingRecent(true)
       try {
-        const response = await fetch('/api/items/recent?limit=5')
-        if (!response.ok) throw new Error('Failed to fetch recent notes')
-
-        const data = await response.json()
-        console.log('=== [FloatingToolbar] API Response:', data)
-        const items = data.items || []
+        const items = await fetchRecentNotes(5)
         console.log('=== [FloatingToolbar] Items count:', items.length)
 
         // Transform API data to match our UI format
@@ -497,8 +494,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       }
     }
 
-    fetchRecentNotes()
-  }, [])
+    loadRecentNotes()
+  }, [refreshRecentNotes])
 
   // Fetch organization tree from API
   useEffect(() => {

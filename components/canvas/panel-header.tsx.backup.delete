@@ -119,20 +119,23 @@ export function PanelHeader({ panelId, branch }: PanelHeaderProps) {
             style={{ cursor: 'text' }}
           />
         ) : (
-          <span>{branch.title}</span>
+          <div className="group flex items-center gap-1.5 flex-1">
+            <span>{branch.title}</span>
+            {/* Hover pencil icon for quick rename */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                handleStartRename()
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-indigo-100 rounded pointer-events-auto flex-shrink-0"
+              title="Rename branch"
+            >
+              <Pencil className="w-3 h-3 text-indigo-400" />
+            </button>
+          </div>
         )}
         <div className="flex items-center gap-2">
-          {/* Edit button */}
-          <button
-            className="bg-gray-100 border border-gray-300 text-gray-600 w-6 h-6 rounded-full cursor-pointer text-xs flex items-center justify-center transition-all duration-200 hover:bg-gray-200 hover:border-gray-500"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleStartRename()
-            }}
-            title="Rename branch"
-          >
-            <Pencil className="w-3 h-3" />
-          </button>
           {/* Save As button */}
           <button
             className="bg-blue-100 border border-blue-300 text-blue-600 px-3 h-6 rounded-full cursor-pointer text-xs flex items-center gap-1 transition-all duration-200 hover:bg-blue-200 hover:border-blue-500"
