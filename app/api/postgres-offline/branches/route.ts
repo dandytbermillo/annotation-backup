@@ -12,14 +12,15 @@ const coerceEntityId = (id: string) => (validateUuid(id) ? id : uuidv5(id, ID_NA
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { 
+    const {
       id,
-      noteId = '', 
-      parentId = '', 
-      type = 'note', 
-      originalText = '', 
-      metadata = {}, 
-      anchors 
+      noteId = '',
+      parentId = '',
+      type = 'note',
+      title = '',
+      originalText = '',
+      metadata = {},
+      anchors
     } = body
     
     // Accept only real UUIDs for primary key; otherwise let DB generate one
@@ -35,17 +36,18 @@ export async function POST(request: NextRequest) {
     if (FEATURE_WORKSPACE_SCOPING) {
       return await withWorkspaceClient(serverPool, async (client, workspaceId) => {
         const insertResult = await client.query(
-          `INSERT INTO branches 
-           (id, note_id, parent_id, type, original_text, metadata, anchors, workspace_id, created_at, updated_at)
-           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::jsonb, $7::jsonb, $8::uuid, NOW(), NOW())
-           RETURNING id, note_id as "noteId", parent_id as "parentId", 
-                     type, original_text as "originalText", metadata, anchors, 
+          `INSERT INTO branches
+           (id, note_id, parent_id, type, title, original_text, metadata, anchors, workspace_id, created_at, updated_at)
+           VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::jsonb, $8::jsonb, $9::uuid, NOW(), NOW())
+           RETURNING id, note_id as "noteId", parent_id as "parentId",
+                     type, title, original_text as "originalText", metadata, anchors,
                      created_at as "createdAt", updated_at as "updatedAt"`,
           [
             idOrNull,
             noteKey,
             parentIdOrNull,
             type,
+            title,
             originalText,
             JSON.stringify(metadata),
             anchors ? JSON.stringify(anchors) : null,
@@ -58,17 +60,18 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await serverPool.query(
-      `INSERT INTO branches 
-       (id, note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
-       VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::jsonb, $7::jsonb, NOW(), NOW())
-       RETURNING id, note_id as "noteId", parent_id as "parentId", 
-                 type, original_text as "originalText", metadata, anchors, 
+      `INSERT INTO branches
+       (id, note_id, parent_id, type, title, original_text, metadata, anchors, created_at, updated_at)
+       VALUES (COALESCE($1::uuid, gen_random_uuid()), $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::jsonb, $8::jsonb, NOW(), NOW())
+       RETURNING id, note_id as "noteId", parent_id as "parentId",
+                 type, title, original_text as "originalText", metadata, anchors,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
         idOrNull,
         noteKey,
         parentIdOrNull,
         type,
+        title,
         originalText,
         JSON.stringify(metadata),
         anchors ? JSON.stringify(anchors) : null
@@ -78,7 +81,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result.rows[0], { status: 201 })
   } catch (error) {
     console.error('[POST /api/postgres-offline/branches] Error:', error)
-    console.error('Request body:', { id, noteId, parentId, type, originalText, anchors })
     return NextResponse.json(
       { error: 'Failed to create branch', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
@@ -105,10 +107,10 @@ export async function GET(request: NextRequest) {
     if (FEATURE_WORKSPACE_SCOPING) {
       return await withWorkspaceClient(serverPool, async (client) => {
         const scopedResult = await client.query(
-          `SELECT id, note_id as "noteId", parent_id as "parentId", 
-                  type, original_text as "originalText", metadata, anchors, 
+          `SELECT id, note_id as "noteId", parent_id as "parentId",
+                  type, title, original_text as "originalText", metadata, anchors,
                   created_at as "createdAt", updated_at as "updatedAt"
-           FROM branches 
+           FROM branches
            WHERE note_id = $1
              AND deleted_at IS NULL
            ORDER BY created_at ASC`,
@@ -120,10 +122,10 @@ export async function GET(request: NextRequest) {
     }
 
     const result = await serverPool.query(
-      `SELECT id, note_id as "noteId", parent_id as "parentId", 
-              type, original_text as "originalText", metadata, anchors, 
+      `SELECT id, note_id as "noteId", parent_id as "parentId",
+              type, title, original_text as "originalText", metadata, anchors,
               created_at as "createdAt", updated_at as "updatedAt"
-       FROM branches 
+       FROM branches
        WHERE note_id = $1
          AND deleted_at IS NULL
        ORDER BY created_at ASC`,

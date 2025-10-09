@@ -25,6 +25,7 @@ import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { createNote } from "@/lib/utils/note-creator"
 import { Save, Pencil } from "lucide-react"
+import { TypeSelector, type AnnotationType } from "./type-selector"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -157,9 +158,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
           return
         }
 
-        // Only update if this panel is showing the renamed note
-        if (renamedNoteId === noteId) {
-          console.log('[CanvasPanel] Received rename event for this panel:', newTitle.trim())
+        // Only update if this is the main panel and showing the renamed note
+        // Branch panels manage their own titles independently via handleSaveRename
+        if (panelId === 'main' && renamedNoteId === noteId) {
+          console.log('[CanvasPanel] Main panel received note rename event:', newTitle.trim())
 
           // Guard: Ensure dataStore.update doesn't throw
           try {
@@ -837,11 +839,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     
     // If no provider data, use store data or branch prop
     const data = storeData || branch
+    // CRITICAL: Return a deep copy to prevent shared object references
+    // Without this, multiple panels would modify the same object causing title/data sync issues
+    const dataCopy = JSON.parse(JSON.stringify(data))
     // Ensure branches array exists
-    if (!data.branches) {
-      data.branches = []
+    if (!dataCopy.branches) {
+      dataCopy.branches = []
     }
-    return data
+    return dataCopy
   }
   const currentBranch = getBranchData()
   
@@ -941,9 +946,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               window.localStorage.setItem(`${cachedKey}:invalidated`, Date.now().toString())
 
               // 3. Emit event for live components (e.g., popup overlay) to refresh
-              window.dispatchEvent(new CustomEvent('note-renamed', {
-                detail: { noteId, newTitle: result.title }
-              }))
+              // CRITICAL: Only emit note-renamed event for main panel (note-level rename)
+              // Branch panels manage their own titles independently
+              if (panelId === 'main') {
+                window.dispatchEvent(new CustomEvent('note-renamed', {
+                  detail: { noteId, newTitle: result.title }
+                }))
+              }
 
               console.log('[CanvasPanel] Invalidated localStorage cache with tombstone')
             } catch (cacheError) {
@@ -999,6 +1008,33 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     setTitleValue(currentBranch.title || '')
   }
 
+  const handleTypeChange = async (newType: AnnotationType) => {
+    const plainProvider = getPlainProvider()
+    if (!plainProvider || !noteId || panelId === 'main') return
+
+    try {
+      // Extract branch ID (remove 'branch-' prefix)
+      const branchId = panelId.replace('branch-', '')
+
+      // Call provider method which handles API call
+      await plainProvider.changeBranchType(branchId, newType)
+
+      // Update local state immediately (provider already updated cache)
+      const current = dataStore.get(panelId)
+      if (current) {
+        dataStore.update(panelId, { type: newType })
+      }
+
+      // Force re-render
+      dispatch({ type: "BRANCH_UPDATED" })
+
+      console.log(`✓ Changed annotation type to ${newType}`)
+    } catch (error) {
+      console.error('[CanvasPanel] Failed to change type:', error)
+      alert(`Failed to change type: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
 
@@ -1030,6 +1066,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       // Explicitly preserve other fields we care about
       type: currentBranch.type,
       position: currentBranch.position,
+      title: currentBranch.title, // Preserve title to prevent overwriting during edits
     }
 
     // Update both stores with panel-specific content + preview
@@ -1954,6 +1991,15 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
               </button>
             )}
           </div>
+
+          {/* Type Selector - only for branch panels */}
+          {panelId !== 'main' && currentBranch.type && currentBranch.type !== 'main' && (
+            <TypeSelector
+              currentType={currentBranch.type as AnnotationType}
+              onTypeChange={handleTypeChange}
+              disabled={false}
+            />
+          )}
 
           {/* Panel Title */}
           {showPanelTitle && (

@@ -186,15 +186,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
-  // Debug: Log when FloatingToolbar renders and when canvasState changes
-  useEffect(() => {
-    console.log('[FloatingToolbar] Component rendered or canvasState changed:', {
-      hasCanvasState: !!canvasState,
-      lastUpdate: canvasState?.lastUpdate,
-      timestamp: Date.now()
-    })
-  }, [canvasState])
-
   // Use controlled activePanel from parent if provided, otherwise use internal state
   const [internalActivePanel, setInternalActivePanel] = useState<PanelKey>(null)
   const activePanel = activePanelProp !== undefined ? activePanelProp : internalActivePanel
@@ -2001,28 +1992,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Use activePanelId if available, otherwise default to 'main'
     const currentPanelId = activePanelId || 'main'
-
-    console.log('[FloatingToolbar] renderBranchesPanel:', {
-      activePanelId,
-      currentPanelId,
-      hasDataStore: !!dataStore,
-      hasState: !!canvasStateValue,
-      hasDispatch: !!canvasDispatchValue,
-      lastUpdate,
-      usingPropsState: !!canvasState,
-      usingWindowState: !canvasState && !!canvasStateValue,
-      timestamp: Date.now()
-    })
-
-    if (dataStore && currentPanelId) {
-      const currentBranchData = dataStore.get(currentPanelId)
-      console.log('[FloatingToolbar] Current panel data:', {
-        panelId: currentPanelId,
-        hasBranchData: !!currentBranchData,
-        branchesCount: currentBranchData?.branches?.length || 0,
-        branches: currentBranchData?.branches
-      })
-    }
 
     if (!dataStore) {
       return (

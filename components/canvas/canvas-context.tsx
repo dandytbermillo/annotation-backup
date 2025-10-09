@@ -86,16 +86,10 @@ function canvasReducer(state: CanvasState, action: any): CanvasState {
     case "BRANCH_UPDATED":
       // This action is just to trigger a re-render
       // The actual data is stored in the dataStore
-      const newTimestamp = Date.now()
-      console.log('[CanvasContext Reducer] BRANCH_UPDATED received:', {
-        oldLastUpdate: state.lastUpdate,
-        newLastUpdate: newTimestamp,
-        timestamp: newTimestamp
-      })
       return {
         ...state,
         // Force a new object to trigger re-render
-        lastUpdate: newTimestamp,
+        lastUpdate: Date.now(),
       }
     case "SET_PANELS":
       // Bulk set all panels (used for loading saved state)
@@ -365,13 +359,15 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
             id: uiId,
             type: branch.type as 'note' | 'explore' | 'promote',
             originalText: branch.originalText || '',
-            title: branch.title || '',
+            // Prioritize: 1) Database title, 2) Cached title, 3) Empty string
+            // Database title is now persisted on branch creation
+            title: branch.title || cachedBranch?.title || '',
             content: cachedBranch?.content,
             preview: normalizedPreview,
             hasHydratedContent: cachedBranch?.hasHydratedContent ?? false,
-            position: branch.metadata?.position || cachedBranch?.position || { 
-              x: 2500 + Math.random() * 500, 
-              y: 1500 + Math.random() * 500 
+            position: branch.metadata?.position || cachedBranch?.position || {
+              x: 2500 + Math.random() * 500,
+              y: 1500 + Math.random() * 500
             },
             dimensions: branch.metadata?.dimensions || cachedBranch?.dimensions || { width: 400, height: 300 },
             isEditable: true,

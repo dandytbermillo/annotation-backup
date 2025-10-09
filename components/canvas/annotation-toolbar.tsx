@@ -184,6 +184,7 @@ export function AnnotationToolbar() {
         noteId: noteId,
         parentId: panel,  // Keep as-is: 'main', 'branch-xxx', or UUID
         type: type,
+        title: draftBranch.title, // Persist title to database immediately
         originalText: text,
         metadata: {
           annotationType: type,
@@ -207,17 +208,7 @@ export function AnnotationToolbar() {
      if (parentPanel) {
         const branches = parentPanel.branches || []
         const newBranches = [...branches, branchId]
-        console.log('[AnnotationToolbar] Updating parent branches:', {
-          panel,
-          oldBranches: branches,
-          newBranches,
-          branchId
-        })
         dataStore.update(panel, { branches: newBranches })
-        console.log('[AnnotationToolbar] After update, dataStore has:', {
-          panel,
-          branches: dataStore.get(panel)?.branches
-        })
       }
     } else {
       // Yjs mode: Use UnifiedProvider (collab)
@@ -283,9 +274,7 @@ export function AnnotationToolbar() {
     }))
 
     // Force a re-render by triggering branch updated action
-    console.log('[AnnotationToolbar] Dispatching BRANCH_UPDATED action')
     dispatch({ type: "BRANCH_UPDATED" })
-    console.log('[AnnotationToolbar] After dispatch, should trigger context update')
 
     // Hide the toolbar after creating annotation
     const toolbar = document.getElementById("annotation-toolbar")

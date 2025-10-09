@@ -46,14 +46,6 @@ export function CanvasAwareFloatingToolbar(
     setMounted(true)
   }, [])
 
-  // Debug: Log when state.lastUpdate changes (should trigger re-render)
-  useEffect(() => {
-    console.log('[CanvasAwareFloatingToolbar] State updated:', {
-      lastUpdate: state?.lastUpdate,
-      timestamp: Date.now()
-    })
-  }, [state?.lastUpdate])
-
   if (!mounted) return null
 
   // Pass context values as props to FloatingToolbar

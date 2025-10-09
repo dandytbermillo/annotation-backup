@@ -32,17 +32,31 @@ export async function POST(
     await client.query('BEGIN')
 
     try {
-      // 1. Update notes table (canonical source)
-      const notesResult = await client.query(
-        `UPDATE notes
-         SET title = $1, updated_at = NOW()
-         WHERE id = $2
-         RETURNING id, title, updated_at`,
-        [trimmedTitle, noteId]
-      )
+      // 1. Update notes table (canonical source) - ONLY for main panel
+      // Branch panels manage their own titles independently
+      let notesResult
+      if (panelId === 'main') {
+        notesResult = await client.query(
+          `UPDATE notes
+           SET title = $1, updated_at = NOW()
+           WHERE id = $2
+           RETURNING id, title, updated_at`,
+          [trimmedTitle, noteId]
+        )
 
-      if (notesResult.rows.length === 0) {
-        throw new Error('Note not found')
+        if (notesResult.rows.length === 0) {
+          throw new Error('Note not found')
+        }
+      } else {
+        // For branch panels, just verify note exists
+        notesResult = await client.query(
+          `SELECT id, title, updated_at FROM notes WHERE id = $1`,
+          [noteId]
+        )
+
+        if (notesResult.rows.length === 0) {
+          throw new Error('Note not found')
+        }
       }
 
       // 2. Update panels table (layout/state)
@@ -82,13 +96,16 @@ export async function POST(
         }
       }
 
-      // 3. Update items table (knowledge tree/popup overlay)
-      await client.query(
-        `UPDATE items
-         SET name = $1, updated_at = NOW()
-         WHERE id = $2`,
-        [trimmedTitle, noteId]
-      )
+      // 3. Update items table (knowledge tree/popup overlay) - ONLY for main panel
+      // Branch panels are internal to the note and don't affect the note's filename
+      if (panelId === 'main') {
+        await client.query(
+          `UPDATE items
+           SET name = $1, updated_at = NOW()
+           WHERE id = $2`,
+          [trimmedTitle, noteId]
+        )
+      }
 
       // COMMIT - all updates succeeded
       await client.query('COMMIT')

@@ -1,0 +1,37 @@
+diff --git a/components/canvas/canvas-panel.tsx b/components/canvas/canvas-panel.tsx
+index abc123..def456 100644
+--- a/components/canvas/canvas-panel.tsx
++++ b/components/canvas/canvas-panel.tsx
+@@ -158,8 +158,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Can
+           return
+         }
+
+-        // Only update if this panel is showing the renamed note
+-        if (renamedNoteId === noteId) {
+-          console.log('[CanvasPanel] Received rename event for this panel:', newTitle.trim())
++        // Only update if this is the main panel and showing the renamed note
++        // Branch panels manage their own titles independently via handleSaveRename
++        if (panelId === 'main' && renamedNoteId === noteId) {
++          console.log('[CanvasPanel] Main panel received note rename event:', newTitle.trim())
+
+           // Guard: Ensure dataStore.update doesn't throw
+           try {
+@@ -944,10 +946,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Can
+               // 2. Set timestamped tombstone (self-expires after 5 seconds)
+               window.localStorage.setItem(`${cachedKey}:invalidated`, Date.now().toString())
+
+-              // 3. Emit event for live components (e.g., popup overlay) to refresh
+-              window.dispatchEvent(new CustomEvent('note-renamed', {
+-                detail: { noteId, newTitle: result.title }
+-              }))
++              // 3. Emit event for live components (e.g., popup overlay) to refresh
++              // CRITICAL: Only emit note-renamed event for main panel (note-level rename)
++              // Branch panels manage their own titles independently
++              if (panelId === 'main') {
++                window.dispatchEvent(new CustomEvent('note-renamed', {
++                  detail: { noteId, newTitle: result.title }
++                }))
++              }
+
+               console.log('[CanvasPanel] Invalidated localStorage cache with tombstone')
+             } catch (cacheError) {

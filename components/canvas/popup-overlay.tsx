@@ -114,6 +114,7 @@ interface PopupOverlayProps {
   onFolderCreated?: (popupId: string, newFolder: PopupChildNode) => void; // Called after folder created - parent should update popup children
   onFolderRenamed?: (folderId: string, newName: string) => void; // Called after folder renamed - parent should sync state
   onPopupCardClick?: () => void; // Called when clicking on popup card - used to close floating toolbar
+  onContextMenu?: (event: React.MouseEvent) => void; // Handle right-click to show floating toolbar
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
@@ -202,6 +203,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onFolderCreated,
   onFolderRenamed,
   onPopupCardClick,
+  onContextMenu,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'none', // Backdrop style preference (default to 'none')
 }) => {
@@ -2589,6 +2591,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           onPopupCardClick?.();
         }
       }}
+      onContextMenu={onContextMenu}
     >
       {/* Transform container - applies pan/zoom to all children */}
       <div ref={containerRef} className="absolute inset-0" style={containerStyle}>

@@ -34,8 +34,22 @@ export interface Branch {
   noteId: string
   parentId: string
   type: 'note' | 'explore' | 'promote'
+  title?: string
   originalText: string
-  metadata?: Record<string, any>
+  metadata?: {
+    annotationType?: string
+    color?: string
+    typeHistory?: Array<{
+      type: 'note' | 'explore' | 'promote'
+      changedAt: string
+      reason: 'initial' | 'user_change'
+    }>
+    preview?: string
+    displayId?: string
+    position?: { x: number; y: number }
+    dimensions?: { width: number; height: number }
+    [key: string]: any
+  }
   anchors?: {
     start: number
     end: number
@@ -742,6 +756,7 @@ export class PlainOfflineProvider extends EventEmitter {
       noteId: branch.noteId || '',
       parentId: branch.parentId || '',
       type: branch.type || 'note',
+      title: branch.title, // Preserve title for database persistence
       originalText: branch.originalText || '',
       metadata: branch.metadata || {},
       anchors: branch.anchors,
@@ -842,6 +857,78 @@ export class PlainOfflineProvider extends EventEmitter {
 
   getBranchesForNote(noteId: string): Branch[] {
     return Array.from(this.branches.values()).filter(b => b.noteId === noteId)
+  }
+
+  /**
+   * Change the type of an existing branch and track history
+   */
+  async changeBranchType(
+    branchId: string,
+    newType: 'note' | 'explore' | 'promote'
+  ): Promise<void> {
+    const branch = this.branches.get(branchId)
+    if (!branch) {
+      throw new Error(`Branch not found: ${branchId}`)
+    }
+
+    const oldType = branch.type
+    if (oldType === newType) {
+      return // No change needed
+    }
+
+    // Update type history in metadata
+    const typeHistory = branch.metadata?.typeHistory || []
+    typeHistory.push({
+      type: newType,
+      changedAt: new Date().toISOString(),
+      reason: 'user_change'
+    })
+
+    // Update branch - title stays the same (user may have customized it)
+    const updated: Branch = {
+      ...branch,
+      type: newType,
+      metadata: {
+        ...branch.metadata,
+        annotationType: newType,
+        typeHistory
+      },
+      updatedAt: new Date()
+    }
+
+    // Update in-memory cache
+    this.branches.set(branchId, updated)
+
+    // Persist to database via API
+    try {
+      // Use WebPostgresOfflineAdapter which calls the API
+      const response = await fetch(`/api/postgres-offline/branches/${branchId}/change-type`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newType })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Failed to change branch type: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      // Update cache with server response
+      this.branches.set(branchId, result)
+
+      // Emit event for UI to react
+      this.emit('branch:updated', result)
+
+      console.log(`✓ Changed branch ${branchId} from ${oldType} to ${newType}`)
+    } catch (error) {
+      console.error('[PlainOfflineProvider] Failed to change branch type:', error)
+
+      // Revert in-memory change on failure
+      this.branches.set(branchId, branch)
+
+      throw error
+    }
   }
 
   /**

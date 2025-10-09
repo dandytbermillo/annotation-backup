@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import dynamic from 'next/dynamic'
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
+import { FloatingToolbar } from "./floating-toolbar"
 import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
@@ -1706,8 +1707,29 @@ function AnnotationAppContent() {
           onFolderCreated={handleFolderCreated}
           onFolderRenamed={handleFolderRenamed}
           onPopupCardClick={handleCloseNotesWidget}
+          onContextMenu={handleContextMenu}
           sidebarOpen={false}
           backdropStyle={backdropStyle}
+        />
+      )}
+
+      {/* Fallback Floating Toolbar - renders when no note is selected (selectedNoteId is null) */}
+      {/* This ensures right-click and Cmd+K work immediately after app reload */}
+      {showNotesWidget && !selectedNoteId && (
+        <FloatingToolbar
+          x={notesWidgetPosition.x}
+          y={notesWidgetPosition.y}
+          onClose={handleCloseNotesWidget}
+          onSelectNote={handleNoteSelect}
+          onCreateOverlayPopup={handleCreateOverlayPopup}
+          onAddComponent={handleAddComponentFromToolbar}
+          editorRef={activeEditorRef}
+          activePanelId={activePanelId}
+          onBackdropStyleChange={handleBackdropStyleChange}
+          onFolderRenamed={handleFolderRenamed}
+          activePanel={toolbarActivePanel}
+          onActivePanelChange={setToolbarActivePanel}
+          refreshRecentNotes={recentNotesRefreshTrigger}
         />
       )}
     </div>

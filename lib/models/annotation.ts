@@ -114,22 +114,27 @@ export function createAnnotationBranch(
   selectedText: string,
   position: { x: number; y: number }
 ): Omit<AnnotationBranch, 'id' | 'created_at' | 'updated_at'> {
-  const truncatedText = selectedText.length > 30 
-    ? selectedText.substring(0, 30) + '...' 
+  const truncatedText = selectedText.length > 50
+    ? selectedText.substring(0, 50) + '...'
     : selectedText
-    
+
   return {
     noteId,
     parentId,
     type,
-    title: `${type.charAt(0).toUpperCase() + type.slice(1)} on "${truncatedText}"`,
+    title: truncatedText,
     content: selectedText.trim()
       ? `<blockquote><p>${selectedText}</p></blockquote>`
       : `<blockquote><p></p></blockquote>`,
     originalText: selectedText,
     metadata: {
       annotationType: type,
-      color: getAnnotationColor(type)
+      color: getAnnotationColor(type),
+      typeHistory: [{
+        type,
+        changedAt: new Date().toISOString(),
+        reason: 'initial'
+      }]
     },
     branches: [],
     position,

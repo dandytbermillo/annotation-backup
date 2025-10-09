@@ -122,32 +122,34 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
    */
   async createBranch(input: Partial<Branch>): Promise<Branch> {
     const pool = this.getPool()
-    const { 
-      noteId = '', 
-      parentId = '', 
-      type = 'note', 
-      originalText = '', 
-      metadata = {}, 
-      anchors 
+    const {
+      noteId = '',
+      parentId = '',
+      type = 'note',
+      title = '',
+      originalText = '',
+      metadata = {},
+      anchors
     } = input
-    
+
     const result = await pool.query<Branch>(
-      `INSERT INTO branches 
-       (note_id, parent_id, type, original_text, metadata, anchors, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, NOW(), NOW())
-       RETURNING id, note_id as "noteId", parent_id as "parentId", 
-                 type, original_text as "originalText", metadata, anchors, 
+      `INSERT INTO branches
+       (note_id, parent_id, type, title, original_text, metadata, anchors, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, NOW(), NOW())
+       RETURNING id, note_id as "noteId", parent_id as "parentId",
+                 type, title, original_text as "originalText", metadata, anchors,
                  created_at as "createdAt", updated_at as "updatedAt"`,
       [
-        noteId, 
-        parentId, 
-        type, 
-        originalText, 
-        JSON.stringify(metadata), 
+        noteId,
+        parentId,
+        type,
+        title,
+        originalText,
+        JSON.stringify(metadata),
         anchors ? JSON.stringify(anchors) : null
       ]
     )
-    
+
     return result.rows[0]
   }
 
@@ -212,10 +214,10 @@ export abstract class PostgresOfflineAdapter extends PostgresAdapter implements 
     const pool = this.getPool()
     
     const result = await pool.query<Branch>(
-      `SELECT id, note_id as "noteId", parent_id as "parentId", 
-              type, original_text as "originalText", metadata, anchors, 
+      `SELECT id, note_id as "noteId", parent_id as "parentId",
+              type, title, original_text as "originalText", metadata, anchors,
               created_at as "createdAt", updated_at as "updatedAt"
-       FROM branches 
+       FROM branches
        WHERE note_id = $1
        ORDER BY created_at ASC`,
       [noteId]
