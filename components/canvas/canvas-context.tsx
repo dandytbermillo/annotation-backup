@@ -86,10 +86,16 @@ function canvasReducer(state: CanvasState, action: any): CanvasState {
     case "BRANCH_UPDATED":
       // This action is just to trigger a re-render
       // The actual data is stored in the dataStore
+      const newTimestamp = Date.now()
+      console.log('[CanvasContext Reducer] BRANCH_UPDATED received:', {
+        oldLastUpdate: state.lastUpdate,
+        newLastUpdate: newTimestamp,
+        timestamp: newTimestamp
+      })
       return {
         ...state,
         // Force a new object to trigger re-render
-        lastUpdate: Date.now(),
+        lastUpdate: newTimestamp,
       }
     case "SET_PANELS":
       // Bulk set all panels (used for loading saved state)
@@ -447,6 +453,15 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
       })
     }, 100)
   }, [noteId])
+
+  // Keep global state reference fresh (update whenever state changes)
+  // Note: FloatingToolbar now subscribes to DataStore events directly instead of canvas state events
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      ;(window as any).canvasState = state
+      ;(window as any).canvasDispatch = dispatch
+    }
+  }, [state, dispatch])
 
   return <CanvasContext.Provider value={{ state, dispatch, dataStore, events, noteId, onRegisterActiveEditor }}>{children}</CanvasContext.Provider>
 }

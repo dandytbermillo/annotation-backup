@@ -1020,12 +1020,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       delete nextMetadata.preview
     }
 
+    // CRITICAL: Don't spread entire currentBranch - it would overwrite branches array!
+    // Only update content/preview/metadata, preserve branches managed by AnnotationToolbar
     const updatedData = {
-      ...currentBranch,
       content: payload,
       preview: previewText,
       hasHydratedContent: true,
       metadata: nextMetadata,
+      // Explicitly preserve other fields we care about
+      type: currentBranch.type,
+      position: currentBranch.position,
     }
 
     // Update both stores with panel-specific content + preview

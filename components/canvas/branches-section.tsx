@@ -77,6 +77,25 @@ Features:
       // Plain mode: Get data from dataStore
       currentBranch = dataStore.get(panelId) || branch
       branchesMap = dataStore
+      console.log('[BranchesSection] Reading from dataStore:', {
+        panelId,
+        branchesCount: currentBranch?.branches?.length || 0,
+        branches: currentBranch?.branches,
+        lastUpdate: state?.lastUpdate
+      })
+
+      // Debug: Log each branch ID and its data
+      if (currentBranch?.branches) {
+        currentBranch.branches.forEach((branchId: string) => {
+          const branchData = branchesMap.get(branchId) || dataStore.get(branchId)
+          console.log('[BranchesSection] Branch:', {
+            id: branchId,
+            type: branchData?.type,
+            hasData: !!branchData,
+            metadata: branchData?.metadata
+          })
+        })
+      }
     } else {
       // Yjs mode: Get branch data from UnifiedProvider
       const provider = UnifiedProvider.getInstance()
@@ -86,11 +105,28 @@ Features:
 
     if (!currentBranch.branches || currentBranch.branches.length === 0) return []
 
-    return currentBranch.branches.filter((branchId: string) => {
+    const filtered = currentBranch.branches.filter((branchId: string) => {
       if (activeFilter === "all") return true
       const childBranch = branchesMap.get(branchId) || dataStore.get(branchId)
-      return childBranch && childBranch.type === activeFilter
+      const shouldInclude = childBranch && childBranch.type === activeFilter
+      console.log('[BranchesSection] Filter check:', {
+        branchId,
+        activeFilter,
+        branchType: childBranch?.type,
+        hasChildBranch: !!childBranch,
+        shouldInclude
+      })
+      return shouldInclude
     })
+
+    console.log('[BranchesSection] Filtered branches:', {
+      totalCount: currentBranch.branches.length,
+      filteredCount: filtered.length,
+      activeFilter,
+      filtered: filtered
+    })
+
+    return filtered
   }
 
   const filteredBranches = getFilteredBranches()

@@ -39,6 +39,7 @@ interface ModernAnnotationCanvasProps {
   showAddComponentMenu?: boolean
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
+  children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
 }
 
 interface CanvasImperativeHandle {
@@ -1037,6 +1038,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   <IsolationProvider config={{ enabled: false }}>
     <CanvasProvider noteId={props.noteId} onRegisterActiveEditor={props.onRegisterActiveEditor}>
       <ModernAnnotationCanvasInner {...props} ref={ref} />
+      {props.children}
     </CanvasProvider>
   </IsolationProvider>
 ))

@@ -2,7 +2,8 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import dynamic from 'next/dynamic'
-import { FloatingToolbar, type OverlayPopup, type OrgItem } from "./floating-toolbar"
+import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
+import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess } from "@/lib/utils/note-creator"
@@ -1628,25 +1629,6 @@ function AnnotationAppContent() {
       className="flex h-screen w-screen overflow-hidden relative"
       onContextMenu={handleContextMenu}
     >
-      {/* Floating Toolbar */}
-      {showNotesWidget && (
-        <FloatingToolbar
-          x={notesWidgetPosition.x}
-          y={notesWidgetPosition.y}
-          onClose={handleCloseNotesWidget}
-          onSelectNote={handleNoteSelect}
-          onCreateOverlayPopup={handleCreateOverlayPopup}
-          onAddComponent={handleAddComponentFromToolbar}
-          editorRef={activeEditorRef}
-          activePanelId={activePanelId}
-          onBackdropStyleChange={handleBackdropStyleChange}
-          onFolderRenamed={handleFolderRenamed}
-          activePanel={toolbarActivePanel}
-          onActivePanelChange={setToolbarActivePanel}
-          refreshRecentNotes={recentNotesRefreshTrigger}
-        />
-      )}
-      
       {/* Canvas Area - Full width when explorer is closed */}
       <div 
         className="flex-1 relative transition-all duration-300 ease-in-out"
@@ -1669,7 +1651,26 @@ function AnnotationAppContent() {
             showAddComponentMenu={showAddComponentMenu}
             onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
             onRegisterActiveEditor={handleRegisterActiveEditor}
-          />
+          >
+            {/* Floating Toolbar - rendered inside CanvasProvider tree */}
+            {showNotesWidget && (
+              <CanvasAwareFloatingToolbar
+                x={notesWidgetPosition.x}
+                y={notesWidgetPosition.y}
+                onClose={handleCloseNotesWidget}
+                onSelectNote={handleNoteSelect}
+                onCreateOverlayPopup={handleCreateOverlayPopup}
+                onAddComponent={handleAddComponentFromToolbar}
+                editorRef={activeEditorRef}
+                activePanelId={activePanelId}
+                onBackdropStyleChange={handleBackdropStyleChange}
+                onFolderRenamed={handleFolderRenamed}
+                activePanel={toolbarActivePanel}
+                onActivePanelChange={setToolbarActivePanel}
+                refreshRecentNotes={recentNotesRefreshTrigger}
+              />
+            )}
+          </ModernAnnotationCanvas>
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-gray-950">
             <div className="text-center">

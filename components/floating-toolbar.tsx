@@ -74,6 +74,10 @@ type FloatingToolbarProps = {
   activePanel?: PanelKey // Controlled active panel state from parent
   onActivePanelChange?: (panel: PanelKey) => void // Callback when active panel changes
   refreshRecentNotes?: number // Increment this counter to trigger recent notes refresh (fixes stale list when toolbar stays open)
+  // Canvas context props (provided by CanvasAwareFloatingToolbar wrapper)
+  canvasState?: any // CanvasState from useCanvas()
+  canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
+  canvasDataStore?: any // DataStore from useCanvas()
 }
 
 interface RecentNote {
@@ -178,9 +182,18 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, canvasState, canvasDispatch, canvasDataStore }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
+
+  // Debug: Log when FloatingToolbar renders and when canvasState changes
+  useEffect(() => {
+    console.log('[FloatingToolbar] Component rendered or canvasState changed:', {
+      hasCanvasState: !!canvasState,
+      lastUpdate: canvasState?.lastUpdate,
+      timestamp: Date.now()
+    })
+  }, [canvasState])
 
   // Use controlled activePanel from parent if provided, otherwise use internal state
   const [internalActivePanel, setInternalActivePanel] = useState<PanelKey>(null)
@@ -1979,10 +1992,12 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderBranchesPanel = () => {
-    // Access global dataStore, state, and dispatch (made available by CanvasProvider)
-    const dataStore = typeof window !== 'undefined' ? (window as any).canvasDataStore : null
-    const canvasState = typeof window !== 'undefined' ? (window as any).canvasState : null
-    const canvasDispatch = typeof window !== 'undefined' ? (window as any).canvasDispatch : null
+    // Prefer context props (from CanvasAwareFloatingToolbar wrapper)
+    // Fall back to window globals for backward compatibility
+    const dataStore = canvasDataStore || (typeof window !== 'undefined' ? (window as any).canvasDataStore : null)
+    const canvasStateValue = canvasState || (typeof window !== 'undefined' ? (window as any).canvasState : null)
+    const canvasDispatchValue = canvasDispatch || (typeof window !== 'undefined' ? (window as any).canvasDispatch : null)
+    const lastUpdate = canvasStateValue?.lastUpdate ?? 0
 
     // Use activePanelId if available, otherwise default to 'main'
     const currentPanelId = activePanelId || 'main'
@@ -1991,8 +2006,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       activePanelId,
       currentPanelId,
       hasDataStore: !!dataStore,
-      hasState: !!canvasState,
-      hasDispatch: !!canvasDispatch,
+      hasState: !!canvasStateValue,
+      hasDispatch: !!canvasDispatchValue,
+      lastUpdate,
+      usingPropsState: !!canvasState,
+      usingWindowState: !canvasState && !!canvasStateValue,
       timestamp: Date.now()
     })
 
@@ -2040,7 +2058,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
 
     // Use BranchesSection component with props
-    // Use key prop to force re-mount when panel changes
+    // Use key prop to force re-mount when panel changes OR when canvas state updates
     // Pass state and dispatch to enable real-time updates
     return (
       <div
@@ -2049,12 +2067,12 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         onMouseLeave={handlePanelHoverLeave}
       >
         <BranchesSection
-          key={currentPanelId}
+          key={`${currentPanelId}-${lastUpdate}`}
           panelId={currentPanelId}
           branch={currentBranch}
           dataStore={dataStore}
-          state={canvasState}
-          dispatch={canvasDispatch}
+          state={canvasStateValue}
+          dispatch={canvasDispatchValue}
         />
       </div>
     )
@@ -2287,7 +2305,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     )
   }
 
-  return (
+  const toolbarContent = (
     <div
       ref={containerRef}
       className="absolute z-[9999] group"
@@ -2622,4 +2640,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       )}
     </div>
   )
+
+  if (typeof document === 'undefined') {
+    return toolbarContent
+  }
+
+  return createPortal(toolbarContent, document.body)
 }

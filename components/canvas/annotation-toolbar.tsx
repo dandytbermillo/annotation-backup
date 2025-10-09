@@ -206,7 +206,18 @@ export function AnnotationToolbar() {
      const parentPanel = dataStore.get(panel)
      if (parentPanel) {
         const branches = parentPanel.branches || []
-        dataStore.update(panel, { branches: [...branches, branchId] })
+        const newBranches = [...branches, branchId]
+        console.log('[AnnotationToolbar] Updating parent branches:', {
+          panel,
+          oldBranches: branches,
+          newBranches,
+          branchId
+        })
+        dataStore.update(panel, { branches: newBranches })
+        console.log('[AnnotationToolbar] After update, dataStore has:', {
+          panel,
+          branches: dataStore.get(panel)?.branches
+        })
       }
     } else {
       // Yjs mode: Use UnifiedProvider (collab)
@@ -272,7 +283,9 @@ export function AnnotationToolbar() {
     }))
 
     // Force a re-render by triggering branch updated action
+    console.log('[AnnotationToolbar] Dispatching BRANCH_UPDATED action')
     dispatch({ type: "BRANCH_UPDATED" })
+    console.log('[AnnotationToolbar] After dispatch, should trigger context update')
 
     // Hide the toolbar after creating annotation
     const toolbar = document.getElementById("annotation-toolbar")
