@@ -708,7 +708,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       ],
       content: initialContent,
       editable: isEditable, // Use the prop value instead of hardcoding true
-      autofocus: isEditable ? 'end' : false, // Auto-focus at end if editable
+      autofocus: false, // Disable autofocus to prevent auto-scroll on load
       immediatelyRender: false, // Prevent immediate render to avoid content loss
       onCreate: ({ editor }) => {
         debugLog('TiptapEditorPlain', 'EDITOR_CREATED', {
@@ -724,7 +724,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           contentPreview: initialContent ? createContentPreview(initialContent) : undefined,
           metadata: {
             isEditable,
-            autofocus: isEditable ? 'end' : false,
+            autofocus: false,
             initialContentType: typeof initialContent
           }
         })
@@ -853,10 +853,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             text.includes('Start writing your promote')
           
           if (isEmptyOrPlaceholder) {
-            // Auto-focus empty/placeholder panel
+            // Auto-focus empty/placeholder panel without scrolling
             setTimeout(() => {
-              // Only focus, don't clear content
-              editor.commands.focus('end')
+              editor.commands.focus('start', { scrollIntoView: false })
             }, 200)
           }
         }
@@ -999,6 +998,12 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             font-size: 15px;
             color: #2c3e50;
           `,
+        },
+        // Prevent ProseMirror from auto-scrolling when content loads
+        handleScrollToSelection: () => {
+          // Return true to prevent default scroll behavior
+          // This stops the editor from scrolling to the end when loading long notes
+          return true
         },
         // Removed handleClick to allow normal text editing when clicking annotations
         // The branch window will only open via the hover icon click

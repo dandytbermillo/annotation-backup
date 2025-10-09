@@ -287,6 +287,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
       // Make dataStore globally accessible
       if (typeof window !== 'undefined') {
         ;(window as any).canvasDataStore = dataStore
+        ;(window as any).canvasState = state
+        ;(window as any).canvasDispatch = dispatch
       }
       
       // Mark this note as loaded

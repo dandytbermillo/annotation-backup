@@ -10,6 +10,12 @@ import { UnifiedProvider } from "@/lib/provider-switcher"
 import { BranchesSection } from "@/components/canvas/branches-section"
 import { createNote, fetchRecentNotes } from "@/lib/utils/note-creator"
 import { buildMultilinePreview } from "@/lib/utils/branch-preview"
+import { PreviewPopover } from "@/components/shared/preview-popover"
+import {
+  PREVIEW_HOVER_DELAY_MS,
+  FOLDER_PREVIEW_DELAY_MS,
+  TOOLBAR_HOVER_DELAY_MS,
+} from "@/lib/constants/ui-timings"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -189,6 +195,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   const panelHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const buttonHoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [isHoveringPanel, setIsHoveringPanel] = useState(false)
   const [isCreatingNote, setIsCreatingNote] = useState(false)
 
@@ -300,6 +307,18 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     folderPopupsRef.current = folderPopups
   }, [folderPopups])
 
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (buttonHoverTimeoutRef.current) {
+        clearTimeout(buttonHoverTimeoutRef.current)
+      }
+      if (panelHoverTimeoutRef.current) {
+        clearTimeout(panelHoverTimeoutRef.current)
+      }
+    }
+  }, [])
+
   // Debug: Log when activeLayer changes
   useEffect(() => {
     console.log('[FloatingToolbar] Active layer changed to:', layerContext?.activeLayer)
@@ -320,6 +339,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     console.log('[FloatingToolbar] Switching to layer:', newLayer)
     layerContext.setActiveLayer(newLayer)
     console.log('[FloatingToolbar] Layer after switch:', layerContext.activeLayer)
+  }
+
+  // Auto-switch to note canvas when opening a note (only if currently on popups layer)
+  const switchToNoteCanvasIfNeeded = () => {
+    if (!layerContext) return
+
+    // Only switch if currently on popups layer
+    if (layerContext.activeLayer === 'popups') {
+      layerContext.setActiveLayer('notes')
+    }
   }
 
   // Drag handlers for making toolbar draggable
@@ -1052,7 +1081,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         }
         return remaining
       })
-    }, 300) // 300ms delay before closing
+    }, FOLDER_PREVIEW_DELAY_MS)
 
     hoverTimeoutRef.current.set(folderId, timeout)
 
@@ -1252,17 +1281,32 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   // Handle button hover
   const handleButtonHover = (panel: PanelKey) => {
+    // Clear any existing button hover timeout
+    if (buttonHoverTimeoutRef.current) {
+      clearTimeout(buttonHoverTimeoutRef.current)
+      buttonHoverTimeoutRef.current = null
+    }
+
+    // Clear panel hover timeout if exists
     if (panelHoverTimeoutRef.current) {
       clearTimeout(panelHoverTimeoutRef.current)
       panelHoverTimeoutRef.current = null
     }
-    setActivePanel(panel)
+
+    // Set timeout to open panel after delay (prevents accidental triggers)
+    buttonHoverTimeoutRef.current = setTimeout(() => {
+      setActivePanel(panel)
+      buttonHoverTimeoutRef.current = null
+    }, TOOLBAR_HOVER_DELAY_MS)
   }
 
   // Handle button hover leave
   const handleButtonHoverLeave = () => {
-    // Panels now stay open when hovering away - only close via explicit dismiss
-    // No timeout logic needed
+    // Clear button hover timeout if user moves away before delay completes
+    if (buttonHoverTimeoutRef.current) {
+      clearTimeout(buttonHoverTimeoutRef.current)
+      buttonHoverTimeoutRef.current = null
+    }
   }
 
   // Handle panel hover
@@ -1336,8 +1380,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         const content = data?.item?.content
         const contentText = data?.item?.contentText
 
-        // Extract preview text preserving newlines for multi-line display
-        const previewText = buildMultilinePreview(content, contentText || '', 200)
+        // Pass full content to PreviewPopover - no hardcoded limit
+        // Component will handle truncation (initial 300 chars, expand to show all content)
+        // Component's internal safety cap of 5000 chars applies when not using lazy loading
+        const previewText = buildMultilinePreview(content, contentText || '', Number.MAX_SAFE_INTEGER)
 
         setNotePreview({
           noteId,
@@ -1364,7 +1410,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       if (!isHoveringPreviewRef.current) {
         setNotePreview(null)
       }
-    }, 100)
+    }, PREVIEW_HOVER_DELAY_MS)
   }
 
   // Handle preview tooltip hover
@@ -1393,7 +1439,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Handle preview tooltip leave
   const handlePreviewTooltipLeave = () => {
     isHoveringPreviewRef.current = false
-    setNotePreview(null)
+
+    // Delay closing to allow moving mouse back to preview
+    previewCloseTimeoutRef.current = setTimeout(() => {
+      setNotePreview(null)
+    }, PREVIEW_HOVER_DELAY_MS)
     // Panels now stay open - no auto-close on hover leave
   }
 
@@ -1440,26 +1490,29 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         ) : recentNotes.length === 0 ? (
           <div className="text-center py-4 text-white/60 text-sm">No recent notes</div>
         ) : (
-          recentNotes.map((item) => (
-            <button
-              key={item.id}
-              className="group w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
-              onDoubleClick={() => {
-                onSelectNote?.(item.id)
-                onClose()
-              }}
-            >
+          recentNotes.map((item) => {
+            const isPreviewActive = notePreview?.noteId === item.id
+            return (
+              <button
+                key={item.id}
+                className={`group w-full rounded-xl px-3 py-2 text-left text-white/90 transition ${
+                  isPreviewActive
+                    ? 'bg-blue-500/20 border-blue-400/40'
+                    : 'bg-white/5 border-white/10 hover:bg-blue-500/20 hover:border-blue-400/40'
+                } border`}
+                onDoubleClick={() => {
+                  switchToNoteCanvasIfNeeded()
+                  onSelectNote?.(item.id)
+                  onClose()
+                }}
+              >
               <div className="text-sm font-medium flex items-center justify-between gap-2">
                 <span className="flex-1">{item.title}</span>
                 <div
                   onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
                   onMouseLeave={handleNotePreviewHoverLeave}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onSelectNote?.(item.id)
-                    onClose()
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
+                  className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5"
+                  title="Hover to preview, use 'Open note' button to open"
                 >
                   <Eye className="w-3.5 h-3.5 text-blue-400" />
                 </div>
@@ -1469,7 +1522,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 <span>{item.metaRight}</span>
               </div>
             </button>
-          ))
+            )
+          })
         )}
       </div>
     </div>
@@ -1534,6 +1588,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         borderLeftColor: 'rgba(239, 68, 68, 0.8)',
                         backgroundColor: 'rgba(239, 68, 68, 0.15)',
                         borderColor: 'rgba(239, 68, 68, 0.4)'
+                      } : (notePreview?.noteId === item.id) ? {
+                        // Active preview highlight
+                        backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                        borderColor: 'rgba(96, 165, 250, 0.4)'
                       } : colorTheme ? {
                         borderLeftWidth: '3px',
                         borderLeftColor: colorTheme.bg,
@@ -1541,8 +1599,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                       } : {}
                     }
                     onMouseEnter={(e) => {
-                      if (isSelected) {
-                        // Keep selected styling on hover
+                      if (isSelected || notePreview?.noteId === item.id) {
+                        // Keep selected/preview styling on hover
                         return
                       }
                       if (colorTheme) {
@@ -1560,6 +1618,12 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         e.currentTarget.style.borderLeftColor = 'rgba(239, 68, 68, 0.8)'
                         e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)'
                         e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.4)'
+                        return
+                      }
+                      if (notePreview?.noteId === item.id) {
+                        // Restore preview styling
+                        e.currentTarget.style.backgroundColor = 'rgba(59, 130, 246, 0.2)'
+                        e.currentTarget.style.borderColor = 'rgba(96, 165, 250, 0.4)'
                         return
                       }
                       if (colorTheme) {
@@ -1585,6 +1649,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         handleStartRenameFolder(item)
                       } else if (!isFolder) {
                         // Not in edit mode: double-click note to open
+                        switchToNoteCanvasIfNeeded()
                         onSelectNote?.(item.id)
                         onClose()
                       }
@@ -1700,13 +1765,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                           <button
                             onMouseEnter={(e) => handleNotePreviewHover(item.id, e)}
                             onMouseLeave={handleNotePreviewHoverLeave}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onSelectNote?.(item.id)
-                              onClose()
-                            }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                            title="Hover to preview, click to open"
+                            className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5"
+                            title="Hover to preview, use 'Open note' button to open"
                           >
                             <Eye className="w-3.5 h-3.5 text-blue-400" />
                           </button>
@@ -1919,8 +1979,10 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   )
 
   const renderBranchesPanel = () => {
-    // Access global dataStore (made available by CanvasProvider)
+    // Access global dataStore, state, and dispatch (made available by CanvasProvider)
     const dataStore = typeof window !== 'undefined' ? (window as any).canvasDataStore : null
+    const canvasState = typeof window !== 'undefined' ? (window as any).canvasState : null
+    const canvasDispatch = typeof window !== 'undefined' ? (window as any).canvasDispatch : null
 
     // Use activePanelId if available, otherwise default to 'main'
     const currentPanelId = activePanelId || 'main'
@@ -1929,6 +1991,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       activePanelId,
       currentPanelId,
       hasDataStore: !!dataStore,
+      hasState: !!canvasState,
+      hasDispatch: !!canvasDispatch,
       timestamp: Date.now()
     })
 
@@ -1977,6 +2041,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Use BranchesSection component with props
     // Use key prop to force re-mount when panel changes
+    // Pass state and dispatch to enable real-time updates
     return (
       <div
         style={{ maxWidth: '300px' }}
@@ -1988,6 +2053,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           panelId={currentPanelId}
           branch={currentBranch}
           dataStore={dataStore}
+          state={canvasState}
+          dispatch={canvasDispatch}
         />
       </div>
     )
@@ -2277,7 +2344,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel((prev) => (prev === "recents" ? null : "recents"))}
+            onClick={() => setActivePanel("recents")}
             onMouseEnter={() => handleButtonHover("recents")}
             data-tooltip="Recent Notes"
           >
@@ -2293,7 +2360,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel((prev) => (prev === "org" ? null : "org"))}
+            onClick={() => setActivePanel("org")}
             onMouseEnter={() => handleButtonHover("org")}
             data-tooltip="Organization"
           >
@@ -2309,7 +2376,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel((prev) => (prev === "tools" ? null : "tools"))}
+            onClick={() => setActivePanel("tools")}
             onMouseEnter={() => handleButtonHover("tools")}
             data-tooltip="Tools & Actions"
           >
@@ -2325,7 +2392,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel((prev) => (prev === "add-component" ? null : "add-component"))}
+            onClick={() => setActivePanel("add-component")}
             onMouseEnter={() => handleButtonHover("add-component")}
             data-tooltip="Add Component"
           >
@@ -2341,7 +2408,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel((prev) => (prev === "display" ? null : "display"))}
+            onClick={() => setActivePanel("display")}
             onMouseEnter={() => handleButtonHover("display")}
             data-tooltip="Display Settings"
           >
@@ -2434,6 +2501,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-left text-white/90 transition hover:bg-blue-500/20 hover:border-blue-400/40"
                     onDoubleClick={() => {
                       if (child.type === 'note') {
+                        switchToNoteCanvasIfNeeded() // Auto-switch to note canvas if on popups layer
                         onSelectNote?.(child.id)
                         onClose()
                         closeAllPopups()
@@ -2449,14 +2517,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                         <div
                           onMouseEnter={(e) => handleNotePreviewHover(child.id, e, popup.folderId)}
                           onMouseLeave={handleNotePreviewHoverLeave}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onSelectNote?.(child.id)
-                            onClose()
-                            closeAllPopups()
-                          }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5 cursor-pointer"
-                          title="Hover to preview, click to open"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white/10 rounded p-0.5"
+                          title="Hover to preview, use 'Open note' button to open"
                         >
                           <Eye className="w-3.5 h-3.5 text-blue-400" />
                         </div>
@@ -2484,25 +2546,25 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         )
       })}
 
-      {/* Note preview tooltip */}
-      {notePreview && (
-        <div
-          data-toolbar-resident="true"
-          className="fixed px-4 py-3 rounded-xl border border-blue-500/30 bg-gray-900 shadow-2xl max-w-sm"
-          style={{
-            backgroundColor: 'rgba(17, 24, 39, 0.98)',
-            left: `${notePreview.position.x}px`,
-            top: `${notePreview.position.y}px`,
-            zIndex: 10000
+      {/* Note preview tooltip - using shared PreviewPopover component */}
+      {notePreview && createPortal(
+        <PreviewPopover
+          content={notePreview.content}
+          status={isLoadingPreview ? 'loading' : 'ready'}
+          position={notePreview.position}
+          noteId={notePreview.noteId}
+          onOpenNote={(noteId) => {
+            switchToNoteCanvasIfNeeded(); // Auto-switch to note canvas if on popups layer
+            onSelectNote?.(noteId);
+            setNotePreview(null);
+            closeAllPopups(); // Close folder popups
+            onClose(); // Close toolbar after opening note
           }}
           onMouseEnter={handlePreviewTooltipEnter}
           onMouseLeave={handlePreviewTooltipLeave}
-        >
-          <div className="text-xs text-blue-400 font-semibold mb-1">Preview</div>
-          <div className="text-sm text-white/90 whitespace-pre-line leading-relaxed line-clamp-6">
-            {isLoadingPreview ? 'Loading...' : notePreview.content}
-          </div>
-        </div>
+          zIndex={10000}
+        />,
+        document.body
       )}
 
       {/* Color palette popup - rendered via portal to appear on top */}
