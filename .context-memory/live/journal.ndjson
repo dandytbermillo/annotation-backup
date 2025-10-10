@@ -313,3 +313,4 @@
 {"ts":"2025-10-09T18:10:15.168Z","type":"commit","sha":"91d40ac9f808a163b48d7232bbd5e63099909794","files_changed":11,"message":"the bug The handleUpdate function is called whenever the editor"}
 {"ts":"2025-10-09T22:37:12.868Z","type":"commit","sha":"aa092c4fe64f9967e23714a6d710e0013a456478","files_changed":29,"message":"add annotation type selector"}
 {"ts":"2025-10-10T02:15:39.516Z","type":"commit","sha":"dc101aaf62feb8fc50c23e69ad11ab8fd39383e0","files_changed":18,"message":"created proposal for making the extension cand extensivle"}
+{"ts":"2025-10-10T05:38:59.948Z","type":"commit","sha":"9587393689b19261a338c64527ec31341903b819","files_changed":37,"message":"make the extension command extensible"}

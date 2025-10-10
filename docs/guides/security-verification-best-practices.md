@@ -44,3 +44,82 @@ Use this high-level checklist whenever youre asked to verify a security fix or 
 ---
 
 Following this framework keeps each security review consistent, reproducible, and audit-ready. When specific commands or scripts are needed, create or update feature-specific checklists in `docs/verification/` and link them back to this best-practices guide.
+
+---
+
+## Core Principle – “Trust Nothing, Verify Everything”
+
+1. **Never claim without evidence**  
+   - Provide exact file paths, line numbers, and tool outputs for every statement.
+   - Prefer quotes lifted from the source over summaries.
+
+2. **Always read the current file**  
+   - Files might have changed since you last touched them. Use the read tool before citing content.
+
+3. **Execute real commands**  
+   - Run docker/curl/npm commands instead of describing expected behaviour.
+   - Capture actual stdout/stderr; note timestamps when possible.
+
+4. **Test malicious inputs, not just happy paths**  
+   - Prove that attacks fail (invalid gradients, nested `__proto__`, etc.).
+   - Then confirm valid payloads still succeed (no false positives).
+
+5. **Verify database state directly**  
+   - Query Postgres to ensure migrations, triggers, and stored functions exist and contain the expected logic.
+
+6. **Stress edge cases and deep recursion**  
+   - Test multi-level nesting, arrays of objects, null/empty values—especially for recursive sanitizers.
+
+7. **Distinguish between “I wrote it” and “It exists”**  
+   - Re-read files even if you authored the change; the repo could have diverged.
+
+8. **Cross-verify with multiple sources**  
+   - Combine code inspection, database queries, and runtime tests to bolster confidence.
+
+9. **Provide line numbers and exact quotes**  
+   - Makes your verification reproducible and reviewable.
+
+10. **Document both positive and negative cases**  
+    - Show that attacks fail and legitimate scenarios still work.
+
+11. **Log every verification step**  
+    - Record the sequence of reads/commands/tests in the feature’s verification report.
+
+12. **Account for caching and state**  
+    - Test create/update/delete flows to confirm registry/cache invalidation is working.
+
+Use the “✅ checklist” below before writing “verified” in any report.
+
+### Remember the Critical Patterns
+
+- **Cache / lifecycle checks**  
+  1. Create resource  
+  2. Verify it appears via read (proves cache invalidated)  
+  3. Update resource  
+  4. Re-read to confirm update visible  
+  5. Delete resource  
+  6. Re-read to confirm removal  
+  Skipping any step risks missing cache-invalidation bugs.
+
+- **Show your work**  
+  Log each step explicitly (file inspected, command executed, response observed). “Everything works” without evidence is not verification.
+
+- **Cross-method confirmation**  
+  Validate the same behaviour from multiple angles (code read, DB query, runtime call). High confidence comes from concordant results.
+
+- **Both negative and positive cases**  
+  Demonstrate that attacks fail **and** legitimate flows still work. Blocking bad input is insufficient if good input breaks.
+
+### Quick Self-Check (✅ / ❌)
+- Did I **read the current** file contents?
+- Did I **run concrete commands** instead of guessing?
+- Did I test **malicious inputs** and see them blocked?
+- Did I **query the database** for ground truth?
+- Did I explore **deep nesting / edge cases**?
+- Did I **cross-verify** via code + DB + runtime?
+- Did I quote the **specific lines** I saw (with timestamps if possible)?
+- Did I test both **attack fail** and **valid success** paths?
+- Did I **document outputs** and attach proof?
+- Did I re-run a scenario after **cache invalidation**?
+
+If any box is unchecked, keep investigating—your verification isn’t complete yet.
