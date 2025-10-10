@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Annotation Types Registry Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7fb;
+      color: #1f2933;
+    }
+
+    body {
+      margin: 0;
+      padding: 2.5rem clamp(1rem, 3vw, 4rem);
+      line-height: 1.55;
+    }
+
+    h1, h2, h3 {
+      margin: 0 0 0.75rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    pre {
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-size: 0.9rem;
+    }
+
+    .layout {
+      display: grid;
+      gap: 2rem clamp(1rem, 2vw, 2.5rem);
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      margin-top: 2rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 20px 45px -35px rgba(15, 23, 42, 0.45);
+      padding: clamp(1rem, 3vw, 1.6rem);
+    }
+
+    .card h3 {
+      margin-bottom: 0.5rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      color: #52606d;
+      margin-bottom: 0.35rem;
+    }
+
+    input, select {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid rgba(100, 116, 139, 0.25);
+      padding: 0.6rem 0.75rem;
+      font-size: 0.95rem;
+      background: #fff;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+    }
+
+    .field-grid {
+      display: grid;
+      gap: 0.9rem clamp(0.6rem, 1.5vw, 1rem);
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-top: 1rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      padding: 0.6rem 1.1rem;
+      border-radius: 12px;
+      border: none;
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: #fff;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px -15px rgba(59, 130, 246, 0.8);
+    }
+
+    .registry-table {
+      margin-top: 1.25rem;
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.95rem;
+    }
+
+    .registry-table th,
+    .registry-table td {
+      padding: 0.85rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+    }
+
+    .registry-table th {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 0.75rem;
+      background: rgba(37, 99, 235, 0.08);
+      color: #1d4ed8;
+    }
+
+    .canvas-preview {
+      background: #111827;
+      border-radius: 18px;
+      padding: 1.5rem;
+      color: #e2e8f0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .canvas-preview::before {
+      content: "";
+      position: absolute;
+      inset: -40% -30%;
+      background: radial-gradient(circle at 30% 20%, rgba(59, 130, 246, 0.25), transparent 45%);
+      pointer-events: none;
+    }
+
+    .panel-grid {
+      display: flex;
+      gap: 1.2rem;
+      position: relative;
+    }
+
+    .panel {
+      position: relative;
+      border-radius: 16px;
+      background: #fff;
+      color: #1f2933;
+      box-shadow: 0 25px 55px -40px rgba(148, 163, 184, 0.85);
+      min-height: 260px;
+      transition: width 0.25s ease, transform 0.2s ease;
+      overflow: hidden;
+    }
+
+    .panel.active {
+      transform: translateY(-6px);
+      box-shadow: 0 30px 70px -40px rgba(59, 130, 246, 0.9);
+    }
+
+    .panel-header {
+      padding: 0.9rem 1.1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      background: rgba(15, 23, 42, 0.04);
+    }
+
+    .panel-body {
+      padding: 1.1rem;
+    }
+
+    .icon-circle {
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      background: rgba(15, 23, 42, 0.08);
+      color: #1f2933;
+    }
+
+    .connections {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .legend {
+      display: flex;
+      gap: 0.5rem 1.5rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+      font-size: 0.85rem;
+      color: #c7d2fe;
+    }
+
+    @media (max-width: 830px) {
+      .panel-grid {
+        flex-direction: column;
+      }
+
+      .panel {
+        width: 100% !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Annotation Types Registry – Interactive Prototype</h1>
+    <p>
+      This sandbox mirrors the proposal’s registry model. You can register new annotation types,
+      inspect the registry table, and preview branch panels sized using type metadata.
+      It’s a static client‑side implementation designed for exploration and demos.
+    </p>
+  </header>
+
+  <section class="layout">
+    <article class="card">
+      <h3>Register Annotation Type</h3>
+      <p style="margin-bottom: 0.9rem;">
+        Built-in types (<span class="tag">note</span>, <span class="tag">explore</span>, <span class="tag">promote</span>)
+        are seeded automatically. Add more to see how the registry updates live.
+      </p>
+      <form id="type-form">
+        <div class="field-grid">
+          <label>
+            Type ID
+            <input name="id" placeholder="e.g. critical" required pattern="^[a-z][a-z0-9-]{1,31}$" />
+          </label>
+          <label>
+            Label
+            <input name="label" placeholder="Critical Insight" required />
+          </label>
+          <label>
+            Icon
+            <input name="icon" placeholder="🚨" minlength="1" maxlength="6" />
+          </label>
+          <label>
+            Default Width (px)
+            <input name="width" type="number" min="180" max="900" step="10" placeholder="500" required />
+          </label>
+          <label>
+            Hex Color
+            <input name="color" type="text" placeholder="#e74c3c" pattern="^#[0-9a-fA-F]{6}$" required />
+          </label>
+          <label>
+            Gradient
+            <input
+              name="gradient"
+              placeholder="linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)"
+              required />
+          </label>
+        </div>
+        <div style="margin-top: 1.25rem;">
+          <button class="btn" type="submit">Register Type</button>
+        </div>
+        <p id="form-error" style="margin-top: 0.8rem; color: #dc2626; display: none;"></p>
+      </form>
+    </article>
+
+    <article class="card">
+      <h3>Registry Snapshot</h3>
+      <table class="registry-table" id="registry-table" aria-live="polite">
+        <thead>
+          <tr>
+            <th>Type ID</th>
+            <th>Label</th>
+            <th>Icon</th>
+            <th>Width</th>
+            <th>Preview</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </article>
+  </section>
+
+  <section class="card" style="margin-top: 2rem;">
+    <h3>Canvas Preview</h3>
+    <p style="margin-bottom: 1rem;">
+      Select a branch type to see how its configuration affects panel size and styling. The preview simulates a simple canvas with a main document and two branch panels.
+    </p>
+    <div style="max-width: 360px; margin-bottom: 1rem;">
+      <label for="type-select">Active Branch Type</label>
+      <select id="type-select"></select>
+    </div>
+    <div class="canvas-preview">
+      <svg class="connections" viewBox="0 0 600 260" aria-hidden="true">
+        <path id="connection-path" d="M120 150 C 240 75, 340 120, 470 90" stroke="rgba(96, 165, 250, 0.45)" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M 470 90 L 482 95 L 470 100 Z" fill="rgba(96, 165, 250, 0.45)"/>
+      </svg>
+      <div class="panel-grid">
+        <div class="panel" id="panel-main" style="width: 320px;">
+          <div class="panel-header">
+            <span class="icon-circle">📄</span>
+            <span>Main Document</span>
+          </div>
+          <div class="panel-body">
+            <p style="margin: 0;">
+              “AI in Healthcare Research”<br />
+              <small style="color: #64748b;">Root note content preview...</small>
+            </p>
+          </div>
+        </div>
+        <div class="panel" id="panel-branch-a">
+          <div class="panel-header">
+            <span class="icon-circle" id="panel-icon">📝</span>
+            <span id="panel-label">Note Branch</span>
+          </div>
+          <div class="panel-body">
+            <p style="margin: 0 0 0.75rem;">
+              The branch panel adopts the width declared in the registry. Active panels grow slightly to emphasise focus.
+            </p>
+            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+              <span class="tag" id="panel-id-tag">note</span>
+              <span class="tag" id="panel-width-tag">W: 380</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel" id="panel-branch-b" style="width: 240px;">
+          <div class="panel-header">
+            <span class="icon-circle">🔍</span>
+            <span>Explore Branch</span>
+          </div>
+          <div class="panel-body">
+            <p style="margin: 0;">
+              Supporting research threads can remain compact while still feeling connected.
+            </p>
+          </div>
+        </div>
+      </div>
+      <footer class="legend">
+        <span>• Main panel fixed width (320px)</span>
+        <span>• Selected branch uses registry width + active bump</span>
+        <span>• Branch accents derive from type color/gradient</span>
+      </footer>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top: 2rem;">
+    <h3>How It Works</h3>
+    <p style="margin-bottom: 0.9rem;">
+      The demo keeps a local “registry” Map. In the real implementation the registry lives on the server,
+      pulls data from Postgres, emits metrics, and exposes an event API to clients (e.g. via BroadcastChannel).
+    </p>
+    <pre><code>// Simplified registry used in this demo
+const registry = new Map();
+
+function registerType(config) {
+  validate(config);
+
+  registry.set(config.id, {
+    ...config,
+    defaultWidth: Number(config.defaultWidth),
+  });
+
+  broadcast(); // notify subscribers
+}
+
+function getTypes() {
+  return Array.from(registry.values());
+}</code></pre>
+  </section>
+
+  <script>
+    const registry = new Map();
+    const subscribers = new Set();
+
+    const builtIns = [
+      {
+        id: 'note',
+        label: 'Note',
+        icon: '📝',
+        color: '#3498db',
+        gradient: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
+        defaultWidth: 380
+      },
+      {
+        id: 'explore',
+        label: 'Explore',
+        icon: '🔍',
+        color: '#f39c12',
+        gradient: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+        defaultWidth: 500
+      },
+      {
+        id: 'promote',
+        label: 'Promote',
+        icon: '⭐',
+        color: '#27ae60',
+        gradient: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
+        defaultWidth: 550
+      }
+    ];
+
+    const idRegex = /^[a-z][a-z0-9-]{1,31}$/;
+    const gradientRegex = /^linear-gradient\([^<>"]+\)$/;
+    const form = document.getElementById('type-form');
+    const errorEl = document.getElementById('form-error');
+    const registryTableBody = document.querySelector('#registry-table tbody');
+    const typeSelect = document.getElementById('type-select');
+
+    function validateConfig(config) {
+      if (!idRegex.test(config.id)) {
+        throw new Error('Type ID must be lowercase alphanumeric with optional hyphens (max 32 chars).');
+      }
+      if (!gradientRegex.test(config.gradient)) {
+        throw new Error('Gradient must be a CSS linear-gradient without quotes or angle brackets.');
+      }
+      if (!/^#[0-9a-fA-F]{6}$/.test(config.color)) {
+        throw new Error('Color must be a hex value, e.g. #ff0000.');
+      }
+      const width = Number(config.defaultWidth);
+      if (Number.isNaN(width) || width < 180 || width > 900) {
+        throw new Error('Default width must be between 180 and 900.');
+      }
+      if (registry.has(config.id) && registry.get(config.id).isSystem) {
+        throw new Error(`Cannot overwrite system type "${config.id}".`);
+      }
+    }
+
+    function registerType(config, { isSystem = false } = {}) {
+      validateConfig(config);
+      registry.set(config.id, {
+        ...config,
+        defaultWidth: Number(config.defaultWidth),
+        isSystem
+      });
+      notifySubscribers();
+    }
+
+    function notifySubscribers() {
+      for (const listener of subscribers) {
+        try {
+          listener(Array.from(registry.values()));
+        } catch (error) {
+          console.error('[Registry subscriber] error', error);
+        }
+      }
+    }
+
+    function subscribe(listener) {
+      subscribers.add(listener);
+      listener(Array.from(registry.values()));
+      return () => subscribers.delete(listener);
+    }
+
+    function updateRegistryTable(types) {
+      registryTableBody.innerHTML = types.map(type => `
+        <tr>
+          <td><strong>${type.id}</strong>${type.isSystem ? ' <span class="tag">built-in</span>' : ''}</td>
+          <td>${type.label}</td>
+          <td>${type.icon || '—'}</td>
+          <td>${type.defaultWidth}px</td>
+          <td><span class="tag" style="background:${type.color}20;color:${type.color};"> ${type.color}</span></td>
+        </tr>`).join('');
+
+      typeSelect.innerHTML = types.map(type => `
+        <option value="${type.id}">${type.icon || '•'} ${type.label} (${type.id})</option>
+      `).join('');
+
+      updatePreview();
+    }
+
+    function updatePreview() {
+      const selectedId = typeSelect.value;
+      const type = registry.get(selectedId);
+      if (!type) return;
+
+      const panel = document.getElementById('panel-branch-a');
+      const iconEl = document.getElementById('panel-icon');
+      const labelEl = document.getElementById('panel-label');
+      const idTag = document.getElementById('panel-id-tag');
+      const widthTag = document.getElementById('panel-width-tag');
+      const connection = document.getElementById('connection-path');
+
+      const activeWidth = type.defaultWidth + 40;
+
+      panel.style.width = `${activeWidth}px`;
+      panel.classList.add('active');
+      panel.style.background = type.gradient;
+      panel.style.color = '#0f172a';
+
+      iconEl.textContent = type.icon || '•';
+      labelEl.textContent = `${type.label} Branch`;
+      idTag.textContent = type.id;
+      widthTag.textContent = `W: ${type.defaultWidth}px (+40px active)`;
+      widthTag.style.background = `${type.color}20`;
+      widthTag.style.color = type.color;
+
+      connection.setAttribute('stroke', `${type.color}70`);
+    }
+
+    builtIns.forEach(type => registerType(type, { isSystem: true }));
+
+    subscribe(updateRegistryTable);
+
+    typeSelect.addEventListener('change', updatePreview);
+
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      errorEl.style.display = 'none';
+      const formData = new FormData(form);
+      const config = {
+        id: formData.get('id').trim(),
+        label: formData.get('label').trim(),
+        icon: formData.get('icon').trim(),
+        color: formData.get('color').trim(),
+        gradient: formData.get('gradient').trim(),
+        defaultWidth: formData.get('width').trim()
+      };
+
+      try {
+        registerType(config);
+        form.reset();
+        typeSelect.value = config.id;
+        updatePreview();
+      } catch (error) {
+        errorEl.textContent = error.message;
+        errorEl.style.display = 'block';
+      }
+    });
+
+    // Initialize preview with first option
+    if (typeSelect.options.length > 0) {
+      typeSelect.value = typeSelect.options[0].value;
+      updatePreview();
+    }
+  </script>
+</body>
+</html>

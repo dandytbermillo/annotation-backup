@@ -7,6 +7,7 @@ Current Work
 - Last Progress: (no details)
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-10 02:15Z] dc101aa: created proposal for making the extension cand extensivle
 - commit [2025-10-09 22:37Z] aa092c4: add annotation type selector
 - commit [2025-10-09 18:10Z] 91d40ac: the bug The handleUpdate function is called whenever the editor
 - commit [2025-10-09 01:45Z] 5ec56d4: improved popup,recent note, org panel preview
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-07 04:47Z] d292cb0: added cascade-close behavior for popup with pinning functionality
 - commit [2025-10-07 02:09Z] 14286cc: added renaming functionality in the popup overlay
 - commit [2025-10-07 00:59Z] 7d4cb45: added smart connection line for popup overlay
-- commit [2025-10-07 00:20Z] 31ffa53: renaming folder fixed
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-09 22:37Z] aa092c4: add annotation type selector
+- commit [2025-10-10 02:15Z] dc101aa: created proposal for making the extension cand extensivle

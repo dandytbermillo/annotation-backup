@@ -1,0 +1,332 @@
+/**
+ * Annotation Type Registry
+ *
+ * Server-side registry for annotation types with database backing.
+ * Implements observable pattern with lazy loading for serverless compatibility.
+ *
+ * @module lib/models/annotation-type-registry
+ */
+
+import type { Pool, PoolClient } from 'pg';
+
+/**
+ * Annotation type configuration from database
+ */
+export interface AnnotationTypeConfig {
+  id: string;
+  label: string;
+  color: string;
+  gradient: string;
+  icon: string;
+  defaultWidth: number;
+  metadata: Record<string, any>;
+  isSystem: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Validation patterns from proposal (strict whitelisting)
+ */
+const VALIDATION_PATTERNS = {
+  id: /^[a-z][a-z0-9_-]{0,63}$/,
+  label: /^[\p{L}\p{N}\s]{1,100}$/u,
+  color: /^#[0-9a-fA-F]{6}$/,
+  icon: /^.{1,16}$/u,
+} as const;
+
+/**
+ * Validate annotation type configuration
+ * @throws {Error} If validation fails
+ */
+function validateAnnotationType(config: Partial<AnnotationTypeConfig>): void {
+  if (config.id && !VALIDATION_PATTERNS.id.test(config.id)) {
+    throw new Error(
+      `Invalid annotation type ID: "${config.id}". Must match pattern: ${VALIDATION_PATTERNS.id}`
+    );
+  }
+
+  if (config.label && !VALIDATION_PATTERNS.label.test(config.label)) {
+    throw new Error(
+      `Invalid annotation type label: "${config.label}". Must be 1-100 chars of letters, numbers, spaces.`
+    );
+  }
+
+  if (config.color && !VALIDATION_PATTERNS.color.test(config.color)) {
+    throw new Error(
+      `Invalid annotation type color: "${config.color}". Must be hex format: #RRGGBB`
+    );
+  }
+
+  if (config.icon && !VALIDATION_PATTERNS.icon.test(config.icon)) {
+    throw new Error(
+      `Invalid annotation type icon: "${config.icon}". Must be 1-16 characters.`
+    );
+  }
+
+  if (config.defaultWidth !== undefined) {
+    if (typeof config.defaultWidth !== 'number' || config.defaultWidth < 120 || config.defaultWidth > 1200) {
+      throw new Error(
+        `Invalid default width: ${config.defaultWidth}. Must be between 120 and 1200 pixels.`
+      );
+    }
+  }
+}
+
+/**
+ * Subscriber callback type
+ */
+type SubscriberCallback = () => void;
+
+/**
+ * Annotation Type Registry
+ *
+ * Thread-safe in-memory cache with database backing.
+ * Implements observable pattern for real-time updates.
+ */
+export class AnnotationTypeRegistry {
+  private pool: Pool;
+  private cache: Map<string, AnnotationTypeConfig> = new Map();
+  private loaded: boolean = false;
+  private loadPromise: Promise<void> | null = null;
+  private subscribers: Set<SubscriberCallback> = new Set();
+
+  constructor(pool: Pool) {
+    this.pool = pool;
+  }
+
+  /**
+   * Ensure types are loaded from database (single-flight pattern)
+   * Safe to call multiple times - only loads once
+   */
+  async ensureLoaded(): Promise<void> {
+    if (this.loaded) {
+      return;
+    }
+
+    // Single-flight: reuse in-progress load promise
+    if (this.loadPromise) {
+      return this.loadPromise;
+    }
+
+    this.loadPromise = this.loadFromDatabase();
+
+    try {
+      await this.loadPromise;
+      this.loaded = true;
+    } catch (error) {
+      // Reset promise on failure to allow retry
+      this.loadPromise = null;
+      throw error;
+    }
+
+    return this.loadPromise;
+  }
+
+  /**
+   * Load annotation types from database
+   * @private
+   */
+  private async loadFromDatabase(): Promise<void> {
+    let client: PoolClient | null = null;
+
+    try {
+      client = await this.pool.connect();
+
+      const result = await client.query<{
+        id: string;
+        label: string;
+        color: string;
+        gradient: string;
+        icon: string;
+        default_width: number;
+        metadata: Record<string, any>;
+        is_system: boolean;
+        created_at: Date;
+        updated_at: Date;
+      }>(`
+        SELECT
+          id,
+          label,
+          color,
+          gradient,
+          icon,
+          default_width,
+          metadata,
+          is_system,
+          created_at,
+          updated_at
+        FROM annotation_types
+        ORDER BY created_at ASC
+      `);
+
+      // Clear and rebuild cache
+      this.cache.clear();
+
+      for (const row of result.rows) {
+        const config: AnnotationTypeConfig = {
+          id: row.id,
+          label: row.label,
+          color: row.color,
+          gradient: row.gradient,
+          icon: row.icon,
+          defaultWidth: row.default_width,
+          metadata: row.metadata || {},
+          isSystem: row.is_system,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        };
+
+        this.cache.set(config.id, config);
+      }
+
+      console.log(`[AnnotationTypeRegistry] Loaded ${this.cache.size} annotation types from database`);
+    } catch (error) {
+      console.error('[AnnotationTypeRegistry] Failed to load from database:', error);
+      throw new Error(
+        `Failed to load annotation types: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+
+  /**
+   * Get all annotation types
+   * @returns Array of annotation type configurations
+   */
+  getAll(): AnnotationTypeConfig[] {
+    if (!this.loaded) {
+      throw new Error('Registry not loaded. Call ensureLoaded() first.');
+    }
+
+    return Array.from(this.cache.values());
+  }
+
+  /**
+   * Get annotation type by ID
+   * @param id - Annotation type ID
+   * @returns Configuration or undefined if not found
+   */
+  getById(id: string): AnnotationTypeConfig | undefined {
+    if (!this.loaded) {
+      throw new Error('Registry not loaded. Call ensureLoaded() first.');
+    }
+
+    return this.cache.get(id);
+  }
+
+  /**
+   * Check if annotation type exists
+   * @param id - Annotation type ID
+   * @returns True if exists
+   */
+  has(id: string): boolean {
+    if (!this.loaded) {
+      throw new Error('Registry not loaded. Call ensureLoaded() first.');
+    }
+
+    return this.cache.has(id);
+  }
+
+  /**
+   * Subscribe to registry updates
+   * @param callback - Function to call when registry updates
+   * @returns Unsubscribe function
+   */
+  subscribe(callback: SubscriberCallback): () => void {
+    this.subscribers.add(callback);
+
+    // Return unsubscribe function
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  /**
+   * Notify all subscribers of changes
+   * @private
+   */
+  private notify(): void {
+    for (const callback of this.subscribers) {
+      try {
+        callback();
+      } catch (error) {
+        console.error('[AnnotationTypeRegistry] Subscriber callback error:', error);
+      }
+    }
+  }
+
+  /**
+   * Reload types from database and notify subscribers
+   * Useful after INSERT/UPDATE/DELETE operations
+   */
+  async reload(): Promise<void> {
+    this.loaded = false;
+    this.loadPromise = null;
+
+    await this.ensureLoaded();
+    this.notify();
+  }
+
+  /**
+   * Add new annotation type (future: Phase 2)
+   * Currently not exposed via API, but included for completeness
+   * @private
+   */
+  async add(config: Omit<AnnotationTypeConfig, 'createdAt' | 'updatedAt'>): Promise<void> {
+    validateAnnotationType(config);
+
+    let client: PoolClient | null = null;
+
+    try {
+      client = await this.pool.connect();
+
+      await client.query(
+        `
+        INSERT INTO annotation_types (id, label, color, gradient, icon, default_width, metadata, is_system)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `,
+        [
+          config.id,
+          config.label,
+          config.color,
+          config.gradient,
+          config.icon,
+          config.defaultWidth,
+          JSON.stringify(config.metadata),
+          config.isSystem,
+        ]
+      );
+
+      await this.reload();
+    } catch (error) {
+      console.error('[AnnotationTypeRegistry] Failed to add type:', error);
+      throw new Error(
+        `Failed to add annotation type: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    } finally {
+      if (client) {
+        client.release();
+      }
+    }
+  }
+
+  /**
+   * Get subscriber count (for testing/debugging)
+   */
+  getSubscriberCount(): number {
+    return this.subscribers.size;
+  }
+}
+
+/**
+ * Factory function to create registry instance
+ * @param pool - PostgreSQL connection pool
+ * @returns New registry instance
+ */
+export function createAnnotationTypeRegistry(pool: Pool): AnnotationTypeRegistry {
+  return new AnnotationTypeRegistry(pool);
+}

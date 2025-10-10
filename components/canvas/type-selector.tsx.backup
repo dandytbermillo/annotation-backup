@@ -1,50 +1,24 @@
 "use client"
 
 import { useState, useRef, useEffect } from 'react'
-import type { AnnotationTypeConfig } from '@/lib/models/annotation-type-registry'
 
-// Backward compatible: accept string instead of literal union
-export type AnnotationType = string
+export type AnnotationType = 'note' | 'explore' | 'promote'
 
 interface TypeSelectorProps {
   currentType: AnnotationType
   onTypeChange: (newType: AnnotationType) => void
   disabled?: boolean
-  // NEW: Accept dynamic types from database (falls back to hardcoded if not provided)
-  availableTypes?: AnnotationTypeConfig[]
 }
 
-// Fallback hardcoded config for backward compatibility
-const FALLBACK_TYPE_CONFIG = {
+const TYPE_CONFIG = {
   note: { icon: '📝', label: 'Note', color: '#3498db' },
   explore: { icon: '🔍', label: 'Explore', color: '#f39c12' },
   promote: { icon: '⭐', label: 'Promote', color: '#27ae60' }
 } as const
 
-export function TypeSelector({ currentType, onTypeChange, disabled = false, availableTypes }: TypeSelectorProps) {
+export function TypeSelector({ currentType, onTypeChange, disabled = false }: TypeSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
-
-  // Build type config from availableTypes or fallback to hardcoded
-  const typeConfig = useRef<Record<string, { icon: string; label: string; color: string }>>({})
-
-  useEffect(() => {
-    if (availableTypes && availableTypes.length > 0) {
-      // Use dynamic types from database
-      const config: Record<string, { icon: string; label: string; color: string }> = {}
-      for (const type of availableTypes) {
-        config[type.id] = {
-          icon: type.icon,
-          label: type.label,
-          color: type.color,
-        }
-      }
-      typeConfig.current = config
-    } else {
-      // Fallback to hardcoded types
-      typeConfig.current = FALLBACK_TYPE_CONFIG
-    }
-  }, [availableTypes])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -67,7 +41,7 @@ export function TypeSelector({ currentType, onTypeChange, disabled = false, avai
     setIsOpen(false)
   }
 
-  const current = typeConfig.current[currentType] || { icon: '📌', label: currentType, color: '#999999' }
+  const current = TYPE_CONFIG[currentType]
 
   return (
     <div
@@ -117,10 +91,10 @@ export function TypeSelector({ currentType, onTypeChange, disabled = false, avai
             overflow: 'hidden'
           }}
         >
-          {Object.entries(typeConfig.current).map(([type, config]) => (
+          {Object.entries(TYPE_CONFIG).map(([type, config]) => (
             <button
               key={type}
-              onClick={() => handleTypeSelect(type)}
+              onClick={() => handleTypeSelect(type as AnnotationType)}
               style={{
                 width: '100%',
                 display: 'flex',

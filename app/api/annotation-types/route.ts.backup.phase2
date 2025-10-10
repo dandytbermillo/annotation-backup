@@ -1,0 +1,49 @@
+/**
+ * GET /api/annotation-types
+ *
+ * Returns all available annotation types from the database.
+ * Used by client components to fetch current annotation type configurations.
+ *
+ * @returns JSON array of AnnotationTypeConfig objects
+ */
+
+import { NextResponse } from 'next/server';
+import { ensureAnnotationTypesReady, getAnnotationTypeRegistry } from '@/lib/bootstrap/annotation-types';
+import type { AnnotationTypeConfig } from '@/lib/models/annotation-type-registry';
+
+export async function GET() {
+  try {
+    // Ensure registry is loaded (lazy initialization)
+    await ensureAnnotationTypesReady();
+
+    // Get registry and fetch all types
+    const registry = getAnnotationTypeRegistry();
+    const types: AnnotationTypeConfig[] = registry.getAll();
+
+    // Return types as JSON
+    return NextResponse.json(types, {
+      status: 200,
+      headers: {
+        'Cache-Control': 'no-store, must-revalidate',
+        'Content-Type': 'application/json',
+      },
+    });
+  } catch (error) {
+    console.error('[GET /api/annotation-types] Error fetching annotation types:', error);
+
+    return NextResponse.json(
+      {
+        error: 'Failed to fetch annotation types',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Route configuration for Next.js
+ * Disable static optimization to ensure fresh data
+ */
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';

@@ -312,3 +312,4 @@
 {"ts":"2025-10-09T01:45:29.387Z","type":"commit","sha":"5ec56d474b591fc99e16c90673e3eb08bfb46cd6","files_changed":9,"message":"improved popup,recent note, org panel preview"}
 {"ts":"2025-10-09T18:10:15.168Z","type":"commit","sha":"91d40ac9f808a163b48d7232bbd5e63099909794","files_changed":11,"message":"the bug The handleUpdate function is called whenever the editor"}
 {"ts":"2025-10-09T22:37:12.868Z","type":"commit","sha":"aa092c4fe64f9967e23714a6d710e0013a456478","files_changed":29,"message":"add annotation type selector"}
+{"ts":"2025-10-10T02:15:39.516Z","type":"commit","sha":"dc101aaf62feb8fc50c23e69ad11ab8fd39383e0","files_changed":18,"message":"created proposal for making the extension cand extensivle"}

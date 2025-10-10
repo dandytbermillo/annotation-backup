@@ -9,16 +9,7 @@
 
 import type { PlainAnchor } from '../utils/text-anchoring'
 
-/**
- * Annotation Type
- *
- * Changed from literal union to string for extensibility.
- * System now supports custom annotation types from database.
- *
- * @deprecated Direct usage of hardcoded types is deprecated.
- * Use AnnotationTypeConfig from registry instead.
- */
-export type AnnotationType = string
+export type AnnotationType = 'note' | 'explore' | 'promote'
 
 export interface PlainAnnotation {
   id: string
@@ -69,9 +60,6 @@ export interface AnnotationConnection {
 
 /**
  * Get color for annotation type
- *
- * @deprecated Use registry.getById(type)?.color instead
- * This function provides fallback for backward compatibility only
  */
 export function getAnnotationColor(type: AnnotationType): string {
   switch (type) {
@@ -82,15 +70,12 @@ export function getAnnotationColor(type: AnnotationType): string {
     case 'promote':
       return '#27ae60' // Green
     default:
-      return '#95a5a6' // Gray fallback
+      return '#95a5a6' // Gray
   }
 }
 
 /**
  * Get gradient for annotation type
- *
- * @deprecated Use registry.getById(type)?.gradient instead
- * This function provides fallback for backward compatibility only
  */
 export function getAnnotationGradient(type: AnnotationType): string {
   switch (type) {
@@ -107,9 +92,6 @@ export function getAnnotationGradient(type: AnnotationType): string {
 
 /**
  * Get icon for annotation type
- *
- * @deprecated Use registry.getById(type)?.icon instead
- * This function provides fallback for backward compatibility only
  */
 export function getAnnotationIcon(type: AnnotationType): string {
   switch (type) {

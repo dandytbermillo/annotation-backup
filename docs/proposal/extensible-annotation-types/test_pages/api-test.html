@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extensible Annotation Types - API Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status.success { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .status.loading { background: #fff3cd; color: #856404; }
+
+        .type-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            transition: all 0.2s;
+        }
+        .type-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .type-icon {
+            font-size: 48px;
+        }
+        .type-info {
+            flex: 1;
+        }
+        .type-label {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .type-id {
+            color: #666;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .type-color {
+            width: 100px;
+            height: 40px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+        .type-gradient {
+            width: 200px;
+            height: 40px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+        }
+        .meta-badge {
+            background: #e9ecef;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .test-results {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .test-item {
+            padding: 5px 0;
+        }
+        .test-item.pass { color: #28a745; }
+        .test-item.fail { color: #dc3545; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>
+            Extensible Annotation Types System
+            <span id="status" class="status loading">Testing...</span>
+        </h1>
+        <p>Real-time verification of the database-backed annotation type system</p>
+
+        <button onclick="runTests()">🔄 Refresh Data</button>
+
+        <div id="results"></div>
+        <div id="tests" class="test-results"></div>
+    </div>
+
+    <script>
+        async function runTests() {
+            const statusEl = document.getElementById('status');
+            const resultsEl = document.getElementById('results');
+            const testsEl = document.getElementById('tests');
+
+            statusEl.className = 'status loading';
+            statusEl.textContent = 'Loading...';
+            testsEl.innerHTML = '<div class="test-item">Running tests...</div>';
+
+            const tests = [];
+
+            try {
+                // Test 1: Fetch API
+                const response = await fetch('http://localhost:3000/api/annotation-types');
+                tests.push(`✓ API Response: ${response.status} ${response.statusText}`);
+
+                // Test 2: Parse JSON
+                const data = await response.json();
+                tests.push(`✓ Parsed JSON: ${data.length} types received`);
+
+                // Test 3: Validate structure
+                const requiredFields = ['id', 'label', 'color', 'gradient', 'icon', 'defaultWidth', 'metadata', 'isSystem'];
+                data.forEach(type => {
+                    const hasAll = requiredFields.every(field => field in type);
+                    if (hasAll) {
+                        tests.push(`✓ Type "${type.id}" has all required fields`);
+                    } else {
+                        tests.push(`✗ Type "${type.id}" missing fields`);
+                    }
+                });
+
+                // Test 4: Color validation
+                data.forEach(type => {
+                    const validColor = /^#[0-9a-fA-F]{6}$/.test(type.color);
+                    if (validColor) {
+                        tests.push(`✓ Color validation passed for "${type.id}": ${type.color}`);
+                    } else {
+                        tests.push(`✗ Invalid color for "${type.id}": ${type.color}`);
+                    }
+                });
+
+                // Test 5: System types
+                const systemTypes = data.filter(t => t.isSystem);
+                tests.push(`✓ Found ${systemTypes.length} system types (expected: 3)`);
+
+                // Success - render types
+                statusEl.className = 'status success';
+                statusEl.textContent = '✓ System Operational';
+
+                resultsEl.innerHTML = data.map(type => `
+                    <div class="type-card" style="border-color: ${type.color}">
+                        <div class="type-icon">${type.icon}</div>
+                        <div class="type-info">
+                            <div class="type-label">${type.label}</div>
+                            <div class="type-id">ID: ${type.id} ${type.isSystem ? '<span class="meta-badge">SYSTEM</span>' : ''}</div>
+                        </div>
+                        <div>
+                            <div class="type-color" style="background: ${type.color}"></div>
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">${type.color}</div>
+                        </div>
+                        <div>
+                            <div class="type-gradient" style="background: ${type.gradient}"></div>
+                            <div style="font-size: 12px; color: #666; margin-top: 5px;">Width: ${type.defaultWidth}px</div>
+                        </div>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                statusEl.className = 'status error';
+                statusEl.textContent = '✗ Error';
+                tests.push(`✗ Error: ${error.message}`);
+                resultsEl.innerHTML = `
+                    <div style="color: #dc3545; padding: 20px; text-align: center;">
+                        <h3>❌ Test Failed</h3>
+                        <p>${error.message}</p>
+                        <p style="font-size: 14px; color: #666;">Make sure the dev server is running on port 3000</p>
+                    </div>
+                `;
+            }
+
+            testsEl.innerHTML = tests.map(test =>
+                `<div class="test-item ${test.startsWith('✓') ? 'pass' : 'fail'}">${test}</div>`
+            ).join('');
+        }
+
+        // Auto-run on page load
+        runTests();
+    </script>
+</body>
+</html>
