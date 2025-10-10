@@ -22,7 +22,9 @@ import {
   type CollapsibleBlockSelectionStorage,
   type CollapsibleSelectionSnapshot,
 } from '@/lib/extensions/collapsible-block-selection'
+import { AnnotationUpdater } from '@/lib/extensions/annotation-updater'
 import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
+import { useCanvas } from './canvas-context'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
@@ -314,9 +316,17 @@ export interface TiptapEditorPlainHandle {
 
 const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainProps>(
   ({ content, isEditable, noteId, panelId, onUpdate, onSelectionChange, onCollapsibleSelectionChange, placeholder, provider, onCreateAnnotation, onContentLoaded }, ref) => {
+    // Get canvas context (optional - may not be available in all contexts)
+    let canvasContext: ReturnType<typeof useCanvas> | null = null
+    try {
+      canvasContext = useCanvas()
+    } catch {
+      // Component used outside CanvasProvider, that's OK
+    }
+
     // Fix #3: Track loading state
     const [isContentLoading, setIsContentLoading] = useState(true)
-    
+
     // Track editable state for read-only guard
     const isEditableRef = useRef(isEditable)
     const [loadedContent, setLoadedContent] = useState<ProseMirrorJSON | string | null>(null)
@@ -700,6 +710,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         Highlight,
         Underline,
         Annotation,
+        AnnotationUpdater, // Provides updateAnnotationType command
         CollapsibleBlock,
         CollapsibleBlockSelection,
         Placeholder.configure({
@@ -858,6 +869,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
               editor.commands.focus('start', { scrollIntoView: false })
             }, 200)
           }
+        }
+
+        // Register editor with canvas context for annotation updates
+        if (canvasContext && panelId) {
+          canvasContext.onRegisterActiveEditor?.(editor, panelId)
         }
       },
       onUpdate: ({ editor }) => {

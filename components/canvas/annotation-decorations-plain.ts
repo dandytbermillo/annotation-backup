@@ -47,7 +47,7 @@ export const AnnotationDecorations = () => new Plugin({
         node.marks.forEach(mark => {
           if (mark.type.name === 'annotation') {
             const from = pos
-            const to = pos + node.nodeSize
+            const to = pos + (node.text?.length || 0) // Correct position calculation for text nodes
             const branchId = mark.attrs.branchId || mark.attrs['data-branch']
             decos.push(Decoration.inline(from, to, {
               class: 'annotation-hover-target',

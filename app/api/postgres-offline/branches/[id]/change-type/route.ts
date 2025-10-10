@@ -4,11 +4,11 @@ import { FEATURE_WORKSPACE_SCOPING, withWorkspaceClient } from '@/lib/workspace/
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { newType } = await request.json()
-    const branchId = params.id
+    const { id: branchId } = await params
 
     if (!['note', 'explore', 'promote'].includes(newType)) {
       return NextResponse.json(
@@ -44,9 +44,9 @@ export async function PATCH(
           return NextResponse.json(unchanged.rows[0])
         }
 
-        // Update type history
+        // Update type history (immutable - create new array)
         const metadata = branch.metadata || {}
-        const typeHistory = metadata.typeHistory || []
+        const typeHistory = [...(metadata.typeHistory || [])]
         typeHistory.push({
           type: newType,
           changedAt: new Date().toISOString(),
@@ -100,9 +100,9 @@ export async function PATCH(
       return NextResponse.json(unchanged.rows[0])
     }
 
-    // Update type history
+    // Update type history (immutable - create new array)
     const metadata = branch.metadata || {}
-    const typeHistory = metadata.typeHistory || []
+    const typeHistory = [...(metadata.typeHistory || [])]
     typeHistory.push({
       type: newType,
       changedAt: new Date().toISOString(),

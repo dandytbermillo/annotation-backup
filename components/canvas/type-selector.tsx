@@ -103,8 +103,10 @@ export function TypeSelector({ currentType, onTypeChange, disabled = false }: Ty
                 padding: '8px 12px',
                 border: 'none',
                 background: type === currentType ? 'rgba(0,0,0,0.05)' : 'transparent',
+                color: '#2c3e50',
                 cursor: 'pointer',
                 fontSize: '13px',
+                fontWeight: 500,
                 textAlign: 'left',
                 transition: 'background 0.15s ease'
               }}

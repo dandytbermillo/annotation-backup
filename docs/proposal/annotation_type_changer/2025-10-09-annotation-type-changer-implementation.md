@@ -169,76 +169,55 @@ export interface Branch {
 
 ### 4. Added changeBranchType Method to Provider
 
-**File:** `/lib/providers/plain-offline-provider.ts` (lines 865-932)
+**File:** `/lib/providers/plain-offline-provider.ts` (lines 865-900)
 
-**Method:**
+**Method (CURRENT FIXED VERSION):**
 ```typescript
 async changeBranchType(
   branchId: string,
   newType: 'note' | 'explore' | 'promote'
 ): Promise<void> {
-  const branch = this.branches.get(branchId)
-  if (!branch) {
-    throw new Error(`Branch not found: ${branchId}`)
+  // Don't check in-memory cache - branches may be loaded directly via adapter
+  // Just call API directly
+  try {
+    const response = await fetch(`/api/postgres-offline/branches/${branchId}/change-type`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newType })
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.error || `Failed to change branch type: ${response.statusText}`)
+    }
+
+    const result = await response.json()
+
+    // Update in-memory cache if branch exists there (optional optimization)
+    if (this.branches.has(branchId)) {
+      this.branches.set(branchId, result)
+    }
+
+    // Emit event for UI to react
+    this.emit('branch:updated', result)
+
+    console.log(`✓ Changed branch ${branchId} type to ${newType}`)
+
+    return result
+  } catch (error) {
+    console.error('[PlainOfflineProvider] Failed to change branch type:', error)
+    throw error
   }
-
-  const oldType = branch.type
-  if (oldType === newType) {
-    return // No change needed
-  }
-
-  // Update type history in metadata
-  const typeHistory = branch.metadata?.typeHistory || []
-  typeHistory.push({
-    type: newType,
-    changedAt: new Date().toISOString(),
-    reason: 'user_change'
-  })
-
-  // Update branch - title stays the same (user may have customized it)
-  const updated: Branch = {
-    ...branch,
-    type: newType,
-    metadata: {
-      ...branch.metadata,
-      annotationType: newType,
-      typeHistory
-    },
-    updatedAt: new Date()
-  }
-
-  // Update in-memory cache
-  this.branches.set(branchId, updated)
-
-  // Persist to database via API
-  const response = await fetch(`/api/postgres-offline/branches/${branchId}/change-type`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ newType })
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to change branch type: ${response.statusText}`)
-  }
-
-  const result = await response.json()
-
-  // Update cache with server response
-  this.branches.set(branchId, result)
-
-  // Emit event for UI to react
-  this.emit('branch:updated', result)
-
-  console.log(`✓ Changed branch ${branchId} from ${oldType} to ${newType}`)
 }
 ```
 
 **Key Design Decisions:**
-1. **Title preservation** - User's custom title is NOT changed
-2. **Optimistic update** - UI updates immediately, DB sync in background
-3. **Rollback on error** - If API fails, revert in-memory change
+1. **No cache dependency** - Works whether branch is in provider cache or not
+2. **API-first approach** - Database is source of truth, not in-memory cache
+3. **Optional cache update** - Updates cache only if branch happens to be there
 4. **Event emission** - Notify UI components to re-render
-5. **History tracking** - Append to typeHistory array
+5. **History tracking** - API endpoint appends to typeHistory array
+6. **Title preservation** - API preserves user's custom title
 
 ---
 
@@ -629,6 +608,136 @@ deleted_at       TIMESTAMP
 
 ---
 
+## Errors Encountered and Fixes
+
+### Error 1: Invisible Dropdown Text
+
+**Issue:** User reported "i cant see the text in the menus if there are any" when clicking the type badge. The dropdown appeared but text was invisible.
+
+**Screenshot:** Dropdown menu visible but no text showing in the options.
+
+**Root Cause:**
+The dropdown button styles in `type-selector.tsx` had no `color` property set, resulting in text rendering with default/inherited color (likely white or transparent).
+
+**Fix Applied:** `/components/canvas/type-selector.tsx` (lines 106, 109)
+```typescript
+style={{
+  // ... existing styles
+  color: '#2c3e50',  // Added: dark blue-gray text
+  fontWeight: 500,   // Added: medium weight for better readability
+  // ... rest of styles
+}}
+```
+
+**User Feedback:** ✅ "the coloring is good now"
+
+**Status:** RESOLVED
+
+---
+
+### Error 2: Branch Not Found in Provider Cache
+
+**Issue:** When user clicked to change annotation type, the following error occurred:
+```
+Error: Branch not found: f4a80e3b-768a-4127-a906-ad25ad86a0c9
+lib/providers/plain-offline-provider.ts (871:13) @ PlainOfflineProvider.changeBranchType
+```
+
+**Root Cause Analysis:**
+
+The original `changeBranchType` implementation in `/lib/providers/plain-offline-provider.ts` checked the in-memory cache first:
+
+```typescript
+// BUGGY VERSION:
+async changeBranchType(branchId: string, newType: AnnotationType): Promise<void> {
+  const branch = this.branches.get(branchId)  // ❌ Throws if not in cache
+  if (!branch) {
+    throw new Error(`Branch not found: ${branchId}`)
+  }
+  // ...
+}
+```
+
+The problem: In the web application architecture, branches are loaded directly via the adapter in `canvas-context.tsx`, which populates the `DataStore` but bypasses the provider's `this.branches` Map. The provider's in-memory cache was empty, even though the branch existed in:
+1. The database (persistent)
+2. The DataStore (runtime state)
+3. The UI (rendered panels)
+
+**Fix Applied:** `/lib/providers/plain-offline-provider.ts` (lines 865-900)
+
+Changed the method to call the API directly without checking the in-memory cache:
+
+```typescript
+// FIXED VERSION:
+async changeBranchType(
+  branchId: string,
+  newType: 'note' | 'explore' | 'promote'
+): Promise<void> {
+  // Don't check in-memory cache - branches may be loaded directly via adapter
+  // Just call API directly
+  try {
+    const response = await fetch(`/api/postgres-offline/branches/${branchId}/change-type`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newType })
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      throw new Error(errorData.error || `Failed to change branch type: ${response.statusText}`)
+    }
+
+    const result = await response.json()
+
+    // Update in-memory cache if branch exists there (optional optimization)
+    if (this.branches.has(branchId)) {
+      this.branches.set(branchId, result)
+    }
+
+    // Emit event for UI to react
+    this.emit('branch:updated', result)
+
+    console.log(`✓ Changed branch ${branchId} type to ${newType}`)
+
+    return result
+  } catch (error) {
+    console.error('[PlainOfflineProvider] Failed to change branch type:', error)
+    throw error
+  }
+}
+```
+
+**Key Changes:**
+1. ✅ Removed cache existence check - no longer throws "Branch not found"
+2. ✅ API call is now the primary action, not secondary
+3. ✅ In-memory cache update is now optional (if branch happens to be cached)
+4. ✅ Method works whether branch is in provider cache or not
+
+**Why This Works:**
+- The API endpoint queries the database directly using the branch ID
+- Database is the source of truth, not the provider's cache
+- Provider cache is an optimization, not a requirement
+- The `canvas-context.tsx` loading pattern is now compatible with type changes
+
+**Status:** FIX IMPLEMENTED - Awaiting user testing
+
+**Testing Steps:**
+1. User should create a new branch annotation
+2. Click the type badge to open dropdown
+3. Select a different type (e.g., change Note → Explore)
+4. Verify no error appears
+5. Verify type badge updates to show new type
+6. Reload page and verify new type persists in database
+
+**Expected Behavior After Fix:**
+- Type change succeeds immediately
+- No "Branch not found" error
+- Badge updates to show new type
+- Database persists the change
+- typeHistory array updated with new entry
+
+---
+
 ## Conclusion
 
 Successfully implemented a user-friendly annotation type changer with:
@@ -640,4 +749,8 @@ Successfully implemented a user-friendly annotation type changer with:
 - ✅ Proper database persistence
 - ✅ Responsive UI with optimistic updates
 
-**The feature is production-ready and ready for user testing!**
+**Bugs Fixed:**
+- ✅ Error 1: Invisible dropdown text (RESOLVED - user confirmed)
+- ⏳ Error 2: Branch not found error (FIX APPLIED - awaiting user testing)
+
+**The feature is ready for continued user testing!**

@@ -2,13 +2,14 @@
 
 import type React from "react"
 
-import { createContext, useContext, useReducer, useEffect, useRef, type ReactNode } from "react"
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback, type ReactNode } from "react"
 import type { CanvasState } from "@/types/canvas"
 import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
 import { initialData } from "@/lib/initial-data"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import type { AnnotationType } from "@/lib/models/annotation"
 
 interface CanvasContextType {
   state: CanvasState
@@ -17,6 +18,7 @@ interface CanvasContextType {
   events: EventEmitter
   noteId?: string
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
+  updateAnnotationType?: (branchId: string, newType: AnnotationType) => void
 }
 
 const CanvasContext = createContext<CanvasContextType | null>(null)
@@ -115,15 +117,18 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
   // Create stable instances that survive re-renders
   const dataStoreRef = useRef<DataStore>()
   const eventsRef = useRef<EventEmitter>()
-  
+
   if (!dataStoreRef.current) dataStoreRef.current = new DataStore()
   if (!eventsRef.current) eventsRef.current = new EventEmitter()
-  
+
   const dataStore = dataStoreRef.current
   const events = eventsRef.current
 
   // Track if branches have been loaded for current note
   const loadedNotesRef = useRef(new Set<string>())
+
+  // Track editor instances for annotation updates
+  const editorsRef = useRef<Map<string, any>>(new Map())
   
   useEffect(() => {
     // Check if we're in plain mode
@@ -459,7 +464,63 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
     }
   }, [state, dispatch])
 
-  return <CanvasContext.Provider value={{ state, dispatch, dataStore, events, noteId, onRegisterActiveEditor }}>{children}</CanvasContext.Provider>
+  /**
+   * Register an editor instance for annotation updates
+   * This allows updateAnnotationType to call commands on the correct editor
+   */
+  const registerEditor = useCallback((editor: any, panelId: string) => {
+    editorsRef.current.set(panelId, editor)
+
+    // Clean up on unmount
+    return () => {
+      editorsRef.current.delete(panelId)
+    }
+  }, [])
+
+  /**
+   * Update annotation type in the main editor
+   * Type-safe, uses TipTap commands with fallback to direct manipulation
+   */
+  const updateAnnotationType = useCallback((branchId: string, newType: AnnotationType) => {
+    if (!branchId || !newType) {
+      console.warn('[CanvasProvider] updateAnnotationType: Invalid parameters', { branchId, newType })
+      return
+    }
+
+    try {
+      // Get the main editor instance
+      const mainEditor = editorsRef.current.get('main')
+
+      if (!mainEditor) {
+        console.warn('[CanvasProvider] updateAnnotationType: Main editor not registered')
+        return
+      }
+
+      // Use TipTap extension command (production-quality)
+      const success = mainEditor.commands.updateAnnotationType(branchId, newType)
+
+      if (!success) {
+        console.warn('[CanvasProvider] Failed to update annotation type')
+      }
+    } catch (error) {
+      console.error('[CanvasProvider] updateAnnotationType: Error', error)
+    }
+  }, [])
+
+  const contextValue = {
+    state,
+    dispatch,
+    dataStore,
+    events,
+    noteId,
+    onRegisterActiveEditor: (editorRef: any, panelId: string) => {
+      registerEditor(editorRef, panelId)
+      onRegisterActiveEditor?.(editorRef, panelId)
+    },
+    updateAnnotationType,
+  }
+
+  return <CanvasContext.Provider value={contextValue}>{children}</CanvasContext.Provider>
 }
 
 export function useCanvas() {

@@ -866,42 +866,9 @@ export class PlainOfflineProvider extends EventEmitter {
     branchId: string,
     newType: 'note' | 'explore' | 'promote'
   ): Promise<void> {
-    const branch = this.branches.get(branchId)
-    if (!branch) {
-      throw new Error(`Branch not found: ${branchId}`)
-    }
-
-    const oldType = branch.type
-    if (oldType === newType) {
-      return // No change needed
-    }
-
-    // Update type history in metadata
-    const typeHistory = branch.metadata?.typeHistory || []
-    typeHistory.push({
-      type: newType,
-      changedAt: new Date().toISOString(),
-      reason: 'user_change'
-    })
-
-    // Update branch - title stays the same (user may have customized it)
-    const updated: Branch = {
-      ...branch,
-      type: newType,
-      metadata: {
-        ...branch.metadata,
-        annotationType: newType,
-        typeHistory
-      },
-      updatedAt: new Date()
-    }
-
-    // Update in-memory cache
-    this.branches.set(branchId, updated)
-
-    // Persist to database via API
+    // Don't check in-memory cache - branches may be loaded directly via adapter
+    // Just call API directly
     try {
-      // Use WebPostgresOfflineAdapter which calls the API
       const response = await fetch(`/api/postgres-offline/branches/${branchId}/change-type`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -909,24 +876,25 @@ export class PlainOfflineProvider extends EventEmitter {
       })
 
       if (!response.ok) {
-        throw new Error(`Failed to change branch type: ${response.statusText}`)
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to change branch type: ${response.statusText}`)
       }
 
       const result = await response.json()
 
-      // Update cache with server response
-      this.branches.set(branchId, result)
+      // Update in-memory cache if branch exists there
+      if (this.branches.has(branchId)) {
+        this.branches.set(branchId, result)
+      }
 
       // Emit event for UI to react
       this.emit('branch:updated', result)
 
-      console.log(`✓ Changed branch ${branchId} from ${oldType} to ${newType}`)
+      console.log(`✓ Changed branch ${branchId} type to ${newType}`)
+
+      return result
     } catch (error) {
       console.error('[PlainOfflineProvider] Failed to change branch type:', error)
-
-      // Revert in-memory change on failure
-      this.branches.set(branchId, branch)
-
       throw error
     }
   }

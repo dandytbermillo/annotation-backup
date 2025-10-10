@@ -9,9 +9,11 @@
 
 import type { PlainAnchor } from '../utils/text-anchoring'
 
+export type AnnotationType = 'note' | 'explore' | 'promote'
+
 export interface PlainAnnotation {
   id: string
-  type: 'note' | 'explore' | 'promote'
+  type: AnnotationType
   anchors: PlainAnchor[]
   anchors_fallback: PlainAnchor[]  // For resilience
   noteId: string
@@ -32,7 +34,7 @@ export interface AnnotationBranch {
   id: string
   noteId: string
   parentId: string
-  type: 'note' | 'explore' | 'promote'
+  type: AnnotationType
   title: string
   content: string  // HTML or ProseMirror JSON as string
   originalText: string
@@ -48,7 +50,7 @@ export interface AnnotationConnection {
   id: string
   fromPanelId: string
   toPanelId: string
-  type: 'note' | 'explore' | 'promote'
+  type: AnnotationType
   metadata?: {
     color?: string
     curved?: boolean
@@ -59,7 +61,7 @@ export interface AnnotationConnection {
 /**
  * Get color for annotation type
  */
-export function getAnnotationColor(type: 'note' | 'explore' | 'promote'): string {
+export function getAnnotationColor(type: AnnotationType): string {
   switch (type) {
     case 'note':
       return '#3498db' // Blue
@@ -75,7 +77,7 @@ export function getAnnotationColor(type: 'note' | 'explore' | 'promote'): string
 /**
  * Get gradient for annotation type
  */
-export function getAnnotationGradient(type: 'note' | 'explore' | 'promote'): string {
+export function getAnnotationGradient(type: AnnotationType): string {
   switch (type) {
     case 'note':
       return 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)'
@@ -91,7 +93,7 @@ export function getAnnotationGradient(type: 'note' | 'explore' | 'promote'): str
 /**
  * Get icon for annotation type
  */
-export function getAnnotationIcon(type: 'note' | 'explore' | 'promote'): string {
+export function getAnnotationIcon(type: AnnotationType): string {
   switch (type) {
     case 'note':
       return '📝'
@@ -105,10 +107,35 @@ export function getAnnotationIcon(type: 'note' | 'explore' | 'promote'): string 
 }
 
 /**
+ * Get default panel width based on annotation type
+ */
+export function getDefaultPanelWidth(type: 'note' | 'explore' | 'promote' | 'main'): number {
+  switch(type) {
+    case 'note': return 380      // Compact - quick references
+    case 'explore': return 500   // Standard - investigation
+    case 'promote': return 550   // Prominent - important findings
+    case 'main': return 600      // Primary document
+    default: return 500
+  }
+}
+
+/**
+ * Get annotation type color for visual differentiation
+ */
+export function getAnnotationTypeColor(type: string): string {
+  switch(type) {
+    case 'note': return '#3498db'      // Blue
+    case 'explore': return '#f39c12'   // Orange
+    case 'promote': return '#27ae60'   // Green
+    default: return '#999999'          // Gray fallback
+  }
+}
+
+/**
  * Create default branch data
  */
 export function createAnnotationBranch(
-  type: 'note' | 'explore' | 'promote',
+  type: AnnotationType,
   parentId: string,
   noteId: string,
   selectedText: string,

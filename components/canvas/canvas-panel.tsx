@@ -9,7 +9,7 @@ import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plai
 import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
 import { v4 as uuidv4 } from "uuid"
-import { createAnnotationBranch } from "@/lib/models/annotation"
+import { createAnnotationBranch, getDefaultPanelWidth } from "@/lib/models/annotation"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
@@ -38,12 +38,13 @@ interface CanvasPanelProps {
   panelId: string
   branch: Branch
   position: { x: number; y: number }
+  width?: number  // Optional width prop (defaults based on type)
   onClose?: () => void
   noteId?: string
 }
 
-export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
-  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor } = useCanvas()
+export function CanvasPanel({ panelId, branch, position, width, onClose, noteId }: CanvasPanelProps) {
+  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -72,6 +73,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [titleValue, setTitleValue] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Type change state - prevents race conditions from rapid clicks
+  const [isChangingType, setIsChangingType] = useState(false)
 
   // Request cancellation for race condition prevention
   //
@@ -849,7 +853,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return dataCopy
   }
   const currentBranch = getBranchData()
-  
+
+  // Calculate panel width based on type (if not explicitly provided)
+  const panelWidth = width ?? getDefaultPanelWidth(
+    currentBranch.type === 'main' ? 'main' : (currentBranch.type as 'note' | 'explore' | 'promote')
+  )
+
   // Generate title for branch panels if not set
   const getPanelTitle = () => {
     if (currentBranch.title) {
@@ -1012,6 +1021,14 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     const plainProvider = getPlainProvider()
     if (!plainProvider || !noteId || panelId === 'main') return
 
+    // Prevent concurrent type changes (race condition protection)
+    if (isChangingType) {
+      console.log('[CanvasPanel] Type change already in progress, ignoring')
+      return
+    }
+
+    setIsChangingType(true)
+
     try {
       // Extract branch ID (remove 'branch-' prefix)
       const branchId = panelId.replace('branch-', '')
@@ -1028,10 +1045,16 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       // Force re-render
       dispatch({ type: "BRANCH_UPDATED" })
 
+      // Update annotation color in main editor via context (type-safe)
+      updateAnnotationType?.(branchId, newType)
+
       console.log(`✓ Changed annotation type to ${newType}`)
     } catch (error) {
       console.error('[CanvasPanel] Failed to change type:', error)
       alert(`Failed to change type: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      // Always reset loading state, even on error
+      setIsChangingType(false)
     }
   }
 
@@ -1861,13 +1884,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         position: 'absolute',
         left: renderPosition.x + 'px',
         top: renderPosition.y + 'px',
-        width: '500px',
+        width: `${panelWidth}px`,
         height: `${panelHeight}px`,
         maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
-        boxShadow: isIsolated 
-          ? '0 8px 32px rgba(239, 68, 68, 0.25)' 
+        boxShadow: isIsolated
+          ? '0 8px 32px rgba(239, 68, 68, 0.25)'
           : '0 8px 32px rgba(0,0,0,0.15)',
         display: 'flex',
         flexDirection: 'column',
@@ -1997,7 +2020,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             <TypeSelector
               currentType={currentBranch.type as AnnotationType}
               onTypeChange={handleTypeChange}
-              disabled={false}
+              disabled={isChangingType}
             />
           )}
 
