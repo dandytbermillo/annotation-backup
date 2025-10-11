@@ -143,6 +143,9 @@ export interface PlainOfflineProviderOptions {
  * Implements all 10 critical fixes from the Yjs implementation
  */
 export class PlainOfflineProvider extends EventEmitter {
+  private static instanceCounter = 0
+  private instanceId: number
+
   public readonly isEmptyContent = this._isEmptyContent.bind(this)
 
   public readonly isEmptyContent = this._isEmptyContent.bind(this)
@@ -184,8 +187,10 @@ export class PlainOfflineProvider extends EventEmitter {
 
   constructor(adapter: PlainCrudAdapter, options?: PlainOfflineProviderOptions) {
     super()
+    this.instanceId = ++PlainOfflineProvider.instanceCounter
+    console.log(`[PlainOfflineProvider] Creating instance #${this.instanceId}`)
     this.adapter = adapter
-    
+
     // Initialize batching if enabled
     this.batchingEnabled = options?.enableBatching ?? false
     
@@ -435,19 +440,22 @@ export class PlainOfflineProvider extends EventEmitter {
     }
     
     // Check cache first
-    if (this.documents.has(cacheKey)) {
+    const hadCachedContent = this.documents.has(cacheKey)
+    const previousVersion = this.documentVersions.get(cacheKey) || 0
+
+    if (hadCachedContent) {
       const cachedContent = this.documents.get(cacheKey)
       console.log(`[PlainOfflineProvider] Found cached document for ${cacheKey}:`, cachedContent)
       this.updateLastAccess(cacheKey)
       if (AUTOSAVE_DEBUG) {
         providerAutosaveDebug('load:cache-hit', {
           cacheKey,
-          version: this.documentVersions.get(cacheKey) || 0
+          version: previousVersion
         })
       }
       return cachedContent || null
     }
-    
+
     // Create loading promise
     const loadPromise = this.adapter.loadDocument(noteId, panelId)
       .then(result => {
@@ -460,7 +468,7 @@ export class PlainOfflineProvider extends EventEmitter {
               isEmpty: this.isEmptyContent(result.content)
             })
           }
-          
+
           // Fix #1: Clear empty content
           if (this.isEmptyContent(result.content)) {
             console.log(`[PlainOfflineProvider] Content is empty, using empty doc for ${cacheKey}`)
@@ -472,6 +480,19 @@ export class PlainOfflineProvider extends EventEmitter {
             this.documents.set(cacheKey, result.content)
             this.documentVersions.set(cacheKey, result.version)
             this.updateLastAccess(cacheKey)
+
+            // Emit remote-update event if this is a refresh (cache was populated before)
+            // Don't emit on first load to avoid interfering with normal content loading
+            if (hadCachedContent && result.version > previousVersion) {
+              console.log(`[PlainOfflineProvider] Emitting remote-update: ${cacheKey} refreshed from v${previousVersion} to v${result.version}`)
+              this.emit('document:remote-update', {
+                noteId,
+                panelId,
+                version: result.version,
+                content: result.content,
+                reason: 'refresh'
+              })
+            }
           }
         } else {
           console.log(`[PlainOfflineProvider] No document found for ${cacheKey}`)
@@ -506,7 +527,17 @@ export class PlainOfflineProvider extends EventEmitter {
           version: this.documentVersions.get(cacheKey) || 0
         })
       }
-      return this.documents.get(cacheKey) || null
+
+      // DEBUG: Cross-browser sync investigation
+      const loadedContent = this.documents.get(cacheKey) || null
+      console.log(`[🔍 SYNC-DEBUG] loadDocument complete for ${cacheKey}`, {
+        hasContent: !!loadedContent,
+        version: this.documentVersions.get(cacheKey),
+        contentPreview: loadedContent ? JSON.stringify(loadedContent).substring(0, 100) : 'NULL',
+        cacheSize: this.documents.size
+      })
+
+      return loadedContent
     } catch (error) {
       if (AUTOSAVE_DEBUG) {
         providerAutosaveDebug('load:complete-error', {
@@ -630,6 +661,18 @@ export class PlainOfflineProvider extends EventEmitter {
             this.revertOptimisticUpdate(cacheKey, prev, previousVersion)
             const latest = await this.refreshDocumentFromRemote(noteId, panelId, 'conflict')
             const conflictError = new PlainDocumentConflictError(noteId, panelId, message, latest || undefined)
+
+            const listenerCount = this.listenerCount('document:conflict')
+            console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} emitting document:conflict event`, {
+              noteId,
+              panelId,
+              message,
+              remoteVersion: latest?.version,
+              hasRemoteContent: !!latest?.content,
+              listenerCount,
+              instanceId: this.instanceId
+            })
+
             this.emit('document:conflict', {
               noteId,
               panelId,
@@ -637,6 +680,8 @@ export class PlainOfflineProvider extends EventEmitter {
               remoteVersion: latest?.version,
               remoteContent: latest?.content
             })
+
+            console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} event emitted, listener count:`, listenerCount)
             throw conflictError
           }
           if (
@@ -714,10 +759,18 @@ export class PlainOfflineProvider extends EventEmitter {
     }
   }
 
+  /**
+   * Public method to force refresh from database and emit update events
+   * Use this when you want to check for remote changes (e.g., on visibility change)
+   */
+  async checkForRemoteUpdates(noteId: string, panelId: string): Promise<void> {
+    await this.refreshDocumentFromRemote(noteId, panelId, 'manual')
+  }
+
   private async refreshDocumentFromRemote(
     noteId: string,
     panelId: string,
-    reason: 'conflict' | 'manual'
+    reason: 'conflict' | 'manual' | 'visibility'
   ): Promise<{ content: ProseMirrorJSON | HtmlString; version: number } | null> {
     try {
       const latest = await this.adapter.loadDocument(noteId, panelId)

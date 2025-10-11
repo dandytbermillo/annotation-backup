@@ -732,6 +732,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     ({ content: loadedContent }: { content: ProseMirrorJSON | string | null; version: number }) => {
       if (!isPlainMode) return
 
+      console.log(`[🔍 DATASTORE-UPDATE] handleEditorContentLoaded called for ${panelId}`, {
+        hasContent: !!loadedContent,
+        isEmpty: isContentEmptyValue(loadedContent),
+        contentPreview: loadedContent ? JSON.stringify(loadedContent).substring(0, 100) : 'NULL'
+      })
+
       if (loadedContent !== undefined && loadedContent !== null && !isContentEmptyValue(loadedContent)) {
         const existing = dataStore.get(panelId) || {}
         const previewFallback = existing.preview
@@ -749,6 +755,11 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         } else {
           delete nextMetadata.preview
         }
+
+        console.log(`[🔍 DATASTORE-UPDATE] Updating dataStore for ${panelId}`, {
+          preview: previewText.substring(0, 50),
+          hasHydratedContent: true
+        })
 
         dataStore.update(panelId, {
           content: loadedContent,

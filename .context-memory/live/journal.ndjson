@@ -314,3 +314,4 @@
 {"ts":"2025-10-09T22:37:12.868Z","type":"commit","sha":"aa092c4fe64f9967e23714a6d710e0013a456478","files_changed":29,"message":"add annotation type selector"}
 {"ts":"2025-10-10T02:15:39.516Z","type":"commit","sha":"dc101aaf62feb8fc50c23e69ad11ab8fd39383e0","files_changed":18,"message":"created proposal for making the extension cand extensivle"}
 {"ts":"2025-10-10T05:38:59.948Z","type":"commit","sha":"9587393689b19261a338c64527ec31341903b819","files_changed":37,"message":"make the extension command extensible"}
+{"ts":"2025-10-10T20:57:10.623Z","type":"commit","sha":"f2f9357a31662f4740cbe6d97576837c22fa7462","files_changed":13,"message":"fixing the cross browser not in sync"}

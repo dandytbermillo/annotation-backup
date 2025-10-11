@@ -46,7 +46,7 @@ import { AnnotationArrowNavigationFix } from './annotation-arrow-navigation-fix'
 import { SafariProvenFix } from './safari-proven-fix'
 import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import { ReadOnlyGuard } from './read-only-guard'
-import type { PlainOfflineProvider, ProseMirrorJSON } from '@/lib/providers/plain-offline-provider'
+import type { PlainOfflineProvider, ProseMirrorJSON, HtmlString } from '@/lib/providers/plain-offline-provider'
 import { debugLog, createContentPreview } from '@/lib/debug-logger'
 import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
 
@@ -450,6 +450,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           remoteContent = provider.getDocument(noteId, panelId)
         } catch {}
 
+        // DEBUG: Cross-browser sync investigation
+        console.log(`[🔍 SYNC-DEBUG] Editor loadDocument callback for ${panelId}`, {
+          remoteContent: remoteContent ? 'HAS_CONTENT' : 'NULL',
+          remoteContentPreview: remoteContent ? JSON.stringify(remoteContent).substring(0, 100) : 'NULL',
+          branchEntryContent: branchEntry?.content ? 'HAS_SNAPSHOT' : 'NO_SNAPSHOT',
+          providerVersion: provider.getDocumentVersion(noteId, panelId)
+        })
+
         let resolvedContent: ProseMirrorJSON | string | null = remoteContent
 
         fallbackSourceRef.current = null
@@ -462,6 +470,17 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         const needsFallback = !resolvedContent
           || providerContentIsEmpty(provider, resolvedContent)
           || treatAsPlaceholder
+
+        // DEBUG: Cross-browser sync investigation
+        console.log(`[🔍 SYNC-DEBUG] Fallback check for ${panelId}`, {
+          needsFallback,
+          reasons: {
+            noContent: !resolvedContent,
+            isEmpty: providerContentIsEmpty(provider, resolvedContent),
+            isPlaceholder: treatAsPlaceholder
+          }
+        })
+
         if (needsFallback && typeof window !== 'undefined') {
           try {
             const fallbackRaw = branchEntry?.content || branchEntry?.metadata?.htmlSnapshot
@@ -590,6 +609,15 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
 
         const notifyLoad = fallbackSourceRef.current !== 'preview'
+
+        // DEBUG: Cross-browser sync investigation
+        console.log(`[🔍 SYNC-DEBUG] Setting editor content for ${panelId}`, {
+          contentSource: fallbackSourceRef.current || 'remote',
+          contentPreview: resolvedContent ? JSON.stringify(resolvedContent).substring(0, 100) : 'NULL',
+          version: remoteVersion,
+          willNotify: notifyLoad
+        })
+
         setLoadedContent(resolvedContent)
         setIsContentLoading(false)
         if (notifyLoad) {
@@ -617,7 +645,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         isActive = false
       }
     }, [provider, noteId, panelId, normalizeContent, onContentLoaded])
-    
+
     // Check for pending saves in localStorage and restore when provider cache is behind
     useEffect(() => {
       if (!provider || !noteId || !panelId) return
@@ -951,6 +979,8 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
               .catch(err => {
                 console.error('[TiptapEditorPlain] Failed to save content:', err)
+                // Don't swallow the error - let it propagate so conflict events can be handled
+                // The provider already emitted document:conflict event if this was a conflict
               })
           }
           onUpdate?.(json)
@@ -1062,6 +1092,192 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       }
     }, [editor, onCollapsibleSelectionChange])
 
+    // Handle document conflicts - update editor when remote version is newer
+    useEffect(() => {
+      if (!provider || !noteId || !panelId || !editor) return
+
+      console.log(`[🔍 CONFLICT-RESOLUTION] Registering conflict listener for ${panelId}`, {
+        noteId,
+        panelId,
+        hasProvider: !!provider,
+        hasEditor: !!editor,
+        providerInstanceId: (provider as any)?.instanceId,
+        listenersBefore: provider?.listenerCount?.('document:conflict')
+      })
+
+      const handleConflict = (event: {
+        noteId: string
+        panelId: string
+        message: string
+        remoteVersion?: number
+        remoteContent?: ProseMirrorJSON | HtmlString
+      }) => {
+        console.log(`[🔍 CONFLICT-RESOLUTION] *** HANDLER CALLED ***`, event)
+        console.log(`[🔍 CONFLICT-RESOLUTION] Conflict event received`, {
+          eventNoteId: event.noteId,
+          eventPanelId: event.panelId,
+          myNoteId: noteId,
+          myPanelId: panelId,
+          willHandle: event.noteId === noteId && event.panelId === panelId
+        })
+
+        // Only handle conflicts for this specific panel
+        if (event.noteId !== noteId || event.panelId !== panelId) return
+
+        console.log(`[🔍 CONFLICT-RESOLUTION] Handling conflict for ${panelId}`, {
+          remoteVersion: event.remoteVersion,
+          currentVersion: provider.getDocumentVersion(noteId, panelId),
+          hasRemoteContent: !!event.remoteContent
+        })
+
+        // Get the fresh content that the provider already loaded
+        let freshContent: ProseMirrorJSON | HtmlString | null = null
+        try {
+          freshContent = provider.getDocument(noteId, panelId)
+        } catch (err) {
+          console.error('[TiptapEditorPlain] Failed to get fresh content after conflict:', err)
+          return
+        }
+
+        if (!freshContent) {
+          console.warn('[TiptapEditorPlain] No fresh content available after conflict')
+          return
+        }
+
+        console.log(`[🔍 CONFLICT-RESOLUTION] Updating editor with fresh content`, {
+          contentPreview: JSON.stringify(freshContent).substring(0, 100),
+          version: event.remoteVersion
+        })
+
+        // Update editor with fresh content
+        try {
+          console.log(`[🔍 CONFLICT-RESOLUTION] Before setContent, editor has:`, editor.getJSON())
+          console.log(`[🔍 CONFLICT-RESOLUTION] Editor is focused:`, editor.isFocused)
+
+          // CRITICAL: Make editor non-editable to prevent interference during update
+          const wasEditable = editor.isEditable
+          if (wasEditable) {
+            console.log(`[🔍 CONFLICT-RESOLUTION] Making editor non-editable during update`)
+            editor.setEditable(false)
+          }
+
+          // CRITICAL: If editor is focused, blur it first so setContent works
+          if (editor.isFocused) {
+            console.log(`[🔍 CONFLICT-RESOLUTION] Blurring editor to allow setContent`)
+            editor.commands.blur()
+          }
+
+          // Use chain().clearContent().insertContent() for more reliable update
+          console.log(`[🔍 CONFLICT-RESOLUTION] Replacing content with chain command`)
+          editor.chain()
+            .clearContent()
+            .insertContent(freshContent)
+            .run()
+
+          console.log(`[🔍 CONFLICT-RESOLUTION] After update, editor has:`, editor.getJSON())
+
+          // Restore editability
+          if (wasEditable) {
+            console.log(`[🔍 CONFLICT-RESOLUTION] Restoring editor editability`)
+            editor.setEditable(true)
+          }
+
+          setLoadedContent(freshContent)
+
+          // Notify parent component to update dataStore
+          console.log(`[🔍 CONFLICT-RESOLUTION] Calling onContentLoaded to update dataStore`, {
+            hasCallback: !!onContentLoaded,
+            version: event.remoteVersion
+          })
+          if (event.remoteVersion !== undefined) {
+            onContentLoaded?.({ content: freshContent, version: event.remoteVersion })
+          }
+
+          // Show brief notification to user (optional - can be styled better later)
+          console.info(`[Editor] Content updated to latest version (conflict resolved)`)
+        } catch (err) {
+          console.error('[TiptapEditorPlain] Failed to update editor after conflict:', err)
+        }
+      }
+
+      // Handle remote updates (when provider loads fresh content from database)
+      const handleRemoteUpdate = (event: {
+        noteId: string
+        panelId: string
+        version: number
+        content: ProseMirrorJSON | HtmlString
+        reason?: string
+      }) => {
+        console.log(`[🔍 REMOTE-UPDATE] Remote update event received`, {
+          eventNoteId: event.noteId,
+          eventPanelId: event.panelId,
+          myNoteId: noteId,
+          myPanelId: panelId,
+          reason: event.reason,
+          willHandle: event.noteId === noteId && event.panelId === panelId
+        })
+
+        // Only handle updates for this specific panel
+        if (event.noteId !== noteId || event.panelId !== panelId) return
+
+        console.log(`[🔍 REMOTE-UPDATE] Handling remote update for ${panelId}`, {
+          version: event.version,
+          currentVersion: provider.getDocumentVersion(noteId, panelId),
+          reason: event.reason
+        })
+
+        // Update editor with remote content
+        try {
+          console.log(`[🔍 REMOTE-UPDATE] Updating editor with remote content`, {
+            contentPreview: JSON.stringify(event.content).substring(0, 100),
+            version: event.version
+          })
+
+          // Make editor non-editable during update
+          const wasEditable = editor.isEditable
+          if (wasEditable) {
+            editor.setEditable(false)
+          }
+
+          // Blur if focused
+          if (editor.isFocused) {
+            editor.commands.blur()
+          }
+
+          // Update content
+          editor.chain()
+            .clearContent()
+            .insertContent(event.content)
+            .run()
+
+          // Restore editability
+          if (wasEditable) {
+            editor.setEditable(true)
+          }
+
+          setLoadedContent(event.content)
+
+          // Notify parent to update dataStore
+          console.log(`[🔍 REMOTE-UPDATE] Calling onContentLoaded to update dataStore`)
+          onContentLoaded?.({ content: event.content, version: event.version })
+
+          console.info(`[Editor] Content updated from remote (${event.reason || 'background refresh'})`)
+        } catch (err) {
+          console.error('[TiptapEditorPlain] Failed to update editor with remote content:', err)
+        }
+      }
+
+      // Listen for both conflict and remote update events
+      provider.on('document:conflict', handleConflict)
+      provider.on('document:remote-update', handleRemoteUpdate)
+
+      // Cleanup listeners on unmount
+      return () => {
+        provider.off('document:conflict', handleConflict)
+        provider.off('document:remote-update', handleRemoteUpdate)
+      }
+    }, [provider, noteId, panelId, editor, onContentLoaded])
+
     // Save content before browser unload or visibility change
     useEffect(() => {
       const saveCurrentContent = async (isSync = false) => {
@@ -1110,9 +1326,28 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       }
       
       // visibilitychange fires earlier and allows async operations
-      const handleVisibilityChange = () => {
+      const handleVisibilityChange = async () => {
         if (document.visibilityState === 'hidden') {
           saveCurrentContent(false) // async save
+        } else if (document.visibilityState === 'visible' && provider) {
+          // Check for remote updates when page becomes visible
+          fetch('/api/debug/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              component: 'TiptapEditorPlain',
+              event: 'VISIBILITY_REFRESH',
+              metadata: { noteId, panelId }
+            }),
+          }).catch(() => {})
+
+          try {
+            // Force refresh from database to check for remote changes
+            // This will emit document:remote-update if newer content is found
+            await provider.checkForRemoteUpdates(noteId, panelId)
+          } catch (err) {
+            console.error('[TiptapEditorPlain] Failed to refresh on visibility:', err)
+          }
         }
       }
       

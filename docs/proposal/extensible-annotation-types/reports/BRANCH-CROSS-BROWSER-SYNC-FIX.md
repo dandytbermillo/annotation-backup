@@ -1,314 +1,77 @@
-# Branch Panel Cross-Browser Sync Fix
+# ⚠️ Deprecated: Branch Panel Cross-Browser Sync Fix (Superseded)
 
-**Date**: 2025-10-10
-**Issue**: Branch panels show stale content across different browsers while main panel syncs correctly
-**Root Cause**: Branch panels always load from localStorage snapshot without checking provider version
-**Status**: Fix identified, ready to implement
-
----
-
-## Problem Description
-
-**Observed Behavior**:
-- **Same browser (Chrome tabs)**: Both main and branch sync ✅
-- **Cross-browser**:
-  - Main panel syncs ✅
-  - Branch panels DON'T sync (show old content) ❌
-
-**User Impact**: When editing branch content in Chrome, then opening Firefox, Firefox shows outdated branch content while main panel shows correct content.
+> **Status**: **Deprecated / Do Not Implement**  
+> **Reason**: Subsequent analysis (`CRITIQUE-ANALYSIS-BRANCH-SYNC-FIX.md`) shows that the plan below relies on incorrect assumptions (e.g., when `loadDocument` populates the cache, when `document:remote-update` fires, and how stale saves are prevented by the API). Implementing these steps would introduce regressions without resolving the root issue.
+>
+> **Next Steps**:  
+> * Discard the implementation steps in this document.  
+> * Re-investigate the true failure mode (stale snapshot being re-saved before the fresh load completes vs. lack of cross-tab refresh) with accurate instrumentation.  
+> * Draft a new fix plan aligned with verified behaviour—preserving snapshot/offline UX while preventing premature saves—before touching production code.
 
 ---
 
-## Root Cause Analysis
+# Review Summary (2025-10-10)
 
-### Main Panel Loading (Works Correctly)
-
-**File**: `components/annotation-canvas-modern.tsx:361-368`
-
-```typescript
-if (plainProvider && providerVersion > 0 && providerHasContent) {
-  console.log('[AnnotationCanvas] Skipping snapshot restore: provider already has fresh content', {
-    providerVersion,
-    savedAt: snapshot.savedAt,
-    items: snapshot.items.length,
-  })
-  setIsStateLoaded(true)
-  return  // ← SKIPS stale snapshot if provider has content
-}
-```
-
-**How it works**:
-1. Check provider for main panel content (line 315: `providerVersion = plainProvider.getDocumentVersion(noteId, 'main')`)
-2. If provider has content (`providerVersion > 0 && providerHasContent`), skip snapshot
-3. Provider cache is empty in new browser → loads from database → fresh ✅
+- **Decision**: **Reject implementation** described in this document.  
+- **Why**: The original proposal misread the provider load flow, underestimated existing conflict safeguards, and would have broken snapshot-dependent UX.  
+- **Action**: Treat the content below as historical context only; do **not** implement the listed steps.
 
 ---
 
-### Branch Panel Loading (BROKEN)
+## Key Findings
 
-**File**: `components/canvas/canvas-context.tsx:238-256`
+1. **Provider hydration happens before the promise resolves**  
+   `loadDocument` writes into `documents`/`documentVersions` inside its `then` chain (`lib/providers/plain-offline-provider.ts:452-509`). Any guard that tries to inspect `getDocumentVersion` *before* that promise resolves will always see `0` and conclude the provider is empty.
 
-```typescript
-// Pre-populate additional branches from cache before remote load
-snapshotMap.forEach((value, key) => {
-  if (key === 'main') return
-  const cachedBranch = value as Record<string, any>
-  dataStore.set(key, {
-    id: key,
-    type: cachedBranch.type,
-    title: cachedBranch.title || '',
-    originalText: cachedBranch.originalText || '',  // ← STALE from localStorage!
-    content: cachedBranch.content,                   // ← STALE from localStorage!
-    preview: cachedBranch.preview || '',
-    hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
-    branches: cachedBranch.branches || [],
-    parentId: cachedBranch.parentId ?? 'main',
-    position: cachedBranch.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
-    dimensions: cachedBranch.dimensions || { width: 400, height: 300 },
-    isEditable: cachedBranch.isEditable ?? true,
-    metadata: { displayId: key }
-  })
-})
-```
+2. **Server already rejects stale writes**  
+   The API throws `stale document save: baseVersion …` (409) when an outdated payload arrives (`app/api/postgres-offline/documents/route.ts:60-119`). The database is not silently overwritten by snapshot fallback.
 
-**Problem**:
-1. **NO version check** for branch panels
-2. **ALWAYS** uses snapshot `originalText` and `content` from localStorage
-3. Snapshot contains stale data from previous browser session
-4. Even when provider has fresh data from database, snapshot takes precedence
+3. **`document:remote-update` is conflict-only**  
+   The event is emitted in `refreshDocumentFromRemote` during conflict recovery (`lib/providers/plain-offline-provider.ts:630-736`). Wiring initial hydration or cross-tab refresh to it would have no effect.
 
-**Result**: Branch panels show old content across browsers ❌
+4. **Snapshots power offline UX and previews**  
+   Removing `originalText`/`content` from the snapshot preload would leave branch cards and tooltips blank (`components/canvas/branch-item.tsx`, `components/canvas/annotation-tooltip.ts`) and remove the offline fallback that Option A relies on.
+
+5. **Root cause still needs verification**  
+   The precise reason a second browser sometimes shows stale content (UI not re-rendering after hydration, pending autosave order, conflict handling) remains unconfirmed. This document did not supply correct evidence.
 
 ---
 
-## The Fix
+## Why the Original Plan Was Rejected
 
-Add the same version check for branch panels that main panel uses.
-
-### Implementation
-
-**File**: `components/canvas/canvas-context.tsx`
-
-**Location**: Before line 238 (before the `snapshotMap.forEach`)
-
-**Add this code**:
-
-```typescript
-// Pre-populate additional branches from cache before remote load
-// BUT skip branches where provider has fresher content (same logic as main panel)
-snapshotMap.forEach((value, key) => {
-  if (key === 'main') return
-
-  const cachedBranch = value as Record<string, any>
-
-  // NEW: Check if provider has fresher content for this branch
-  let shouldSkipSnapshot = false
-  if (plainProvider) {
-    try {
-      const branchProviderVersion = plainProvider.getDocumentVersion(noteId, key)
-      const branchProviderContent = plainProvider.getDocument(noteId, key)
-      const providerHasContent = branchProviderContent ? !plainProvider.isEmptyContent(branchProviderContent) : false
-
-      if (branchProviderVersion > 0 && providerHasContent) {
-        console.log(`[CanvasContext] Skipping snapshot for branch ${key}: provider has fresh content`, {
-          branchId: key,
-          providerVersion: branchProviderVersion,
-          snapshotSavedAt: cachedBranch.savedAt
-        })
-        shouldSkipSnapshot = true
-      }
-    } catch (err) {
-      console.warn(`[CanvasContext] Failed to check provider for branch ${key}:`, err)
-    }
-  }
-
-  // Skip if provider has fresher data
-  if (shouldSkipSnapshot) {
-    return
-  }
-
-  // Otherwise, use snapshot (existing logic)
-  dataStore.set(key, {
-    id: key,
-    type: cachedBranch.type,
-    title: cachedBranch.title || '',
-    originalText: cachedBranch.originalText || '',
-    content: cachedBranch.content,
-    preview: cachedBranch.preview || '',
-    hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
-    branches: cachedBranch.branches || [],
-    parentId: cachedBranch.parentId ?? 'main',
-    position: cachedBranch.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
-    dimensions: cachedBranch.dimensions || { width: 400, height: 300 },
-    isEditable: cachedBranch.isEditable ?? true,
-    metadata: { displayId: key }
-  })
-})
-```
+| Original assumption | Reality | Result |
+|---------------------|---------|--------|
+| Version check before snapshot restore will skip stale data | Provider cache is still empty at that moment | Guard never fires; snapshot remains |
+| Snapshot fallback overwrites DB | Server rejects stale payloads with 409 | Claim incorrect |
+| Listening to `document:remote-update` refreshes tabs on load | Event fires only after conflicts | Listener would do nothing |
+| Removing snapshot content is harmless | Breaks offline mode and immediate previews | Significant UX regression |
+| Added suppress/guard logic reduces risk | Increases complexity without verified benefit | Not justified |
 
 ---
 
-## How the Fix Works
+## Recommended Path Forward
 
-### Before Fix (Current Behavior)
+1. **Instrument both browsers**  
+   Log provider version, cache contents, autosave payloads, and API responses to understand the real sequence when the bug reproduces.
 
-**Browser A (Chrome)**:
-1. Edit branch panel → saves to database (version 112)
-2. Saves to localStorage snapshot
+2. **Validate UI refresh behaviour**  
+   Confirm whether branch panels re-render with the provider’s hydrated content. If they do not, determine which state/event is missing.
 
-**Browser B (Firefox)**:
-1. Opens note → provider cache is EMPTY
-2. Loads branch from localStorage snapshot (version 111 - STALE)
-3. Editor shows old content ❌
+3. **Design a targeted fix**  
+   Once evidence is captured, propose the smallest change that keeps snapshot/offline behaviour intact while preventing premature saves (e.g., delaying autosave until after first successful load, explicitly forcing a panel refresh on resolved loads).
 
-### After Fix (Expected Behavior)
-
-**Browser A (Chrome)**:
-1. Edit branch panel → saves to database (version 112)
-2. Saves to localStorage snapshot
-
-**Browser B (Firefox)**:
-1. Opens note → provider cache is EMPTY
-2. **Checks provider for branch content** → provider fetches from DB
-3. **Provider has version 112** → skips stale snapshot ✅
-4. Editor calls `loadDocument(noteId, branchId)` → loads version 112 from DB
-5. Editor shows fresh content ✅
+4. **Draft a fresh proposal**  
+   Replace this deprecated report with a new, evidence-backed plan before implementing code changes.
 
 ---
 
-## Testing Plan
+## References
 
-### Manual Testing
-
-**Test 1: Cross-Browser Branch Sync**
-1. **Chrome**: Create note with branch panel
-2. **Chrome**: Edit branch content: "Test from Chrome v1"
-3. **Chrome**: Wait 2 seconds (autosave)
-4. **Firefox**: Open same note
-5. **Expected**: Branch shows "Test from Chrome v1" ✅
-
-**Test 2: Multiple Edits**
-1. **Chrome**: Edit branch: "Test v2"
-2. **Safari**: Open note
-3. **Expected**: Branch shows "Test v2" ✅
-4. **Safari**: Edit branch: "Test v3"
-5. **Chrome**: Reload page
-6. **Expected**: Chrome shows "Test v3" ✅
-
-**Test 3: Main Panel Still Works**
-1. **Chrome**: Edit main panel: "Main content"
-2. **Firefox**: Open note
-3. **Expected**: Main panel shows "Main content" ✅ (regression test)
+- `CRITIQUE-ANALYSIS-BRANCH-SYNC-FIX.md` – peer review that surfaced the inaccuracies.  
+- `lib/providers/plain-offline-provider.ts` – authoritative load/save ordering.  
+- `components/canvas/tiptap-editor-plain.tsx` – snapshot fallback and autosave implementation.  
+- `app/api/postgres-offline/documents/route.ts` – conflict handling for document saves.
 
 ---
 
-## Validation
-
-### Before Implementation
-
-```bash
-# Verify current behavior
-# 1. Edit branch in Chrome
-# 2. Open Firefox
-# Expected: Shows old branch content ❌
-```
-
-### After Implementation
-
-```bash
-# Run type-check
-npm run type-check  # Must pass
-
-# Run lint
-npm run lint  # Must pass
-
-# Manual test
-# 1. Edit branch in Chrome
-# 2. Open Firefox
-# Expected: Shows new branch content ✅
-```
-
----
-
-## Risks and Mitigations
-
-### Risk 1: Performance Impact
-**Risk**: Checking provider version for every branch on load
-**Mitigation**:
-- Same logic already used for main panel (proven safe)
-- Provider checks are in-memory (fast)
-- Only runs once on note load
-
-### Risk 2: Provider Not Ready
-**Risk**: Provider might not be initialized when snapshot loads
-**Mitigation**:
-- Wrapped in try/catch
-- Falls back to snapshot if provider check fails
-- Same pattern as main panel
-
-### Risk 3: Breaks Same-Browser Sync
-**Risk**: Might break Chrome tab-to-tab sync
-**Mitigation**:
-- Same-browser tabs share database connection
-- Provider will have correct version
-- Fix only affects cross-browser case
-
----
-
-## Alternative Approaches Considered
-
-### Approach 1: Wire `document:remote-update` Listener
-**Pros**: Would also fix conflict error handling
-**Cons**: More complex, requires editor component changes
-**Decision**: Save for later, this fix is simpler and targeted
-
-### Approach 2: Force Provider Reload on Visibility
-**Pros**: Simple
-**Cons**: Performance impact, unnecessary reloads
-**Decision**: Not needed, version check is sufficient
-
-### Approach 3: Remove Snapshot System
-**Pros**: Eliminates stale data source
-**Cons**: Breaks offline support, major refactor
-**Decision**: Keep snapshot, just add version guard
-
----
-
-## Implementation Checklist
-
-- [ ] Read `components/canvas/canvas-context.tsx` completely
-- [ ] Add version check logic before `snapshotMap.forEach` (line 238)
-- [ ] Test in Chrome → Firefox scenario
-- [ ] Test in Firefox → Safari scenario
-- [ ] Test same-browser sync still works
-- [ ] Run `npm run type-check`
-- [ ] Run `npm run lint`
-- [ ] Create verification report with test results
-
----
-
-## Expected Impact
-
-**Before**:
-- Main panel: ✅ Cross-browser sync
-- Branch panels: ❌ Stale content across browsers
-
-**After**:
-- Main panel: ✅ Cross-browser sync (unchanged)
-- Branch panels: ✅ Cross-browser sync (FIXED)
-
----
-
-## Next Steps
-
-1. Implement the fix in `components/canvas/canvas-context.tsx`
-2. Test cross-browser scenarios
-3. Verify no regressions in same-browser sync
-4. Update this report with test results
-5. Consider adding automated test for cross-browser sync
-
----
-
-**Status**: Ready to implement
-**Estimated Time**: 15 minutes implementation + 15 minutes testing
-**Files to Modify**: 1 file (`components/canvas/canvas-context.tsx`)
+> _Historical plan removed:_ Earlier implementation instructions have been intentionally omitted to avoid accidental reuse. Treat this file solely as a rejection log until a corrected strategy is authored.
