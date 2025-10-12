@@ -447,23 +447,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           }))
         })
 
-        // ✅ CRITICAL FIX: Sync to context to prevent stale state on first drag
-        // Without this, panCameraBy reads old translateX=-1000 from context
-        // causing panels to snap on first auto-scroll
-        dispatch({
-          type: 'SET_CANVAS_STATE',
-          payload: {
-            translateX: targetX,
-            translateY: targetY
-          }
-        })
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'new_note_context_synced',
-          metadata: { noteId, targetX, targetY }
-        })
-
         // Restore transition
         if (canvasEl) {
           requestAnimationFrame(() => {
@@ -697,23 +680,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           translateX: targetX,
           translateY: targetY
         }))
-      })
-
-      // ✅ CRITICAL FIX: Sync to context to prevent stale state on first drag
-      // Without this, panCameraBy reads old translateX=-1000 from context
-      // causing panels to snap on first auto-scroll
-      dispatch({
-        type: 'SET_CANVAS_STATE',
-        payload: {
-          translateX: targetX,
-          translateY: targetY
-        }
-      })
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'snapshot_context_synced',
-        metadata: { noteId, targetX, targetY }
       })
 
       // Restore transition
@@ -1261,26 +1227,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             }))
           })
 
-          // ✅ CRITICAL FIX: Sync to context to prevent stale state on first drag
-          // Without this, panCameraBy reads old translateX=-1000 from context
-          // causing panels to snap on first auto-scroll
-          dispatch({
-            type: 'SET_CANVAS_STATE',
-            payload: {
-              translateX: targetX,
-              translateY: targetY
-            }
-          })
-
           debugLog({
             component: 'AnnotationCanvas',
             action: 'viewport_updated_instant',
-            metadata: { panelId, targetX, targetY }
-          })
-
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'centerOnPanel_context_synced',
             metadata: { panelId, targetX, targetY }
           })
 

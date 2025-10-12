@@ -1,0 +1,64 @@
+I need help debugging a React panel dragging issue. Here's the problem:
+
+## Issue
+When dragging a panel to the edge of the viewport to trigger auto-scroll:
+- FIRST drag to edge: Panel snaps to the right side (BUG)
+- SECOND and subsequent drags: Works correctly, no snapping
+
+This only happens on the FIRST drag after the app loads or opens a note.
+
+## Key Code
+
+The panel position is controlled by:
+1. `renderPosition` state (line 59) - drives panel CSS
+2. `position` prop (from parent) - comes from dataStore/branchesMap
+3. `canvasNode?.position` (from LayerManager) - cached position
+
+There's a useEffect (lines 333-370) that syncs position:
+```typescript
+useEffect(() => {
+  const isPanelBeingDragged = globalDraggingPanelId === panelId
+  if (!isPanelBeingDragged) {
+    setRenderPosition(position) // This resets position!
+  }
+}, [position, panelId])
+```
+
+During drag, we update DOM directly (no React state):
+```typescript
+panelRef.current.style.left = `${nextLeft}px`
+panelRef.current.style.top = `${nextTop}px`
+```
+
+At drag end, we update stores:
+```typescript
+dataStore.update(panelId, { position: { x: finalX, y: finalY } })
+branchData.position = { x: finalX, y: finalY }
+branchesMap.set(panelId, branchData)
+```
+
+## Debug Logs Available
+
+I have detailed debug logs for:
+- `drag_start` - when drag begins
+- `auto_scroll` - during edge scrolling
+- `position_update_sources` - when useEffect updates position
+- `position_update_skipped_during_drag` - when useEffect is blocked
+- `drag_end` - when drag finishes
+
+## Questions
+
+1. Why would the `position` prop change DURING the first drag but not subsequent drags?
+2. What could be uninitialized on first drag that gets set after first drag completes?
+3. Could the useEffect dependency `[position, panelId]` be triggering differently on first vs second drag?
+4. Is there a React rendering difference between first and subsequent drags?
+
+## What I've Already Tried
+
+- Disabled auto-save of positions
+- Disabled loading old positions (always use centered default)
+- Removed `canvasNode?.position` from useEffect dependencies
+- Added `globalDraggingPanelId` check to prevent updates during drag
+- Removed `setRenderPosition()` call during auto-scroll
+
+The issue persists. What should I investigate next to find why the FIRST drag behaves differently?
