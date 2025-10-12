@@ -26,6 +26,7 @@ import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { createNote } from "@/lib/utils/note-creator"
 import { Save, Pencil } from "lucide-react"
 import { TypeSelector, type AnnotationType } from "./type-selector"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -502,7 +503,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const currentNoteId = noteId || contextNoteId
   
   // Blur editor when switching to popup layer
-  // Simplified drag state - no RAF accumulation
+  // RAF-throttled drag state
   const dragState = useRef({
     isDragging: false,
     startX: 0,
@@ -510,7 +511,13 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     initialPosition: { x: 0, y: 0 },
     pointerDelta: { x: 0, y: 0 },
     autoScrollOffset: { x: 0, y: 0 },
+    mouseMoveCount: 0, // Track first few mousemove events for debugging
+    lastMoveTime: 0, // Track timing for jitter detection
+    lastPosition: { x: 0, y: 0 }, // Track previous position for delta calculation
+    rafScheduled: false, // Track if RAF update is scheduled
+    pendingMouseEvent: null as { clientX: number; clientY: number } | null, // Store latest mouse position
   })
+  const rafIdRef = useRef<number | null>(null)
   
   // Link dragStateRef to dragState for the useEffect above
   dragStateRef.current = dragState.current
@@ -518,7 +525,20 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   // Auto-scroll functionality for panel dragging
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
     if (!dragState.current.isDragging) return
-    
+
+    // DEBUG: Log auto-scroll events
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'auto_scroll',
+      metadata: {
+        panelId,
+        scrollDelta: { x: deltaX, y: deltaY },
+        currentOffset: { ...dragState.current.autoScrollOffset },
+        cameraEnabled: isCameraEnabled,
+        moveCount: dragState.current.mouseMoveCount
+      }
+    })
+
     if (isCameraEnabled) {
       // Use camera-based panning (pan opposite to pointer delta)
       panCameraBy({ dxScreen: -deltaX, dyScreen: -deltaY })
@@ -541,7 +561,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       const allPanels = document.querySelectorAll('[data-panel-id]')
       allPanels.forEach(panel => {
         const panelEl = panel as HTMLElement
-        
+
         if (panelEl.id === `panel-${panelId}` && dragState.current.isDragging) {
           // For the dragging panel, update its initial position
           dragState.current.initialPosition.x += deltaX
@@ -1423,32 +1443,61 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       if (target && target.closest('button')) {
         return
       }
-      
+
       // Block drag if popup layer is active - USE REFS for current values
       if (multiLayerEnabledRef.current && layerContextRef.current?.activeLayer === 'popups') {
         e.preventDefault()
         e.stopPropagation()
         return
       }
-      
+
       dragState.current.isDragging = true
-      
+
       // Notify editor to defer heavy operations
       if (editorRef.current && typeof editorRef.current.setPerformanceMode === 'function') {
         editorRef.current.setPerformanceMode(true)
       }
-      
+
       // Get current panel position from style
       const currentLeft = parseInt(panel.style.left || position.x.toString(), 10)
       const currentTop = parseInt(panel.style.top || position.y.toString(), 10)
-      
+
       // Store initial position
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
       dragState.current.pointerDelta = { x: 0, y: 0 }
       dragState.current.autoScrollOffset = { x: 0, y: 0 }
-      
+      dragState.current.mouseMoveCount = 0
+      dragState.current.lastMoveTime = performance.now()
+      dragState.current.lastPosition = { x: currentLeft, y: currentTop }
+
+      // DEBUG: Log drag initialization
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_start',
+        metadata: {
+          panelId,
+          initialPosition: { x: currentLeft, y: currentTop },
+          cursorPosition: { x: e.clientX, y: e.clientY },
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight
+          },
+          distanceToLeftEdge: e.clientX,
+          distanceToRightEdge: window.innerWidth - e.clientX,
+          distanceToTopEdge: e.clientY,
+          distanceToBottomEdge: window.innerHeight - e.clientY,
+          autoScrollThreshold: 80,
+          cameraEnabled: isCameraEnabled,
+          canvasState: {
+            translateX: state.canvasState?.translateX || 0,
+            translateY: state.canvasState?.translateY || 0,
+            zoom: state.canvasState?.zoom || 1
+          }
+        }
+      })
+
       // Update render position to current position when starting drag
       setRenderPosition({ x: currentLeft, y: currentTop })
 
@@ -1461,24 +1510,29 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         layerManager.focusNode(panelId) // This brings to front and updates focus time
       }
       globalDraggingPanelId = panelId
-      
+
       // Prevent text selection while dragging
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'move'
       panel.style.cursor = 'move'
-      
+
       e.preventDefault()
       e.stopPropagation()
     }
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!dragState.current.isDragging) return
-      
-      // Check for auto-scroll when near edges
-      checkAutoScroll(e.clientX, e.clientY)
-      
-      // Direct position update - no RAF accumulation
+    // RAF-throttled position update function
+    const updatePanelPosition = () => {
       const state = dragState.current
+      if (!state.isDragging || !state.pendingMouseEvent || !panelRef.current) {
+        state.rafScheduled = false
+        return
+      }
+
+      const e = state.pendingMouseEvent
+      const now = performance.now()
+      const timeDelta = now - state.lastMoveTime
+
+      // Calculate position from pending mouse event
       const deltaX = e.clientX - state.startX
       const deltaY = e.clientY - state.startY
 
@@ -1488,23 +1542,84 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       const baseY = state.initialPosition.y + deltaY
       const newLeft = isCameraEnabled ? baseX - state.autoScrollOffset.x : baseX
       const newTop = isCameraEnabled ? baseY - state.autoScrollOffset.y : baseY
-      
-      // Update render position to prevent snap-back during drag
-      setRenderPosition({ x: newLeft, y: newTop })
-      
-      panel.style.left = newLeft + 'px'
-      panel.style.top = newTop + 'px'
-      
+
+      // Calculate position change from last frame
+      const positionDeltaX = newLeft - state.lastPosition.x
+      const positionDeltaY = newTop - state.lastPosition.y
+      const positionDeltaMagnitude = Math.sqrt(positionDeltaX * positionDeltaX + positionDeltaY * positionDeltaY)
+
+      // DEBUG: Log jitter metrics for moves 5-20
+      if (state.mouseMoveCount >= 5 && state.mouseMoveCount <= 20) {
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'drag_jitter_raf_no_react',
+          metadata: {
+            panelId,
+            moveCount: state.mouseMoveCount,
+            timeDelta,
+            positionDelta: { x: positionDeltaX, y: positionDeltaY },
+            positionDeltaMagnitude,
+            autoScrollOffset: { ...state.autoScrollOffset },
+            cursorPosition: { x: e.clientX, y: e.clientY },
+            calculatedPosition: { x: newLeft, y: newTop },
+            hasAutoScrollInterference: state.autoScrollOffset.x !== 0 || state.autoScrollOffset.y !== 0,
+            hasDecimalPrecision: newLeft % 1 !== 0 || newTop % 1 !== 0,
+            rafThrottled: true,
+            reactStateUpdateSkipped: true  // No setRenderPosition during drag
+          }
+        })
+      }
+
+      // Apply position update (DOM only - no React state during drag)
+      panelRef.current.style.left = newLeft + 'px'
+      panelRef.current.style.top = newTop + 'px'
+
+      // DON'T call setRenderPosition during drag - causes re-render jitter
+      // We'll update React state only when drag ends
+
+      // Update tracking for next frame
+      state.lastMoveTime = now
+      state.lastPosition = { x: newLeft, y: newTop }
+      state.pendingMouseEvent = null
+      state.rafScheduled = false
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragState.current.isDragging) return
+
+      const state = dragState.current
+      state.mouseMoveCount++
+
+      // Store the latest mouse event
+      state.pendingMouseEvent = { clientX: e.clientX, clientY: e.clientY }
+
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
+
+      // Schedule RAF update if not already scheduled
+      if (!state.rafScheduled) {
+        state.rafScheduled = true
+        rafIdRef.current = requestAnimationFrame(updatePanelPosition)
+      }
+
       e.preventDefault()
     }
 
     const handleMouseUp = (e: MouseEvent) => {
       if (!dragState.current.isDragging) return
-      
+
+      // Cancel any pending RAF update
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+
       // Stop auto-scroll when dragging ends
       stopAutoScroll()
-      
+
       dragState.current.isDragging = false
+      dragState.current.rafScheduled = false
+      dragState.current.pendingMouseEvent = null
       globalDraggingPanelId = null
       
       // Re-enable normal editor operations

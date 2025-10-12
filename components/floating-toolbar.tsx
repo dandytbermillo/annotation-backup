@@ -16,6 +16,7 @@ import {
   FOLDER_PREVIEW_DELAY_MS,
   TOOLBAR_HOVER_DELAY_MS,
 } from "@/lib/constants/ui-timings"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -1505,6 +1506,15 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
                     : 'bg-white/5 border-white/10 hover:bg-blue-500/20 hover:border-blue-400/40'
                 } border`}
                 onDoubleClick={() => {
+                  debugLog({
+                    component: 'FloatingToolbar',
+                    action: 'note_double_click',
+                    metadata: {
+                      noteId: item.id,
+                      noteTitle: item.title,
+                      timestamp: Date.now()
+                    }
+                  })
                   switchToNoteCanvasIfNeeded()
                   onSelectNote?.(item.id)
                   onClose()

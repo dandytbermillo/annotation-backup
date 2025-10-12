@@ -41,7 +41,6 @@ interface ModernAnnotationCanvasProps {
   showAddComponentMenu?: boolean
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
-  onSnapshotLoadComplete?: () => void  // Called after snapshot load + centering completes
   children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
 }
 
@@ -87,8 +86,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   isNotesExplorerOpen = false,
   onCanvasStateChange,
   showAddComponentMenu: externalShowAddComponentMenu,
-  onToggleAddComponentMenu,
-  onSnapshotLoadComplete
+  onToggleAddComponentMenu
 }, ref) => {
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
 
@@ -96,54 +94,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const layerContext = useLayer()
   const canvasOpacity = layerContext ? PopupStateAdapter.getLayerOpacity('notes', layerContext.activeLayer) : 1
 
-  const [canvasState, _setCanvasState] = useState(createDefaultCanvasState)
-
-  // Wrap setCanvasState to log all calls
-  const setCanvasState: typeof _setCanvasState = useCallback((update) => {
-    const stack = new Error().stack
-    const caller = stack?.split('\n').slice(2, 6).join(' | ') || 'unknown'
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'setCanvasState_called',
-      metadata: {
-        noteId,
-        isFunction: typeof update === 'function',
-        caller: caller.substring(0, 500)
-      }
-    })
-
-    return _setCanvasState(update)
-  }, [noteId])
-
-  // Track viewport changes for debugging
-  const previousViewportRef = useRef({ x: canvasState.translateX, y: canvasState.translateY })
-
-  useEffect(() => {
-    const prev = previousViewportRef.current
-    const changed = prev.x !== canvasState.translateX || prev.y !== canvasState.translateY
-
-    if (changed) {
-      const stack = new Error().stack
-      const caller = stack?.split('\n')[3] || 'unknown'
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'viewport_changed',
-        metadata: {
-          noteId,
-          from: { x: prev.x, y: prev.y },
-          to: { x: canvasState.translateX, y: canvasState.translateY },
-          delta: { x: canvasState.translateX - prev.x, y: canvasState.translateY - prev.y },
-          zoom: canvasState.zoom,
-          caller: caller.trim(),
-          isDragging: canvasState.isDragging
-        }
-      })
-
-      previousViewportRef.current = { x: canvasState.translateX, y: canvasState.translateY }
-    }
-  }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, noteId])
+  const [canvasState, setCanvasState] = useState(createDefaultCanvasState)
 
   // Unified canvas items state
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>(createDefaultCanvasItems)
@@ -344,15 +295,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       autoSaveTimerRef.current = null
     }
 
-    // DISABLED: Don't load old positions - always center panels instead
-    // const snapshot = loadStateFromStorage(noteId)
-    const snapshot = null // Force treating every note as new (no saved positions)
+    // Attempt to load saved state
+    const snapshot = loadStateFromStorage(noteId)
     if (!snapshot) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'no_saved_state_new_note',
-        metadata: { noteId }
-      })
       console.table([
         {
           Action: 'No Saved State',
@@ -360,109 +305,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           Time: new Date().toLocaleTimeString(),
         },
       ])
-
-      // For new notes, we still need to center the main panel
-      // Use setTimeout with retries to ensure DOM is ready
-      let retries = 0
-      const maxRetries = 10
-      const tryCenter = () => {
-        retries++
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'centering_new_note',
-          metadata: { noteId, attempt: retries }
-        })
-
-        const panelEl = document.querySelector(`[data-panel-id="main"]`) as HTMLElement
-        if (!panelEl) {
-          if (retries < maxRetries) {
-            debugLog({
-              component: 'AnnotationCanvas',
-              action: 'new_note_panel_not_found_retry',
-              metadata: { noteId, attempt: retries, nextRetry: '50ms' }
-            })
-            setTimeout(tryCenter, 50)
-            return
-          }
-
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'new_note_panel_not_found',
-            metadata: { noteId, attemptsExhausted: retries }
-          })
-          if (onSnapshotLoadComplete) {
-            onSnapshotLoadComplete()
-          }
-          return
-        }
-
-        // Get panel dimensions and calculate center
-        const panelDimensions = {
-          width: panelEl.offsetWidth,
-          height: panelEl.offsetHeight
-        }
-
-        const viewportDimensions = {
-          width: window.innerWidth,
-          height: window.innerHeight
-        }
-
-        // Panel is at default position (2000, 1500)
-        const position = { x: 2000, y: 1500 }
-
-        const centerOffset = {
-          x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / canvasState.zoom,
-          y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / canvasState.zoom
-        }
-
-        const targetX = -position.x + centerOffset.x
-        const targetY = -position.y + centerOffset.y
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'new_note_centering_calculated',
-          metadata: {
-            position,
-            panelDimensions,
-            viewportDimensions,
-            targetX,
-            targetY
-          }
-        })
-
-        // Disable CSS transition
-        const canvasEl = document.getElementById('infinite-canvas')
-        if (canvasEl) {
-          canvasEl.style.transition = 'none'
-          void canvasEl.offsetHeight
-        }
-
-        // Update viewport
-        flushSync(() => {
-          setCanvasState(prev => ({
-            ...prev,
-            translateX: targetX,
-            translateY: targetY
-          }))
-        })
-
-        // Restore transition
-        if (canvasEl) {
-          requestAnimationFrame(() => {
-            canvasEl.style.transition = ''
-          })
-        }
-
-        // Notify parent
-        if (onSnapshotLoadComplete) {
-          onSnapshotLoadComplete()
-        }
-      }
-
-      // Start the centering retry loop
-      setTimeout(tryCenter, 0)
-
       setIsStateLoaded(true)
       return
     }
@@ -574,127 +416,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
     const restored = ensureMainPanel(restoredItems)
     setCanvasItems(restored)
-
-    // CRITICAL: Also reset main panel position in dataStore so getPanelPosition reads correct value
-    // (reuse plainProvider already declared above)
-    if (plainProvider) {
-      const mainBranch = dataStore.get('main')
-      if (mainBranch) {
-        mainBranch.position = { x: 2000, y: 1500 }
-        dataStore.set('main', mainBranch)
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'reset_datastore_main_position',
-          metadata: { noteId, position: mainBranch.position }
-        })
-      }
-    }
-
     setIsStateLoaded(true)
-
-    // Call centering after state is loaded to ensure viewport reset completes first
-    // Use setTimeout to defer until next tick (after React processes viewport reset)
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'scheduling_snapshot_centering',
-      metadata: { noteId }
-    })
-
-    setTimeout(() => {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'snapshot_centering_callback_start',
-        metadata: { noteId }
-      })
-
-      // Find panel position
-      const panelEl = document.querySelector(`[data-panel-id="main"]`) as HTMLElement
-      if (!panelEl) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'snapshot_centering_no_panel_element',
-          metadata: { noteId }
-        })
-        console.warn('[Canvas] Panel element not found for centering')
-        return
-      }
-
-      // Get actual panel position from canvasItems
-      const panel = restored.find(item => item.itemType === 'panel' && item.panelId === 'main')
-      if (!panel || !panel.position) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'snapshot_centering_no_panel_data',
-          metadata: { noteId, hasPanel: !!panel }
-        })
-        console.warn('[Canvas] Panel data not found for centering')
-        return
-      }
-
-      const position = panel.position
-
-      // Get actual panel dimensions from DOM
-      const panelDimensions = {
-        width: panelEl.offsetWidth,
-        height: panelEl.offsetHeight
-      }
-
-      const viewportDimensions = {
-        width: window.innerWidth,
-        height: window.innerHeight
-      }
-
-      // Calculate offset to center the panel
-      const centerOffset = {
-        x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / canvasState.zoom,
-        y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / canvasState.zoom
-      }
-
-      // Calculate target viewport position
-      const targetX = -position.x + centerOffset.x
-      const targetY = -position.y + centerOffset.y
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'snapshot_load_centering',
-        metadata: {
-          position,
-          panelDimensions,
-          viewportDimensions,
-          targetX,
-          targetY
-        }
-      })
-
-      // Disable CSS transition to prevent animation
-      const canvasEl = document.getElementById('infinite-canvas')
-      if (canvasEl) {
-        canvasEl.style.transition = 'none'
-        void canvasEl.offsetHeight // Force reflow
-      }
-
-      // Update viewport with centered position
-      flushSync(() => {
-        setCanvasState(prev => ({
-          ...prev,
-          translateX: targetX,
-          translateY: targetY
-        }))
-      })
-
-      // Restore transition
-      if (canvasEl) {
-        requestAnimationFrame(() => {
-          canvasEl.style.transition = ''
-        })
-      }
-
-      // Notify parent that snapshot load + centering is complete
-      if (onSnapshotLoadComplete) {
-        onSnapshotLoadComplete()
-      }
-    }, 0)
-  }, [noteId, canvasState.zoom, onSnapshotLoadComplete])
+  }, [noteId])
 
   // Cleanup auto-save timer on unmount
   useEffect(() => {
@@ -707,22 +430,18 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [])
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Only respond to primary button (left-click)
-    // Ignore right-click (button 2), middle-click (button 1), etc.
-    if (e.button !== 0) return
-
     // Only start dragging if clicking on canvas background
     // Don't drag if clicking on a panel or component
     const target = e.target instanceof Element ? e.target : null
     if (target && (target.closest('.panel') || target.closest('[data-component-panel]'))) return
-
+    
     setCanvasState(prev => ({
       ...prev,
       isDragging: true,
       lastMouseX: e.clientX,
       lastMouseY: e.clientY
     }))
-
+    
     enableSelectionGuards()
     document.body.style.userSelect = 'none'
     try { window.getSelection()?.removeAllRanges?.() } catch {}
@@ -876,36 +595,33 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         }
       }
       
-      // DISABLED: Auto-pan to newly created panels
-      // This was causing unwanted viewport movement when opening branch panels or floating toolbar
-      // Users expect panels to appear without moving the viewport
-      //
-      // setTimeout(() => {
-      //   const getPanelPosition = (id: string) => {
-      //     if (isPlainMode) {
-      //       // In plain mode, use dataStore position
-      //       const dataStore = (window as any).canvasDataStore
-      //       const panel = dataStore?.get(id)
-      //       return panel?.position || { x: 2000, y: 1500 }
-      //     } else {
-      //       const panel = UnifiedProvider.getInstance().getBranchesMap().get(id)
-      //       return panel?.position || null
-      //     }
-      //   }
-      //
-      //   panToPanel(
-      //     panelId,
-      //     getPanelPosition,
-      //     canvasState,
-      //     (updates) => setCanvasState(prev => ({ ...prev, ...updates })),
-      //     {
-      //       duration: 600,
-      //       callback: () => {
-      //         console.log('[AnnotationCanvas] Finished panning to panel:', panelId)
-      //       }
-      //     }
-      //   )
-      // }, 100) // Small delay to ensure panel is rendered
+      // After adding panel, smoothly pan to it
+      setTimeout(() => {
+        const getPanelPosition = (id: string) => {
+          if (isPlainMode) {
+            // In plain mode, use dataStore position
+            const dataStore = (window as any).canvasDataStore
+            const panel = dataStore?.get(id)
+            return panel?.position || { x: 2000, y: 1500 }
+          } else {
+            const panel = UnifiedProvider.getInstance().getBranchesMap().get(id)
+            return panel?.position || null
+          }
+        }
+        
+        panToPanel(
+          panelId,
+          getPanelPosition,
+          canvasState,
+          (updates) => setCanvasState(prev => ({ ...prev, ...updates })),
+          {
+            duration: 600,
+            callback: () => {
+              console.log('[AnnotationCanvas] Finished panning to panel:', panelId)
+            }
+          }
+        )
+      }, 100) // Small delay to ensure panel is rendered
       
       // Determine panel type based on panelId
       const panelType = panelId === 'main' ? 'main' : 
@@ -1031,39 +747,35 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   )
 
   // Auto-save canvas state with debouncing
-  // TEMPORARILY DISABLED to debug centering issues
   useEffect(() => {
-    console.log('[AnnotationCanvas] Auto-save DISABLED temporarily for debugging')
-    return
+    if (!isStateLoaded) return
 
-    // if (!isStateLoaded) return
+    // Clear existing timer
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current)
+    }
 
-    // // Clear existing timer
-    // if (autoSaveTimerRef.current) {
-    //   window.clearTimeout(autoSaveTimerRef.current)
-    // }
+    // Set new timer with proper debounce
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      const success = saveStateToStorage(noteId, { 
+        viewport: viewportSnapshot, 
+        items: canvasItems 
+      })
+      
+      if (!success) {
+        console.warn('[AnnotationCanvas] Failed to save canvas state')
+      }
+      
+      autoSaveTimerRef.current = null
+    }, CANVAS_STORAGE_DEBOUNCE)
 
-    // // Set new timer with proper debounce
-    // autoSaveTimerRef.current = window.setTimeout(() => {
-    //   const success = saveStateToStorage(noteId, {
-    //     viewport: viewportSnapshot,
-    //     items: canvasItems
-    //   })
-    //
-    //   if (!success) {
-    //     console.warn('[AnnotationCanvas] Failed to save canvas state')
-    //   }
-    //
-    //   autoSaveTimerRef.current = null
-    // }, CANVAS_STORAGE_DEBOUNCE)
-
-    // // Cleanup on unmount or dependency change
-    // return () => {
-    //   if (autoSaveTimerRef.current) {
-    //     window.clearTimeout(autoSaveTimerRef.current)
-    //     autoSaveTimerRef.current = null
-    //   }
-    // }
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
   }, [noteId, viewportSnapshot, canvasItems, isStateLoaded])
 
   // Expose methods via ref

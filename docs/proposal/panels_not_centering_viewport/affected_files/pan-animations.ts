@@ -9,9 +9,6 @@
 
 import { debugLog } from "@/lib/utils/debug-logger"
 
-// TEMPORARY: Disable all automatic panning to debug panel movement issue
-const DISABLE_AUTO_PAN = true
-
 export interface ViewportState {
   x: number
   y: number
@@ -77,21 +74,6 @@ export function smoothPanTo(
   updateViewport: (viewport: Partial<ViewportState>) => void,
   options: PanOptions = {}
 ): () => void {
-  // TEMPORARY: Block all automatic panning
-  if (DISABLE_AUTO_PAN) {
-    debugLog({
-      component: 'PanAnimations',
-      action: 'pan_blocked',
-      metadata: {
-        reason: 'DISABLE_AUTO_PAN flag is true',
-        targetPosition,
-        currentViewport
-      }
-    })
-    options.callback?.()
-    return () => {}
-  }
-
   const {
     duration = 500,
     ease = easings.easeInOutCubic,

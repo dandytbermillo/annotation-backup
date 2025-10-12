@@ -110,21 +110,7 @@ function AnnotationAppContent() {
 
   // Ref to track last centered note to avoid repeated centering during normal flow
   const lastCenteredRef = useRef<string | null>(null)
-
-  // Ref to track when canvas last loaded a note (to avoid duplicate centering)
-  const lastCanvasLoadTimeRef = useRef<number>(0)
-
-  // Stable callback for snapshot load completion
-  const handleSnapshotLoadComplete = useCallback(() => {
-    // Track when snapshot load completes to avoid duplicate centering
-    lastCanvasLoadTimeRef.current = Date.now()
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'snapshot_load_complete',
-      metadata: { timestamp: lastCanvasLoadTimeRef.current }
-    })
-  }, [])
-
+  
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
@@ -748,27 +734,13 @@ function AnnotationAppContent() {
     // Always center when this effect runs (triggered by selectedNoteId change or centerTrigger change)
     lastCenteredRef.current = selectedNoteId
 
-    // Retry mechanism to wait for canvas to mount AND viewport to reset
+    // Retry mechanism to wait for canvas to mount
     let attempts = 0
     const maxAttempts = 10 // Max 1 second (10 * 100ms)
     let timeoutId: NodeJS.Timeout
 
     const attemptCenter = () => {
       attempts++
-
-      // Skip if canvas recently loaded a snapshot (snapshot centering already ran)
-      const timeSinceLoad = Date.now() - lastCanvasLoadTimeRef.current
-      if (timeSinceLoad < 300) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'centering_skipped_recent_snapshot_load',
-          metadata: {
-            timeSinceLoad,
-            reason: 'snapshot centering already handled it'
-          }
-        })
-        return
-      }
 
       debugLog({
         component: 'AnnotationApp',
@@ -777,8 +749,7 @@ function AnnotationAppContent() {
           attempt: attempts,
           maxAttempts,
           hasCanvasRef: !!canvasRef.current,
-          hasCenterOnPanel: !!canvasRef.current?.centerOnPanel,
-          timeSinceLoad
+          hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
         }
       })
 
@@ -810,9 +781,8 @@ function AnnotationAppContent() {
       }
     }
 
-    // Add small delay before first attempt to allow canvas viewport reset to complete
-    // This prevents race condition where centering runs before viewport is reset
-    timeoutId = setTimeout(attemptCenter, 50)
+    // Start attempting immediately
+    attemptCenter()
 
     return () => {
       if (timeoutId) {
@@ -824,17 +794,6 @@ function AnnotationAppContent() {
   // Handle right-click to show notes widget
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'context_menu_opened',
-      metadata: {
-        x: e.clientX,
-        y: e.clientY,
-        canvasTranslateX: canvasState?.translateX,
-        canvasTranslateY: canvasState?.translateY
-      }
-    })
 
     // Find which panel was right-clicked
     let target = e.target as HTMLElement
@@ -858,17 +817,7 @@ function AnnotationAppContent() {
 
     setNotesWidgetPosition({ x: e.clientX, y: e.clientY })
     setShowNotesWidget(true)
-
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'context_menu_after_open',
-      metadata: {
-        canvasTranslateX: canvasState?.translateX,
-        canvasTranslateY: canvasState?.translateY,
-        toolbarOpen: true
-      }
-    })
-  }, [canvasState])
+  }, [])
 
   // Handle closing notes widget
   const handleCloseNotesWidget = useCallback(() => {
@@ -1785,7 +1734,6 @@ function AnnotationAppContent() {
             showAddComponentMenu={showAddComponentMenu}
             onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
             onRegisterActiveEditor={handleRegisterActiveEditor}
-            onSnapshotLoadComplete={handleSnapshotLoadComplete}
           >
             {/* Floating Toolbar - rendered inside CanvasProvider tree */}
             {showNotesWidget && (
