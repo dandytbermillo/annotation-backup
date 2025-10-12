@@ -659,30 +659,100 @@ export class PlainOfflineProvider extends EventEmitter {
               })
             }
             this.revertOptimisticUpdate(cacheKey, prev, previousVersion)
-            const latest = await this.refreshDocumentFromRemote(noteId, panelId, 'conflict')
-            const conflictError = new PlainDocumentConflictError(noteId, panelId, message, latest || undefined)
 
-            const listenerCount = this.listenerCount('document:conflict')
-            console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} emitting document:conflict event`, {
-              noteId,
-              panelId,
-              message,
-              remoteVersion: latest?.version,
-              hasRemoteContent: !!latest?.content,
-              listenerCount,
-              instanceId: this.instanceId
-            })
+            // CRITICAL: Check content BEFORE refreshing to decide if we should emit events
+            // Load latest from DB without emitting events yet
+            const latest = await this.adapter.loadDocument(noteId, panelId)
 
-            this.emit('document:conflict', {
-              noteId,
-              panelId,
-              message,
-              remoteVersion: latest?.version,
-              remoteContent: latest?.content
-            })
+            if (!latest) {
+              throw new PlainDocumentConflictError(noteId, panelId, message, undefined)
+            }
 
-            console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} event emitted, listener count:`, listenerCount)
-            throw conflictError
+            // Compare content - if identical, this is just a version bump (silent catchup)
+            const contentDiffers = JSON.stringify(content) !== JSON.stringify(latest.content)
+
+            // Update cache with latest version
+            this.documents.set(cacheKey, latest.content)
+            this.documentVersions.set(cacheKey, latest.version)
+            this.updateLastAccess(cacheKey)
+
+            if (contentDiffers) {
+              // Real conflict - content actually differs
+              console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} real conflict detected (content differs)`, {
+                noteId,
+                panelId,
+                baseVersion,
+                remoteVersion: latest.version,
+                instanceId: this.instanceId
+              })
+
+              // Log to debug system
+              import('@/lib/utils/debug-logger').then(({ debugLog }) => {
+                debugLog({
+                  component: 'CrossBrowserSync',
+                  action: 'CONFLICT_CONTENT_DIFFERS',
+                  metadata: {
+                    noteId,
+                    panelId,
+                    baseVersion,
+                    remoteVersion: latest.version,
+                    instanceId: this.instanceId
+                  }
+                })
+              }).catch(() => {})
+
+              // Emit remote-update event (will trigger notification)
+              this.emit('document:remote-update', {
+                noteId,
+                panelId,
+                version: latest.version,
+                content: latest.content,
+                reason: 'conflict'
+              })
+
+              // Emit conflict event
+              const listenerCount = this.listenerCount('document:conflict')
+              this.emit('document:conflict', {
+                noteId,
+                panelId,
+                message,
+                remoteVersion: latest.version,
+                remoteContent: latest.content
+              })
+
+              console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} conflict events emitted, listener count:`, listenerCount)
+
+              const conflictError = new PlainDocumentConflictError(noteId, panelId, message, latest)
+              throw conflictError
+            } else {
+              // Silent catchup - content is identical, just version bumped
+              console.log(`[🔍 PROVIDER-CONFLICT] Instance #${this.instanceId} silent catchup (content identical)`, {
+                noteId,
+                panelId,
+                baseVersion,
+                remoteVersion: latest.version,
+                message: 'Version conflict but content identical - silent catchup, no events'
+              })
+
+              // Log silent conflict resolution to debug system
+              import('@/lib/utils/debug-logger').then(({ debugLog }) => {
+                debugLog({
+                  component: 'CrossBrowserSync',
+                  action: 'CONFLICT_SILENT_CATCHUP',
+                  metadata: {
+                    noteId,
+                    panelId,
+                    baseVersion,
+                    remoteVersion: latest.version,
+                    message: 'Version conflict but content identical - silent catchup, no events'
+                  }
+                })
+              }).catch(() => {})
+
+              // Don't emit any events - just silently caught up to latest version
+              // Return normally without throwing
+              return
+            }
           }
           if (
             message.includes('must be a number') ||
@@ -777,16 +847,71 @@ export class PlainOfflineProvider extends EventEmitter {
       const cacheKey = this.getCacheKey(noteId, panelId)
 
       if (latest) {
+        // Compare with cached VERSION before emitting event
+        const cached = this.documents.get(cacheKey)
+        const cachedVersion = this.documentVersions.get(cacheKey) || 0
+
+        // CRITICAL: For cross-browser sync, use VERSION comparison, not content comparison
+        // Content comparison fails because each browser has its own stale cache
+        // Version numbers are monotonically increasing and reliable
+        const versionChanged = latest.version > cachedVersion
+
+        // Emit if: no cache yet OR version increased
+        const shouldEmit = !cached || versionChanged
+
+        // Update cache
         this.documents.set(cacheKey, latest.content)
         this.documentVersions.set(cacheKey, latest.version)
         this.updateLastAccess(cacheKey)
-        this.emit('document:remote-update', {
-          noteId,
-          panelId,
-          version: latest.version,
-          content: latest.content,
-          reason
-        })
+
+        // Emit event if version changed or this is a visibility refresh with different version
+        if (shouldEmit) {
+          console.log(`[PlainOfflineProvider] Version changed (${cachedVersion} → ${latest.version}), emitting remote-update event for ${cacheKey}`)
+          // Use dynamic import to avoid circular dependency
+          import('@/lib/utils/debug-logger').then(({ debugLog }) => {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'PROVIDER_EMIT_REMOTE_UPDATE',
+              metadata: {
+                noteId,
+                panelId,
+                version: latest.version,
+                cachedVersion,
+                versionChanged,
+                reason,
+                cacheKey,
+                hadCached: !!cached
+              }
+            })
+          }).catch(() => {})
+
+          this.emit('document:remote-update', {
+            noteId,
+            panelId,
+            version: latest.version,
+            content: latest.content,
+            reason
+          })
+        } else {
+          console.log(`[PlainOfflineProvider] Version unchanged (${cachedVersion}), skipping remote-update event for ${cacheKey}`)
+          // Use dynamic import to avoid circular dependency
+          import('@/lib/utils/debug-logger').then(({ debugLog }) => {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'PROVIDER_SKIP_IDENTICAL',
+              metadata: {
+                noteId,
+                panelId,
+                version: latest.version,
+                cachedVersion,
+                versionChanged: false,
+                reason,
+                cacheKey
+              }
+            })
+          }).catch(() => {})
+        }
+
         return latest
       }
 
@@ -796,6 +921,19 @@ export class PlainOfflineProvider extends EventEmitter {
       return null
     } catch (loadError) {
       console.error('[PlainOfflineProvider] Failed to refresh document from remote:', loadError)
+      // Use dynamic import to avoid circular dependency
+      import('@/lib/utils/debug-logger').then(({ debugLog }) => {
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'PROVIDER_REFRESH_ERROR',
+          metadata: {
+            noteId,
+            panelId,
+            reason,
+            error: loadError instanceof Error ? loadError.message : String(loadError)
+          }
+        })
+      }).catch(() => {})
       return null
     }
   }

@@ -23,11 +23,12 @@ import {
   type CollapsibleSelectionSnapshot,
 } from '@/lib/extensions/collapsible-block-selection'
 import { AnnotationUpdater } from '@/lib/extensions/annotation-updater'
-import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef } from 'react'
+import { useEffect, useImperativeHandle, forwardRef, useState, useMemo, useRef, useCallback } from 'react'
 import { useCanvas } from './canvas-context'
 import { Mark, mergeAttributes } from '@tiptap/core'
 import { Plugin, PluginKey } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
+import { DOMParser } from '@tiptap/pm/model'
 // import { AnnotationDecorations } from './annotation-decorations'
 // import { AnnotationDecorationsHoverOnly } from './annotation-decorations-hover-only' // Replaced with hover-icon.ts
 // import { AnnotationDecorationsSimple } from './annotation-decorations-simple'
@@ -47,7 +48,8 @@ import { SafariProvenFix } from './safari-proven-fix'
 import { SafariManualCursorFix } from './safari-manual-cursor-fix'
 import { ReadOnlyGuard } from './read-only-guard'
 import type { PlainOfflineProvider, ProseMirrorJSON, HtmlString } from '@/lib/providers/plain-offline-provider'
-import { debugLog, createContentPreview } from '@/lib/debug-logger'
+import { debugLog } from '@/lib/utils/debug-logger'
+import { createContentPreview } from '@/lib/debug-logger'
 import { extractPreviewFromContent } from '@/lib/utils/branch-preview'
 
 const JSON_START_RE = /^\s*[\[{]/
@@ -208,6 +210,62 @@ type PendingRestoreState = {
   key: string
 }
 
+/**
+ * Canonize content to ProseMirrorJSON format
+ * Handles both HTML strings and ProseMirrorJSON objects
+ */
+function canonizeDoc(
+  content: ProseMirrorJSON | HtmlString | null | undefined,
+  editor?: any
+): ProseMirrorJSON | null {
+  if (!content) return null
+
+  // Already JSON
+  if (typeof content === 'object' && content.type === 'doc') {
+    return content as ProseMirrorJSON
+  }
+
+  // HTML string - convert to JSON
+  if (typeof content === 'string') {
+    if (!editor) {
+      console.error('[Canonize] Editor required to parse HTML')
+      return null
+    }
+
+    try {
+      const tempDiv = document.createElement('div')
+      tempDiv.innerHTML = content
+
+      // CORRECT API: DOMParser.fromSchema
+      const parser = DOMParser.fromSchema(editor.state.schema)
+      const doc = parser.parse(tempDiv)
+      return doc.toJSON() as ProseMirrorJSON
+    } catch (err) {
+      console.error('[Canonize] Failed to parse HTML:', err)
+      return null
+    }
+  }
+
+  console.warn('[Canonize] Unknown content type:', typeof content)
+  return null
+}
+
+/**
+ * Generate stable hash from content for fast comparison
+ */
+function hashContent(content: ProseMirrorJSON | null): string {
+  if (!content) return ''
+
+  const str = JSON.stringify(content)
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return hash.toString(36)
+}
+
 // Custom annotation mark extension (same as Yjs version)
 const Annotation = Mark.create({
   name: 'annotation',
@@ -336,6 +394,63 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     const fallbackSourceRef = useRef<'preview' | 'content' | null>(null)
     const previewFallbackContentRef = useRef<ProseMirrorJSON | string | null>(null)
     const collapsibleSelectionRef = useRef<CollapsibleSelectionSnapshot>(EMPTY_COLLAPSIBLE_SELECTION)
+
+    // Track last saved content (canonized to JSON)
+    const lastSavedContentRef = useRef<ProseMirrorJSON | null>(null)
+    const lastSavedHashRef = useRef<string>('')
+
+    // STATE (not ref) for triggering auto-apply effect
+    // Monotonic counter (not timestamp) to guarantee state change
+    const [lastSaveTimestamp, setLastSaveTimestamp] = useState(0)
+
+    // Track when we're applying remote updates (suppress onUpdate)
+    const isApplyingRemoteUpdateRef = useRef(false)
+
+    // Track pending remote updates blocked by unsaved changes
+    const pendingRemoteUpdateRef = useRef<{
+      content: ProseMirrorJSON
+      version: number
+      reason: string
+    } | null>(null)
+
+    // Track dismissed notifications
+    const notificationDismissedRef = useRef(false)
+
+    // Track notification state
+    const [remoteUpdateNotification, setRemoteUpdateNotification] = useState<{
+      message: string
+      version: number
+      hasRemoteUpdate: boolean
+      saveError?: string
+    } | null>(null)
+
+    // Track notification position for dragging
+    const [notificationPosition, setNotificationPosition] = useState({ x: 0, y: 8 })
+    const notificationDragRef = useRef<{
+      isDragging: boolean
+      startX: number
+      startY: number
+      offsetX: number
+      offsetY: number
+    }>({ isDragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0 })
+
+    // Track if currently saving (prevent double-click)
+    const [isSaving, setIsSaving] = useState(false)
+
+    // Track if user has actually typed/edited (not just viewing)
+    // This helps distinguish "uninitialized + viewing" from "uninitialized + typed"
+    const hasUserEditedRef = useRef(false)
+
+    // Track timestamp when user last edited (for conflict grace period - SECONDARY defense)
+    const lastEditTimestampRef = useRef<number>(0)
+
+    // PRIMARY DEFENSE: Track processed conflict versions to prevent duplicate handling
+    // Maps panel-version to timestamp when processed
+    const processedConflictVersionsRef = useRef<Map<string, number>>(new Map())
+
+    // Track last successfully applied version (prevents processing older conflicts)
+    const lastAppliedVersionRef = useRef<number>(0)
+
     const normalizeContent = useMemo(
       () => (value: any) => {
         if (!value) return ''
@@ -348,7 +463,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
       []
     )
-    
+
     useEffect(() => {
       if (typeof window !== 'undefined') {
         const existingSession = window.localStorage.getItem('debug-logger-session-id')
@@ -364,6 +479,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
     useEffect(() => {
       hasHydratedRef.current = false
+      hasUserEditedRef.current = false  // Reset edit tracking when content changes
     }, [noteId, panelId])
 
     // Load content from provider when noteId/panelId changes
@@ -558,6 +674,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
 
           if (remoteNotOlder && sameContent) {
             setLoadedContent(resolvedContent)
+
+            // Track initial load (only if editor exists)
+            if (editor) {
+              const canonized = canonizeDoc(resolvedContent, editor)
+              if (canonized) {
+                lastSavedContentRef.current = canonized
+                lastSavedHashRef.current = hashContent(canonized)
+              }
+            }
+
             onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
             localStorage.removeItem(promoted.key)
             pendingPromotionRef.current = null
@@ -619,6 +745,16 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         })
 
         setLoadedContent(resolvedContent)
+
+        // Track initial load (only if editor exists)
+        if (editor) {
+          const canonized = canonizeDoc(resolvedContent, editor)
+          if (canonized) {
+            lastSavedContentRef.current = canonized
+            lastSavedHashRef.current = hashContent(canonized)
+          }
+        }
+
         setIsContentLoading(false)
         if (notifyLoad) {
           onContentLoaded?.({ content: resolvedContent, version: remoteVersion })
@@ -645,6 +781,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         isActive = false
       }
     }, [provider, noteId, panelId, normalizeContent, onContentLoaded])
+    // Note: editor is NOT in dependencies - canonization calls are guarded with if(editor)
 
     // Check for pending saves in localStorage and restore when provider cache is behind
     useEffect(() => {
@@ -905,6 +1042,11 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         }
       },
       onUpdate: ({ editor }) => {
+        // CRITICAL: Skip during remote content updates
+        if (isApplyingRemoteUpdateRef.current) {
+          return
+        }
+
         const json = editor.getJSON()
         const isEmptyDoc = providerContentIsEmpty(provider, json)
 
@@ -913,6 +1055,52 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             return
           }
           hasHydratedRef.current = true
+        }
+
+        // Mark that user has actually edited content (not just viewing)
+        // CRITICAL: Only set this AFTER hydration is complete to avoid false positives
+        // during initial content loading or automated plugin updates
+        if (hasHydratedRef.current && !isContentLoading) {
+          const wasEdited = hasUserEditedRef.current
+          hasUserEditedRef.current = true
+          lastEditTimestampRef.current = Date.now()
+
+          // Debug: Log when this flag transitions from false to true
+          if (!wasEdited) {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'USER_EDIT_FLAG_SET',
+              metadata: {
+                noteId,
+                panelId,
+                hydrated: hasHydratedRef.current,
+                loading: isContentLoading,
+                applying: isApplyingRemoteUpdateRef.current,
+                timestamp: lastEditTimestampRef.current
+              }
+            })
+          }
+
+          // Reset edit flag after period of inactivity (3 seconds)
+          // This allows auto-save to complete and prevents flickering during active typing
+          // but still clears the flag when user stops editing
+          const timerKey = `${noteId}:${panelId}`
+          ;(window as any).__editInactivityTimer = (window as any).__editInactivityTimer || new Map()
+          const existingTimer = (window as any).__editInactivityTimer.get(timerKey)
+          if (existingTimer) clearTimeout(existingTimer)
+
+          const inactivityTimer = setTimeout(() => {
+            if (hasUserEditedRef.current) {
+              hasUserEditedRef.current = false
+              debugLog({
+                component: 'CrossBrowserSync',
+                action: 'USER_EDIT_FLAG_RESET_INACTIVITY',
+                metadata: { noteId, panelId, inactivityMs: 3000 }
+              })
+            }
+          }, 3000) // 3 seconds of no typing = user stopped editing
+
+          ;(window as any).__editInactivityTimer.set(timerKey, inactivityTimer)
         }
 
         const pendingKey = `pending_save_${noteId}_${panelId}`
@@ -977,6 +1165,33 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           if (provider && noteId) {
             // Skip batching for document saves to ensure timely persistence
             provider.saveDocument(noteId, panelId, json, false, { skipBatching: true })
+              .then(() => {
+                // Track successful save
+                const canonized = canonizeDoc(json, editor)
+                if (canonized) {
+                  lastSavedContentRef.current = canonized
+                  lastSavedHashRef.current = hashContent(canonized)
+
+                  // Update state to trigger auto-apply (monotonic counter)
+                  setLastSaveTimestamp(prev => prev + 1)
+
+                  // DON'T reset edit flag after auto-save
+                  // User might still be actively editing even though save completed
+                  // Only reset when remote update is applied (in applyRemoteUpdateSafely)
+                  // This prevents flickering notifications during active typing sessions
+
+                  debugLog({
+                    component: 'CrossBrowserSync',
+                    action: 'SAVE_HASH_UPDATED',
+                    metadata: { noteId, panelId, hash: lastSavedHashRef.current }
+                  })
+                }
+
+                // Clear notification if no pending update
+                if (remoteUpdateNotification?.hasRemoteUpdate && !pendingRemoteUpdateRef.current) {
+                  setRemoteUpdateNotification(null)
+                }
+              })
               .catch(err => {
                 console.error('[TiptapEditorPlain] Failed to save content:', err)
                 // Don't swallow the error - let it propagate so conflict events can be handled
@@ -1070,6 +1285,328 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       },
     })
 
+    // =============================================================================
+    // CALLBACKS - Must be defined AFTER editor exists
+    // =============================================================================
+
+    /**
+     * Check if local changes exist that haven't been saved
+     */
+    const hasUnsavedChanges = useCallback((): boolean => {
+      if (!editor) return false
+
+      try {
+        const currentDoc = editor.getJSON()
+        const currentCanonized = canonizeDoc(currentDoc, editor)
+        if (!currentCanonized) return false
+
+        const currentHash = hashContent(currentCanonized)
+        const savedHash = lastSavedHashRef.current
+
+        // CRITICAL: If tracking not initialized, check if user has actually typed
+        // This prevents false positives when just viewing (no edits)
+        // But protects data if user typed before initialization completed
+        if (!savedHash || savedHash === '') {
+          if (hasUserEditedRef.current) {
+            // User typed before tracking initialized - PROTECT their work
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'CHECK_UNINITIALIZED_WITH_EDITS',
+              metadata: { noteId, panelId, hasUserEdited: true, result: 'UNSAVED' }
+            })
+            return true  // ✅ SAFE: Block remote updates, protect user work
+          } else {
+            // Just viewing, no edits yet - safe to allow updates
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'CHECK_UNINITIALIZED_NO_EDITS',
+              metadata: { noteId, panelId, hasUserEdited: false, result: 'SAVED' }
+            })
+            return false  // ✅ NO FALSE POSITIVE: Allow remote updates when just viewing
+          }
+        }
+
+        const hasChanges = currentHash !== savedHash
+
+        // CRITICAL: If user hasn't actually edited, trust that flag over hash comparison
+        // Hash mismatches without user edits = plugin mutations (e.g., trailing-paragraph)
+        // These should NOT block remote updates
+        if (!hasUserEditedRef.current) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'HAS_UNSAVED_CHECK',
+            metadata: {
+              noteId,
+              panelId,
+              hasChanges,
+              currentHash,
+              savedHash,
+              hasUserEdited: false,
+              result: 'NO_USER_EDITS_ALLOW_UPDATE'
+            }
+          })
+          return false  // ✅ NO FALSE POSITIVE: User hasn't typed, allow remote updates
+        }
+
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'HAS_UNSAVED_CHECK',
+          metadata: {
+            noteId,
+            panelId,
+            hasChanges,
+            currentHash,
+            savedHash,
+            hasUserEdited: hasUserEditedRef.current
+          }
+        })
+
+        return hasChanges
+      } catch (err) {
+        console.error('[🔧 CHECK] Error checking unsaved changes:', err)
+        return false
+      }
+    }, [editor, lastSaveTimestamp])
+
+    /**
+     * Apply remote content safely with suppression
+     * @returns true if successful, false otherwise
+     */
+    const applyRemoteUpdateSafely = useCallback((
+      remoteContent: ProseMirrorJSON,
+      version: number,
+      reason: string
+    ): boolean => {
+      if (!editor) {
+        return false
+      }
+
+      debugLog({
+        component: 'CrossBrowserSync',
+        action: 'APPLY_START',
+        metadata: { noteId, panelId, version, reason }
+      })
+
+      try {
+        // Set suppression flag
+        isApplyingRemoteUpdateRef.current = true
+
+        // Apply the content
+        editor.commands.setContent(remoteContent, false)
+
+        // CRITICAL: Hash what TipTap actually rendered, not the raw input
+        // TipTap plugins (e.g., trailing-paragraph) mutate the document after setContent()
+        // If we hash the input, we'll have a mismatch with editor.getJSON()
+        const actualContent = editor.getJSON()
+        const canonizedActual = canonizeDoc(actualContent, editor) ?? remoteContent
+        const newHash = hashContent(canonizedActual)
+
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'APPLY_HASH_UPDATE',
+          metadata: {
+            noteId,
+            panelId,
+            version,
+            reason,
+            remoteHash: hashContent(remoteContent),
+            actualContentHash: hashContent(actualContent),
+            canonizedHash: newHash,
+            oldHash: lastSavedHashRef.current
+          }
+        })
+
+        // Update tracking with what's ACTUALLY in the editor now
+        lastSavedContentRef.current = canonizedActual
+        lastSavedHashRef.current = newHash
+        setLastSaveTimestamp(prev => prev + 1)
+
+        // Track successfully applied version (prevents re-processing older conflicts)
+        if (version > lastAppliedVersionRef.current) {
+          lastAppliedVersionRef.current = version
+        }
+
+        // Reset edit flag - content is now synced with remote
+        hasUserEditedRef.current = false
+
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'USER_EDIT_FLAG_RESET_APPLY',
+          metadata: { noteId, panelId, version, reason }
+        })
+
+        // Clear pending update
+        pendingRemoteUpdateRef.current = null
+
+        // Clear notification
+        setRemoteUpdateNotification(null)
+
+        return true
+      } catch (err) {
+        console.error('[🔧 APPLY] Failed to apply remote content:', err)
+        setRemoteUpdateNotification({
+          message: `Failed to apply update: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          version,
+          hasRemoteUpdate: false,
+          saveError: String(err)
+        })
+        return false
+      } finally {
+        // Always clear suppression flag
+        isApplyingRemoteUpdateRef.current = false
+      }
+    }, [editor])
+
+    /**
+     * Save current content then sync with remote
+     */
+    const handleSaveAndSync = useCallback(async () => {
+      if (!editor || !provider || !noteId || isSaving) {
+        return
+      }
+
+      setIsSaving(true)
+
+      try {
+        // Step 1: Get current content
+        const currentJson = editor.getJSON()
+
+        // Step 2: Save to database
+        const versionBeforeSave = provider.getDocumentVersion(noteId, panelId)
+
+        await provider.saveDocument(noteId, panelId, currentJson, false, { skipBatching: true })
+
+        const versionAfterSave = provider.getDocumentVersion(noteId, panelId)
+
+        // Step 3: Update tracking
+        const canonized = canonizeDoc(currentJson, editor)
+        if (canonized) {
+          lastSavedContentRef.current = canonized
+          lastSavedHashRef.current = hashContent(canonized)
+          setLastSaveTimestamp(prev => prev + 1)
+        }
+
+
+        // Step 4: Check for remote updates using public API (fetches from DB, not cache)
+        await provider.checkForRemoteUpdates(noteId, panelId)
+
+        // Step 5: Get version after refresh (now fresh from database)
+        const versionAfterRefresh = provider.getDocumentVersion(noteId, panelId)
+
+        // Step 6: Compare versions
+        if (versionAfterRefresh > versionAfterSave) {
+          // Remote changes detected after our save
+
+          // Get fresh content (now in cache after checkForRemoteUpdates)
+          const freshContent = provider.getDocument(noteId, panelId)
+          const freshCanonized = canonizeDoc(freshContent, editor)
+          const freshHash = freshCanonized ? hashContent(freshCanonized) : ''
+          const savedHash = lastSavedHashRef.current
+
+          if (freshHash !== savedHash) {
+            // Content differs - apply it
+            applyRemoteUpdateSafely(
+              freshCanonized!,
+              versionAfterRefresh,
+              'save-and-sync-detected-newer'
+            )
+          } else {
+            setRemoteUpdateNotification(null)
+          }
+        } else {
+          // No new changes, we're synced
+          setRemoteUpdateNotification(null)
+        }
+
+      } catch (err) {
+        console.error('[🔧 SAVE-SYNC] Save and sync failed:', err)
+        setRemoteUpdateNotification({
+          message: `Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          version: provider.getDocumentVersion(noteId, panelId),
+          hasRemoteUpdate: true,
+          saveError: String(err)
+        })
+      } finally {
+        setIsSaving(false)
+      }
+    }, [editor, provider, noteId, panelId, isSaving, applyRemoteUpdateSafely])
+
+    /**
+     * Discard local changes and sync with remote
+     */
+    const handleDiscardAndSync = useCallback(async () => {
+      if (!editor || !provider || !noteId) {
+        return
+      }
+
+      try {
+
+        // Fetch fresh content
+        const freshContent = await provider.getDocument(noteId, panelId)
+        const freshVersion = provider.getDocumentVersion(noteId, panelId)
+
+
+        // Apply it
+        const canonized = canonizeDoc(freshContent, editor)
+        if (canonized) {
+          applyRemoteUpdateSafely(canonized, freshVersion, 'discard-and-sync')
+        }
+
+      } catch (err) {
+        console.error('[🔧 DISCARD] Discard and sync failed:', err)
+        setRemoteUpdateNotification({
+          message: `Sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          version: provider.getDocumentVersion(noteId, panelId),
+          hasRemoteUpdate: true,
+          saveError: String(err)
+        })
+      }
+    }, [editor, provider, noteId, panelId, applyRemoteUpdateSafely])
+
+    /**
+     * Dismiss notification without syncing
+     */
+    const handleDismissNotification = useCallback(() => {
+      notificationDismissedRef.current = true
+      setRemoteUpdateNotification(null)
+    }, [])
+
+    /**
+     * Initialize tracking when editor loads with content
+     * Prevents false positives when switching browsers without editing
+     * CRITICAL: Hash what's ACTUALLY in the editor after TipTap has processed it
+     */
+    useEffect(() => {
+      if (!editor || !loadedContent) return
+
+      // Only initialize if not already set
+      if (lastSavedHashRef.current === '') {
+        // CRITICAL: Get what TipTap actually rendered, not the raw loaded content
+        // TipTap plugins (e.g., trailing-paragraph) mutate content after setContent()
+        const actualContent = editor.getJSON()
+        const canonized = canonizeDoc(actualContent, editor)
+        if (canonized) {
+          const newHash = hashContent(canonized)
+
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'INIT_HASH_SET',
+            metadata: {
+              noteId,
+              panelId,
+              loadedHash: hashContent(loadedContent),
+              actualContentHash: hashContent(actualContent),
+              canonizedHash: newHash
+            }
+          })
+
+          lastSavedContentRef.current = canonized
+          lastSavedHashRef.current = newHash
+          hasUserEditedRef.current = false  // Reset edit flag - content is fresh from database
+        }
+      }
+    }, [editor, loadedContent, noteId, panelId])
+
     useEffect(() => {
       if (!editor) {
         return
@@ -1105,6 +1642,68 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         listenersBefore: provider?.listenerCount?.('document:conflict')
       })
 
+      /**
+       * ============================================================================
+       * CONFLICT HANDLER - Cross-Browser Synchronization Safety
+       * ============================================================================
+       *
+       * PURPOSE:
+       * Handles document:conflict events when multiple browsers edit the same panel.
+       * Prevents data loss while avoiding false positive notifications.
+       *
+       * ARCHITECTURE:
+       *
+       * 1. PRIMARY DEFENSE: Version-Based Deduplication
+       *    - Tracks processed conflict versions in processedConflictVersionsRef
+       *    - Prevents duplicate handling of the same conflict event
+       *    - Ignores conflicts for versions already successfully applied
+       *    - SAFE: Based on explicit version numbers, not timing assumptions
+       *
+       * 2. SECONDARY DEFENSE: Grace Period (Defense-in-Depth)
+       *    - Defers conflicts within 2 seconds of user starting to type
+       *    - Catches edge cases where version tracking might miss duplicates
+       *    - LESS SAFE: Time-based, can ignore legitimate conflicts in theory
+       *
+       * 3. CONTENT VERIFICATION:
+       *    - Checks if remote content matches current editor content (hash comparison)
+       *    - Auto-resolves conflicts where content is actually identical
+       *    - Updates tracking to prevent repeated checks
+       *
+       * KNOWN LIMITATIONS & TODOS:
+       *
+       * TODO: Root cause investigation
+       *   - Why are duplicate conflict events firing in the first place?
+       *   - Are they queued in PlainOfflineProvider?
+       *   - Are they from visibility change polling?
+       *   - Can we prevent duplicates at the source?
+       *
+       * TODO: Conflict resolution queue
+       *   - Currently we defer/ignore conflicts, but don't queue them for retry
+       *   - Should implement a proper conflict queue that rechecks after grace period
+       *   - Risk: Deferred conflicts might never be rechecked if user keeps typing
+       *
+       * TODO: Monitoring & alerting
+       *   - Add metrics for CONFLICT_GRACE_PERIOD_DEFERRED events
+       *   - Alert if grace period is frequently triggered (might indicate legitimate conflicts being missed)
+       *   - Track CONFLICT_DUPLICATE_IGNORED vs CONFLICT_STALE_VERSION_IGNORED ratios
+       *
+       * TODO: Version monotonicity enforcement
+       *   - Verify versions always increase monotonically
+       *   - Add warning if we see version numbers go backwards
+       *   - Might indicate clock skew or race conditions
+       *
+       * SAFETY ASSESSMENT:
+       * ✅ Safe: Version-based deduplication (exact version matching)
+       * ✅ Safe: Stale version detection (comparing to lastAppliedVersion)
+       * ⚠️  Risky: Grace period (can ignore legitimate conflicts within 2 seconds)
+       * ✅ Safe: Content hash comparison (verifies actual content differences)
+       *
+       * TESTING:
+       * - Use `node scripts/query-main-panel.js` to monitor conflict handling
+       * - Look for CONFLICT_DUPLICATE_IGNORED (good - working as intended)
+       * - Watch for CONFLICT_GRACE_PERIOD_DEFERRED (needs monitoring - might hide real conflicts)
+       * - Verify CONFLICT_BLOCKED only appears for genuine conflicts
+       */
       const handleConflict = (event: {
         noteId: string
         panelId: string
@@ -1112,91 +1711,234 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         remoteVersion?: number
         remoteContent?: ProseMirrorJSON | HtmlString
       }) => {
-        console.log(`[🔍 CONFLICT-RESOLUTION] *** HANDLER CALLED ***`, event)
-        console.log(`[🔍 CONFLICT-RESOLUTION] Conflict event received`, {
-          eventNoteId: event.noteId,
-          eventPanelId: event.panelId,
-          myNoteId: noteId,
-          myPanelId: panelId,
-          willHandle: event.noteId === noteId && event.panelId === panelId
-        })
 
-        // Only handle conflicts for this specific panel
         if (event.noteId !== noteId || event.panelId !== panelId) return
 
-        console.log(`[🔍 CONFLICT-RESOLUTION] Handling conflict for ${panelId}`, {
-          remoteVersion: event.remoteVersion,
-          currentVersion: provider.getDocumentVersion(noteId, panelId),
-          hasRemoteContent: !!event.remoteContent
-        })
+        if (!editor || editor.isDestroyed) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_EDITOR_DESTROYED',
+            metadata: { noteId, panelId, reason: 'editor_destroyed' }
+          })
+          return
+        }
 
-        // Get the fresh content that the provider already loaded
         let freshContent: ProseMirrorJSON | HtmlString | null = null
         try {
-          freshContent = provider.getDocument(noteId, panelId)
+          freshContent = provider?.getDocument(noteId, panelId) || null
         } catch (err) {
-          console.error('[TiptapEditorPlain] Failed to get fresh content after conflict:', err)
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_FETCH_ERROR',
+            metadata: {
+              noteId,
+              panelId,
+              error: err instanceof Error ? err.message : String(err)
+            }
+          })
           return
         }
 
         if (!freshContent) {
-          console.warn('[TiptapEditorPlain] No fresh content available after conflict')
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_NO_CONTENT',
+            metadata: { noteId, panelId, reason: 'provider_returned_null' }
+          })
           return
         }
 
-        console.log(`[🔍 CONFLICT-RESOLUTION] Updating editor with fresh content`, {
-          contentPreview: JSON.stringify(freshContent).substring(0, 100),
-          version: event.remoteVersion
+        const canonizedFresh = canonizeDoc(freshContent, editor)
+        if (!canonizedFresh) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_CANONIZE_ERROR',
+            metadata: { noteId, panelId, reason: 'canonization_failed' }
+          })
+          return
+        }
+
+        // CRITICAL: Check if content is actually different
+        const freshHash = hashContent(canonizedFresh)
+        const currentHash = lastSavedHashRef.current
+
+        if (freshHash === currentHash) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_RESOLVED_AUTO',
+            metadata: {
+              noteId,
+              panelId,
+              version: event.remoteVersion || 0,
+              hash: freshHash
+            }
+          })
+          return // EXIT - content is the same, no action needed
+        }
+
+        // ALSO check if user's CURRENT editor content already matches the fresh content
+        // This handles stale conflict events that fire while user is typing
+        const currentEditorDoc = editor.getJSON()
+        const canonizedCurrent = canonizeDoc(currentEditorDoc, editor)
+        if (canonizedCurrent) {
+          const currentEditorHash = hashContent(canonizedCurrent)
+          if (currentEditorHash === freshHash) {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'CONFLICT_RESOLVED_ALREADY_MATCHES',
+              metadata: {
+                noteId,
+                panelId,
+                version: event.remoteVersion || 0,
+                hash: freshHash,
+                reason: 'user_content_matches_remote'
+              }
+            })
+            // Update tracking to match current state
+            lastSavedHashRef.current = freshHash
+            lastSavedContentRef.current = canonizedCurrent
+            return // EXIT - user's current content already matches remote
+          }
+        }
+
+        const conflictVersion = event.remoteVersion || 0
+
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'CONFLICT_DIFFERS',
+          metadata: {
+            noteId,
+            panelId,
+            version: conflictVersion,
+            freshHash,
+            currentHash,
+            lastAppliedVersion: lastAppliedVersionRef.current
+          }
         })
 
-        // Update editor with fresh content
-        try {
-          console.log(`[🔍 CONFLICT-RESOLUTION] Before setContent, editor has:`, editor.getJSON())
-          console.log(`[🔍 CONFLICT-RESOLUTION] Editor is focused:`, editor.isFocused)
+        // ============================================================================
+        // PRIMARY DEFENSE: Version-Based Deduplication
+        // ============================================================================
+        // Prevents processing the same conflict version multiple times
+        // This is safer than time-based grace periods
 
-          // CRITICAL: Make editor non-editable to prevent interference during update
-          const wasEditable = editor.isEditable
-          if (wasEditable) {
-            console.log(`[🔍 CONFLICT-RESOLUTION] Making editor non-editable during update`)
-            editor.setEditable(false)
-          }
+        const versionKey = `${panelId}-${conflictVersion}`
 
-          // CRITICAL: If editor is focused, blur it first so setContent works
-          if (editor.isFocused) {
-            console.log(`[🔍 CONFLICT-RESOLUTION] Blurring editor to allow setContent`)
-            editor.commands.blur()
-          }
+        // 1. Check if we already processed this exact version
+        if (processedConflictVersionsRef.current.has(versionKey)) {
+          const processedAt = processedConflictVersionsRef.current.get(versionKey)!
+          const timeSinceProcessed = Date.now() - processedAt
 
-          // Use chain().clearContent().insertContent() for more reliable update
-          console.log(`[🔍 CONFLICT-RESOLUTION] Replacing content with chain command`)
-          editor.chain()
-            .clearContent()
-            .insertContent(freshContent)
-            .run()
-
-          console.log(`[🔍 CONFLICT-RESOLUTION] After update, editor has:`, editor.getJSON())
-
-          // Restore editability
-          if (wasEditable) {
-            console.log(`[🔍 CONFLICT-RESOLUTION] Restoring editor editability`)
-            editor.setEditable(true)
-          }
-
-          setLoadedContent(freshContent)
-
-          // Notify parent component to update dataStore
-          console.log(`[🔍 CONFLICT-RESOLUTION] Calling onContentLoaded to update dataStore`, {
-            hasCallback: !!onContentLoaded,
-            version: event.remoteVersion
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_DUPLICATE_IGNORED',
+            metadata: {
+              noteId,
+              panelId,
+              version: conflictVersion,
+              timeSinceProcessed,
+              reason: 'already_processed_this_version'
+            }
           })
-          if (event.remoteVersion !== undefined) {
-            onContentLoaded?.({ content: freshContent, version: event.remoteVersion })
+
+          return // EXIT - duplicate conflict event, safe to ignore
+        }
+
+        // 2. Check if this conflict is for an older version we already applied
+        if (conflictVersion > 0 && conflictVersion <= lastAppliedVersionRef.current) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_STALE_VERSION_IGNORED',
+            metadata: {
+              noteId,
+              panelId,
+              conflictVersion,
+              lastAppliedVersion: lastAppliedVersionRef.current,
+              reason: 'conflict_for_already_applied_version'
+            }
+          })
+
+          return // EXIT - conflict is for an older version we already have
+        }
+
+        // ============================================================================
+        // SECONDARY DEFENSE: Grace Period (Defense-in-Depth)
+        // ============================================================================
+        // Additional safety for edge cases where version tracking might miss something
+        // This prevents showing notifications immediately after user starts typing
+
+        const now = Date.now()
+        const timeSinceLastEdit = now - lastEditTimestampRef.current
+        const GRACE_PERIOD_MS = 2000 // 2 seconds
+
+        if (hasUserEditedRef.current && timeSinceLastEdit < GRACE_PERIOD_MS) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_GRACE_PERIOD_DEFERRED',
+            metadata: {
+              noteId,
+              panelId,
+              version: conflictVersion,
+              timeSinceLastEdit,
+              gracePeriodMs: GRACE_PERIOD_MS,
+              reason: 'user_recently_started_typing'
+            }
+          })
+
+          return // EXIT - user just started typing, defer conflict check
+        }
+
+        // ============================================================================
+        // Mark this version as processed before showing notification
+        // ============================================================================
+        processedConflictVersionsRef.current.set(versionKey, Date.now())
+
+        // Clean up old processed versions (keep last 50 to prevent memory leak)
+        if (processedConflictVersionsRef.current.size > 50) {
+          const entries = Array.from(processedConflictVersionsRef.current.entries())
+          entries.sort((a, b) => a[1] - b[1]) // Sort by timestamp
+          const toDelete = entries.slice(0, entries.length - 50)
+          toDelete.forEach(([key]) => processedConflictVersionsRef.current.delete(key))
+        }
+
+        // CRITICAL: Check for unsaved changes (always active)
+        if (hasUnsavedChanges()) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'CONFLICT_BLOCKED',
+            metadata: {
+              noteId,
+              panelId,
+              version: event.remoteVersion || 0,
+              reason: 'unsaved_changes',
+              hasUserEdited: hasUserEditedRef.current,
+              message: event.message
+            }
+          })
+
+          pendingRemoteUpdateRef.current = {
+            content: canonizedFresh,
+            version: event.remoteVersion || 0,
+            reason: 'conflict resolution'
           }
 
-          // Show brief notification to user (optional - can be styled better later)
-          console.info(`[Editor] Content updated to latest version (conflict resolved)`)
-        } catch (err) {
-          console.error('[TiptapEditorPlain] Failed to update editor after conflict:', err)
+          setRemoteUpdateNotification({
+            message: 'Conflict detected. Save your work to resolve.',
+            version: event.remoteVersion || 0,
+            hasRemoteUpdate: true
+          })
+
+          notificationDismissedRef.current = false
+          return // EXIT
+        }
+
+        // Safe to resolve
+
+        const success = applyRemoteUpdateSafely(canonizedFresh, event.remoteVersion || 0, 'conflict resolution')
+
+        if (success) {
+          pendingRemoteUpdateRef.current = null
+          notificationDismissedRef.current = false
         }
       }
 
@@ -1208,62 +1950,114 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         content: ProseMirrorJSON | HtmlString
         reason?: string
       }) => {
-        console.log(`[🔍 REMOTE-UPDATE] Remote update event received`, {
-          eventNoteId: event.noteId,
-          eventPanelId: event.panelId,
-          myNoteId: noteId,
-          myPanelId: panelId,
-          reason: event.reason,
-          willHandle: event.noteId === noteId && event.panelId === panelId
+        // Log IMMEDIATELY to catch all calls
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'REMOTE_UPDATE_RECEIVED',
+          metadata: {
+            noteId: event.noteId,
+            panelId: event.panelId,
+            version: event.version,
+            reason: event.reason,
+            matchesThisPanel: event.noteId === noteId && event.panelId === panelId
+          }
         })
 
-        // Only handle updates for this specific panel
-        if (event.noteId !== noteId || event.panelId !== panelId) return
 
-        console.log(`[🔍 REMOTE-UPDATE] Handling remote update for ${panelId}`, {
-          version: event.version,
-          currentVersion: provider.getDocumentVersion(noteId, panelId),
-          reason: event.reason
+        if (event.noteId !== noteId || event.panelId !== panelId) {
+          return
+        }
+
+        if (!editor || editor.isDestroyed) {
+          console.warn('[Remote Update] Editor destroyed')
+          return
+        }
+
+        const canonizedRemote = canonizeDoc(event.content, editor)
+        if (!canonizedRemote) {
+          console.error('[Remote Update] Failed to canonize')
+          return
+        }
+
+        // CRITICAL: Check if remote content is actually different
+        const remoteHash = hashContent(canonizedRemote)
+        const currentHash = lastSavedHashRef.current
+
+        if (remoteHash === currentHash) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'REMOTE_UPDATE_IDENTICAL',
+            metadata: {
+              noteId,
+              panelId,
+              version: event.version,
+              reason: event.reason,
+              hash: remoteHash
+            }
+          })
+          return // EXIT - content hasn't changed, nothing to do
+        }
+
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'REMOTE_UPDATE_DIFFERS',
+          metadata: {
+            noteId,
+            panelId,
+            version: event.version,
+            reason: event.reason,
+            remoteHash,
+            currentHash
+          }
         })
 
-        // Update editor with remote content
-        try {
-          console.log(`[🔍 REMOTE-UPDATE] Updating editor with remote content`, {
-            contentPreview: JSON.stringify(event.content).substring(0, 100),
-            version: event.version
+        // CRITICAL: Check for unsaved changes (always active)
+        if (hasUnsavedChanges()) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'REMOTE_UPDATE_BLOCKED',
+            metadata: {
+              noteId,
+              panelId,
+              version: event.version,
+              reason: 'unsaved_changes',
+              hasUserEdited: hasUserEditedRef.current
+            }
           })
 
-          // Make editor non-editable during update
-          const wasEditable = editor.isEditable
-          if (wasEditable) {
-            editor.setEditable(false)
+          pendingRemoteUpdateRef.current = {
+            content: canonizedRemote,
+            version: event.version,
+            reason: event.reason || 'remote update'
           }
 
-          // Blur if focused
-          if (editor.isFocused) {
-            editor.commands.blur()
+          setRemoteUpdateNotification({
+            message: 'Remote changes available. Save your work to sync.',
+            version: event.version,
+            hasRemoteUpdate: true
+          })
+
+          notificationDismissedRef.current = false
+          return // EXIT - don't touch editor
+        }
+
+        // Safe to apply
+        debugLog({
+          component: 'CrossBrowserSync',
+          action: 'REMOTE_UPDATE_APPLYING',
+          metadata: {
+            noteId,
+            panelId,
+            version: event.version,
+            reason: event.reason
           }
+        })
 
-          // Update content
-          editor.chain()
-            .clearContent()
-            .insertContent(event.content)
-            .run()
+        const success = applyRemoteUpdateSafely(canonizedRemote, event.version, event.reason || 'remote update')
 
-          // Restore editability
-          if (wasEditable) {
-            editor.setEditable(true)
-          }
-
-          setLoadedContent(event.content)
-
-          // Notify parent to update dataStore
-          console.log(`[🔍 REMOTE-UPDATE] Calling onContentLoaded to update dataStore`)
-          onContentLoaded?.({ content: event.content, version: event.version })
-
-          console.info(`[Editor] Content updated from remote (${event.reason || 'background refresh'})`)
-        } catch (err) {
-          console.error('[TiptapEditorPlain] Failed to update editor with remote content:', err)
+        if (success) {
+          pendingRemoteUpdateRef.current = null
+          notificationDismissedRef.current = false
         }
       }
 
@@ -1277,6 +2071,32 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         provider.off('document:remote-update', handleRemoteUpdate)
       }
     }, [provider, noteId, panelId, editor, onContentLoaded])
+
+    /**
+     * Auto-apply pending remote updates after successful save
+     * Uses state dependency to trigger
+     */
+    useEffect(() => {
+      if (!pendingRemoteUpdateRef.current || !notificationDismissedRef.current) {
+        return
+      }
+
+      if (hasUnsavedChanges()) {
+        return // Still has unsaved changes
+      }
+
+      // Safe to apply now
+      const pending = pendingRemoteUpdateRef.current
+
+      const success = applyRemoteUpdateSafely(pending.content, pending.version, 'auto-apply after save')
+
+      if (success) {
+        pendingRemoteUpdateRef.current = null
+        notificationDismissedRef.current = false
+      }
+
+      // STATE dependency triggers this effect after saves
+    }, [lastSaveTimestamp, hasUnsavedChanges, applyRemoteUpdateSafely])
 
     // Save content before browser unload or visibility change
     useEffect(() => {
@@ -1328,18 +2148,35 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       // visibilitychange fires earlier and allows async operations
       const handleVisibilityChange = async () => {
         if (document.visibilityState === 'hidden') {
-          saveCurrentContent(false) // async save
+          // CRITICAL: Only save if there are actual unsaved changes
+          // This prevents ghost saves when just viewing (no edits)
+          if (hasUnsavedChanges()) {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'VISIBILITY_SAVE_TRIGGERED',
+              metadata: { noteId, panelId, reason: 'unsaved_changes_exist' }
+            })
+            saveCurrentContent(false) // async save
+          } else {
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'VISIBILITY_SAVE_SKIPPED',
+              metadata: { noteId, panelId, reason: 'no_unsaved_changes' }
+            })
+          }
         } else if (document.visibilityState === 'visible' && provider) {
           // Check for remote updates when page becomes visible
-          fetch('/api/debug/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              component: 'TiptapEditorPlain',
-              event: 'VISIBILITY_REFRESH',
-              metadata: { noteId, panelId }
-            }),
-          }).catch(() => {})
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'VISIBILITY_REFRESH',
+            metadata: {
+              noteId,
+              panelId,
+              hasUserEdited: hasUserEditedRef.current,
+              isContentLoading,
+              hasLastSavedHash: lastSavedHashRef.current !== ''
+            }
+          })
 
           try {
             // Force refresh from database to check for remote changes
@@ -1347,13 +2184,37 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             await provider.checkForRemoteUpdates(noteId, panelId)
           } catch (err) {
             console.error('[TiptapEditorPlain] Failed to refresh on visibility:', err)
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'VISIBILITY_REFRESH_ERROR',
+              metadata: {
+                noteId,
+                panelId,
+                error: err instanceof Error ? err.message : String(err)
+              }
+            })
           }
         }
       }
       
       // beforeunload as last resort (sync localStorage only)
       const handleBeforeUnload = () => {
-        saveCurrentContent(true) // sync localStorage save
+        // CRITICAL: Only save if there are actual unsaved changes
+        // This prevents ghost saves when just viewing (no edits)
+        if (hasUnsavedChanges()) {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'BEFOREUNLOAD_SAVE_TRIGGERED',
+            metadata: { noteId, panelId, reason: 'unsaved_changes_exist' }
+          })
+          saveCurrentContent(true) // sync localStorage save
+        } else {
+          debugLog({
+            component: 'CrossBrowserSync',
+            action: 'BEFOREUNLOAD_SAVE_SKIPPED',
+            metadata: { noteId, panelId, reason: 'no_unsaved_changes' }
+          })
+        }
       }
       
       document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -1363,7 +2224,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         document.removeEventListener('visibilitychange', handleVisibilityChange)
         window.removeEventListener('beforeunload', handleBeforeUnload)
       }
-    }, [editor, provider, noteId, panelId])
+    }, [editor, provider, noteId, panelId, hasUnsavedChanges])
 
     // Mouse up handler to show toolbar after selection is complete
     useEffect(() => {
@@ -1498,12 +2359,67 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         setTimeout(() => {
           if (editor && !editor.isDestroyed) {
             const beforeContent = editor.getJSON()
-            
+
+            // CRITICAL: Suppress onUpdate during initial content load to prevent unnecessary save
+            isApplyingRemoteUpdateRef.current = true
+
+            debugLog({
+              component: 'CrossBrowserSync',
+              action: 'LOAD_CONTENT_SUPPRESSION_START',
+              metadata: {
+                noteId,
+                panelId,
+                message: 'Suppressing onUpdate during initial load to prevent ghost save'
+              }
+            })
+
             editor.commands.setContent(loadedContent, false)
             // Force a view update
             editor.view.updateState(editor.view.state)
             ensureTrailingParagraph(editor.view)
-            
+
+            // CRITICAL: Wait for TipTap's onUpdate to fire before clearing suppression
+            // TipTap fires onUpdate asynchronously after DOM updates
+            // Use requestAnimationFrame to ensure we clear AFTER the update cycle completes
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                // Double RAF ensures we're after both layout and paint
+                isApplyingRemoteUpdateRef.current = false
+
+                debugLog({
+                  component: 'CrossBrowserSync',
+                  action: 'LOAD_CONTENT_SUPPRESSION_END',
+                  metadata: {
+                    noteId,
+                    panelId,
+                    message: 'Suppression cleared after TipTap update cycle'
+                  }
+                })
+
+                // Update hash tracking with the actual rendered content
+                const actualContent = editor.getJSON()
+                const canonized = canonizeDoc(actualContent as ProseMirrorJSON, editor)
+                if (canonized) {
+                  const newHash = hashContent(canonized)
+                  lastSavedHashRef.current = newHash
+                  lastSavedContentRef.current = canonized
+
+                  debugLog({
+                    component: 'CrossBrowserSync',
+                    action: 'LOAD_HASH_INITIALIZED',
+                    metadata: {
+                      noteId,
+                      panelId,
+                      hash: newHash.substring(0, 8)
+                    }
+                  })
+                }
+
+                // Reset user edit flag since this is a fresh load
+                hasUserEditedRef.current = false
+              })
+            })
+
             const afterContent = editor.getJSON()
 
             const treatedAsPreview = fallbackSourceRef.current === 'preview'
@@ -2198,6 +3114,49 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
       }
     }, [editor])
 
+    // Notification drag handlers
+    const handleNotificationMouseDown = useCallback((e: React.MouseEvent) => {
+      // Only allow dragging from the notification header area (not buttons)
+      if ((e.target as HTMLElement).tagName === 'BUTTON') return
+
+      notificationDragRef.current = {
+        isDragging: true,
+        startX: e.clientX,
+        startY: e.clientY,
+        offsetX: notificationPosition.x,
+        offsetY: notificationPosition.y
+      }
+      e.preventDefault()
+    }, [notificationPosition])
+
+    const handleNotificationMouseMove = useCallback((e: MouseEvent) => {
+      if (!notificationDragRef.current.isDragging) return
+
+      const deltaX = e.clientX - notificationDragRef.current.startX
+      const deltaY = e.clientY - notificationDragRef.current.startY
+
+      setNotificationPosition({
+        x: notificationDragRef.current.offsetX + deltaX,
+        y: notificationDragRef.current.offsetY + deltaY
+      })
+    }, [])
+
+    const handleNotificationMouseUp = useCallback(() => {
+      notificationDragRef.current.isDragging = false
+    }, [])
+
+    // Add/remove mouse event listeners for dragging
+    useEffect(() => {
+      if (remoteUpdateNotification?.hasRemoteUpdate) {
+        document.addEventListener('mousemove', handleNotificationMouseMove)
+        document.addEventListener('mouseup', handleNotificationMouseUp)
+        return () => {
+          document.removeEventListener('mousemove', handleNotificationMouseMove)
+          document.removeEventListener('mouseup', handleNotificationMouseUp)
+        }
+      }
+    }, [remoteUpdateNotification?.hasRemoteUpdate, handleNotificationMouseMove, handleNotificationMouseUp])
+
     // Show loading state
     if (isContentLoading && provider) {
       return (
@@ -2216,7 +3175,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
     return (
       <div
         className="tiptap-editor-document"
-        style={{ height: '100%' }}
+        style={{ height: '100%', position: 'relative' }}
         ref={editorWrapperRef}
       >
         <div 
@@ -2237,6 +3196,141 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         >
           <EditorContent editor={editor} style={{ height: '100%' }} />
         </div>
+
+        {/* Remote Update Notification Banner */}
+        {remoteUpdateNotification?.hasRemoteUpdate && (
+          <div
+            onMouseDown={handleNotificationMouseDown}
+            style={{
+              position: 'absolute',
+              top: notificationPosition.y,
+              right: notificationPosition.x === 0 ? 8 : undefined,
+              left: notificationPosition.x !== 0 ? notificationPosition.x : undefined,
+              maxWidth: 400,
+              background: remoteUpdateNotification.saveError ? '#fee2e2' : '#fef3c7',
+              border: `1px solid ${remoteUpdateNotification.saveError ? '#ef4444' : '#f59e0b'}`,
+              borderRadius: 8,
+              padding: '12px 16px',
+              fontSize: 13,
+              zIndex: 1000,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+              cursor: notificationDragRef.current.isDragging ? 'grabbing' : 'grab',
+              userSelect: 'none',
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{
+                color: remoteUpdateNotification.saveError ? '#991b1b' : '#92400e',
+                flex: 1,
+                lineHeight: 1.4
+              }}>
+                {remoteUpdateNotification.saveError ? '❌' : '⚠️'} {remoteUpdateNotification.message}
+              </span>
+              <button
+                onClick={handleDismissNotification}
+                title="Remind me later"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: remoteUpdateNotification.saveError ? '#991b1b' : '#92400e',
+                  cursor: 'pointer',
+                  fontSize: 18,
+                  padding: 0,
+                  lineHeight: 1,
+                  opacity: 0.6,
+                }}
+                onMouseOver={(e) => (e.currentTarget.style.opacity = '1')}
+                onMouseOut={(e) => (e.currentTarget.style.opacity = '0.6')}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Error details */}
+            {remoteUpdateNotification.saveError && (
+              <div style={{
+                fontSize: 11,
+                color: '#7f1d1d',
+                backgroundColor: '#fca5a5',
+                padding: '6px 8px',
+                borderRadius: 4,
+                fontFamily: 'monospace',
+              }}>
+                {remoteUpdateNotification.saveError}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleSaveAndSync}
+                disabled={isSaving}
+                style={{
+                  background: isSaving ? '#d1d5db' : (remoteUpdateNotification.saveError ? '#ef4444' : '#f59e0b'),
+                  color: isSaving ? '#6b7280' : 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  cursor: isSaving ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  flex: 1,
+                  transition: 'all 0.2s',
+                  opacity: isSaving ? 0.7 : 1,
+                }}
+                onMouseOver={(e) => {
+                  if (!isSaving) {
+                    e.currentTarget.style.transform = 'scale(1.02)'
+                    e.currentTarget.style.opacity = '0.95'
+                  }
+                }}
+                onMouseOut={(e) => {
+                  if (!isSaving) {
+                    e.currentTarget.style.transform = 'scale(1)'
+                    e.currentTarget.style.opacity = '1'
+                  }
+                }}
+              >
+                {isSaving ? '⏳ Saving...' : (remoteUpdateNotification.saveError ? '🔄 Retry Save & Sync' : 'Save & Sync')}
+              </button>
+              <button
+                onClick={handleDiscardAndSync}
+                style={{
+                  background: 'transparent',
+                  color: remoteUpdateNotification.saveError ? '#991b1b' : '#92400e',
+                  border: `1px solid ${remoteUpdateNotification.saveError ? '#ef4444' : '#f59e0b'}`,
+                  borderRadius: 4,
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  flex: 1,
+                  transition: 'all 0.2s',
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = remoteUpdateNotification.saveError ? '#fef2f2' : '#fffbeb'
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'transparent'
+                }}
+              >
+                Discard & Sync
+              </button>
+            </div>
+
+            {/* Version info */}
+            <div style={{
+              fontSize: 10,
+              color: remoteUpdateNotification.saveError ? '#991b1b' : '#92400e',
+              opacity: 0.6,
+            }}>
+              Remote version: {remoteUpdateNotification.version}
+            </div>
+          </div>
+        )}
       </div>
     )
   }

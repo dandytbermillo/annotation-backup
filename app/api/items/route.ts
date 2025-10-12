@@ -162,9 +162,6 @@ export async function POST(request: NextRequest) {
       }
       parentPath = parentResult.rows[0].path
     }
-    
-    // Construct path
-    const path = parentPath ? `${parentPath}/${name}` : `/${name}`
 
     // Always get workspace_id since database requires it (NOT NULL constraint)
     let workspaceId = null;
@@ -178,7 +175,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check for duplicate name in the same parent folder (case-insensitive)
+    // Check for duplicate name and auto-increment if needed
+    let finalName = name
     const duplicateCheck = await serverPool.query(
       `SELECT id, name FROM items
        WHERE workspace_id = $1
@@ -189,11 +187,43 @@ export async function POST(request: NextRequest) {
     )
 
     if (duplicateCheck.rows.length > 0) {
-      return NextResponse.json(
-        { error: `An item named "${name}" already exists in this location` },
-        { status: 409 }
-      )
+      // Auto-increment: Find the next available number
+      // Pattern: "New Note - Oct 11, 4:30 PM" → "New Note 1 - Oct 11, 4:30 PM"
+      const baseName = name.replace(/ - \d{1,2}:\d{2} (AM|PM)$/, '') // Remove time portion
+      const timeMatch = name.match(/ - (\w+ \d+, \d{1,2}:\d{2} (AM|PM))$/)
+      const timeSuffix = timeMatch ? ` - ${timeMatch[1]}` : ''
+
+      let counter = 1
+      let foundUnique = false
+
+      while (!foundUnique && counter < 1000) {
+        const candidateName = `${baseName} ${counter}${timeSuffix}`
+
+        const existingCheck = await serverPool.query(
+          `SELECT id FROM items
+           WHERE workspace_id = $1
+             AND ${parentId ? 'parent_id = $2' : 'parent_id IS NULL'}
+             AND LOWER(name) = LOWER($${parentId ? '3' : '2'})
+             AND deleted_at IS NULL`,
+          parentId ? [workspaceId, parentId, candidateName] : [workspaceId, candidateName]
+        )
+
+        if (existingCheck.rows.length === 0) {
+          finalName = candidateName
+          foundUnique = true
+        } else {
+          counter++
+        }
+      }
+
+      if (!foundUnique) {
+        // Fallback: if we somehow hit 1000 duplicates, use timestamp
+        finalName = `${baseName} ${Date.now()}${timeSuffix}`
+      }
     }
+
+    // Construct path with finalName (after duplicate check)
+    const path = parentPath ? `${parentPath}/${finalName}` : `/${finalName}`
 
     // Always include workspace_id in INSERT since it's required
     const query = `
@@ -205,12 +235,12 @@ export async function POST(request: NextRequest) {
       )
       RETURNING *
     `
-    
+
     const values = [
       type,
       parentId || null,
       path,
-      name,
+      finalName,
       type === 'note' ? (content || null) : null,
       metadata,
       icon || null,
@@ -248,7 +278,7 @@ export async function POST(request: NextRequest) {
           title = EXCLUDED.title,
           metadata = EXCLUDED.metadata,
           updated_at = EXCLUDED.updated_at
-      `, [row.id, name, metadata, workspaceId, row.created_at, row.updated_at])
+      `, [row.id, row.name, metadata, workspaceId, row.created_at, row.updated_at])
     }
     
     return NextResponse.json({ item }, { status: 201 })
