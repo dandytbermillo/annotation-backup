@@ -1018,17 +1018,21 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         // If parent position is provided, update the dataStore
         if (parentPosition && (window as any).canvasDataStore) {
           const dataStore = (window as any).canvasDataStore
-          const camera = {
-            x: canvasState.translateX,
-            y: canvasState.translateY
-          }
-          const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+          const existingPanelData = dataStore.get(panelId)
 
-          dataStore.update(panelId, {
-            id: panelId,
-            position: worldPosition,
-            worldPosition: worldPosition
-          })
+          if (!existingPanelData?.worldPosition) {
+            const camera = {
+              x: canvasState.translateX,
+              y: canvasState.translateY
+            }
+            const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+
+            dataStore.update(panelId, {
+              id: panelId,
+              position: worldPosition,
+              worldPosition: worldPosition
+            })
+          }
         }
       } else {
         // Ensure the provider knows about the current note

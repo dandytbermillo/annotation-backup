@@ -323,3 +323,4 @@
 {"time":"2025-10-14T00:21:02Z","note":"Resumed session; reviewed codex/previous-sessions/RESUME.md and isolation-reactivity anti-pattern guidelines."}
 {"ts":"2025-10-14T00:25:53.755Z","type":"commit","sha":"180221496b02329fb36fc989d74e069d6d1dfe17","files_changed":60,"message":"added canvas state persistence"}
 {"time":"2025-10-14T01:58:48Z","note":"Updated components/annotation-canvas-modern.tsx to convert plain-mode parentPosition to world coordinates before persisting branch panels."}
+{"ts":"2025-10-14T02:08:51.093Z","type":"commit","sha":"b07d7b0799654b0d83ca76d8851226f6cc14757e","files_changed":20,"message":"canvas state persistence working abit"}
