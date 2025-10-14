@@ -30,7 +30,7 @@ import {
 } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
-import { worldToScreen } from "@/lib/canvas/coordinate-utils"
+import { worldToScreen, screenToWorld } from "@/lib/canvas/coordinate-utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
@@ -1018,12 +1018,17 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         // If parent position is provided, update the dataStore
         if (parentPosition && (window as any).canvasDataStore) {
           const dataStore = (window as any).canvasDataStore
-          const panelData = dataStore.get(panelId)
-          if (panelData) {
-            // Update position to be beside parent
-            panelData.position = parentPosition
-            dataStore.set(panelId, panelData)
+          const camera = {
+            x: canvasState.translateX,
+            y: canvasState.translateY
           }
+          const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+
+          dataStore.update(panelId, {
+            id: panelId,
+            position: worldPosition,
+            worldPosition: worldPosition
+          })
         }
       } else {
         // Ensure the provider knows about the current note

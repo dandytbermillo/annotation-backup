@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Resumed session; reviewed RESUME.md and POLICY.md per startup routine.
 
 Recent Activity (showing last 10 of 199)
+- commit [2025-10-14 00:25Z] 1802214: added canvas state persistence
 - commit [2025-10-12 19:21Z] f6530cb: panels_not_centering_viewport fixed
 - commit [2025-10-12 05:20Z] ac18297: panels are in the center when they appeared
 - commit [2025-10-12 00:28Z] 5a12c61: added a cross browser sync
@@ -14,8 +15,6 @@ Recent Activity (showing last 10 of 199)
 - commit [2025-10-11 01:59Z] d8009f2: branch panel not sync across the browser worked
 - commit [2025-10-10 20:57Z] f2f9357: fixing the cross browser not in sync
 - commit [2025-10-10 05:38Z] 9587393: make the extension command extensible
-- commit [2025-10-10 02:15Z] dc101aa: created proposal for making the extension cand extensivle
-- commit [2025-10-09 22:37Z] aa092c4: add annotation type selector
 
 Recent Chat
 - (none)
@@ -34,4 +33,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-10-12 19:21Z] f6530cb: panels_not_centering_viewport fixed
+- commit [2025-10-14 00:25Z] 1802214: added canvas state persistence

@@ -321,3 +321,5 @@
 {"ts":"2025-10-12T05:20:32.042Z","type":"commit","sha":"ac182973073cb887ab4b94093c496ef1b30b1122","files_changed":23,"message":"panels are in the center when they appeared"}
 {"ts":"2025-10-12T19:21:45.519Z","type":"commit","sha":"f6530cbecf5c38b6638739a83b22a61a954222ef","files_changed":16,"message":"panels_not_centering_viewport fixed"}
 {"time":"2025-10-14T00:21:02Z","note":"Resumed session; reviewed codex/previous-sessions/RESUME.md and isolation-reactivity anti-pattern guidelines."}
+{"ts":"2025-10-14T00:25:53.755Z","type":"commit","sha":"180221496b02329fb36fc989d74e069d6d1dfe17","files_changed":60,"message":"added canvas state persistence"}
+{"time":"2025-10-14T01:58:48Z","note":"Updated components/annotation-canvas-modern.tsx to convert plain-mode parentPosition to world coordinates before persisting branch panels."}

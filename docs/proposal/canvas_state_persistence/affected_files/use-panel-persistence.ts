@@ -91,8 +91,10 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       const transaction = new StateTransactionImpl(dataStore, branchesMap, layerManager)
 
       // Queue updates to all stores
+      // CRITICAL: Keep position as screen-space and worldPosition as world-space
       const updateData: any = {
-        position: worldPosition
+        position: position,          // Screen-space position for rendering
+        worldPosition: worldPosition // World-space position for persistence
       }
 
       if (worldSize) {

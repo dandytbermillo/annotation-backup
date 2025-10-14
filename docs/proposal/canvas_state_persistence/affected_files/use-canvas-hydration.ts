@@ -441,22 +441,34 @@ export function useCanvasHydration(options: HydrationOptions) {
           }
         })
 
+        // CRITICAL: Stores must hold WORLD-SPACE coordinates per implementation plan
+        // Components will convert world→screen during rendering
         const panelData = {
           id: panel.id,
           noteId: panel.noteId,
           type: annotationType, // Use UI annotation type for rendering (note/explore/promote/main)
           dbType: panel.type, // Keep database type for reference (editor/branch/context/etc.)
-          position: screenPosition,
-          size: screenSize,
-          dimensions: screenSize, // Alias for backward compatibility
+          position: panel.position, // WORLD-SPACE coordinates (from database)
+          worldPosition: panel.position, // EXPLICIT world-space for branch loader detection
+          size: panel.size, // WORLD-SPACE dimensions
+          dimensions: panel.size, // Alias for backward compatibility
           zIndex: panel.zIndex,
           state: panel.state,
           revisionToken: panel.revisionToken,
-          worldPosition: panel.position, // Keep world coordinates for persistence
-          worldSize: panel.size,
           title: panel.title,
           metadata: panel.metadata
         }
+
+        debugLog({
+          component: 'CanvasHydration',
+          action: 'storing_panel_data',
+          metadata: {
+            panelId: panel.id,
+            worldPosition: panel.position, // Stored in dataStore (world-space)
+            cameraUsed: camera,
+            zoom
+          }
+        })
 
         // Update DataStore
         if (dataStore) {
@@ -519,8 +531,27 @@ export function useCanvasHydration(options: HydrationOptions) {
 
       const cameraLoaded = camera !== null
 
-      // Use loaded camera or defaults
-      const effectiveCamera = camera || { x: 0, y: 0, zoom: 1.0 }
+      // Use loaded camera or default canvas translation
+      // CRITICAL: When no camera state is saved, use the canvas's default translation
+      // offsets (-1000, -1200) instead of (0, 0). Otherwise world→screen conversion
+      // will be wrong and panels will appear at incorrect positions.
+      const effectiveCamera = cameraLoaded
+        ? camera
+        : {
+            x: state.canvasState?.translateX || -1000,
+            y: state.canvasState?.translateY || -1200,
+            zoom: state.canvasState?.zoom || 1.0
+          }
+
+      debugLog({
+        component: 'CanvasHydration',
+        action: 'using_effective_camera',
+        metadata: {
+          cameraLoaded,
+          effectiveCamera,
+          reason: cameraLoaded ? 'loaded_from_db' : 'using_default_canvas_translation'
+        }
+      })
 
       // Apply camera to canvas context
       if (camera) {
@@ -547,13 +578,31 @@ export function useCanvasHydration(options: HydrationOptions) {
       // Initialize offline queue
       await canvasOfflineQueue.init()
 
+      // Get panels from dataStore (with world-space positions per implementation plan)
+      const storedPanels = panels.map(panel => {
+        const storedPanel = dataStore?.get(panel.id)
+        return {
+          id: panel.id,
+          noteId: panel.noteId,
+          type: panel.type,
+          position: storedPanel?.position || panel.position, // World-space position
+          size: storedPanel?.size || panel.size, // World-space size
+          zIndex: panel.zIndex,
+          state: panel.state,
+          revisionToken: panel.revisionToken,
+          updatedAt: panel.updatedAt,
+          title: panel.title,
+          metadata: panel.metadata
+        }
+      })
+
       setStatus({
         loading: false,
         error: null,
         success: true,
         panelsLoaded,
         cameraLoaded,
-        panels // Include loaded panels so canvas can create CanvasItems
+        panels: storedPanels // Return panels with world-space positions per implementation plan
       })
 
       debugLog({

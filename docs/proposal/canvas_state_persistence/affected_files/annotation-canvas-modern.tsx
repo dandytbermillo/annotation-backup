@@ -30,6 +30,7 @@ import {
 } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
+import { worldToScreen } from "@/lib/canvas/coordinate-utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
@@ -242,6 +243,42 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     layerManager,
     noteId
   })
+
+  // Persist main panel if it doesn't exist in database (first-time note open)
+  useEffect(() => {
+    if (hydrationStatus.success) {
+      const hasMainPanel = hydrationStatus.panels.some(p => p.id === 'main')
+
+      if (!hasMainPanel) {
+        // Main panel doesn't exist in database - persist it with default position
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'persisting_default_main_panel',
+          metadata: { noteId }
+        })
+
+        // Get current main panel position from canvas items
+        const mainPanelItem = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
+        const mainPosition = mainPanelItem?.position || { x: 2000, y: 1500 }
+
+        persistPanelCreate({
+          panelId: 'main',
+          type: 'editor',
+          position: mainPosition,
+          size: { width: 600, height: 800 },
+          zIndex: 0,
+          title: 'Main',
+          metadata: { annotationType: 'main' }
+        }).catch(err => {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'main_panel_persist_failed',
+            metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
+          })
+        })
+      }
+    }
+  }, [hydrationStatus.success, hydrationStatus.panels, noteId, canvasItems, persistPanelCreate])
 
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
@@ -1066,22 +1103,30 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         panelType === 'explore' ? 'context' :
         panelType === 'promote' ? 'annotation' : 'branch'
 
-      // Determine position: use saved position from branchData if it exists (from hydration),
-      // otherwise use parentPosition from click event, or fall back to default
-      // CRITICAL: Use worldPosition (world-space coords) if available, not position (screen-space)
-      const position = branchData?.worldPosition || branchData?.position || parentPosition || { x: 2000, y: 1500 }
+      // Determine position: per implementation.md line 97, stores hold WORLD-SPACE coordinates
+      // Components MUST convert world→screen for rendering
+      // Priority: 1) position/worldPosition from store (world), 2) parentPosition (screen), 3) default (screen)
+      const position = (branchData?.position || branchData?.worldPosition)
+        ? worldToScreen(
+            branchData.position || branchData.worldPosition,
+            { x: canvasState.translateX, y: canvasState.translateY },
+            canvasState.zoom
+          )
+        : (parentPosition || { x: 2000, y: 1500 })
 
       debugLog({
         component: 'AnnotationCanvas',
         action: 'determining_panel_position',
         metadata: {
           panelId,
-          worldPosition: branchData?.worldPosition,
-          screenPosition: branchData?.position,
+          branchDataKeys: branchData ? Object.keys(branchData) : [],
+          branchDataPosition: branchData?.position,
+          branchDataWorldPosition: branchData?.worldPosition,
           parentPosition,
           finalPosition: position,
           hasBranchData: !!branchData,
-          hasWorldPosition: !!branchData?.worldPosition
+          hasWorldPosition: !!branchData?.worldPosition,
+          hasPosition: !!branchData?.position
         }
       })
 
