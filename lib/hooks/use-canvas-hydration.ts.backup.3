@@ -1,0 +1,301 @@
+/**
+ * Canvas Hydration Hook
+ *
+ * Loads persisted canvas state on mount:
+ * - Panel positions and dimensions (world-space -> screen-space conversion)
+ * - Camera state (translation and zoom)
+ * - Applies to stores (dataStore, branchesMap, LayerManager)
+ * - Initializes canvas context with restored camera
+ *
+ * @see docs/proposal/canvas_state_persistence/implementation.md lines 50-87
+ */
+
+import { useEffect, useState, useCallback } from 'react'
+import { useCanvas } from '@/components/canvas/canvas-context'
+import { DataStore } from '@/lib/data-store'
+import { LayerManager } from '@/lib/canvas/layer-manager'
+import { worldToScreen, sizeWorldToScreen } from '@/lib/canvas/coordinate-utils'
+import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
+
+export interface HydrationOptions {
+  /** Note ID to load state for */
+  noteId: string
+  /** Optional user ID for per-user camera state */
+  userId?: string
+  /** Data store instance */
+  dataStore?: DataStore
+  /** Branches map */
+  branchesMap?: Map<string, any>
+  /** Layer manager instance */
+  layerManager?: LayerManager
+  /** Enable/disable hydration (default: true) */
+  enabled?: boolean
+}
+
+export interface HydrationStatus {
+  /** Whether hydration is in progress */
+  loading: boolean
+  /** Hydration error if any */
+  error: Error | null
+  /** Whether hydration succeeded */
+  success: boolean
+  /** Number of panels loaded */
+  panelsLoaded: number
+  /** Whether camera state was loaded */
+  cameraLoaded: boolean
+}
+
+/**
+ * Hook to hydrate canvas state from persisted data
+ */
+export function useCanvasHydration(options: HydrationOptions) {
+  const {
+    noteId,
+    userId,
+    dataStore,
+    branchesMap,
+    layerManager,
+    enabled = true
+  } = options
+
+  const { state, dispatch } = useCanvas()
+  const [status, setStatus] = useState<HydrationStatus>({
+    loading: false,
+    error: null,
+    success: false,
+    panelsLoaded: 0,
+    cameraLoaded: false
+  })
+
+  /**
+   * Load camera state from API
+   */
+  const loadCameraState = useCallback(async (): Promise<{
+    x: number
+    y: number
+    zoom: number
+  } | null> => {
+    try {
+      const url = userId
+        ? `/api/canvas/camera/${noteId}?userId=${userId}`
+        : `/api/canvas/camera/${noteId}`
+
+      const response = await fetch(url)
+
+      if (!response.ok) {
+        throw new Error(`Failed to load camera state: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success && result.exists) {
+        console.log('[Canvas Hydration] Loaded camera state:', result.camera)
+        return result.camera
+      }
+
+      // No saved camera state, use defaults
+      console.log('[Canvas Hydration] No saved camera state, using defaults')
+      return null
+    } catch (error) {
+      console.error('[Canvas Hydration] Failed to load camera state:', error)
+      // Don't fail hydration if camera load fails
+      return null
+    }
+  }, [noteId, userId])
+
+  /**
+   * Load panel layout from API
+   */
+  const loadPanelLayout = useCallback(async (): Promise<Array<{
+    id: string
+    noteId: string
+    type: string
+    position: { x: number; y: number }
+    size: { width: number; height: number }
+    zIndex: number
+    state: string
+    revisionToken: string
+    updatedAt: string
+  }>> => {
+    try {
+      const response = await fetch(`/api/canvas/layout/${noteId}`)
+
+      if (!response.ok) {
+        throw new Error(`Failed to load panel layout: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+
+      if (result.success && result.panels) {
+        console.log(`[Canvas Hydration] Loaded ${result.panels.length} panels`)
+        return result.panels
+      }
+
+      console.log('[Canvas Hydration] No panels found')
+      return []
+    } catch (error) {
+      console.error('[Canvas Hydration] Failed to load panel layout:', error)
+      throw error
+    }
+  }, [noteId])
+
+  /**
+   * Apply camera state to canvas context
+   */
+  const applyCameraState = useCallback((camera: { x: number; y: number; zoom: number }) => {
+    dispatch({
+      type: 'SET_CANVAS_STATE',
+      payload: {
+        ...state.canvasState,
+        translateX: camera.x,
+        translateY: camera.y,
+        zoom: camera.zoom
+      }
+    })
+
+    console.log('[Canvas Hydration] Applied camera state to canvas')
+  }, [dispatch, state.canvasState])
+
+  /**
+   * Apply panel layout to stores
+   */
+  const applyPanelLayout = useCallback((panels: Array<any>, camera: { x: number; y: number }, zoom: number) => {
+    let appliedCount = 0
+
+    for (const panel of panels) {
+      try {
+        // Convert world-space to screen-space for rendering
+        const screenPosition = worldToScreen(panel.position, camera, zoom)
+        const screenSize = sizeWorldToScreen(panel.size, zoom)
+
+        const panelData = {
+          id: panel.id,
+          noteId: panel.noteId,
+          type: panel.type,
+          position: screenPosition,
+          size: screenSize,
+          dimensions: screenSize, // Alias for backward compatibility
+          zIndex: panel.zIndex,
+          state: panel.state,
+          revisionToken: panel.revisionToken,
+          worldPosition: panel.position, // Keep world coordinates for persistence
+          worldSize: panel.size
+        }
+
+        // Update DataStore
+        if (dataStore) {
+          dataStore.set(panel.id, panelData)
+        }
+
+        // Update branchesMap
+        if (branchesMap) {
+          branchesMap.set(panel.id, panelData)
+        }
+
+        // Update LayerManager
+        if (layerManager && layerManager.isEnabled) {
+          layerManager.updateNode(panel.id, panelData)
+        }
+
+        appliedCount++
+      } catch (error) {
+        console.error(`[Canvas Hydration] Failed to apply panel ${panel.id}:`, error)
+      }
+    }
+
+    console.log(`[Canvas Hydration] Applied ${appliedCount} panels to stores`)
+    return appliedCount
+  }, [dataStore, branchesMap, layerManager])
+
+  /**
+   * Perform full hydration
+   */
+  const hydrate = useCallback(async () => {
+    if (!enabled) {
+      console.log('[Canvas Hydration] Hydration disabled')
+      return
+    }
+
+    setStatus({
+      loading: true,
+      error: null,
+      success: false,
+      panelsLoaded: 0,
+      cameraLoaded: false
+    })
+
+    try {
+      // Load camera state first (needed for coordinate conversion)
+      const camera = await loadCameraState()
+      const cameraLoaded = camera !== null
+
+      // Use loaded camera or defaults
+      const effectiveCamera = camera || { x: 0, y: 0, zoom: 1.0 }
+
+      // Apply camera to canvas context
+      if (camera) {
+        applyCameraState(camera)
+      }
+
+      // Load panel layout
+      const panels = await loadPanelLayout()
+
+      // Apply panels to stores with coordinate conversion
+      const panelsLoaded = applyPanelLayout(panels, effectiveCamera, effectiveCamera.zoom)
+
+      // Initialize offline queue
+      await canvasOfflineQueue.init()
+
+      setStatus({
+        loading: false,
+        error: null,
+        success: true,
+        panelsLoaded,
+        cameraLoaded
+      })
+
+      console.log('[Canvas Hydration] Hydration complete:', {
+        panels: panelsLoaded,
+        camera: cameraLoaded
+      })
+    } catch (error) {
+      const errorObj = error instanceof Error ? error : new Error('Unknown hydration error')
+      console.error('[Canvas Hydration] Hydration failed:', errorObj)
+
+      setStatus({
+        loading: false,
+        error: errorObj,
+        success: false,
+        panelsLoaded: 0,
+        cameraLoaded: false
+      })
+    }
+  }, [
+    enabled,
+    loadCameraState,
+    loadPanelLayout,
+    applyCameraState,
+    applyPanelLayout
+  ])
+
+  /**
+   * Hydrate on mount
+   */
+  useEffect(() => {
+    if (enabled && noteId) {
+      hydrate()
+    }
+  }, [enabled, noteId]) // Note: hydrate is not in deps to avoid re-running on every render
+
+  /**
+   * Manual re-hydration function (useful for refresh)
+   */
+  const refetch = useCallback(() => {
+    return hydrate()
+  }, [hydrate])
+
+  return {
+    ...status,
+    refetch
+  }
+}

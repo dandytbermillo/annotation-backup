@@ -238,7 +238,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
       snapshotMap.forEach((value, key) => {
         if (key === 'main') return
         const cachedBranch = value as Record<string, any>
-        dataStore.set(key, {
+        const existing = dataStore.get(key)
+        const merged = {
+          ...existing,
           id: key,
           type: cachedBranch.type,
           title: cachedBranch.title || '',
@@ -248,11 +250,14 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
           hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
           branches: cachedBranch.branches || [],
           parentId: cachedBranch.parentId ?? 'main',
-          position: cachedBranch.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
-          dimensions: cachedBranch.dimensions || { width: 400, height: 300 },
+          position: cachedBranch.position || existing?.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
+          dimensions: cachedBranch.dimensions || existing?.dimensions || { width: 400, height: 300 },
           isEditable: cachedBranch.isEditable ?? true,
-          metadata: { displayId: key }
-        })
+          metadata: { ...(existing?.metadata || {}), displayId: key },
+          worldPosition: existing?.worldPosition ?? cachedBranch.worldPosition,
+          worldSize: existing?.worldSize ?? cachedBranch.worldSize
+        }
+        dataStore.set(key, merged)
       })
 
       persistPlainBranchSnapshot()
@@ -360,29 +365,80 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
             delete branchMetadata.preview
           }
 
-          const branchData = {
-            id: uiId,
-            type: branch.type as 'note' | 'explore' | 'promote',
-            originalText: branch.originalText || '',
-            // Prioritize: 1) Database title, 2) Cached title, 3) Empty string
-            // Database title is now persisted on branch creation
-            title: branch.title || cachedBranch?.title || '',
-            content: cachedBranch?.content,
-            preview: normalizedPreview,
-            hasHydratedContent: cachedBranch?.hasHydratedContent ?? false,
-            position: branch.metadata?.position || cachedBranch?.position || {
-              x: 2500 + Math.random() * 500,
-              y: 1500 + Math.random() * 500
-            },
-            dimensions: branch.metadata?.dimensions || cachedBranch?.dimensions || { width: 400, height: 300 },
-            isEditable: true,
-            branches: [],
-            parentId,
-            metadata: branchMetadata
+          const existing = dataStore.get(uiId)
+
+          // Import debugLog at the top of the file if not already imported
+          const { debugLog } = require('@/lib/utils/debug-logger')
+
+          debugLog({
+            component: 'CanvasContext',
+            action: 'branch_loader_reading_existing',
+            metadata: {
+              branchId: uiId,
+              hasExisting: !!existing,
+              existingWorldPosition: existing?.worldPosition,
+              existingPosition: existing?.position,
+              cachedWorldPosition: cachedBranch?.worldPosition,
+              cachedPosition: cachedBranch?.position
+            }
+          })
+
+          // CRITICAL: Branch loader should NEVER set position data
+          // Hydration handles ALL position data. Branch loader only updates annotation fields.
+          // If existing data exists (from hydration or previous load), only update annotation fields
+          if (existing) {
+            // Update only annotation-related fields, preserve all position data
+            dataStore.update(uiId, {
+              id: uiId,
+              type: branch.type as 'note' | 'explore' | 'promote',
+              originalText: branch.originalText || '',
+              title: branch.title || cachedBranch?.title || '',
+              content: cachedBranch?.content,
+              preview: normalizedPreview,
+              hasHydratedContent: cachedBranch?.hasHydratedContent ?? false,
+              isEditable: true,
+              branches: existing.branches || [],
+              parentId,
+              metadata: branchMetadata
+              // DO NOT touch: position, worldPosition, dimensions, worldSize, zIndex
+            })
+
+            debugLog({
+              component: 'CanvasContext',
+              action: 'branch_loader_updated_existing',
+              metadata: {
+                branchId: uiId,
+                preservedWorldPosition: existing.worldPosition,
+                preservedPosition: existing.position
+              }
+            })
+          } else {
+            // No existing data - this is a NEW branch, set minimal data
+            // Position will be handled by panel creation in annotation-canvas-modern.tsx
+            dataStore.set(uiId, {
+              id: uiId,
+              type: branch.type as 'note' | 'explore' | 'promote',
+              originalText: branch.originalText || '',
+              title: branch.title || cachedBranch?.title || '',
+              content: cachedBranch?.content,
+              preview: normalizedPreview,
+              hasHydratedContent: cachedBranch?.hasHydratedContent ?? false,
+              isEditable: true,
+              branches: [],
+              parentId,
+              metadata: branchMetadata
+              // Position will be set by handleCreatePanel in annotation-canvas-modern.tsx
+            })
+
+            debugLog({
+              component: 'CanvasContext',
+              action: 'branch_loader_created_new',
+              metadata: {
+                branchId: uiId,
+                note: 'Position will be set by panel creation'
+              }
+            })
           }
-          
-          // Add to dataStore
-          dataStore.set(uiId, branchData)
           
           // Track parent-child relationships
           if (parentId === 'main') {

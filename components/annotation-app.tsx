@@ -49,7 +49,23 @@ const ModernAnnotationCanvas = dynamic(
 )
 
 function AnnotationAppContent() {
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
+  // Initialize selectedNoteId from localStorage (persist which note canvas is open)
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('annotation_selectedNoteId')
+        return stored || null
+      } catch (err) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'localStorage_load_failed',
+          metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
+        })
+        return null
+      }
+    }
+    return null
+  })
   const [canvasState, setCanvasState] = useState({
     zoom: 1,
     showConnections: true
@@ -95,6 +111,28 @@ function AnnotationAppContent() {
   useEffect(() => {
     console.log('[AnnotationApp] overlayPersistenceEnabled =', overlayPersistenceEnabled)
   }, [overlayPersistenceEnabled])
+
+  // Persist selectedNoteId to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        if (selectedNoteId) {
+          localStorage.setItem('annotation_selectedNoteId', selectedNoteId)
+        } else {
+          localStorage.removeItem('annotation_selectedNoteId')
+        }
+      } catch (err) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'localStorage_save_failed',
+          metadata: {
+            error: err instanceof Error ? err.message : 'Unknown error',
+            operation: selectedNoteId ? 'setItem' : 'removeItem'
+          }
+        })
+      }
+    }
+  }, [selectedNoteId])
 
   // Initialize overlay adapter
   useEffect(() => {
@@ -393,7 +431,11 @@ function AnnotationAppContent() {
       try {
         const response = await fetch(`/api/items/${popup.folderId}`)
         if (!response.ok) {
-          console.error('[Popup Restore] Failed to fetch folder:', popup.folderId, 'status:', response.status)
+          debugLog({
+            component: 'AnnotationApp',
+            action: 'popup_restore_fetch_failed',
+            metadata: { folderId: popup.folderId, status: response.status }
+          })
           return
         }
 
@@ -497,7 +539,14 @@ function AnnotationAppContent() {
           return updated
         })
       } catch (error) {
-        console.error(`Failed to load folder ${popup.folderId}:`, error)
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'folder_load_failed',
+          metadata: {
+            folderId: popup.folderId,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        })
       }
     })
   }, [layerContext?.transforms.popups])
@@ -555,7 +604,11 @@ function AnnotationAppContent() {
         applyOverlayLayout(envelope.layout)
         console.log('[AnnotationApp] Resolved layout conflict from database')
       } else {
-        console.error('[AnnotationApp] Failed to save overlay layout:', error)
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'overlay_layout_save_failed',
+          metadata: { error: error instanceof Error ? error.message : 'Unknown error' }
+        })
         pendingLayoutRef.current = pending
       }
     } finally {

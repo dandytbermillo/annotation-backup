@@ -1,0 +1,52 @@
+-- Migration: Add Canvas Camera State Table
+-- Stores per-note (optionally per-user) camera position and zoom for viewport persistence
+--
+-- @see docs/proposal/canvas_state_persistence/implementation.md lines 40-49
+
+CREATE TABLE canvas_camera_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    user_id UUID,
+
+    -- Camera translation (in screen pixels, applied to CSS transform)
+    camera_x NUMERIC NOT NULL DEFAULT 0,
+    camera_y NUMERIC NOT NULL DEFAULT 0,
+
+    -- Zoom scale factor
+    zoom_level NUMERIC NOT NULL DEFAULT 1.0 CHECK (zoom_level >= 0.5 AND zoom_level <= 5.0),
+
+    -- Persistence metadata
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    schema_version INTEGER NOT NULL DEFAULT 1,
+
+    -- Unique constraint: one camera state per note-user pair
+    -- NULL user_id means shared camera for all users
+    UNIQUE(note_id, user_id)
+);
+
+-- Index for efficient lookups
+CREATE INDEX idx_camera_state_note ON canvas_camera_state(note_id);
+CREATE INDEX idx_camera_state_user ON canvas_camera_state(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX idx_camera_state_updated ON canvas_camera_state(updated_at);
+
+-- Add comments
+COMMENT ON TABLE canvas_camera_state IS 'Persists camera position and zoom per note (optionally per user)';
+COMMENT ON COLUMN canvas_camera_state.camera_x IS 'Canvas translateX at save time (screen pixels, applied to CSS transform)';
+COMMENT ON COLUMN canvas_camera_state.camera_y IS 'Canvas translateY at save time (screen pixels, applied to CSS transform)';
+COMMENT ON COLUMN canvas_camera_state.zoom_level IS 'Zoom scale factor (0.5 to 5.0, default 1.0)';
+COMMENT ON COLUMN canvas_camera_state.user_id IS 'NULL for shared camera, or user ID for personal viewport';
+COMMENT ON COLUMN canvas_camera_state.schema_version IS 'Camera schema version for future migrations';
+
+-- Auto-update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_canvas_camera_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trigger_update_canvas_camera_updated_at
+    BEFORE UPDATE ON canvas_camera_state
+    FOR EACH ROW
+    EXECUTE FUNCTION update_canvas_camera_updated_at();

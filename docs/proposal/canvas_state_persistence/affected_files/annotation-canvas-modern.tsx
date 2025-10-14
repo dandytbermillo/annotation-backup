@@ -21,7 +21,7 @@ import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
-import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent } from "@/types/canvas-items"
+import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent, PanelType } from "@/types/canvas-items"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { 
   loadStateFromStorage, 
@@ -31,6 +31,10 @@ import {
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
+import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
+import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
+import { useLayerManager } from "@/lib/hooks/use-layer-manager"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -156,6 +160,89 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const showAddComponentMenu = externalShowAddComponentMenu !== undefined ? externalShowAddComponentMenu : internalShowAddComponentMenu
   const toggleAddComponentMenu = onToggleAddComponentMenu || (() => setInternalShowAddComponentMenu(!internalShowAddComponentMenu))
   const [stickyOverlayEl, setStickyOverlayEl] = useState<HTMLElement | null>(null)
+
+  // Canvas state persistence - Get provider instances for hydration
+  const provider = useMemo(() => UnifiedProvider.getInstance(), [])
+  const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
+  const layerManager = useLayerManager()
+
+  // Hydrate canvas state on mount (panels + camera)
+  const hydrationStatus = useCanvasHydration({
+    noteId,
+    dataStore,
+    branchesMap,
+    layerManager,
+    enabled: true
+  })
+
+  // Create CanvasItems from hydrated panels
+  useEffect(() => {
+    if (hydrationStatus.success && hydrationStatus.panels.length > 0) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'creating_canvas_items_from_hydration',
+        metadata: { panelCount: hydrationStatus.panels.length }
+      })
+
+      const newItems = hydrationStatus.panels.map(panel => {
+        // Use annotation type from metadata for correct header color
+        const panelType = (panel.metadata?.annotationType as PanelType) || 'note'
+
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'hydrating_panel_with_type',
+          metadata: {
+            panelId: panel.id,
+            dbType: panel.type,
+            annotationType: panel.metadata?.annotationType,
+            resolvedPanelType: panelType
+          }
+        })
+
+        return createPanelItem(
+          panel.id,
+          panel.position,
+          panelType
+        )
+      })
+
+      setCanvasItems(prev => {
+        // Avoid duplicates - only add panels that don't exist
+        const existingPanelIds = new Set(
+          prev.filter(item => item.itemType === 'panel').map(item => item.panelId)
+        )
+
+        const itemsToAdd = newItems.filter(item => !existingPanelIds.has(item.panelId))
+
+        if (itemsToAdd.length > 0) {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'added_panels_to_canvas_items',
+            metadata: { addedCount: itemsToAdd.length, totalItems: prev.length + itemsToAdd.length }
+          })
+          return [...prev, ...itemsToAdd]
+        }
+
+        return prev
+      })
+    }
+  }, [hydrationStatus.success, hydrationStatus.panels])
+
+  // Enable camera persistence (debounced)
+  useCameraPersistence({
+    noteId,
+    debounceMs: 500,
+    enabled: true
+  })
+
+  // Enable panel persistence
+  const { persistPanelCreate, persistPanelUpdate, persistPanelDelete } = usePanelPersistence({
+    dataStore,
+    branchesMap,
+    layerManager,
+    noteId
+  })
+
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
     onSelectStart: (e: Event) => void;
@@ -842,6 +929,18 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   const handlePanelClose = (panelId: string) => {
     setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
+
+    // Persist panel deletion to database
+    persistPanelDelete(panelId).catch(err => {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'panel_delete_persist_failed',
+        metadata: {
+          panelId,
+          error: err instanceof Error ? err.message : 'Unknown error'
+        }
+      })
+    })
   }
 
   const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }) => {
@@ -941,14 +1040,124 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       //   )
       // }, 100) // Small delay to ensure panel is rendered
       
-      // Determine panel type based on panelId
-      const panelType = panelId === 'main' ? 'main' : 
-                       panelId.includes('explore') ? 'explore' : 
-                       panelId.includes('promote') ? 'promote' : 'note'
-      
-      // Use parentPosition if provided, otherwise use default
-      const position = parentPosition || { x: 2000, y: 1500 }
-      
+      // Get branch data to determine annotation type
+      let branchData = dataStore?.get(panelId)
+      if (!branchData && branchesMap) {
+        branchData = branchesMap.get(panelId)
+      }
+
+      // Determine panel type from branch data's type field (which contains the annotation type)
+      // Fallback to panelId string matching if branch data doesn't have type
+      let panelType: PanelType
+      if (panelId === 'main') {
+        panelType = 'main'
+      } else if (branchData?.type) {
+        // Use the type from branch data (this is the annotation type: note/explore/promote)
+        panelType = branchData.type as PanelType
+      } else {
+        // Fallback to string matching (for backward compatibility)
+        panelType = panelId.includes('explore') ? 'explore' :
+                    panelId.includes('promote') ? 'promote' : 'note'
+      }
+
+      // Map UI panel type to database panel type
+      const dbPanelType: 'editor' | 'branch' | 'context' | 'toolbar' | 'annotation' =
+        panelId === 'main' ? 'editor' :
+        panelType === 'explore' ? 'context' :
+        panelType === 'promote' ? 'annotation' : 'branch'
+
+      // Determine position: use saved position from branchData if it exists (from hydration),
+      // otherwise use parentPosition from click event, or fall back to default
+      // CRITICAL: Use worldPosition (world-space coords) if available, not position (screen-space)
+      const position = branchData?.worldPosition || branchData?.position || parentPosition || { x: 2000, y: 1500 }
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'determining_panel_position',
+        metadata: {
+          panelId,
+          worldPosition: branchData?.worldPosition,
+          screenPosition: branchData?.position,
+          parentPosition,
+          finalPosition: position,
+          hasBranchData: !!branchData,
+          hasWorldPosition: !!branchData?.worldPosition
+        }
+      })
+
+      // Get panel title from branch data (for branch panels)
+      let panelTitle: string | undefined
+      if (panelType !== 'main') {
+        // Try to get title from branch data
+        if (branchData?.preview) {
+          panelTitle = branchData.preview
+        } else if (branchData?.title) {
+          panelTitle = branchData.title
+        }
+      } else {
+        panelTitle = 'Main'
+      }
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'creating_panel_with_title',
+        metadata: {
+          panelId,
+          panelType,
+          panelTitle,
+          branchDataType: branchData?.type,
+          hasBranchData: !!branchData,
+          hasDataStore: !!dataStore,
+          hasBranchesMap: !!branchesMap,
+          dataStoreHasPanel: dataStore?.has(panelId),
+          branchesMapHasPanel: branchesMap?.has(panelId)
+        }
+      })
+
+      // Persist panel to database with annotation type in metadata
+      const defaultDimensions = { width: 500, height: 400 }
+      const metadata = {
+        annotationType: panelType  // Store UI panel type (note/explore/promote) for color
+      }
+
+      persistPanelCreate({
+        panelId,
+        type: dbPanelType,
+        position,
+        size: defaultDimensions,
+        zIndex: 1,
+        title: panelTitle,
+        metadata
+      }).catch(err => {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'panel_create_persist_failed',
+          metadata: {
+            panelId,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }
+        })
+      })
+
+      // Check if panel already exists in canvas items (e.g., from hydration)
+      const existingPanel = prev.find(item => item.itemType === 'panel' && item.panelId === panelId)
+
+      if (existingPanel) {
+        // Panel already exists - don't create duplicate
+        // This happens when clicking annotation icon after hydration loaded the panel
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'panel_already_exists',
+          metadata: {
+            panelId,
+            existingPosition: existingPanel.position,
+            requestedPosition: position
+          }
+        })
+        return prev
+      }
+
+      // Panel doesn't exist - create it
       return [...prev, createPanelItem(panelId, position, panelType)]
     })
   }
@@ -1520,6 +1729,19 @@ function PanelsRenderer({
           console.warn(`[PanelsRenderer] Branch ${panelId} not found in ${isPlainMode ? 'plain' : 'yjs'} store`)
           return null
         }
+
+        // Debug: Log branch type being passed to CanvasPanel
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'rendering_panel',
+          metadata: {
+            panelId,
+            branchType: branch.type,
+            branchDbType: branch.dbType,
+            branchMetadata: branch.metadata,
+            isPlainMode
+          }
+        })
         
         console.log(`[PanelsRenderer] Rendering panel ${panelId}:`, {
           hasContent: !!branch.content,

@@ -7,7 +7,15 @@ const pool = new Pool({
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    // Handle empty or malformed request bodies gracefully
+    let body;
+    try {
+      body = await request.json();
+    } catch (jsonError) {
+      // Request body is empty or invalid JSON - likely cancelled request
+      return NextResponse.json({ success: false, error: 'Empty or invalid request body' }, { status: 400 });
+    }
+
     const { component, action, metadata, content_preview, note_id } = body;
     
     // First, try to get the default workspace if it exists

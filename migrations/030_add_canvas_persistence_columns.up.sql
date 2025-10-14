@@ -1,0 +1,63 @@
+-- Migration: Add Canvas Persistence Columns
+-- Extends panels table with world-space coordinates and persistence metadata
+-- for reliable canvas layout persistence independent of zoom/viewport
+--
+-- @see docs/proposal/canvas_state_persistence/implementation.md
+
+-- Add world-space position columns (zoom-invariant canvas coordinates)
+ALTER TABLE panels
+ADD COLUMN position_x_world NUMERIC,
+ADD COLUMN position_y_world NUMERIC;
+
+-- Add world-space dimension columns (NOT NULL with defaults by panel type)
+ALTER TABLE panels
+ADD COLUMN width_world NUMERIC NOT NULL DEFAULT 400,
+ADD COLUMN height_world NUMERIC NOT NULL DEFAULT 300;
+
+-- Add z-index for layering
+ALTER TABLE panels
+ADD COLUMN z_index INTEGER NOT NULL DEFAULT 0;
+
+-- Add persistence metadata
+ALTER TABLE panels
+ADD COLUMN updated_by UUID,
+ADD COLUMN revision_token TEXT,
+ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1;
+
+-- Add CHECK constraint for panel_type (reusing existing 'type' column)
+-- Ensure type is one of the valid panel types
+ALTER TABLE panels
+ADD CONSTRAINT check_panel_type
+CHECK (type = ANY(ARRAY['main', 'editor', 'branch', 'context', 'toolbar', 'annotation']));
+
+-- Create indexes for performance
+CREATE INDEX idx_panels_note_position ON panels(note_id, position_x_world, position_y_world)
+WHERE position_x_world IS NOT NULL;
+
+CREATE INDEX idx_panels_updated_at ON panels(updated_at);
+
+CREATE INDEX idx_panels_revision ON panels(revision_token)
+WHERE revision_token IS NOT NULL;
+
+-- Backfill world-space positions from existing JSONB position data
+-- Extract x/y from position JSONB and set as world coordinates
+UPDATE panels
+SET
+  position_x_world = (position->>'x')::numeric,
+  position_y_world = (position->>'y')::numeric,
+  width_world = COALESCE((dimensions->>'width')::numeric, 400),
+  height_world = COALESCE((dimensions->>'height')::numeric, 300)
+WHERE position_x_world IS NULL;
+
+-- After backfill, make position columns NOT NULL
+ALTER TABLE panels
+ALTER COLUMN position_x_world SET NOT NULL,
+ALTER COLUMN position_y_world SET NOT NULL;
+
+-- Add comment explaining coordinate system
+COMMENT ON COLUMN panels.position_x_world IS 'World-space X coordinate (camera-adjusted canvas position, zoom-invariant)';
+COMMENT ON COLUMN panels.position_y_world IS 'World-space Y coordinate (camera-adjusted canvas position, zoom-invariant)';
+COMMENT ON COLUMN panels.width_world IS 'World-space width in pixels (screen_width / zoom)';
+COMMENT ON COLUMN panels.height_world IS 'World-space height in pixels (screen_height / zoom)';
+COMMENT ON COLUMN panels.revision_token IS 'Monotonic version for causality/conflict resolution';
+COMMENT ON COLUMN panels.schema_version IS 'Layout schema version for future migrations';

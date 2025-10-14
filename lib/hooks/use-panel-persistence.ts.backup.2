@@ -1,0 +1,307 @@
+/**
+ * Panel Persistence Hook
+ *
+ * Provides atomic panel position/size persistence with:
+ * - Coordinate conversion (screen-space -> world-space)
+ * - Atomic multi-store updates via StateTransaction
+ * - API persistence with offline queue fallback
+ * - Conflict detection via revision tokens
+ *
+ * @see docs/proposal/canvas_state_persistence/implementation.md lines 130-220
+ */
+
+import { useCallback } from 'react'
+import { useCanvas } from '@/components/canvas/canvas-context'
+import { DataStore } from '@/lib/data-store'
+import { LayerManager } from '@/lib/canvas/layer-manager'
+import { StateTransactionImpl } from '@/lib/sync/state-transaction'
+import { screenToWorld, sizeScreenToWorld } from '@/lib/canvas/coordinate-utils'
+import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
+
+export interface PanelPersistOptions {
+  /** Data store instance */
+  dataStore: DataStore
+  /** Branches map */
+  branchesMap: Map<string, any>
+  /** Layer manager instance */
+  layerManager: LayerManager
+  /** Current note ID */
+  noteId: string
+  /** Optional user ID for multi-user scenarios */
+  userId?: string
+}
+
+export interface PanelUpdateData {
+  /** Panel ID */
+  panelId: string
+  /** Screen-space position */
+  position: { x: number; y: number }
+  /** Screen-space size (optional) */
+  size?: { width: number; height: number }
+  /** Z-index (optional) */
+  zIndex?: number
+}
+
+/**
+ * Hook to persist panel position/size changes
+ */
+export function usePanelPersistence(options: PanelPersistOptions) {
+  const { dataStore, branchesMap, layerManager, noteId, userId } = options
+  const { state } = useCanvas()
+
+  /**
+   * Persist panel update with atomic transaction and world-space coordinates
+   */
+  const persistPanelUpdate = useCallback(
+    async (update: PanelUpdateData) => {
+      const { panelId, position, size, zIndex } = update
+
+      // Get current camera state
+      const camera = {
+        x: state.canvasState?.translateX || 0,
+        y: state.canvasState?.translateY || 0
+      }
+      const zoom = state.canvasState?.zoom || 1.0
+
+      // Convert screen-space to world-space coordinates
+      const worldPosition = screenToWorld(position, camera, zoom)
+      const worldSize = size ? sizeScreenToWorld(size, zoom) : undefined
+
+      // Create transaction
+      const transaction = new StateTransactionImpl(dataStore, branchesMap, layerManager)
+
+      // Queue updates to all stores
+      const updateData: any = {
+        position: worldPosition
+      }
+
+      if (worldSize) {
+        updateData.size = worldSize
+      }
+
+      if (zIndex !== undefined) {
+        updateData.zIndex = zIndex
+      }
+
+      // Add updates to transaction
+      transaction.add('dataStore', panelId, updateData)
+      transaction.add('branchesMap', panelId, updateData)
+      transaction.add('layerManager', panelId, updateData)
+
+      // Prepare API payload
+      const apiPayload = {
+        id: panelId,
+        position: worldPosition,
+        size: worldSize,
+        zIndex,
+        updatedBy: userId
+      }
+
+      // Commit transaction with API persistence
+      try {
+        await transaction.commit(async () => {
+          const response = await fetch(`/api/canvas/layout/${noteId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              updates: [apiPayload]
+            })
+          })
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Unknown error' }))
+            throw new Error(`API persistence failed: ${error.error || response.statusText}`)
+          }
+
+          const result = await response.json()
+
+          // Check for revision conflicts
+          const resultItem = result.results?.[0]
+          if (resultItem?.error === 'Revision conflict') {
+            throw new Error('Revision conflict detected')
+          }
+
+          console.log('[Panel Persistence] Successfully persisted to API')
+        })
+      } catch (error) {
+        console.error('[Panel Persistence] Persistence failed:', error)
+
+        // Queue for offline replay
+        await canvasOfflineQueue.enqueue({
+          type: 'panel_update',
+          noteId,
+          data: apiPayload
+        })
+
+        console.log('[Panel Persistence] Queued for offline replay')
+      }
+    },
+    [dataStore, branchesMap, layerManager, noteId, userId, state.canvasState]
+  )
+
+  /**
+   * Persist panel creation
+   */
+  const persistPanelCreate = useCallback(
+    async (panelData: {
+      panelId: string
+      type: 'editor' | 'branch' | 'context' | 'toolbar' | 'annotation'
+      position: { x: number; y: number }
+      size: { width: number; height: number }
+      zIndex?: number
+      state?: string
+    }) => {
+      const { panelId, type, position, size, zIndex = 0, state: panelState = 'active' } = panelData
+
+      // Get current camera state
+      const camera = {
+        x: state.canvasState?.translateX || 0,
+        y: state.canvasState?.translateY || 0
+      }
+      const zoom = state.canvasState?.zoom || 1.0
+
+      // Convert to world-space
+      const worldPosition = screenToWorld(position, camera, zoom)
+      const worldSize = sizeScreenToWorld(size, zoom)
+
+      try {
+        const response = await fetch('/api/canvas/panels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: panelId,
+            noteId,
+            type,
+            position: worldPosition,
+            size: worldSize,
+            zIndex,
+            state: panelState,
+            updatedBy: userId
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error(`Panel creation failed: ${response.statusText}`)
+        }
+
+        console.log('[Panel Persistence] Successfully created panel')
+      } catch (error) {
+        console.error('[Panel Persistence] Panel creation failed:', error)
+
+        // Queue for offline replay
+        await canvasOfflineQueue.enqueue({
+          type: 'panel_create',
+          noteId,
+          data: {
+            id: panelId,
+            noteId,
+            type,
+            position: worldPosition,
+            size: worldSize,
+            zIndex,
+            state: panelState,
+            updatedBy: userId
+          }
+        })
+
+        console.log('[Panel Persistence] Panel creation queued for offline replay')
+      }
+    },
+    [noteId, userId, state.canvasState]
+  )
+
+  /**
+   * Persist panel deletion
+   */
+  const persistPanelDelete = useCallback(
+    async (panelId: string) => {
+      try {
+        const response = await fetch(`/api/canvas/panels/${panelId}`, {
+          method: 'DELETE'
+        })
+
+        if (!response.ok && response.status !== 404) {
+          throw new Error(`Panel deletion failed: ${response.statusText}`)
+        }
+
+        console.log('[Panel Persistence] Successfully deleted panel')
+      } catch (error) {
+        console.error('[Panel Persistence] Panel deletion failed:', error)
+
+        // Queue for offline replay
+        await canvasOfflineQueue.enqueue({
+          type: 'panel_delete',
+          noteId,
+          data: { panelId }
+        })
+
+        console.log('[Panel Persistence] Panel deletion queued for offline replay')
+      }
+    },
+    [noteId]
+  )
+
+  /**
+   * Batch persist multiple panel updates (useful for bulk operations)
+   */
+  const persistBatchUpdates = useCallback(
+    async (updates: PanelUpdateData[]) => {
+      const camera = {
+        x: state.canvasState?.translateX || 0,
+        y: state.canvasState?.translateY || 0
+      }
+      const zoom = state.canvasState?.zoom || 1.0
+
+      // Convert all updates to world-space
+      const worldUpdates = updates.map(update => {
+        const worldPosition = screenToWorld(update.position, camera, zoom)
+        const worldSize = update.size ? sizeScreenToWorld(update.size, zoom) : undefined
+
+        return {
+          id: update.panelId,
+          position: worldPosition,
+          size: worldSize,
+          zIndex: update.zIndex,
+          updatedBy: userId
+        }
+      })
+
+      try {
+        const response = await fetch(`/api/canvas/layout/${noteId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            updates: worldUpdates
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error(`Batch update failed: ${response.statusText}`)
+        }
+
+        console.log(`[Panel Persistence] Successfully persisted ${updates.length} panel updates`)
+      } catch (error) {
+        console.error('[Panel Persistence] Batch update failed:', error)
+
+        // Queue each update individually for offline replay
+        for (const update of worldUpdates) {
+          await canvasOfflineQueue.enqueue({
+            type: 'panel_update',
+            noteId,
+            data: update
+          })
+        }
+
+        console.log('[Panel Persistence] Batch updates queued for offline replay')
+      }
+    },
+    [noteId, userId, state.canvasState]
+  )
+
+  return {
+    persistPanelUpdate,
+    persistPanelCreate,
+    persistPanelDelete,
+    persistBatchUpdates
+  }
+}

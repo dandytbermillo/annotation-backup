@@ -1,21 +1,20 @@
 "use client"
 
-import { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
+import React, { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
+import { createPortal } from "react-dom"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
 import dynamic from 'next/dynamic'
 import TiptapEditorPlain, { TiptapEditorPlainHandle } from "./tiptap-editor-plain"
 import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
-import { EditorToolbar } from "./editor-toolbar"
-import { FormatToolbar } from "./format-toolbar"
 import { v4 as uuidv4 } from "uuid"
-import { createAnnotationBranch } from "@/lib/models/annotation"
+import { createAnnotationBranch, getDefaultPanelWidth } from "@/lib/models/annotation"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import type { PlainOfflineProvider, ProseMirrorJSON } from "@/lib/providers/plain-offline-provider"
-import type { CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
+import { type CollapsibleSelectionSnapshot } from "@/lib/extensions/collapsible-block-selection"
 import { useLayer } from "@/components/canvas/layer-provider"
 import { useAutoScroll } from "./use-auto-scroll"
 import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
@@ -24,6 +23,11 @@ import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
 import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
+import { createNote } from "@/lib/utils/note-creator"
+import { Save, Pencil } from "lucide-react"
+import { TypeSelector, type AnnotationType } from "./type-selector"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -36,12 +40,13 @@ interface CanvasPanelProps {
   panelId: string
   branch: Branch
   position: { x: number; y: number }
+  width?: number  // Optional width prop (defaults based on type)
   onClose?: () => void
   noteId?: string
 }
 
-export function CanvasPanel({ panelId, branch, position, onClose, noteId }: CanvasPanelProps) {
-  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor } = useCanvas()
+export function CanvasPanel({ panelId, branch, position, width, onClose, noteId }: CanvasPanelProps) {
+  const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -50,33 +55,160 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const layerManager = useLayerManager()
   const layerBandInfo = layerManager.getLayerBandInfo(panelId)
   const { node: canvasNode } = useCanvasNode(panelId, 'panel', position)
-  
+
+  // Canvas state persistence - Get provider and branchesMap for persistence
+  const provider = UnifiedProvider.getInstance()
+  const branchesMap = provider.getBranchesMap()
+  const effectiveNoteId = noteId || contextNoteId || ''
+
+  // Panel persistence hook
+  const { persistPanelUpdate } = usePanelPersistence({
+    dataStore,
+    branchesMap,
+    layerManager,
+    noteId: effectiveNoteId
+  })
+
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
-  
-  // Sidebar toggle state - must be declared early before useEffects that use it
-  const [isSidebarVisible, setIsSidebarVisible] = useState(false)
-  const [isSidebarHovering, setIsSidebarHovering] = useState(false)
-  const sidebarTimeoutRef = useRef<NodeJS.Timeout>()
-  const sidebarShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
+
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
   const actionsTimeoutRef = useRef<NodeJS.Timeout>()
   const actionsShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
+
   // Panel hover state for hiding/showing buttons
   const [isPanelHovered, setIsPanelHovered] = useState(false)
   const panelHoverShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const panelHoverHideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Rename state
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [titleValue, setTitleValue] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const titleInputRef = useRef<HTMLInputElement>(null)
+
+  // Type change state - prevents race conditions from rapid clicks
+  const [isChangingType, setIsChangingType] = useState(false)
+
+  // Request cancellation for race condition prevention
+  //
+  // CRITICAL: Prevents rapid-rename race conditions where:
+  //   User types: A → B → C
+  //   Without cancellation:
+  //     t0: Request A→B starts
+  //     t1: Request B→C starts
+  //     t2: Response B→C arrives → dataStore = "C" ✓
+  //     t3: Response A→B arrives → dataStore = "B" ❌ (overwrites C!)
+  //   With cancellation:
+  //     t0: Request A→B starts
+  //     t1: Request B→C starts + Request A→B cancelled
+  //     t2: Response B→C arrives → dataStore = "C" ✓
+  //     t3: Cancelled response ignored
+  //
+  // Result: Only the LATEST rename wins, user's final input is preserved
+  const renameAbortControllerRef = useRef<AbortController | null>(null)
+
+  // Load panel title from database on mount - force re-fetch on every mount
+  useEffect(() => {
+    if (!noteId) return
+
+    let isMounted = true
+
+    const loadPanelTitle = async () => {
+      try {
+        // Add timestamp to prevent caching during rapid reloads
+        const timestamp = Date.now()
+        const response = await fetch(`/api/postgres-offline/panels?note_id=${encodeURIComponent(noteId)}&_t=${timestamp}`)
+        if (response.ok && isMounted) {
+          const panels = await response.json()
+          const panel = panels.find((p: any) => p.panel_id === panelId)
+          if (panel?.title && panel.title !== currentBranch.title) {
+            // Only update if title actually changed (prevent re-render loops)
+            dataStore.update(panelId, { title: panel.title })
+            console.log('[CanvasPanel] Loaded title from DB:', panel.title)
+          }
+        }
+      } catch (error) {
+        console.error('[CanvasPanel] Failed to load panel title:', error)
+      }
+    }
+
+    // Load immediately on mount
+    loadPanelTitle()
+
+    return () => {
+      isMounted = false
+      // Cancel any in-flight rename requests on unmount
+      if (renameAbortControllerRef.current) {
+        renameAbortControllerRef.current.abort()
+        renameAbortControllerRef.current = null
+      }
+    }
+  }, [noteId, panelId]) // Only re-run when noteId or panelId changes
+
+  // Listen for rename events from other components (e.g., popup overlay)
+  // CRITICAL: Defensive validation prevents crashes from malformed events
+  useEffect(() => {
+    if (!noteId) return
+
+    const handleNoteRenamed = (event: Event) => {
+      try {
+        // Validate event structure before accessing properties
+        const customEvent = event as CustomEvent<{ noteId: string; newTitle: string }>
+
+        // Guard: Ensure detail object exists
+        if (!customEvent.detail) {
+          console.warn('[CanvasPanel] Received note-renamed event with no detail object')
+          return
+        }
+
+        const { noteId: renamedNoteId, newTitle } = customEvent.detail
+
+        // Guard: Validate required fields
+        if (!renamedNoteId || typeof renamedNoteId !== 'string') {
+          console.warn('[CanvasPanel] Received note-renamed event with invalid noteId:', renamedNoteId)
+          return
+        }
+
+        if (!newTitle || typeof newTitle !== 'string' || !newTitle.trim()) {
+          console.warn('[CanvasPanel] Received note-renamed event with invalid newTitle:', newTitle)
+          return
+        }
+
+        // Only update if this is the main panel and showing the renamed note
+        // Branch panels manage their own titles independently via handleSaveRename
+        if (panelId === 'main' && renamedNoteId === noteId) {
+          console.log('[CanvasPanel] Main panel received note rename event:', newTitle.trim())
+
+          // Guard: Ensure dataStore.update doesn't throw
+          try {
+            dataStore.update(panelId, { title: newTitle.trim() })
+            dispatch({ type: "BRANCH_UPDATED" })
+          } catch (updateError) {
+            console.error('[CanvasPanel] Failed to update panel title:', updateError)
+            // Non-critical: Don't crash the app, just log the error
+          }
+        }
+      } catch (error) {
+        // Catch-all: Prevent event handler errors from crashing the app
+        console.error('[CanvasPanel] Error handling note-renamed event:', error)
+      }
+    }
+
+    window.addEventListener('note-renamed', handleNoteRenamed)
+    return () => {
+      window.removeEventListener('note-renamed', handleNoteRenamed)
+    }
+  }, [noteId, panelId, dataStore, dispatch])
 
   const [panelHeight, setPanelHeight] = useState<number>(500)
   const previousPanelHeightRef = useRef<number>(500)
   const [isPanelHeightExpanded, setIsPanelHeightExpanded] = useState(false)
   const cameraZoomRef = useRef<number>(1)
 
-  const headerControlsActive = isPanelHovered || isSidebarVisible || isActionsVisible || isSidebarHovering || isActionsHovering
+  const headerControlsActive = isPanelHovered || isActionsVisible || isActionsHovering
   
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
@@ -110,69 +242,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     return renderPosition.y
   }, [renderPosition.y])
 
-  // Header action overflow management
-  const ACTION_GAP = 8
-  const actionsContainerRef = useRef<HTMLDivElement | null>(null)
-  const formatActionRef = useRef<HTMLDivElement | null>(null)
-  const overflowButtonRef = useRef<HTMLButtonElement | null>(null)
-  const actionRefs = useRef<Record<string, HTMLDivElement | null>>({})
-  const actionWidthsRef = useRef<Record<string, number>>({})
-  const [hiddenActionIds, setHiddenActionIds] = useState<string[]>([])
-  const [isOverflowMenuOpen, setIsOverflowMenuOpen] = useState(false)
-
-  const registerActionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
-    actionRefs.current[id] = el
-  }, [])
-
-  const closeOverflowMenu = useCallback(() => {
-    setIsOverflowMenuOpen(false)
-  }, [])
-
-  const handleBranchesButtonClick = useCallback((event?: React.MouseEvent<HTMLElement>) => {
-    event?.stopPropagation()
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-
-    if (isSidebarVisible) {
-      setIsSidebarVisible(false)
-      setIsSidebarHovering(false)
-    } else {
-      setIsSidebarVisible(true)
-      setIsSidebarHovering(true)
-    }
-
-    closeOverflowMenu()
-  }, [closeOverflowMenu, isSidebarVisible])
-
-  const handleBranchesButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-    if (sidebarTimeoutRef.current) {
-      clearTimeout(sidebarTimeoutRef.current)
-    }
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-    sidebarShowTimeoutRef.current = setTimeout(() => {
-      setIsSidebarHovering(true)
-      setIsSidebarVisible(true)
-      sidebarShowTimeoutRef.current = null
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [])
-
-  const handleBranchesButtonMouseLeave = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-    if (sidebarShowTimeoutRef.current) {
-      clearTimeout(sidebarShowTimeoutRef.current)
-      sidebarShowTimeoutRef.current = null
-    }
-    sidebarTimeoutRef.current = setTimeout(() => {
-      setIsSidebarHovering(false)
-      setIsSidebarVisible(false)
-    }, HEADER_BUTTON_HOVER_DELAY_MS)
-  }, [])
 
   const positionAnnotationToolbar = useCallback((target: HTMLElement) => {
     const toolbar = document.getElementById("annotation-toolbar")
@@ -203,7 +272,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       actionsShowTimeoutRef.current = null
     }
 
-    const target = (event?.currentTarget as HTMLElement) ?? overflowButtonRef.current ?? null
+    const target = event?.currentTarget as HTMLElement
 
     const nextVisible = !isActionsVisible
     setIsActionsVisible(nextVisible)
@@ -214,9 +283,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     } else if (!nextVisible) {
       hideAnnotationToolbar()
     }
-
-    closeOverflowMenu()
-  }, [closeOverflowMenu, hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
+  }, [hideAnnotationToolbar, isActionsVisible, positionAnnotationToolbar])
 
   const handleActionsButtonMouseEnter = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.currentTarget.style.background = "rgba(255,255,255,0.3)"
@@ -274,124 +341,47 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     setPanelHeight(expandedHeight)
     setIsPanelHeightExpanded(true)
   }, [getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded, panelHeight])
-
-  const recalcOverflow = useCallback(() => {
-    const container = actionsContainerRef.current
-    if (!container) {
-      return
-    }
-
-    const containerWidth = container.getBoundingClientRect().width
-    if (!containerWidth) {
-      if (hiddenActionIds.length > 0) {
-        setHiddenActionIds([])
-      }
-      return
-    }
-
-    const overflowWidth = overflowButtonRef.current?.getBoundingClientRect().width ?? 36
-    const measuredFormatWidth = formatActionRef.current?.getBoundingClientRect().width ?? 0
-    const storedFormatWidth = actionWidthsRef.current.format ?? 0
-    const formatWidth = measuredFormatWidth > 0 ? measuredFormatWidth : storedFormatWidth
-    if (measuredFormatWidth > 0) {
-      actionWidthsRef.current.format = measuredFormatWidth
-    }
-
-    const order = layerManager.isEnabled
-      ? ['bringToFront', 'sendToBack', 'resizeToggle', 'branches', 'actions']
-      : ['resizeToggle', 'branches', 'actions']
-
-    const widthMap: Record<string, number> = {}
-    order.forEach((id) => {
-      const element = actionRefs.current[id]
-      const measured = element?.getBoundingClientRect().width ?? 0
-      const stored = actionWidthsRef.current[id] ?? 0
-      const width = measured > 0 ? measured : stored
-      if (width > 0) {
-        widthMap[id] = width
-        if (measured > 0) {
-          actionWidthsRef.current[id] = measured
-        }
-      }
-    })
-
-    const availableIds = order.filter((id) => widthMap[id] !== undefined)
-    let visibleIds: string[] = []
-    let hiddenIds: string[] = []
-    let usedWidth = formatWidth
-    let visibleCount = formatWidth > 0 ? 1 : 0
-
-    availableIds.forEach((id) => {
-      const width = widthMap[id] ?? 0
-      if (width === 0) {
-        return
-      }
-      const gapBefore = visibleCount > 0 ? ACTION_GAP : 0
-      if (usedWidth + gapBefore + width <= containerWidth) {
-        visibleIds.push(id)
-        usedWidth += gapBefore + width
-        visibleCount += 1
-      } else {
-        hiddenIds.push(id)
-      }
-    })
-
-    if (hiddenIds.length > 0) {
-      const computeUsage = (ids: string[]) => {
-        let width = formatWidth
-        let count = formatWidth > 0 ? 1 : 0
-        ids.forEach((id) => {
-          const w = widthMap[id] ?? 0
-          if (w === 0) {
-            return
-          }
-          width += (count > 0 ? ACTION_GAP : 0) + w
-          count += 1
-        })
-        return { width, count }
-      }
-
-      let { width: recomputedWidth, count } = computeUsage(visibleIds)
-      while (
-        visibleIds.length > 0 &&
-        recomputedWidth + (count > 0 ? ACTION_GAP : 0) + overflowWidth > containerWidth
-      ) {
-        const removed = visibleIds.pop()
-        if (!removed) {
-          break
-        }
-        hiddenIds.unshift(removed)
-        const recalculated = computeUsage(visibleIds)
-        recomputedWidth = recalculated.width
-        count = recalculated.count
-      }
-    }
-
-    const arraysEqual = (a: string[], b: string[]) => {
-      if (a.length !== b.length) {
-        return false
-      }
-      return a.every((value, index) => value === b[index])
-    }
-
-    if (!arraysEqual(hiddenActionIds, hiddenIds)) {
-      setHiddenActionIds(hiddenIds)
-    }
-
-    if (hiddenIds.length === 0 && isOverflowMenuOpen) {
-      setIsOverflowMenuOpen(false)
-    }
-  }, [ACTION_GAP, hiddenActionIds, isOverflowMenuOpen, layerManager.isEnabled])
   
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
   useEffect(() => {
-    if (!dragStateRef.current?.isDragging) {
-      // Use LayerManager position if available, otherwise fall back to prop
-      const nodePosition = canvasNode?.position ?? position
+    // Use globalDraggingPanelId to check if THIS panel is being dragged
+    // This is more reliable than dragStateRef during re-renders
+    const isPanelBeingDragged = globalDraggingPanelId === panelId
+
+    if (!isPanelBeingDragged) {
+      // Always use prop position (centered)
+      const nodePosition = position
+
+      // DEBUG: Log position sources
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'position_update_sources',
+        metadata: {
+          panelId,
+          propPosition: position,
+          canvasNodePosition: canvasNode?.position,
+          usingPosition: nodePosition,
+          isDragging: dragStateRef.current?.isDragging,
+          globalDraggingPanelId,
+          isPanelBeingDragged
+        }
+      })
+
       setRenderPosition(nodePosition)
+    } else {
+      // DEBUG: Log that we're skipping position update during drag
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'position_update_skipped_during_drag',
+        metadata: {
+          panelId,
+          globalDraggingPanelId,
+          propPosition: position
+        }
+      })
     }
-  }, [position, canvasNode?.position])
+  }, [position, panelId]) // REMOVED canvasNode?.position - we don't use it and it causes re-renders during drag
   
   // Camera-based panning
   const {
@@ -426,13 +416,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
-      if (sidebarTimeoutRef.current) {
-        clearTimeout(sidebarTimeoutRef.current)
-      }
-      if (sidebarShowTimeoutRef.current) {
-        clearTimeout(sidebarShowTimeoutRef.current)
-        sidebarShowTimeoutRef.current = null
-      }
       if (actionsTimeoutRef.current) {
         clearTimeout(actionsTimeoutRef.current)
       }
@@ -455,26 +438,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement
-      
-      // Close sidebar if clicking outside of it
-      if (isSidebarHovering || isSidebarVisible) {
-        const sidebar = document.getElementById(`branches-sidebar-${panelId}`)
-        const button = document.getElementById(`branches-button-${panelId}`)
-        
-        if (sidebar && !sidebar.contains(target) && button && !button.contains(target)) {
-          setIsSidebarHovering(false)
-          setIsSidebarVisible(false)
-          if (sidebarTimeoutRef.current) {
-            clearTimeout(sidebarTimeoutRef.current)
-          }
-        }
-      }
-      
+
       // Close actions panel if clicking outside of it
       if (isActionsHovering || isActionsVisible) {
         const actions = document.getElementById(`actions-panel-${panelId}`)
         const button = document.getElementById(`actions-button-${panelId}`)
-        
+
         if (actions && !actions.contains(target) && button && !button.contains(target)) {
           setIsActionsHovering(false)
           setIsActionsVisible(false)
@@ -484,59 +453,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         }
       }
     }
-    
+
     document.addEventListener('mousedown', handleClickOutside)
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [isSidebarHovering, isSidebarVisible, isActionsHovering, isActionsVisible, panelId])
-  
-  useLayoutEffect(() => {
-    recalcOverflow()
-  }, [recalcOverflow])
-
-  useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') {
-      return
-    }
-    const container = actionsContainerRef.current
-    if (!container) {
-      return
-    }
-    const observer = new ResizeObserver(() => {
-      recalcOverflow()
-    })
-    observer.observe(container)
-    return () => {
-      observer.disconnect()
-    }
-  }, [recalcOverflow])
-
-  useEffect(() => {
-    if (!isOverflowMenuOpen) {
-      return
-    }
-
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target as Node
-      if (!actionsContainerRef.current?.contains(target)) {
-        setIsOverflowMenuOpen(false)
-      }
-    }
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOverflowMenuOpen(false)
-      }
-    }
-
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isOverflowMenuOpen])
+  }, [isActionsHovering, isActionsVisible, panelId])
 
   // Determine Option A (plain) vs collaboration mode as early as possible
   const isPlainMode = isPlainModeActive()
@@ -603,6 +525,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
+
+  // Save As dialog state (matching notes-explorer implementation)
+  const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
+  const [saveAsNoteName, setSaveAsNoteName] = useState("")
+  const [saveAsSelectedFolderId, setSaveAsSelectedFolderId] = useState<string | null>(null)
+  const [saveAsAvailableFolders, setSaveAsAvailableFolders] = useState<Array<{
+    id: string
+    name: string
+    path: string
+    parentId?: string | null
+    depth?: number
+  }>>([])
+  const [saveAsIsCreatingFolder, setSaveAsIsCreatingFolder] = useState(false)
+  const [saveAsNewFolderName, setSaveAsNewFolderName] = useState("")
+  const [saveAsShowCustomFolder, setSaveAsShowCustomFolder] = useState(false)
+  const [saveAsCustomFolderInput, setSaveAsCustomFolderInput] = useState("")
   const [plainProvider, setPlainProvider] = useState<PlainOfflineProvider | null>(null)
   const postLoadEditApplied = useRef(false)
   
@@ -610,7 +548,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   const currentNoteId = noteId || contextNoteId
   
   // Blur editor when switching to popup layer
-  // Simplified drag state - no RAF accumulation
+  // RAF-throttled drag state
   const dragState = useRef({
     isDragging: false,
     startX: 0,
@@ -618,15 +556,64 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     initialPosition: { x: 0, y: 0 },
     pointerDelta: { x: 0, y: 0 },
     autoScrollOffset: { x: 0, y: 0 },
+    mouseMoveCount: 0, // Track first few mousemove events for debugging
+    lastMoveTime: 0, // Track timing for jitter detection
+    lastPosition: { x: 0, y: 0 }, // Track previous position for delta calculation
+    rafScheduled: false, // Track if RAF update is scheduled
+    pendingMouseEvent: null as { clientX: number; clientY: number } | null, // Store latest mouse position
   })
+  const rafIdRef = useRef<number | null>(null)
   
   // Link dragStateRef to dragState for the useEffect above
   dragStateRef.current = dragState.current
   
   // Auto-scroll functionality for panel dragging
   const handleAutoScroll = useCallback((deltaX: number, deltaY: number) => {
-    if (!dragState.current.isDragging) return
-    
+    if (!dragState.current.isDragging) {
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'auto_scroll_ignored_not_dragging',
+        metadata: {
+          panelId,
+          scrollDelta: { x: deltaX, y: deltaY },
+          reason: 'isDragging is false'
+        }
+      })
+      return
+    }
+
+    // DEBUG: Log auto-scroll events with full state
+    const currentPanelLeft = panelRef.current ? panelRef.current.style.left : 'N/A'
+    const currentPanelTop = panelRef.current ? panelRef.current.style.top : 'N/A'
+
+    // Get canvas state before scroll
+    const canvasEl = document.getElementById('infinite-canvas')
+    const canvasTransformBefore = canvasEl ? window.getComputedStyle(canvasEl).transform : 'none'
+
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'auto_scroll_EXECUTING',
+      metadata: {
+        panelId,
+        scrollDelta: { x: deltaX, y: deltaY },
+        currentPanelPosition: { left: currentPanelLeft, top: currentPanelTop },
+        cameraEnabled: isCameraEnabled,
+        moveCount: dragState.current.mouseMoveCount,
+        canvasTransformBefore,
+        canvasState: {
+          translateX: state.canvasState?.translateX || 0,
+          translateY: state.canvasState?.translateY || 0,
+          zoom: state.canvasState?.zoom || 1
+        },
+        dragState: {
+          initialPosition: { ...dragState.current.initialPosition },
+          pointerDelta: { ...dragState.current.pointerDelta },
+          autoScrollOffset: { ...dragState.current.autoScrollOffset }
+        },
+        scrollMethod: isCameraEnabled ? 'CAMERA_PAN' : 'LEGACY_PANEL_MOVE'
+      }
+    })
+
     if (isCameraEnabled) {
       // Use camera-based panning (pan opposite to pointer delta)
       panCameraBy({ dxScreen: -deltaX, dyScreen: -deltaY })
@@ -640,37 +627,152 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         const nextLeft = initialPosition.x + pointerDelta.x - autoScrollOffset.x
         const nextTop = initialPosition.y + pointerDelta.y - autoScrollOffset.y
 
+        // DEBUG: Comprehensive viewport + panel state logging
+        // Get canvas transform to detect viewport panning
+        const canvasEl = document.getElementById('infinite-canvas')
+        const canvasTransform = canvasEl ? window.getComputedStyle(canvasEl).transform : 'none'
+
+        // Get ALL panel positions to see if multiple panels move
+        const allPanels = document.querySelectorAll('[data-panel-id]')
+        const allPanelPositions: Record<string, { left: string; top: string }> = {}
+        allPanels.forEach(panel => {
+          const panelEl = panel as HTMLElement
+          const panelId = panelEl.getAttribute('data-panel-id')
+          if (panelId) {
+            allPanelPositions[panelId] = {
+              left: panelEl.style.left || '0',
+              top: panelEl.style.top || '0'
+            }
+          }
+        })
+
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'auto_scroll_comprehensive_state',
+          metadata: {
+            draggedPanelId: panelId,
+            draggedPanelCalculated: { nextLeft, nextTop },
+            dragState: { initialPosition, pointerDelta, autoScrollOffset },
+            canvasTransform,
+            allPanelPositions,
+            viewportSize: { width: window.innerWidth, height: window.innerHeight }
+          }
+        })
+
         panelRef.current.style.left = `${nextLeft}px`
         panelRef.current.style.top = `${nextTop}px`
-        setRenderPosition({ x: nextLeft, y: nextTop })
+        // REMOVED: Don't call setRenderPosition during drag - causes position snapping
+        // We'll update React state only when drag ends
       }
     } else {
       // Legacy: Move ALL panels to simulate canvas panning
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'auto_scroll_legacy_mode',
+        metadata: {
+          panelId,
+          scrollDelta: { x: deltaX, y: deltaY },
+          note: 'This mode moves ALL panels - if this logs, camera is disabled'
+        }
+      })
+
       const allPanels = document.querySelectorAll('[data-panel-id]')
+      const panelPositionsBefore: Record<string, { left: number; top: number }> = {}
+      const panelPositionsAfter: Record<string, { left: number; top: number }> = {}
+
       allPanels.forEach(panel => {
         const panelEl = panel as HTMLElement
-        
-        if (panelEl.id === `panel-${panelId}` && dragState.current.isDragging) {
-          // For the dragging panel, update its initial position
-          dragState.current.initialPosition.x += deltaX
-          dragState.current.initialPosition.y += deltaY
-        } else {
-          // For other panels, update their actual position
+        const pid = panelEl.getAttribute('data-panel-id')
+        if (pid) {
           const currentLeft = parseInt(panelEl.style.left || '0', 10)
           const currentTop = parseInt(panelEl.style.top || '0', 10)
-          panelEl.style.left = (currentLeft + deltaX) + 'px'
-          panelEl.style.top = (currentTop + deltaY) + 'px'
+          panelPositionsBefore[pid] = { left: currentLeft, top: currentTop }
+
+          if (panelEl.id === `panel-${panelId}` && dragState.current.isDragging) {
+            // For the dragging panel, update its initial position
+            dragState.current.initialPosition.x += deltaX
+            dragState.current.initialPosition.y += deltaY
+          } else {
+            // For other panels, update their actual position
+            panelEl.style.left = (currentLeft + deltaX) + 'px'
+            panelEl.style.top = (currentTop + deltaY) + 'px'
+          }
+
+          const newLeft = parseInt(panelEl.style.left || '0', 10)
+          const newTop = parseInt(panelEl.style.top || '0', 10)
+          panelPositionsAfter[pid] = { left: newLeft, top: newTop }
+        }
+      })
+
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'auto_scroll_legacy_panel_moves',
+        metadata: {
+          panelId,
+          panelPositionsBefore,
+          panelPositionsAfter,
+          scrollDelta: { x: deltaX, y: deltaY }
         }
       })
     }
   }, [panelId, isCameraEnabled, panCameraBy])
   
-  const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
+  // State for auto-scroll visual affordance
+  const [isAutoScrollPending, setIsAutoScrollPending] = useState(false)
+  const [edgeGlowEdges, setEdgeGlowEdges] = useState<string[]>([])
+
+  const { checkAutoScroll, stopAutoScroll, autoScroll } = useAutoScroll({
     enabled: true,
-    threshold: 80,
-    speed: 8,
-    onScroll: handleAutoScroll
+    threshold: 50, // Reduced from 80px to 50px
+    speedPxPerSec: 500, // 500 screen px/s (industry standard, frame-rate independent)
+    activationDelay: 800, // Increased to 800ms - gives user time to position panel
+    onScroll: handleAutoScroll,
+    onActivationPending: setIsAutoScrollPending // Visual affordance callback
   })
+
+  // Sync pendingEdges to local state (only when edges actually change, not on velocity updates)
+  useEffect(() => {
+    const newEdges = autoScroll.pendingEdges
+    const edgesChanged =
+      newEdges.length !== edgeGlowEdges.length ||
+      newEdges.some(edge => !edgeGlowEdges.includes(edge))
+
+    if (edgesChanged) {
+      setEdgeGlowEdges(newEdges)
+    }
+  }, [autoScroll.pendingEdges, edgeGlowEdges])
+
+  // Visual affordance: Change cursor when auto-scroll activation is pending
+  useEffect(() => {
+    if (isAutoScrollPending) {
+      // Show "waiting" cursor to indicate auto-scroll will activate soon
+      document.body.style.cursor = 'wait'
+
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'auto_scroll_visual_affordance_active',
+        metadata: {
+          panelId,
+          cursorStyle: 'wait',
+          reason: 'activation_delay_countdown'
+        }
+      })
+    } else {
+      // Reset cursor only if we set it to wait
+      if (document.body.style.cursor === 'wait') {
+        document.body.style.cursor = ''
+
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'auto_scroll_visual_affordance_cleared',
+          metadata: {
+            panelId,
+            reason: 'activation_cancelled_or_completed'
+          }
+        })
+      }
+    }
+  }, [isAutoScrollPending, panelId])
 
   // Get appropriate provider based on mode
   const [ydocState, setYdocState] = useState<{ loading: boolean; doc: Y.Doc | null; error: Error | null }>(
@@ -840,6 +942,12 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     ({ content: loadedContent }: { content: ProseMirrorJSON | string | null; version: number }) => {
       if (!isPlainMode) return
 
+      console.log(`[🔍 DATASTORE-UPDATE] handleEditorContentLoaded called for ${panelId}`, {
+        hasContent: !!loadedContent,
+        isEmpty: isContentEmptyValue(loadedContent),
+        contentPreview: loadedContent ? JSON.stringify(loadedContent).substring(0, 100) : 'NULL'
+      })
+
       if (loadedContent !== undefined && loadedContent !== null && !isContentEmptyValue(loadedContent)) {
         const existing = dataStore.get(panelId) || {}
         const previewFallback = existing.preview
@@ -857,6 +965,11 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         } else {
           delete nextMetadata.preview
         }
+
+        console.log(`[🔍 DATASTORE-UPDATE] Updating dataStore for ${panelId}`, {
+          preview: previewText.substring(0, 50),
+          hasHydratedContent: true
+        })
 
         dataStore.update(panelId, {
           content: loadedContent,
@@ -951,14 +1064,22 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
     
     // If no provider data, use store data or branch prop
     const data = storeData || branch
+    // CRITICAL: Return a deep copy to prevent shared object references
+    // Without this, multiple panels would modify the same object causing title/data sync issues
+    const dataCopy = JSON.parse(JSON.stringify(data))
     // Ensure branches array exists
-    if (!data.branches) {
-      data.branches = []
+    if (!dataCopy.branches) {
+      dataCopy.branches = []
     }
-    return data
+    return dataCopy
   }
   const currentBranch = getBranchData()
-  
+
+  // Calculate panel width based on type (if not explicitly provided)
+  const panelWidth = width ?? getDefaultPanelWidth(
+    currentBranch.type === 'main' ? 'main' : (currentBranch.type as 'note' | 'explore' | 'promote')
+  )
+
   // Generate title for branch panels if not set
   const getPanelTitle = () => {
     if (currentBranch.title) {
@@ -979,6 +1100,184 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
   const panelTitle = getPanelTitle()
   const showPanelTitle = Boolean(panelTitle)
+
+  // Rename handlers
+  const handleStartRename = () => {
+    setIsRenaming(true)
+    setTitleValue(currentBranch.title || '')
+    setTimeout(() => titleInputRef.current?.select(), 0)
+  }
+
+  const handleSaveRename = async () => {
+    const trimmed = titleValue.trim()
+    if (trimmed && trimmed !== currentBranch.title) {
+      const oldTitle = currentBranch.title // For rollback on error
+
+      // Race condition prevention: Cancel any in-flight rename request
+      // This ensures only the LATEST rename wins, preventing "A→B→C" bugs
+      // where the slower "B" request might overwrite the faster "C" result
+      if (renameAbortControllerRef.current) {
+        console.log('[CanvasPanel] Cancelling previous rename request')
+        renameAbortControllerRef.current.abort()
+      }
+
+      // Create new AbortController for this request
+      const abortController = new AbortController()
+      renameAbortControllerRef.current = abortController
+
+      // Show saving indicator to user
+      setIsSaving(true)
+
+      // Optimistic update in-memory dataStore
+      dataStore.update(panelId, { title: trimmed })
+      dispatch({ type: "BRANCH_UPDATED" })
+
+      // Persist to database via atomic transaction endpoint
+      if (noteId) {
+        try {
+          const response = await fetch(`/api/panels/${encodeURIComponent(panelId)}/rename`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              noteId,
+              newTitle: trimmed
+            }),
+            signal: abortController.signal // Attach abort signal
+          })
+
+          if (!response.ok) {
+            const error = await response.json()
+            throw new Error(error.details || 'Failed to rename panel')
+          }
+
+          const result = await response.json()
+          console.log('[CanvasPanel] Rename succeeded:', result)
+
+          // CRITICAL: Clear isSaving BEFORE nulling the ref
+          // Otherwise finally block's guard (renameAbortControllerRef === abortController) fails
+          // and isSaving stays true forever, leaving input permanently disabled
+          if (renameAbortControllerRef.current === abortController) {
+            setIsSaving(false)
+            renameAbortControllerRef.current = null
+          }
+
+          // Update dataStore with confirmed server value (in case server modified it)
+          dataStore.update(panelId, { title: result.title })
+
+          // Invalidate localStorage cache IMMEDIATELY with timestamped tombstone
+          if (typeof window !== 'undefined') {
+            try {
+              const cachedKey = `note-data-${noteId}`
+
+              // 1. Delete cache immediately
+              window.localStorage.removeItem(cachedKey)
+
+              // 2. Set timestamped tombstone (self-expires after 5 seconds)
+              window.localStorage.setItem(`${cachedKey}:invalidated`, Date.now().toString())
+
+              // 3. Emit event for live components (e.g., popup overlay) to refresh
+              // CRITICAL: Only emit note-renamed event for main panel (note-level rename)
+              // Branch panels manage their own titles independently
+              if (panelId === 'main') {
+                window.dispatchEvent(new CustomEvent('note-renamed', {
+                  detail: { noteId, newTitle: result.title }
+                }))
+              }
+
+              console.log('[CanvasPanel] Invalidated localStorage cache with tombstone')
+            } catch (cacheError) {
+              // Non-critical: localStorage may be disabled/full, or event dispatch may fail
+              // Don't let this prevent the rename from succeeding
+              console.warn('[CanvasPanel] Failed to invalidate cache or emit event:', cacheError)
+            }
+          }
+
+          // Note: No dispatch needed - setIsRenaming(false) triggers re-render
+
+        } catch (error) {
+          // Check if this was an intentional abort (race condition prevention)
+          if (error instanceof Error && error.name === 'AbortError') {
+            console.log('[CanvasPanel] Rename request was cancelled (superseded by newer request)')
+            // Don't rollback or show error - this is expected behavior
+            // The newer request will handle the update
+            return
+          }
+
+          console.error('[CanvasPanel] Rename failed, rolling back:', error)
+
+          // CRITICAL: Clear isSaving BEFORE nulling the ref (same reason as success path)
+          if (renameAbortControllerRef.current === abortController) {
+            setIsSaving(false)
+            renameAbortControllerRef.current = null
+          }
+
+          // Rollback optimistic update
+          dataStore.update(panelId, { title: oldTitle })
+          dispatch({ type: "BRANCH_UPDATED" })
+
+          // Show error to user
+          alert(`Failed to rename: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+      }
+    }
+    setIsRenaming(false)
+  }
+
+  const handleCancelRename = () => {
+    // CRITICAL: Cancel any in-flight rename request
+    // Without this, a slow network response can complete after user cancels,
+    // violating user intent (they cancelled, but rename happens anyway)
+    if (renameAbortControllerRef.current) {
+      console.log('[CanvasPanel] Aborting rename due to user cancel')
+      renameAbortControllerRef.current.abort()
+      renameAbortControllerRef.current = null
+    }
+
+    setIsRenaming(false)
+    setIsSaving(false)
+    setTitleValue(currentBranch.title || '')
+  }
+
+  const handleTypeChange = async (newType: AnnotationType) => {
+    const plainProvider = getPlainProvider()
+    if (!plainProvider || !noteId || panelId === 'main') return
+
+    // Prevent concurrent type changes (race condition protection)
+    if (isChangingType) {
+      console.log('[CanvasPanel] Type change already in progress, ignoring')
+      return
+    }
+
+    setIsChangingType(true)
+
+    try {
+      // Extract branch ID (remove 'branch-' prefix)
+      const branchId = panelId.replace('branch-', '')
+
+      // Call provider method which handles API call
+      await plainProvider.changeBranchType(branchId, newType)
+
+      // Update local state immediately (provider already updated cache)
+      const current = dataStore.get(panelId)
+      if (current) {
+        dataStore.update(panelId, { type: newType })
+      }
+
+      // Force re-render
+      dispatch({ type: "BRANCH_UPDATED" })
+
+      // Update annotation color in main editor via context (type-safe)
+      updateAnnotationType?.(branchId, newType)
+
+      console.log(`✓ Changed annotation type to ${newType}`)
+    } catch (error) {
+      console.error('[CanvasPanel] Failed to change type:', error)
+      alert(`Failed to change type: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      // Always reset loading state, even on error
+      setIsChangingType(false)
+    }
+  }
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
     const existing = dataStore.get(panelId) || {}
@@ -1001,12 +1300,17 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       delete nextMetadata.preview
     }
 
+    // CRITICAL: Don't spread entire currentBranch - it would overwrite branches array!
+    // Only update content/preview/metadata, preserve branches managed by AnnotationToolbar
     const updatedData = {
-      ...currentBranch,
       content: payload,
       preview: previewText,
       hasHydratedContent: true,
       metadata: nextMetadata,
+      // Explicitly preserve other fields we care about
+      type: currentBranch.type,
+      position: currentBranch.position,
+      title: currentBranch.title, // Preserve title to prevent overwriting during edits
     }
 
     // Update both stores with panel-specific content + preview
@@ -1058,11 +1362,180 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
       toggleBtn.title = newEditableState ? 'Save Changes' : 'Edit Content'
     }
-    
+
     dataStore.update(panelId, { isEditable: newEditableState })
-    
+
     if (newEditableState) {
       editorRef.current?.focus()
+    }
+  }
+
+  // Fetch available folders with nested structure
+  const fetchSaveAsFolders = useCallback(async () => {
+    try {
+      // Fetch all folders (not just root level)
+      const response = await fetch('/api/items?type=folder')
+      if (!response.ok) return
+
+      const data = await response.json()
+      const allFolders = data.items?.filter((item: any) => item.type === 'folder') || []
+
+      // Build hierarchy with depth calculation
+      const folderMap = new Map()
+      allFolders.forEach((folder: any) => {
+        folderMap.set(folder.id, folder)
+      })
+
+      // Calculate depth for each folder based on path
+      const foldersWithDepth = allFolders.map((folder: any) => {
+        const pathParts = folder.path.split('/').filter(Boolean)
+        return {
+          id: folder.id,
+          name: folder.name,
+          path: folder.path,
+          parentId: folder.parentId,
+          depth: pathParts.length - 1 // Root folders have depth 0
+        }
+      })
+
+      // Sort by path to maintain hierarchical order
+      foldersWithDepth.sort((a: any, b: any) => a.path.localeCompare(b.path))
+
+      setSaveAsAvailableFolders(foldersWithDepth)
+    } catch (error) {
+      console.error('[CanvasPanel] Failed to fetch folders:', error)
+    }
+  }, [])
+
+  // Create new folder (from notes-explorer)
+  const createSaveAsFolder = async (folderName: string, parentId?: string) => {
+    try {
+      const response = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'folder',
+          name: folderName,
+          parentId: parentId || null,
+          metadata: {}
+        })
+      })
+
+      if (!response.ok) throw new Error('Failed to create folder')
+
+      const data = await response.json()
+      return data.item
+    } catch (error) {
+      console.error('[CanvasPanel] Failed to create folder:', error)
+      return null
+    }
+  }
+
+  // Load dialog when opened (from notes-explorer)
+  useEffect(() => {
+    console.log('[SaveAs] showSaveAsDialog changed to:', showSaveAsDialog)
+    if (showSaveAsDialog) {
+      console.log('[SaveAs] Loading dialog data...')
+
+      // Generate a fresh name with current timestamp
+      const timestamp = new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+      const defaultName = `New Note - ${timestamp}`
+
+      setSaveAsNoteName(defaultName)
+      fetchSaveAsFolders()
+    }
+  }, [showSaveAsDialog, fetchSaveAsFolders])
+
+  // Handle Save As - creates a new note with the branch content
+  const createSaveAsNote = async () => {
+    try {
+      const result = await createNote({
+        name: saveAsNoteName.trim() || "Untitled",
+        parentId: saveAsSelectedFolderId,
+        metadata: {
+          branchType: currentBranch.type,
+          savedFrom: panelId,
+          savedAt: new Date().toISOString()
+        }
+      })
+
+      if (result.success && result.noteId) {
+        console.log('[CanvasPanel] Note created, saving content to:', result.noteId)
+
+        // Get current content from editor or branch
+        const currentContent = editorRef.current?.getJSON?.() || currentBranch.content
+
+        if (!currentContent) {
+          console.warn('[CanvasPanel] No content to save')
+        }
+
+        // Copy the content to the new note
+        // Use 'main' as panelId since this is a new standalone note
+        try {
+          await fetch(`/api/postgres-offline/documents/${result.noteId}/main`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              content: currentContent,
+              version: 1,
+              baseVersion: 0
+            })
+          })
+          console.log('[CanvasPanel] Content copied to new note successfully')
+
+          // Update the current panel to reflect the new note
+          dataStore.update(panelId, {
+            ...currentBranch,
+            title: saveAsNoteName.trim() || "Untitled",
+            noteId: result.noteId
+          })
+
+          // Update the note name in the database so it appears correctly in recent/organization
+          if (currentNoteId) {
+            try {
+              await fetch(`/api/items/${result.noteId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  name: saveAsNoteName.trim() || "Untitled"
+                })
+              })
+              console.log('[CanvasPanel] Note name updated in database')
+            } catch (updateError) {
+              console.error('[CanvasPanel] Failed to update note name in database:', updateError)
+            }
+          }
+
+          // Force re-render to show updated title
+          dispatch({ type: "BRANCH_UPDATED" })
+
+          alert(`Note "${saveAsNoteName}" created successfully with content!`)
+        } catch (saveError) {
+          console.error('[CanvasPanel] Failed to save content to new note:', saveError)
+          alert(`Note "${saveAsNoteName}" created, but content copy failed. Please edit the new note manually.`)
+        }
+
+        // Close dialog and reset
+        setShowSaveAsDialog(false)
+        setSaveAsNoteName("")
+        setSaveAsSelectedFolderId(null)
+        setSaveAsAvailableFolders([])
+        setSaveAsIsCreatingFolder(false)
+        setSaveAsNewFolderName("")
+        setSaveAsShowCustomFolder(false)
+        setSaveAsCustomFolderInput("")
+      } else {
+        throw new Error(result.error || 'Failed to create note')
+      }
+    } catch (error) {
+      console.error('[CanvasPanel] Save As failed:', error)
+      alert('Failed to save note. Please try again.')
     }
   }
 
@@ -1160,32 +1633,77 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       if (target && target.closest('button')) {
         return
       }
-      
+
       // Block drag if popup layer is active - USE REFS for current values
       if (multiLayerEnabledRef.current && layerContextRef.current?.activeLayer === 'popups') {
         e.preventDefault()
         e.stopPropagation()
         return
       }
-      
+
       dragState.current.isDragging = true
-      
+
       // Notify editor to defer heavy operations
       if (editorRef.current && typeof editorRef.current.setPerformanceMode === 'function') {
         editorRef.current.setPerformanceMode(true)
       }
-      
+
       // Get current panel position from style
       const currentLeft = parseInt(panel.style.left || position.x.toString(), 10)
       const currentTop = parseInt(panel.style.top || position.y.toString(), 10)
-      
+
+      // DEBUG: Log initial position sources
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_init_position_sources',
+        metadata: {
+          panelId,
+          styleLeft: panel.style.left,
+          styleTop: panel.style.top,
+          positionProp: position,
+          canvasNodePosition: canvasNode?.position,
+          renderPosition,
+          computedLeft: currentLeft,
+          computedTop: currentTop
+        }
+      })
+
       // Store initial position
       dragState.current.initialPosition = { x: currentLeft, y: currentTop }
       dragState.current.startX = e.clientX
       dragState.current.startY = e.clientY
       dragState.current.pointerDelta = { x: 0, y: 0 }
       dragState.current.autoScrollOffset = { x: 0, y: 0 }
-      
+      dragState.current.mouseMoveCount = 0
+      dragState.current.lastMoveTime = performance.now()
+      dragState.current.lastPosition = { x: currentLeft, y: currentTop }
+
+      // DEBUG: Log drag initialization
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_start',
+        metadata: {
+          panelId,
+          initialPosition: { x: currentLeft, y: currentTop },
+          cursorPosition: { x: e.clientX, y: e.clientY },
+          viewport: {
+            width: window.innerWidth,
+            height: window.innerHeight
+          },
+          distanceToLeftEdge: e.clientX,
+          distanceToRightEdge: window.innerWidth - e.clientX,
+          distanceToTopEdge: e.clientY,
+          distanceToBottomEdge: window.innerHeight - e.clientY,
+          autoScrollThreshold: 80,
+          cameraEnabled: isCameraEnabled,
+          canvasState: {
+            translateX: state.canvasState?.translateX || 0,
+            translateY: state.canvasState?.translateY || 0,
+            zoom: state.canvasState?.zoom || 1
+          }
+        }
+      })
+
       // Update render position to current position when starting drag
       setRenderPosition({ x: currentLeft, y: currentTop })
 
@@ -1198,24 +1716,29 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         layerManager.focusNode(panelId) // This brings to front and updates focus time
       }
       globalDraggingPanelId = panelId
-      
+
       // Prevent text selection while dragging
       document.body.style.userSelect = 'none'
       document.body.style.cursor = 'move'
       panel.style.cursor = 'move'
-      
+
       e.preventDefault()
       e.stopPropagation()
     }
 
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!dragState.current.isDragging) return
-      
-      // Check for auto-scroll when near edges
-      checkAutoScroll(e.clientX, e.clientY)
-      
-      // Direct position update - no RAF accumulation
+    // RAF-throttled position update function
+    const updatePanelPosition = () => {
       const state = dragState.current
+      if (!state.isDragging || !state.pendingMouseEvent || !panelRef.current) {
+        state.rafScheduled = false
+        return
+      }
+
+      const e = state.pendingMouseEvent
+      const now = performance.now()
+      const timeDelta = now - state.lastMoveTime
+
+      // Calculate position from pending mouse event
       const deltaX = e.clientX - state.startX
       const deltaY = e.clientY - state.startY
 
@@ -1225,23 +1748,128 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       const baseY = state.initialPosition.y + deltaY
       const newLeft = isCameraEnabled ? baseX - state.autoScrollOffset.x : baseX
       const newTop = isCameraEnabled ? baseY - state.autoScrollOffset.y : baseY
-      
-      // Update render position to prevent snap-back during drag
-      setRenderPosition({ x: newLeft, y: newTop })
-      
-      panel.style.left = newLeft + 'px'
-      panel.style.top = newTop + 'px'
-      
+
+      // Calculate position change from last frame
+      const positionDeltaX = newLeft - state.lastPosition.x
+      const positionDeltaY = newTop - state.lastPosition.y
+      const positionDeltaMagnitude = Math.sqrt(positionDeltaX * positionDeltaX + positionDeltaY * positionDeltaY)
+
+      // DEBUG: Log jitter metrics for moves 5-20
+      if (state.mouseMoveCount >= 5 && state.mouseMoveCount <= 20) {
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'drag_jitter_raf_no_react',
+          metadata: {
+            panelId,
+            moveCount: state.mouseMoveCount,
+            timeDelta,
+            positionDelta: { x: positionDeltaX, y: positionDeltaY },
+            positionDeltaMagnitude,
+            autoScrollOffset: { ...state.autoScrollOffset },
+            cursorPosition: { x: e.clientX, y: e.clientY },
+            calculatedPosition: { x: newLeft, y: newTop },
+            hasAutoScrollInterference: state.autoScrollOffset.x !== 0 || state.autoScrollOffset.y !== 0,
+            hasDecimalPrecision: newLeft % 1 !== 0 || newTop % 1 !== 0,
+            rafThrottled: true,
+            reactStateUpdateSkipped: true  // No setRenderPosition during drag
+          }
+        })
+      }
+
+      // Apply position update (DOM only - no React state during drag)
+      panelRef.current.style.left = newLeft + 'px'
+      panelRef.current.style.top = newTop + 'px'
+
+      // DON'T call setRenderPosition during drag - causes re-render jitter
+      // We'll update React state only when drag ends
+
+      // Update tracking for next frame
+      state.lastMoveTime = now
+      state.lastPosition = { x: newLeft, y: newTop }
+      state.pendingMouseEvent = null
+      state.rafScheduled = false
+    }
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragState.current.isDragging) return
+
+      const state = dragState.current
+      state.mouseMoveCount++
+
+      // Store the latest mouse event
+      state.pendingMouseEvent = { clientX: e.clientX, clientY: e.clientY }
+
+      // Calculate distances to edges
+      const distanceToLeft = e.clientX
+      const distanceToRight = window.innerWidth - e.clientX
+      const distanceToTop = e.clientY
+      const distanceToBottom = window.innerHeight - e.clientY
+      const threshold = 50 // Updated to match useAutoScroll threshold
+
+      // Determine if near any edge
+      const nearLeftEdge = distanceToLeft < threshold
+      const nearRightEdge = distanceToRight < threshold
+      const nearTopEdge = distanceToTop < threshold
+      const nearBottomEdge = distanceToBottom < threshold
+      const nearAnyEdge = nearLeftEdge || nearRightEdge || nearTopEdge || nearBottomEdge
+
+      // DEBUG: Log mouse movement and edge proximity
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_mouse_move',
+        metadata: {
+          panelId,
+          moveCount: state.mouseMoveCount,
+          cursorPosition: { x: e.clientX, y: e.clientY },
+          distanceToEdges: {
+            left: distanceToLeft,
+            right: distanceToRight,
+            top: distanceToTop,
+            bottom: distanceToBottom
+          },
+          nearEdge: {
+            left: nearLeftEdge,
+            right: nearRightEdge,
+            top: nearTopEdge,
+            bottom: nearBottomEdge,
+            any: nearAnyEdge
+          },
+          threshold,
+          aboutToCheckAutoScroll: true,
+          dragState: {
+            pointerDelta: { ...state.pointerDelta },
+            autoScrollOffset: { ...state.autoScrollOffset }
+          }
+        }
+      })
+
+      // Check for auto-scroll when near edges
+      checkAutoScroll(e.clientX, e.clientY)
+
+      // Schedule RAF update if not already scheduled
+      if (!state.rafScheduled) {
+        state.rafScheduled = true
+        rafIdRef.current = requestAnimationFrame(updatePanelPosition)
+      }
+
       e.preventDefault()
     }
 
     const handleMouseUp = (e: MouseEvent) => {
       if (!dragState.current.isDragging) return
-      
+
+      // Cancel any pending RAF update
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
+      }
+
       // Stop auto-scroll when dragging ends
       stopAutoScroll()
-      
+
       dragState.current.isDragging = false
+      dragState.current.rafScheduled = false
+      dragState.current.pendingMouseEvent = null
       globalDraggingPanelId = null
       
       // Re-enable normal editor operations
@@ -1252,21 +1880,38 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
       // Get final position from current style
       const finalX = parseInt(panel.style.left, 10)
       const finalY = parseInt(panel.style.top, 10)
-      
+
+      // DEBUG: Log drag end with all position sources
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_end',
+        metadata: {
+          panelId,
+          finalPosition: { x: finalX, y: finalY },
+          renderPosition,
+          propPosition: position,
+          dragState: {
+            initialPosition: { ...dragState.current.initialPosition },
+            pointerDelta: { ...dragState.current.pointerDelta },
+            autoScrollOffset: { ...dragState.current.autoScrollOffset }
+          }
+        }
+      })
+
       // Update position in LayerManager if enabled
       // Update position through LayerManager
       if (layerManager.isEnabled) {
         layerManager.updateNode(panelId, { position: { x: finalX, y: finalY } })
       }
-      
+
       // Clean up global dragging state
       if (globalDraggingPanelId === panelId) {
         globalDraggingPanelId = null
       }
-      
+
       // Update render position to final position
       setRenderPosition({ x: finalX, y: finalY })
-      
+
       // Update position in both stores
       dataStore.update(panelId, { position: { x: finalX, y: finalY } })
       const branchData = branchesMap.get(panelId)
@@ -1274,7 +1919,27 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         branchData.position = { x: finalX, y: finalY }
         branchesMap.set(panelId, branchData)
       }
-      
+
+      // DEBUG: Log after updating stores
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'drag_end_stores_updated',
+        metadata: {
+          panelId,
+          finalPosition: { x: finalX, y: finalY },
+          dataStoreUpdated: true,
+          branchesMapUpdated: !!branchData
+        }
+      })
+
+      // Persist to database (with world-space coordinate conversion)
+      persistPanelUpdate({
+        panelId,
+        position: { x: finalX, y: finalY }
+      }).catch(err => {
+        console.error('[CanvasPanel] Panel persistence failed:', err)
+      })
+
       // Reset camera pan accumulation if using camera mode
       if (isCameraEnabled) {
         resetPanAccumulation()
@@ -1580,11 +2245,145 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
   }
 
   return (
-    <div
-      ref={panelRef}
-      className={`panel ${currentBranch.type}`}
-      id={`panel-${panelId}`}
-      data-panel-id={panelId}
+    <>
+      {/* Edge Glow Visual Affordance - Portal to document.body */}
+      {typeof window !== 'undefined' && edgeGlowEdges.length > 0 && createPortal(
+        <div className="auto-scroll-edge-glows">
+          {edgeGlowEdges.map(edge => (
+            <React.Fragment key={edge}>
+              {/* Edge glow line */}
+              <div
+                className={`auto-scroll-edge-glow auto-scroll-edge-glow-${edge.toLowerCase()}`}
+                style={{
+                  position: 'fixed',
+                  zIndex: 999999,
+                  pointerEvents: 'none',
+                  ...(edge === 'TOP' && {
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: '4px',
+                  background: '#fbbf24',
+                  boxShadow: '0 0 40px rgba(251, 191, 36, 1), 0 0 80px rgba(251, 191, 36, 0.8), 0 0 120px rgba(251, 191, 36, 0.6)'
+                }),
+                ...(edge === 'BOTTOM' && {
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: '4px',
+                  background: '#fbbf24',
+                  boxShadow: '0 0 40px rgba(251, 191, 36, 1), 0 0 80px rgba(251, 191, 36, 0.8), 0 0 120px rgba(251, 191, 36, 0.6)'
+                }),
+                ...(edge === 'LEFT' && {
+                  top: 0,
+                  left: 0,
+                  bottom: 0,
+                  width: '4px',
+                  background: '#fbbf24',
+                  boxShadow: '0 0 40px rgba(251, 191, 36, 1), 0 0 80px rgba(251, 191, 36, 0.8), 0 0 120px rgba(251, 191, 36, 0.6)'
+                }),
+                ...(edge === 'RIGHT' && {
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: '4px',
+                  background: '#fbbf24',
+                  boxShadow: '0 0 40px rgba(251, 191, 36, 1), 0 0 80px rgba(251, 191, 36, 0.8), 0 0 120px rgba(251, 191, 36, 0.6)'
+                })
+              }}
+            />
+
+            {/* Directional icon with text */}
+            <div
+              className="auto-scroll-icon"
+              style={{
+                position: 'fixed',
+                zIndex: 999999,
+                pointerEvents: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px',
+                background: 'rgba(0, 0, 0, 0.7)',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                opacity: 0.9,
+                ...(edge === 'TOP' && {
+                  top: '20px',
+                  left: '50%',
+                  transform: 'translateX(-50%)'
+                }),
+                ...(edge === 'BOTTOM' && {
+                  bottom: '20px',
+                  left: '50%',
+                  transform: 'translateX(-50%)'
+                }),
+                ...(edge === 'LEFT' && {
+                  left: '20px',
+                  top: '50%',
+                  transform: 'translateY(-50%)'
+                }),
+                ...(edge === 'RIGHT' && {
+                  right: '20px',
+                  top: '50%',
+                  transform: 'translateY(-50%)'
+                })
+              }}
+            >
+              {/* Arrow icon */}
+              <div style={{
+                fontSize: '24px',
+                color: '#fbbf24',
+                transform: edge === 'TOP' ? 'rotate(-90deg)' : edge === 'BOTTOM' ? 'rotate(90deg)' : edge === 'LEFT' ? 'rotate(180deg)' : 'rotate(0deg)'
+              }}>
+                →
+              </div>
+
+              {/* Text label */}
+              <div style={{
+                fontSize: '11px',
+                color: '#fff',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+                textShadow: '0 1px 2px rgba(0,0,0,0.5)'
+              }}>
+                Hold to scroll
+              </div>
+            </div>
+          </React.Fragment>
+          ))}
+          <style jsx>{`
+            @keyframes edgeGlowFadeIn {
+              from {
+                opacity: 0;
+                transform: scale(0.95);
+              }
+              to {
+                opacity: 1;
+                transform: scale(1);
+              }
+            }
+            @keyframes edgeGlowPulse {
+              0%, 100% {
+                opacity: 0.6;
+              }
+              50% {
+                opacity: 1;
+              }
+            }
+            .auto-scroll-edge-glow {
+              animation: edgeGlowFadeIn 0.3s ease-out forwards, edgeGlowPulse 1.5s ease-in-out infinite;
+            }
+          `}</style>
+        </div>,
+        document.body
+      )}
+
+      <div
+        ref={panelRef}
+        className={`panel ${currentBranch.type}`}
+        id={`panel-${panelId}`}
+        data-panel-id={panelId}
       onClick={() => {
         // Register this panel's editor as active when panel is clicked
         if (editorRef.current && onRegisterActiveEditor) {
@@ -1621,7 +2420,7 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
         panelHoverHideTimeoutRef.current = setTimeout(() => {
           // Only hide if no popups are visible
-          if (!isSidebarVisible && !isActionsVisible && !isSidebarHovering && !isActionsHovering) {
+          if (!isActionsVisible && !isActionsHovering) {
             setIsPanelHovered(false)
           }
           panelHoverHideTimeoutRef.current = null
@@ -1631,13 +2430,13 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         position: 'absolute',
         left: renderPosition.x + 'px',
         top: renderPosition.y + 'px',
-        width: '500px',
+        width: `${panelWidth}px`,
         height: `${panelHeight}px`,
         maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
-        boxShadow: isIsolated 
-          ? '0 8px 32px rgba(239, 68, 68, 0.25)' 
+        boxShadow: isIsolated
+          ? '0 8px 32px rgba(239, 68, 68, 0.25)'
           : '0 8px 32px rgba(0,0,0,0.15)',
         display: 'flex',
         flexDirection: 'column',
@@ -1728,9 +2527,9 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
             >
               {isIsolated ? '🔓' : '🔒'}
             </button>
-            
+
             {onClose && (
-              <button 
+              <button
                 className="panel-close"
                 onClick={onClose}
                 style={{
@@ -1760,47 +2559,105 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
                 ×
               </button>
             )}
-
-            {/* Drag Handle */}
-            <div
-              className="drag-indicator"
-              title="Drag to move panel"
-              style={{
-                width: '56px',
-                height: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: '6px',
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.6) 1px, transparent 1px)',
-                backgroundSize: '6px 6px',
-                backgroundPosition: '0 0',
-                cursor: 'move',
-              }}
-            />
           </div>
-          
+
+          {/* Type Selector - only for branch panels */}
+          {panelId !== 'main' && currentBranch.type && currentBranch.type !== 'main' && (
+            <TypeSelector
+              currentType={currentBranch.type as AnnotationType}
+              onTypeChange={handleTypeChange}
+              disabled={isChangingType}
+            />
+          )}
+
           {/* Panel Title */}
           {showPanelTitle && (
-            <div style={{ 
-              display: 'flex', 
-              alignItems: 'center', 
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
               gap: '10px',
-              opacity: headerControlsActive ? 0 : 1,
-              transition: 'opacity 0.2s ease, max-width 0.2s ease',
               overflow: 'hidden',
-              flex: headerControlsActive ? '0 0 auto' : 1,
-              maxWidth: headerControlsActive ? 0 : '100%',
-              width: headerControlsActive ? 0 : 'auto',
-              pointerEvents: headerControlsActive ? 'none' : 'auto',
+              flex: 1,
             }}>
-              <span style={{
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                maxWidth: '300px',
-              }}>{panelTitle}</span>
+              {isRenaming ? (
+                <input
+                  ref={titleInputRef}
+                  type="text"
+                  value={titleValue}
+                  disabled={isSaving}
+                  onChange={(e) => setTitleValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveRename()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      handleCancelRename()
+                    }
+                  }}
+                  onBlur={handleSaveRename}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    background: isSaving ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.9)',
+                    color: isSaving ? '#95a5a6' : '#2c3e50',
+                    border: '2px solid rgba(255,255,255,0.5)',
+                    borderRadius: '6px',
+                    padding: '4px 8px',
+                    fontSize: '16px',
+                    fontWeight: 600,
+                    outline: 'none',
+                    width: '250px',
+                    cursor: isSaving ? 'wait' : 'text',
+                    opacity: isSaving ? 0.7 : 1,
+                  }}
+                />
+              ) : (
+                <div className="group" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  maxWidth: '300px',
+                }}>
+                  <span style={{
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}>{panelTitle}</span>
+                  {/* Hover pencil icon for quick rename - inline with title */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleStartRename()
+                    }}
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    style={{
+                      background: 'rgba(255,255,255,0.2)',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '20px',
+                      height: '20px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      flexShrink: 0,
+                      color: 'white',
+                      padding: 0,
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                    }}
+                    title="Rename panel"
+                  >
+                    <Pencil size={11} />
+                  </button>
+                </div>
+              )}
               {isIsolated && currentBranch.type !== 'main' && (
                 <span style={{
                   background: '#ef4444',
@@ -1820,11 +2677,10 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         
         {/* Right side buttons */}
         <div
-          ref={actionsContainerRef}
-          style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: `${ACTION_GAP}px`,
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
             opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
             pointerEvents: headerControlsActive ? 'auto' : 'none',
@@ -1836,339 +2692,117 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         >
           {layerManager.isEnabled && (
             <>
-              <div
-                ref={registerActionRef('bringToFront')}
-                style={{
-                  display: hiddenActionIds.includes('bringToFront') ? 'none' : 'flex',
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (layerManager.isEnabled) {
+                    layerManager.bringToFront(panelId)
+                  }
                 }}
+                disabled={layerBandInfo?.isAtTop}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!layerBandInfo?.isAtTop) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Bring to front"
               >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (layerManager.isEnabled) {
-                      layerManager.bringToFront(panelId)
-                    }
-                  }}
-                  disabled={layerBandInfo?.isAtTop}
-                  style={{
-                    background: 'rgba(255,255,255,0.2)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: layerBandInfo?.isAtTop ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    color: 'white',
-                    fontSize: '12px',
-                    opacity: layerBandInfo?.isAtTop ? 0.5 : 1,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!layerBandInfo?.isAtTop) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                  }}
-                  title="Bring to front"
-                >
-                  ↑
-                </button>
-              </div>
+                ↑
+              </button>
 
-              <div
-                ref={registerActionRef('sendToBack')}
-                style={{
-                  display: hiddenActionIds.includes('sendToBack') ? 'none' : 'flex',
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (layerManager.isEnabled) {
+                    layerManager.sendToBack(panelId)
+                  }
                 }}
+                disabled={layerBandInfo?.isAtBottom}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s ease',
+                  color: 'white',
+                  fontSize: '12px',
+                  opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
+                }}
+                onMouseEnter={(e) => {
+                  if (!layerBandInfo?.isAtBottom) {
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                }}
+                title="Send to back"
               >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (layerManager.isEnabled) {
-                      layerManager.sendToBack(panelId)
-                    }
-                  }}
-                  disabled={layerBandInfo?.isAtBottom}
-                  style={{
-                    background: 'rgba(255,255,255,0.2)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    cursor: layerBandInfo?.isAtBottom ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease',
-                    color: 'white',
-                    fontSize: '12px',
-                    opacity: layerBandInfo?.isAtBottom ? 0.5 : 1,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!layerBandInfo?.isAtBottom) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                  }}
-                  title="Send to back"
-                >
-                  ↓
-                </button>
-              </div>
+                ↓
+              </button>
             </>
           )}
 
-          <div
-            ref={formatActionRef}
-            style={{
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
-            <FormatToolbar
-              editorRef={editorRef}
-              panelId={panelId}
-              hoverDelayMs={HEADER_BUTTON_HOVER_DELAY_MS}
-              collapsibleSelection={collapsibleSelection}
-            />
-          </div>
-
-          <div
-            ref={registerActionRef('resizeToggle')}
-            style={{
-              display: hiddenActionIds.includes('resizeToggle') ? 'none' : 'flex'
-            }}
-          >
-            <button
-              onClick={(event) => {
-                event.stopPropagation()
-                handleTogglePanelHeight()
-              }}
-              title={isPanelHeightExpanded ? 'Restore panel height' : 'Expand panel height'}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '4px 8px',
-                cursor: 'pointer',
-                fontSize: '11px',
-                color: 'white',
-                transition: 'all 0.2s ease',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                height: '24px',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14" />
-                <path d="M9 8l3-3 3 3" />
-                <path d="M9 16l3 3 3-3" />
-              </svg>
-              <span>{isPanelHeightExpanded ? 'Restore' : 'Resize'}</span>
-            </button>
-          </div>
-
-          <div
-            ref={registerActionRef('branches')}
-            style={{
-              display: hiddenActionIds.includes('branches') ? 'none' : 'flex'
-            }}
-          >
-            <button
-              id={`branches-button-${panelId}`}
-              onClick={handleBranchesButtonClick}
-              onMouseEnter={handleBranchesButtonMouseEnter}
-              onMouseLeave={handleBranchesButtonMouseLeave}
-              title={isSidebarVisible ? "Hide branches" : "Show branches"}
-              style={{
-                background: "rgba(255,255,255,0.2)",
-                border: "none",
-                borderRadius: "4px",
-                padding: "4px 8px",
-                cursor: "pointer",
-                fontSize: "11px",
-                color: "white",
-                transition: "all 0.2s ease",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                height: "24px",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-                <line x1="14" y1="8" x2="18" y2="8" />
-                <line x1="14" y1="12" x2="18" y2="12" />
-                <line x1="14" y1="16" x2="18" y2="16" />
-              </svg>
-              <span>Branches</span>
-            </button>
-          </div>
-
-          <div
-            ref={registerActionRef('actions')}
-            style={{
-              display: hiddenActionIds.includes('actions') ? 'none' : 'flex'
-            }}
-          >
-            <button
-              id={`actions-button-${panelId}`}
-              onClick={handleActionsButtonClick}
-              onMouseEnter={handleActionsButtonMouseEnter}
-              onMouseLeave={handleActionsButtonMouseLeave}
-              title="Create annotation"
-              style={{
-                background: "rgba(255,255,255,0.2)",
-                border: "none",
-                borderRadius: "4px",
-                padding: "4px 8px",
-                cursor: "pointer",
-                fontSize: "11px",
-                color: "white",
-                transition: "all 0.2s ease",
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                height: "24px",
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-              <span>Actions</span>
-            </button>
-          </div>
-
+          {/* Save As button */}
           <button
-            ref={overflowButtonRef}
-            onClick={(event) => {
-              event.stopPropagation()
-              setIsOverflowMenuOpen((prev) => !prev)
+            onClick={(e) => {
+              e.stopPropagation()
+              console.log('[SaveAs] Button clicked, current state:', showSaveAsDialog)
+              setShowSaveAsDialog(true)
+              console.log('[SaveAs] State set to true')
             }}
             style={{
-              display: hiddenActionIds.length > 0 ? 'flex' : 'none',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(255,255,255,0.15)',
+              background: 'rgba(255,255,255,0.2)',
               border: 'none',
               borderRadius: '4px',
-              padding: '4px 6px',
-              color: 'white',
+              padding: '4px 8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
               cursor: 'pointer',
-              fontSize: '14px',
-              height: '24px',
+              transition: 'all 0.2s ease',
+              color: 'white',
+              fontSize: '12px',
+              pointerEvents: 'auto', // Ensure button is always clickable
+              position: 'relative',
+              zIndex: 1,
             }}
-            title="More actions"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              console.log('[SaveAs] Button hovered')
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+            }}
+            title="Save branch as new note"
           >
-            »
+            <Save className="w-3 h-3" />
+            <span>Save As</span>
           </button>
-
-          {isOverflowMenuOpen && hiddenActionIds.length > 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 'calc(100% + 8px)',
-                right: 0,
-                background: 'rgba(22,22,22,0.95)',
-                color: 'white',
-                borderRadius: '8px',
-                padding: '8px 0',
-                boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
-                minWidth: '160px',
-                zIndex: Z_INDEX.DROPDOWN,
-              }}
-            >
-              {hiddenActionIds.map((actionId) => {
-                const isDisabled =
-                  (actionId === 'bringToFront' && layerBandInfo?.isAtTop) ||
-                  (actionId === 'sendToBack' && layerBandInfo?.isAtBottom)
-
-                return (
-                  <button
-                    key={actionId}
-                    onClick={(event) => {
-                      if (isDisabled) {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        return
-                      }
-
-                      if (actionId === 'bringToFront') {
-                        event.stopPropagation()
-                        if (layerManager.isEnabled) {
-                          layerManager.bringToFront(panelId)
-                        }
-                        closeOverflowMenu()
-                        return
-                      }
-                      if (actionId === 'sendToBack') {
-                        event.stopPropagation()
-                        if (layerManager.isEnabled) {
-                          layerManager.sendToBack(panelId)
-                        }
-                        closeOverflowMenu()
-                        return
-                      }
-                      if (actionId === 'branches') {
-                        handleBranchesButtonClick(event)
-                        return
-                      }
-                      if (actionId === 'actions') {
-                        handleActionsButtonClick(event)
-                        return
-                      }
-                      if (actionId === 'resizeToggle') {
-                        handleTogglePanelHeight()
-                        closeOverflowMenu()
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      width: '100%',
-                      padding: '8px 16px',
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'white',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      cursor: isDisabled ? 'not-allowed' : 'pointer',
-                      fontSize: '13px',
-                      textAlign: 'left',
-                      opacity: isDisabled ? 0.6 : 1,
-                    }}
-                  >
-                    <span>
-                      {actionId === 'bringToFront' && 'Bring to Front'}
-                      {actionId === 'sendToBack' && 'Send to Back'}
-                      {actionId === 'resizeToggle' && (isPanelHeightExpanded ? 'Restore Height' : 'Expand Height')}
-                      {actionId === 'branches' && 'Branches'}
-                      {actionId === 'actions' && 'Actions'}
-                    </span>
-                    {(actionId === 'bringToFront' && layerBandInfo?.isAtTop) && (
-                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
-                    )}
-                    {(actionId === 'sendToBack' && layerBandInfo?.isAtBottom) && (
-                      <span style={{ fontSize: '11px', opacity: 0.6 }}>Done</span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </div>
-        
+
       </div>
 
       {/* Check if isolated and show placeholder */}
@@ -2275,277 +2909,6 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
 
       </div>
       )}
-      
-      
-      {/* Branches Sidebar - Floating Panel */}
-      {(isSidebarVisible || isSidebarHovering) && (
-        <div 
-          id={`branches-sidebar-${panelId}`}
-          onMouseEnter={() => {
-            // Keep sidebar visible when hovering over it
-            if (sidebarTimeoutRef.current) {
-              clearTimeout(sidebarTimeoutRef.current)
-            }
-            if (sidebarShowTimeoutRef.current) {
-              clearTimeout(sidebarShowTimeoutRef.current)
-              sidebarShowTimeoutRef.current = null
-            }
-            setIsSidebarHovering(true)
-          }}
-          onMouseLeave={() => {
-            // Hide sidebar after delay when leaving
-            if (sidebarShowTimeoutRef.current) {
-              clearTimeout(sidebarShowTimeoutRef.current)
-              sidebarShowTimeoutRef.current = null
-            }
-            sidebarTimeoutRef.current = setTimeout(() => {
-              setIsSidebarHovering(false)
-            }, HEADER_BUTTON_HOVER_DELAY_MS)
-          }}
-          style={{
-          position: 'absolute',
-          top: '60px',
-          right: '10px',
-          width: '300px',
-          maxHeight: 'calc(100% - 80px)',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          borderRadius: '12px',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
-          padding: '20px',
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          zIndex: zIndex + 10,
-        }}>
-          <div style={{
-            color: 'white',
-            fontSize: '16px',
-            fontWeight: 600,
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}>
-            <span>📌</span> Branches ({allBranches.length})
-          </div>
-
-          {/* Filter buttons */}
-          <div style={{
-            display: 'flex',
-            gap: '6px',
-            marginBottom: '16px',
-            background: 'rgba(255,255,255,0.1)',
-            padding: '4px',
-            borderRadius: '8px',
-          }}>
-            {['all', 'note', 'explore', 'promote'].map(filter => (
-              <button
-                key={filter}
-                onClick={() => setActiveFilter(filter as typeof activeFilter)}
-                style={{
-                  flex: 1,
-                  padding: '6px 12px',
-                  border: 'none',
-                  borderRadius: '6px',
-                  background: activeFilter === filter ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-                  color: 'white',
-                  fontSize: '12px',
-                  fontWeight: activeFilter === filter ? 600 : 500,
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  textTransform: 'capitalize',
-                }}
-                onMouseEnter={(e) => {
-                  if (activeFilter !== filter) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (activeFilter !== filter) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)'
-                  }
-                }}
-              >
-                {filter}
-              </button>
-            ))}
-          </div>
-
-          {/* Branch items */}
-          <div style={{ flex: 1 }}>
-            {filteredBranches.length === 0 ? (
-              <div style={{
-                color: 'rgba(255,255,255,0.7)',
-                textAlign: 'center',
-                fontSize: '14px',
-                marginTop: '20px',
-              }}>
-                No {activeFilter !== 'all' ? `${activeFilter} ` : ''}branches yet
-              </div>
-            ) : (
-              filteredBranches.map((branchId: string) => {
-                // Try both stores for branch data
-                const providerChild = branchesMap.get(branchId)
-                const storeChild = dataStore.get(branchId)
-                const childBranch = providerChild || storeChild
-                
-                if (!childBranch) {
-                  return null
-                }
-
-                return (
-                  <div
-                    key={branchId}
-                    className={`branch-item ${childBranch.type}`}
-                    style={{
-                      background: 'rgba(255,255,255,0.95)',
-                      borderRadius: '12px',
-                      padding: '16px',
-                      marginBottom: '12px',
-                      transition: 'all 0.3s ease',
-                      borderLeft: `4px solid ${
-                        childBranch.type === 'note' ? '#2196f3' :
-                        childBranch.type === 'explore' ? '#ff9800' : '#4caf50'
-                      }`,
-                      userSelect: 'none',
-                      position: 'relative',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = 'translateX(4px)'
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)'
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = 'translateX(0)'
-                      e.currentTarget.style.boxShadow = 'none'
-                    }}
-                  >
-                    {/* Branch content - clickable area */}
-                    <div 
-                      style={{
-                        flex: 1,
-                        cursor: 'pointer',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleBranchClick(branchId)
-                      }}
-                    >
-                      <div style={{
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        color: '#2c3e50',
-                        marginBottom: '4px',
-                      }}>
-                        {childBranch.title}
-                      </div>
-                      <div style={{
-                        fontSize: '12px',
-                        color: '#7f8c8d',
-                        lineHeight: 1.4,
-                      }}>
-                        {childBranch.originalText || 'Click to open'}
-                      </div>
-                    </div>
-                    
-                    {/* Eye/View button */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        // Clear any preview timeout to prevent conflicts
-                        if (previewTimeoutRef.current) {
-                          clearTimeout(previewTimeoutRef.current)
-                        }
-                        // Clear preview state since we're opening permanently
-                        setPreviewBranchId(null)
-                        // Click opens the panel permanently
-                        handleBranchClick(branchId)
-                      }}
-                      onMouseEnter={(e) => {
-                        e.stopPropagation()
-                        // Clear any existing timeout
-                        if (previewTimeoutRef.current) {
-                          clearTimeout(previewTimeoutRef.current)
-                        }
-                        // Only show preview if not already clicked/opened
-                        // Check if panel already exists
-                        const panelExists = document.querySelector(`[data-panel-id="${branchId}"]`)
-                        if (!panelExists) {
-                          // Show preview after short delay
-                          previewTimeoutRef.current = setTimeout(() => {
-                            setPreviewBranchId(branchId)
-                            
-                            // Get position for the preview panel (reuse same logic)
-                            const parentPosition = calculateBranchPanelPosition()
-                            
-                            // Dispatch event to create temporary preview panel
-                            window.dispatchEvent(new CustomEvent('preview-panel', { 
-                              detail: { 
-                                panelId: branchId,
-                                parentPanelId: panelId,
-                                parentPosition: parentPosition,
-                                isPreview: true
-                              },
-                              bubbles: true 
-                            }))
-                          }, 300) // 300ms delay before showing preview
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        e.stopPropagation()
-                        // Clear timeout
-                        if (previewTimeoutRef.current) {
-                          clearTimeout(previewTimeoutRef.current)
-                        }
-                        // Only remove preview if it's actually a preview (not a permanent panel)
-                        if (previewBranchId === branchId) {
-                          setPreviewBranchId(null)
-                          // Dispatch event to remove preview panel
-                          window.dispatchEvent(new CustomEvent('remove-preview-panel', { 
-                            detail: { panelId: branchId },
-                            bubbles: true 
-                          }))
-                        }
-                      }}
-                      style={{
-                        background: 'transparent',
-                        border: '1px solid #ddd',
-                        borderRadius: '50%',
-                        width: '32px',
-                        height: '32px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        color: '#7f8c8d',
-                      }}
-                      onMouseOver={(e) => {
-                        e.currentTarget.style.background = 'rgba(0,0,0,0.05)'
-                        e.currentTarget.style.borderColor = '#999'
-                        e.currentTarget.style.color = '#2c3e50'
-                      }}
-                      onMouseOut={(e) => {
-                        e.currentTarget.style.background = 'transparent'
-                        e.currentTarget.style.borderColor = '#ddd'
-                        e.currentTarget.style.color = '#7f8c8d'
-                      }}
-                      title="Preview branch (hover) / Open (click)"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    </button>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Connection points */}
       {!isMainPanel && (
@@ -2574,6 +2937,239 @@ export function CanvasPanel({ panelId, branch, position, onClose, noteId }: Canv
         border: '3px solid white',
         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
       }} />
+
     </div>
+
+      {/* Save As Dialog - EXACT copy from notes-explorer (no modifications) */}
+      {showSaveAsDialog && typeof window !== 'undefined' && (() => {
+        console.log('[SaveAs] Dialog rendering, showSaveAsDialog =', showSaveAsDialog)
+        console.log('[SaveAs] document.body exists:', !!document.body)
+        setTimeout(() => {
+          const overlays = document.querySelectorAll('[style*="position: fixed"]')
+          console.log('[SaveAs] Found fixed position elements:', overlays.length)
+          overlays.forEach((el, i) => {
+            const style = window.getComputedStyle(el)
+            console.log(`[SaveAs] Overlay ${i}:`, {
+              element: el,
+              zIndex: style.zIndex,
+              display: style.display,
+              position: style.position,
+              visibility: style.visibility,
+              opacity: style.opacity
+            })
+          })
+        }, 100)
+        return createPortal(
+          <div
+            onClick={(e) => {
+              console.log('[SaveAs] Overlay clicked')
+              if (e.target === e.currentTarget) {
+                setShowSaveAsDialog(false)
+              }
+            }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 999999,
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#1f2937',
+                borderRadius: '8px',
+                padding: '24px',
+                width: '384px',
+                maxWidth: '90vw',
+                position: 'relative',
+                zIndex: 1000000,
+              }}
+              onMouseDown={(e) => {
+                // Prevent overlay click from closing when clicking inside dialog
+                e.stopPropagation()
+              }}
+            >
+              <h2 className="text-xl font-semibold mb-4 text-white">Save Branch As Note</h2>
+
+            {/* Note Name Input */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Note Name
+              </label>
+              <input
+                type="text"
+                value={saveAsNoteName}
+                onChange={(e) => setSaveAsNoteName(e.target.value)}
+                placeholder="Enter note name..."
+                className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                autoFocus
+              />
+            </div>
+
+            {/* Folder Selector - Phase 3 Enhanced */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Save to Folder
+              </label>
+
+              {!saveAsShowCustomFolder ? (
+                <>
+                  <select
+                    value={saveAsSelectedFolderId || 'create-new'}
+                    onChange={async (e) => {
+                      const value = e.target.value
+                      if (value === 'create-new') {
+                        setSaveAsIsCreatingFolder(true)
+                        setSaveAsShowCustomFolder(false)
+                      } else if (value === 'type-custom') {
+                        setSaveAsShowCustomFolder(true)
+                        setSaveAsIsCreatingFolder(false)
+                      } else {
+                        setSaveAsSelectedFolderId(value)
+                        setSaveAsIsCreatingFolder(false)
+                        setSaveAsShowCustomFolder(false)
+                      }
+                    }}
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Select a folder...</option>
+                    <option value="create-new" className="font-semibold text-indigo-400">
+                      + Create New Folder...
+                    </option>
+                    <option value="type-custom" className="font-semibold text-green-400">
+                      ✏️ Type Custom Path...
+                    </option>
+                    <optgroup label="Existing Folders">
+                      {saveAsAvailableFolders.map(folder => {
+                        // Create visual hierarchy with indentation
+                        const indent = '　'.repeat(folder.depth || 0)
+                        const displayName = folder.path === '/knowledge-base'
+                          ? 'Knowledge Base'
+                          : folder.name
+
+                        return (
+                          <option key={folder.id} value={folder.id}>
+                            {indent}{(folder.depth || 0) > 0 ? '└─ ' : ''}{displayName}
+                          </option>
+                        )
+                      })}
+                    </optgroup>
+                  </select>
+
+                  {/* New Folder Name Input */}
+                  {saveAsIsCreatingFolder && (
+                    <div className="mt-3 space-y-2">
+                      <input
+                        type="text"
+                        value={saveAsNewFolderName}
+                        onChange={(e) => setSaveAsNewFolderName(e.target.value)}
+                        placeholder="Enter folder name..."
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        autoFocus
+                      />
+                      <select
+                        value={saveAsSelectedFolderId || ''}
+                        onChange={(e) => setSaveAsSelectedFolderId(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                      >
+                        <option value="">Create under Knowledge Base (root)</option>
+                        {saveAsAvailableFolders.map(folder => (
+                          <option key={folder.id} value={folder.id}>
+                            Create under: {folder.path.replace('/knowledge-base/', '') || 'Knowledge Base'}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={async () => {
+                          if (saveAsNewFolderName.trim()) {
+                            const folder = await createSaveAsFolder(saveAsNewFolderName.trim(), saveAsSelectedFolderId || undefined)
+                            if (folder) {
+                              setSaveAsIsCreatingFolder(false)
+                              setSaveAsNewFolderName("")
+                              // Re-fetch folders to update the list
+                              await fetchSaveAsFolders()
+                            }
+                          }
+                        }}
+                        className="w-full px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium"
+                      >
+                        Create Folder
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                /* Type-to-Create Pattern */
+                <div>
+                  <input
+                    type="text"
+                    value={saveAsCustomFolderInput}
+                    onChange={(e) => setSaveAsCustomFolderInput(e.target.value)}
+                    placeholder="e.g., Projects/Web/MyApp or just MyFolder"
+                    className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setSaveAsShowCustomFolder(false)
+                        setSaveAsCustomFolderInput("")
+                      }}
+                      className="text-xs text-gray-400 hover:text-gray-300"
+                    >
+                      ← Back to dropdown
+                    </button>
+                    {saveAsCustomFolderInput && !saveAsAvailableFolders.some(f =>
+                      f.path.endsWith('/' + saveAsCustomFolderInput) ||
+                      f.name === saveAsCustomFolderInput
+                    ) && (
+                      <span className="text-xs text-green-400">
+                        Will create: {saveAsCustomFolderInput}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {saveAsSelectedFolderId && !saveAsIsCreatingFolder && !saveAsShowCustomFolder && (
+                <p className="mt-2 text-xs text-gray-400">
+                  Will be saved to: {saveAsAvailableFolders.find(f => f.id === saveAsSelectedFolderId)?.path}
+                </p>
+              )}
+            </div>
+
+            {/* Dialog Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowSaveAsDialog(false)
+                  setSaveAsNoteName("")
+                  setSaveAsSelectedFolderId(null)
+                  setSaveAsAvailableFolders([]) // Clear folders to prevent stale data
+                  setSaveAsIsCreatingFolder(false)
+                  setSaveAsNewFolderName("")
+                  setSaveAsShowCustomFolder(false)
+                  setSaveAsCustomFolderInput("")
+                }}
+                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createSaveAsNote}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
+              >
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+        )
+      })()}
+    </>
   )
 } 
