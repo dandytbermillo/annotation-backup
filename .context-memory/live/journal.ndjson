@@ -324,3 +324,7 @@
 {"ts":"2025-10-14T00:25:53.755Z","type":"commit","sha":"180221496b02329fb36fc989d74e069d6d1dfe17","files_changed":60,"message":"added canvas state persistence"}
 {"time":"2025-10-14T01:58:48Z","note":"Updated components/annotation-canvas-modern.tsx to convert plain-mode parentPosition to world coordinates before persisting branch panels."}
 {"ts":"2025-10-14T02:08:51.093Z","type":"commit","sha":"b07d7b0799654b0d83ca76d8851226f6cc14757e","files_changed":20,"message":"canvas state persistence working abit"}
+{time:2025-10-14T18:43:03Z,note:Gated WidgetStudioConnections behind plain-mode hydration completion to restore connection lines after reload.}
+{time:2025-10-14T18:53:58Z,note:Reintroduced branch/dataStore version tracking in WidgetStudioConnections and passed branchVersion from canvas to restore post-reload connection computation.}
+{time:2025-10-14T19:08:53Z,note:Replaced WidgetStudioConnections with version that deduplicates parent/child links and listens for plain dataStore events, mirroring Phase 2 implementation.}
+{time:2025-10-14T19:40:45Z,note:Merged hydration panel data with existing store entries to preserve parentId before connections render.}

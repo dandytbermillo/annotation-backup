@@ -1,11 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
-
+import { useMemo, useEffect, useState } from "react"
 import { useCanvas } from "./canvas-context"
 import { CanvasItem, isPanel } from "@/types/canvas-items"
 import { UnifiedProvider } from "@/lib/provider-switcher"
-import { isPlainModeActive } from "@/lib/collab-mode"
+import { getPlainProvider } from "@/lib/provider-switcher"
 
 interface WidgetStudioConnectionsProps {
   canvasItems: CanvasItem[]
@@ -35,98 +34,91 @@ const PANEL_DEFAULT_HEIGHT = 600
  * - Clean, minimal styling
  * - Hover effects
  */
-export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: WidgetStudioConnectionsProps) {
+export function WidgetStudioConnections({ canvasItems, branchVersion }: WidgetStudioConnectionsProps) {
   const { dataStore } = useCanvas()
-  const isPlainMode = isPlainModeActive()
+  const plainProvider = getPlainProvider()
+  const isPlainMode = !!plainProvider
 
-  // Force recomputation when the plain data store mutates while the reference stays stable.
+  // Force re-render when dataStore changes
+  // This solves the issue where connections don't appear after reload because
+  // the branch loader updates dataStore with parentId AFTER this component renders
   const [dataStoreVersion, setDataStoreVersion] = useState(0)
-  const scheduleRef = useRef(false)
 
   useEffect(() => {
-    if (!isPlainMode || !dataStore?.on) return
+    if (!isPlainMode) return
 
-    const handleChange = () => {
-      if (scheduleRef.current) return
-      scheduleRef.current = true
+    console.log('[WidgetStudioConnections] Setting up dataStore listeners')
 
-      const run = () => {
-        scheduleRef.current = false
-        setDataStoreVersion((version) => version + 1)
-      }
-
-      if (typeof queueMicrotask === "function") {
-        queueMicrotask(run)
-      } else {
-        Promise.resolve().then(run).catch(() => {
-          scheduleRef.current = false
-        })
-      }
+    const handleDataStoreChange = (key: string) => {
+      console.log('[WidgetStudioConnections] DataStore changed:', key)
+      setDataStoreVersion(prev => {
+        const next = prev + 1
+        console.log('[WidgetStudioConnections] Incrementing version:', prev, '->', next)
+        return next
+      })
     }
 
-    dataStore.on("set", handleChange)
-    dataStore.on("update", handleChange)
-    dataStore.on("delete", handleChange)
+    dataStore.on('set', handleDataStoreChange)
+    dataStore.on('update', handleDataStoreChange)
+    dataStore.on('delete', handleDataStoreChange)
 
     return () => {
-      scheduleRef.current = false
-      dataStore.off("set", handleChange)
-      dataStore.off("update", handleChange)
-      dataStore.off("delete", handleChange)
+      console.log('[WidgetStudioConnections] Cleaning up dataStore listeners')
+      dataStore.off('set', handleDataStoreChange)
+      dataStore.off('update', handleDataStoreChange)
+      dataStore.off('delete', handleDataStoreChange)
     }
   }, [dataStore, isPlainMode])
 
-  const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])
-
-  const branches = useMemo(() => {
-    return (isPlainMode
-      ? dataStore
-      : UnifiedProvider.getInstance().getBranchesMap()) as {
-      get: (key: string) => any
+  const panels = canvasItems.filter(isPanel)
+  const panelMap = new Map<string, CanvasItem>()
+  panels.forEach((panel) => {
+    if (panel.panelId) {
+      panelMap.set(panel.panelId, panel)
     }
-  }, [dataStore, isPlainMode])
+  })
+
+  const branches = isPlainMode
+    ? dataStore
+    : UnifiedProvider.getInstance().getBranchesMap()
 
   const connections: Connection[] = useMemo(() => {
-    if (panels.length === 0) {
-      return []
-    }
-
-    const panelMap = new Map<string, CanvasItem>()
-    panels.forEach((panel) => {
-      if (panel.panelId) {
-        panelMap.set(panel.panelId, panel)
-      }
-    })
-
-    const seen = new Set<string>()
+    console.log('[WidgetStudioConnections] Recalculating connections. dataStoreVersion:', dataStoreVersion)
     const result: Connection[] = []
 
-    const addConnection = (parentId: string, childId: string) => {
-      const key = `${parentId}::${childId}`
-      if (seen.has(key)) return
+    panels.forEach((panel) => {
+      const panelId = panel.panelId
+      if (!panelId) return
+      const branch = branches.get(panelId)
 
-      const parentPanel = panelMap.get(parentId)
-      const childPanel = panelMap.get(childId)
-      if (!parentPanel || !childPanel) return
+      console.log('[WidgetStudioConnections] Panel:', panelId, 'branch:', branch ? 'found' : 'NOT FOUND', 'parentId:', branch?.parentId)
 
-      const parentBranch = branches.get(parentId)
-      const childBranch = branches.get(childId)
-      if (!parentBranch || !childBranch) return
+      if (!branch || !branch.parentId) return
 
-      const parentPos =
-        parentPanel.position ??
-        parentBranch?.worldPosition ??
-        parentBranch?.position
-      const childPos =
-        childPanel.position ??
-        childBranch?.worldPosition ??
-        childBranch?.position
+      const parentPanel = panelMap.get(branch.parentId)
+      if (!parentPanel) {
+        console.log('[WidgetStudioConnections] Parent panel NOT FOUND for:', branch.parentId)
+        return
+      }
+
+      const parentBranch = branches.get(branch.parentId)
+      if (!parentBranch) {
+        console.log('[WidgetStudioConnections] Parent branch NOT FOUND for:', branch.parentId)
+        return
+      }
+
+      // Calculate connection points (always right edge to left edge)
+      const parentPos = parentBranch?.worldPosition || parentBranch?.position || parentPanel.position
+      const childPos = branch?.worldPosition || branch?.position || panel.position
+
       if (!parentPos || !childPos) return
 
       const parentWidth = parentPanel.dimensions?.width ?? PANEL_DEFAULT_WIDTH
       const parentHeight = parentPanel.dimensions?.height ?? PANEL_DEFAULT_HEIGHT
-      const childHeight = childPanel.dimensions?.height ?? PANEL_DEFAULT_HEIGHT
+      const childHeight = panel.dimensions?.height ?? PANEL_DEFAULT_HEIGHT
 
+      // Always connect from right edge of parent to left edge of child
+      // Vertically centered on each panel
       const from: ConnectionPoint = {
         x: parentPos.x + parentWidth,
         y: parentPos.y + parentHeight / 2,
@@ -138,80 +130,19 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
       }
 
       result.push({
-        id: key,
+        id: `${branch.parentId}-${panelId}`,
         from,
         to,
-        type: normalizeType(childBranch.type),
-        label: undefined,
+        type: normalizeType(branch.type),
+        label: undefined, // Can add labels later
       })
-      seen.add(key)
-    }
 
-    panels.forEach((panel) => {
-      const panelId = panel.panelId
-      if (!panelId) return
-
-      const branch = branches.get(panelId)
-      if (!branch) {
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] branch not found", { panelId })
-        }
-        return
-      }
-
-      if (branch.parentId) {
-        addConnection(branch.parentId, panelId)
-      } else if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.debug("[WidgetStudioConnections] branch missing parentId", {
-          panelId,
-          branchSnapshot: { ...branch },
-        })
-      }
-
-      panels.forEach((maybeParent) => {
-        const candidateId = maybeParent.panelId
-        if (!candidateId || candidateId === panelId) return
-
-        const candidateBranch = branches.get(candidateId)
-        const childIds = Array.isArray(candidateBranch?.branches)
-          ? (candidateBranch.branches as string[])
-          : []
-
-        if (childIds.includes(panelId)) {
-          addConnection(candidateId, panelId)
-        } else if (
-          process.env.NODE_ENV !== "production" &&
-          childIds.length > 0
-        ) {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] child not listed under parent", {
-            parentId: candidateId,
-            panelId,
-            childIds,
-            parentSnapshot: { ...candidateBranch },
-          })
-        }
-      })
+      console.log('[WidgetStudioConnections] Created connection:', panelId, '<-', branch.parentId)
     })
 
-    if (process.env.NODE_ENV !== "production") {
-      // Aid debugging in dev builds: surface connection recomputations.
-      // eslint-disable-next-line no-console
-      console.debug(
-        "[WidgetStudioConnections] recomputed connections",
-        {
-          count: result.length,
-          panels: panels.length,
-          branchVersion,
-          dataStoreVersion,
-        },
-      )
-    }
-
+    console.log('[WidgetStudioConnections] Total connections:', result.length)
     return result
-  }, [branches, panels, branchVersion, dataStoreVersion])
+  }, [panels, branches, panelMap, branchVersion, dataStoreVersion])
 
   return (
     <svg

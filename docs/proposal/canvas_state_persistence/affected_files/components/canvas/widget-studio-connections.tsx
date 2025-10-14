@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-
 import { useCanvas } from "./canvas-context"
 import { CanvasItem, isPanel } from "@/types/canvas-items"
 import { UnifiedProvider } from "@/lib/provider-switcher"
@@ -35,12 +34,13 @@ const PANEL_DEFAULT_HEIGHT = 600
  * - Clean, minimal styling
  * - Hover effects
  */
-export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: WidgetStudioConnectionsProps) {
+export function WidgetStudioConnections({ canvasItems, branchVersion }: WidgetStudioConnectionsProps) {
   const { dataStore } = useCanvas()
   const isPlainMode = isPlainModeActive()
 
   // Force recomputation when the plain data store mutates while the reference stays stable.
   const [dataStoreVersion, setDataStoreVersion] = useState(0)
+
   const scheduleRef = useRef(false)
 
   useEffect(() => {
@@ -49,61 +49,42 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
     const handleChange = () => {
       if (scheduleRef.current) return
       scheduleRef.current = true
-
-      const run = () => {
+      queueMicrotask(() => {
         scheduleRef.current = false
         setDataStoreVersion((version) => version + 1)
-      }
-
-      if (typeof queueMicrotask === "function") {
-        queueMicrotask(run)
-      } else {
-        Promise.resolve().then(run).catch(() => {
-          scheduleRef.current = false
-        })
-      }
+      })
     }
 
-    dataStore.on("set", handleChange)
-    dataStore.on("update", handleChange)
-    dataStore.on("delete", handleChange)
+    dataStore.on('set', handleChange)
+    dataStore.on('update', handleChange)
+    dataStore.on('delete', handleChange)
 
     return () => {
-      scheduleRef.current = false
-      dataStore.off("set", handleChange)
-      dataStore.off("update", handleChange)
-      dataStore.off("delete", handleChange)
+      dataStore.off('set', handleChange)
+      dataStore.off('update', handleChange)
+      dataStore.off('delete', handleChange)
     }
   }, [dataStore, isPlainMode])
 
-  const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])
-
-  const branches = useMemo(() => {
-    return (isPlainMode
-      ? dataStore
-      : UnifiedProvider.getInstance().getBranchesMap()) as {
-      get: (key: string) => any
+  const panels = canvasItems.filter(isPanel)
+  const panelMap = new Map<string, CanvasItem>()
+  panels.forEach((panel) => {
+    if (panel.panelId) {
+      panelMap.set(panel.panelId, panel)
     }
-  }, [dataStore, isPlainMode])
+  })
+
+  const branches = isPlainMode
+    ? dataStore
+    : UnifiedProvider.getInstance().getBranchesMap()
 
   const connections: Connection[] = useMemo(() => {
-    if (panels.length === 0) {
-      return []
-    }
-
-    const panelMap = new Map<string, CanvasItem>()
-    panels.forEach((panel) => {
-      if (panel.panelId) {
-        panelMap.set(panel.panelId, panel)
-      }
-    })
-
-    const seen = new Set<string>()
     const result: Connection[] = []
+    const added = new Set<string>()
 
     const addConnection = (parentId: string, childId: string) => {
       const key = `${parentId}::${childId}`
-      if (seen.has(key)) return
+      if (added.has(key)) return
 
       const parentPanel = panelMap.get(parentId)
       const childPanel = panelMap.get(childId)
@@ -113,14 +94,8 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
       const childBranch = branches.get(childId)
       if (!parentBranch || !childBranch) return
 
-      const parentPos =
-        parentPanel.position ??
-        parentBranch?.worldPosition ??
-        parentBranch?.position
-      const childPos =
-        childPanel.position ??
-        childBranch?.worldPosition ??
-        childBranch?.position
+      const parentPos = parentBranch.worldPosition || parentBranch.position || parentPanel.position
+      const childPos = childBranch.worldPosition || childBranch.position || childPanel.position
       if (!parentPos || !childPos) return
 
       const parentWidth = parentPanel.dimensions?.width ?? PANEL_DEFAULT_WIDTH
@@ -144,74 +119,35 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
         type: normalizeType(childBranch.type),
         label: undefined,
       })
-      seen.add(key)
+      added.add(key)
     }
 
     panels.forEach((panel) => {
       const panelId = panel.panelId
       if (!panelId) return
-
       const branch = branches.get(panelId)
-      if (!branch) {
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] branch not found", { panelId })
-        }
-        return
-      }
+      if (!branch) return
 
+      // Primary source: explicit parentId on branch
       if (branch.parentId) {
         addConnection(branch.parentId, panelId)
-      } else if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.debug("[WidgetStudioConnections] branch missing parentId", {
-          panelId,
-          branchSnapshot: { ...branch },
-        })
       }
 
+      // Secondary source: parent branch listing this id in its branches array
       panels.forEach((maybeParent) => {
-        const candidateId = maybeParent.panelId
-        if (!candidateId || candidateId === panelId) return
-
-        const candidateBranch = branches.get(candidateId)
-        const childIds = Array.isArray(candidateBranch?.branches)
-          ? (candidateBranch.branches as string[])
-          : []
-
-        if (childIds.includes(panelId)) {
-          addConnection(candidateId, panelId)
-        } else if (
-          process.env.NODE_ENV !== "production" &&
-          childIds.length > 0
-        ) {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] child not listed under parent", {
-            parentId: candidateId,
-            panelId,
-            childIds,
-            parentSnapshot: { ...candidateBranch },
-          })
+        const maybeParentId = maybeParent.panelId
+        if (!maybeParentId) return
+        if (maybeParentId === panelId) return
+        const maybeParentBranch = branches.get(maybeParentId)
+        const childIds = Array.isArray(maybeParentBranch?.branches) ? maybeParentBranch?.branches as string[] : []
+        if (childIds?.includes(panelId)) {
+          addConnection(maybeParentId, panelId)
         }
       })
     })
 
-    if (process.env.NODE_ENV !== "production") {
-      // Aid debugging in dev builds: surface connection recomputations.
-      // eslint-disable-next-line no-console
-      console.debug(
-        "[WidgetStudioConnections] recomputed connections",
-        {
-          count: result.length,
-          panels: panels.length,
-          branchVersion,
-          dataStoreVersion,
-        },
-      )
-    }
-
     return result
-  }, [branches, panels, branchVersion, dataStoreVersion])
+  }, [panels, branches, panelMap, branchVersion, dataStoreVersion])
 
   return (
     <svg

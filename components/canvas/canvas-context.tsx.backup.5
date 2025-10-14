@@ -327,14 +327,6 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: Can
             else if (raw.startsWith('branch-')) parentId = raw
             else parentId = `branch-${raw}`
           }
-
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[CanvasProvider] branch loader raw parent', {
-              branchId: uiId,
-              dbParentId: branch.parentId,
-              normalizedParentId: parentId,
-            })
-          }
           
           const metadata = branch.metadata || {}
           const cachedBranch = snapshotMap.get(uiId) as Record<string, any> | undefined

@@ -470,22 +470,19 @@ export function useCanvasHydration(options: HydrationOptions) {
           }
         })
 
-        // Update DataStore (preserve existing fields like parentId injected by branch loader)
+        // Update DataStore
         if (dataStore) {
-          const existing = dataStore.get(panel.id)
-          dataStore.set(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          dataStore.set(panel.id, panelData)
         }
 
-        // Update branchesMap (same merge semantics as dataStore for consistency)
+        // Update branchesMap
         if (branchesMap) {
-          const existing = branchesMap.get(panel.id)
-          branchesMap.set(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          branchesMap.set(panel.id, panelData)
         }
 
         // Update LayerManager
         if (layerManager) {
-          const existing = layerManager.getNode(panel.id)
-          layerManager.updateNode(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          layerManager.updateNode(panel.id, panelData)
         }
 
         appliedCount++

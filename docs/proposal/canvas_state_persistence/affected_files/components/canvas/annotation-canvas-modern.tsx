@@ -1694,7 +1694,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             }}
           >
             {/* Connection Lines - Widget Studio Style */}
-            {canvasState.showConnections && (!isPlainModeActive() || hydrationStatus.success) && (
+            {canvasState.showConnections && (
               <WidgetStudioConnections
                 key={canvasContextState.lastUpdate ?? 0}
                 canvasItems={canvasItems}
