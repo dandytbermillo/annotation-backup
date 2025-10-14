@@ -109,17 +109,28 @@ interface CanvasProviderProps {
   children: ReactNode
   noteId?: string
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
+  externalDataStore?: DataStore
+  externalEvents?: EventEmitter
 }
 
-export function CanvasProvider({ children, noteId, onRegisterActiveEditor }: CanvasProviderProps) {
+export function CanvasProvider({ children, noteId, onRegisterActiveEditor, externalDataStore, externalEvents }: CanvasProviderProps) {
   const [state, dispatch] = useReducer(canvasReducer, initialState)
   
   // Create stable instances that survive re-renders
   const dataStoreRef = useRef<DataStore>()
   const eventsRef = useRef<EventEmitter>()
 
-  if (!dataStoreRef.current) dataStoreRef.current = new DataStore()
-  if (!eventsRef.current) eventsRef.current = new EventEmitter()
+  if (externalDataStore) {
+    dataStoreRef.current = externalDataStore
+  } else if (!dataStoreRef.current) {
+    dataStoreRef.current = new DataStore()
+  }
+
+  if (externalEvents) {
+    eventsRef.current = externalEvents
+  } else if (!eventsRef.current) {
+    eventsRef.current = new EventEmitter()
+  }
 
   const dataStore = dataStoreRef.current
   const events = eventsRef.current

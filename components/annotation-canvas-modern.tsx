@@ -36,6 +36,7 @@ import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { useLayerManager } from "@/lib/hooks/use-layer-manager"
+import { useCanvasWorkspace } from "./canvas/canvas-workspace-context"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -176,16 +177,37 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     enabled: true
   })
 
+  const initialHydrationRef = useRef(true)
+  const lastHydratedNoteRef = useRef<string | null>(null)
+  const initialCanvasSetupRef = useRef(false)
+
   // Create CanvasItems from hydrated panels
   useEffect(() => {
     if (hydrationStatus.success && hydrationStatus.panels.length > 0) {
+      const isInitialHydration = initialHydrationRef.current
+      const isSameNote = lastHydratedNoteRef.current === noteId
+
+      const panelsToHydrate = isInitialHydration || !isSameNote
+        ? (isInitialHydration ? hydrationStatus.panels : hydrationStatus.panels.filter(panel => panel.id === 'main'))
+        : hydrationStatus.panels.filter(panel => panel.id === 'main')
+
       debugLog({
         component: 'AnnotationCanvas',
         action: 'creating_canvas_items_from_hydration',
-        metadata: { panelCount: hydrationStatus.panels.length }
+        metadata: {
+          panelCount: hydrationStatus.panels.length,
+          panelsHydrated: panelsToHydrate.map(panel => panel.id),
+          mode: isInitialHydration ? 'initial_restore' : (isSameNote ? 'same_note_refresh' : 'note_switch')
+        }
       })
 
-      const newItems = hydrationStatus.panels.map(panel => {
+      if (panelsToHydrate.length === 0) {
+        initialHydrationRef.current = false
+        lastHydratedNoteRef.current = noteId
+        return
+      }
+
+      const newItems = panelsToHydrate.map(panel => {
         // Use annotation type from metadata for correct header color
         const panelType = (panel.metadata?.annotationType as PanelType) || 'note'
 
@@ -226,8 +248,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
         return prev
       })
+
+      initialHydrationRef.current = false
+      lastHydratedNoteRef.current = noteId
     }
-  }, [hydrationStatus.success, hydrationStatus.panels])
+  }, [hydrationStatus.success, hydrationStatus.panels, noteId])
 
   // Enable camera persistence (debounced)
   useCameraPersistence({
@@ -459,8 +484,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   // Load canvas state when note changes
   useEffect(() => {
     setIsStateLoaded(false)
-    setCanvasState(createDefaultCanvasState())
-    setCanvasItems(createDefaultCanvasItems())
+
+    if (!initialCanvasSetupRef.current) {
+      setCanvasState(createDefaultCanvasState())
+      setCanvasItems(createDefaultCanvasItems())
+      initialCanvasSetupRef.current = true
+    }
 
     // Clear any pending auto-save timer
     if (autoSaveTimerRef.current) {
@@ -1744,14 +1773,24 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   )
 })
 
-const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => (
-  <IsolationProvider config={{ enabled: false }}>
-    <CanvasProvider noteId={props.noteId} onRegisterActiveEditor={props.onRegisterActiveEditor}>
-      <ModernAnnotationCanvasInner {...props} ref={ref} />
-      {props.children}
-    </CanvasProvider>
-  </IsolationProvider>
-))
+const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => {
+  const { getWorkspace } = useCanvasWorkspace()
+  const workspace = useMemo(() => getWorkspace(props.noteId), [getWorkspace, props.noteId])
+
+  return (
+    <IsolationProvider config={{ enabled: false }}>
+      <CanvasProvider
+        noteId={props.noteId}
+        onRegisterActiveEditor={props.onRegisterActiveEditor}
+        externalDataStore={workspace.dataStore}
+        externalEvents={workspace.events}
+      >
+        <ModernAnnotationCanvasInner {...props} ref={ref} />
+        {props.children}
+      </CanvasProvider>
+    </IsolationProvider>
+  )
+})
 
 ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 

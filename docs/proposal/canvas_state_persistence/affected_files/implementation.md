@@ -48,15 +48,27 @@
 | `updated_at`  | timestamp| For merge ordering / auditing                                 |
 | `schema_version` | integer | Camera schema version (default 1)                          |
 
-## API Surface
-1. `GET /api/notes/:noteId/canvas` → Returns `{ panels: PanelRecord[], globalRevision }`. Panels include their own `revisionToken`.
-2. `PATCH /api/notes/:noteId/canvas` → Accepts partial updates, e.g. `{ panelId, position, metadata, expectedRevision }`; rejects stale per-panel revisions while optionally returning updated global revision.
-3. `POST /api/notes/:noteId/canvas/batch` → Optional bulk endpoint for simultaneous moves/reorders. Each entry supplies its own `expectedRevision`, and the response reports per-panel success/conflict.
-4. `DELETE /api/notes/:noteId/canvas/:panelId` → Soft-delete a panel record when removed so hydration doesn’t resurrect stale panels.
-5. `GET /api/notes/:noteId/canvas/camera` → Returns `{ camera_x, camera_y, zoom_level, schemaVersion, source }` for the requester (user-specific if available, else shared, else `{ camera_x: 0, camera_y: 0, zoom_level: 1, schemaVersion: 1, source: 'default' }`). Always 200 OK.
-6. `PATCH /api/notes/:noteId/canvas/camera` → Updates the caller’s camera state with optimistic concurrency on `updated_at` / `schemaVersion`. Missing records are auto-created.
+### Note Workspace Registry (new)
+| Column            | Type     | Notes                                                                 |
+|-------------------|----------|-----------------------------------------------------------------------|
+| `note_id`         | UUID     | Foreign key to note                                                   |
+| `is_open`         | boolean  | Whether the note should hydrate into the global canvas at startup     |
+| `main_position_x` | numeric  | World-space X for the note's main panel (last persisted)              |
+| `main_position_y` | numeric  | World-space Y for the note's main panel                               |
+| `updated_at`      | timestamp| Tracks last change to open/close state                                |
+| `schema_version`  | integer  | Layout schema version (default 1)                                     |
 
-All endpoints should validate IDs, coerce numbers, and ensure users have access to the target note.
+## API Surface
+1. `GET /api/notes/:noteId/canvas` → Returns `{ panels: PanelRecord[], globalRevision }` (panels include their own `revisionToken`).
+2. `PATCH /api/notes/:noteId/canvas` → Accepts `{ noteId, panelId, position, metadata, expectedRevision }`; rejects stale per-panel revisions while optionally returning updated global revision.
+3. `POST /api/notes/:noteId/canvas/batch` → Optional bulk endpoint for simultaneous moves/reorders. Each entry supplies its own `noteId`/`panelId` pair plus `expectedRevision`, and the response reports per-panel success/conflict.
+4. `DELETE /api/notes/:noteId/canvas/:panelId` → Soft-delete a panel record when removed so hydration doesn’t resurrect stale panels.
+5. `GET /api/notes/:noteId/canvas/camera` → Returns `{ camera_x, camera_y, zoom_level, schemaVersion, source }` for the requester (user-specific if available, else shared, else defaults). Always 200 OK.
+6. `PATCH /api/notes/:noteId/canvas/camera` → Updates the caller’s camera state with optimistic concurrency on `updated_at` / `schemaVersion`. Missing records are auto-created.
+7. `GET /api/canvas/workspace` → Returns `{ openNotes: Array<{ noteId, mainPosition, cameraState? }> }` representing notes currently restored at startup.
+8. `PATCH /api/canvas/workspace` → Accepts `{ noteId, isOpen, mainPosition? }` to add/remove notes from the shared workspace or update last-known main panel position.
+
+All endpoints validate IDs, coerce numbers, and ensure callers can access the target note/workspace entry.
 
 ## Client Flow
 
@@ -86,16 +98,23 @@ All endpoints should validate IDs, coerce numbers, and ensure users have access 
 - All client stores (`dataStore`, `branchesMap`, `LayerManager`) hold world-space position/size values. Rendering converts to screen space with the helpers above.
 - Camera state (`camera_x`, `camera_y`, `zoom_level`) is persisted alongside the layout so world ↔ screen conversions faithfully restore both layout and viewport during hydration.
 
-### Hydration
-1. When `annotation-canvas-modern` mounts (or note switches), cancel any in-flight hydration request via `AbortController`, record the target `noteId`, enter a `layoutLoading` state, and fetch layout + camera state in parallel with a 10 s timeout. Render a skeleton/loader instead of default panels until the payload arrives (or timeout fires).
-2. After the fetch resolves, verify the active `noteId` still matches the requested note to avoid seeding stale data. Seed `dataStore`, `branchesMap`, and `LayerManager` directly with the world-space coordinates/dimensions returned by the API.
-3. If the payload is empty, fall back to current defaults **once**, mark the note as needing persistence setup, and immediately enqueue a baseline persistence write so future loads have data.
-4. Validate incoming data (finite numbers, reasonable bounds, positive dimensions). If dimensions are ≤0, substitute panel-type defaults (main: 600×800, branch: 400×300, annotation: 350×250) and log a warning. Legacy records that are null should be upgraded on write.
-5. Timeout handling: on timeout, check cached layout **and camera**. If both are cached (<7 days) hydrate from cache (`layoutSource: 'cache-stale'`) and continue the fetch in the background to refresh layout + camera. If only layout is cached, hydrate the layout but fall back to default camera (logging a warning). If nothing is cached, load defaults (`layoutSource: 'defaults'`) and log telemetry. When the background fetch completes and the returned `globalRevision` differs from the cached version, update the cache and surface a toast prompting the user to refresh; defer automatic re-render to avoid snapping mid-interaction.
+### Hydration & Workspace Management
+1. On app startup, call `GET /api/canvas/workspace` to retrieve notes flagged as open. For each note:
+   - Fetch layout (`GET /api/notes/:noteId/canvas`) and camera state.
+   - Seed per-note stores (DataStore, branchesMap, LayerManager) namespaced by note ID.
+   - Recreate canvas items for that note (main + previously open branches) using composite IDs (`${noteId}:${panelId}`) to avoid collisions.
+2. Replace the single `CanvasProvider` with a `CanvasWorkspaceProvider` that tracks `{ noteId -> NoteStore }`, where each `NoteStore` encapsulates its own DataStore, LayerManager slice, and branch metadata. Existing provider logic moves inside this per-note structure.
+3. When the user opens an additional note:
+   - Hydrate its data into a new `NoteStore` but append only the main panel (centered) to the canvas.
+   - Mark the note open via `PATCH /api/canvas/workspace`.
+   - Branch panels remain closed until the user opens them.
+4. When the user closes a note, remove it from the workspace map, persist `isOpen = false`, and clean up associated canvas items.
+5. Timeout/cache handling mirrors the previous design on a per-note basis (use cached layout/camera when available). If nothing cached, fall back to defaults once and queue persistence.
+6. As the user opens branch panels, add their composite IDs to the canvas and persist positions; the next startup restores the full multi-note layout.
 
 ### Rendering & Zoom Changes
-- Components treat store values as world-space. On render they read the current camera/zoom from context and compute `const screenPos = worldToScreen(panel.positionWorld, camera, zoom)` (and the same for size) before applying CSS. This keeps store values zoom-invariant.
-- Zoom/camera updates propagate through context, triggering React re-renders. No store mutation is required; components recompute screen-space values on the next render. If a store consumer needs derived screen coordinates outside render, use memoized selectors that recompute when camera/zoom state changes.
+- Each panel is addressed by a composite ID (`noteId:panelId`). Components read the note-specific camera/zoom from the workspace provider and convert world-space coordinates to screen-space via `worldToScreen`. This keeps store values zoom-invariant while allowing multiple notes to coexist.
+- Zoom/camera updates propagate through the workspace context; memoized selectors remain per note to avoid unnecessary re-renders.
 
 ### Camera Persistence Timing
 - Debounce camera persistence: subscribe to changes in `canvasState.translateX/translateY/zoom`, and schedule a PATCH after 500 ms of inactivity. Flush immediately when a drag/zoom gesture ends and when the note unmounts.
@@ -103,29 +122,17 @@ All endpoints should validate IDs, coerce numbers, and ensure users have access 
 - Offline fallback mirrors the panel queue: enqueue camera updates in IndexedDB with the latest value and replay on reconnect (last-write-wins per note/user).
 - The camera PATCH endpoint auto-creates missing rows so the first write succeeds without extra reads.
 
+### UI Adjustments
+- “Open note” flows (recent list, popup overlay, new note creation) call an `addNoteToCanvas(noteId)` action instead of swapping a single `selectedNoteId`.
+- Provide a “Remove from canvas” affordance so users can close notes without deleting them (calls `PATCH /api/canvas/workspace` with `isOpen = false`).
+- Toolbar and overlays display per-note controls while respecting composite IDs; branch lists continue to open branch panels on demand.
+
 ### Drag & Metadata Updates
-1. **Drag end path:** Extend the existing `drag_end` handler (`components/canvas/canvas-panel.tsx:1872-1913`) to capture final world-space values (the DOM `style.left/top` that already exclude camera transforms). Wrap subsequent store mutations in a `StateTransaction`. The transaction applies updates to `LayerManager`, `dataStore`, and `branchesMap` atomically, invokes the persistence enqueue, and only rolls back on hard failures (e.g., server rejects payload). For network/offline timeouts, keep the optimistic state and enqueue the edit for later replay.
-   ```ts
-   const txn = new StateTransaction()
-   txn.add('layerManager', panelId, { position: finalWorld, size: finalWorldSize })
-   txn.add('dataStore', panelId, { position: finalWorld, size: finalWorldSize })
-   txn.add('branchesMap', panelId, { position: finalWorld, size: finalWorldSize })
-   await txn.commit(() =>
-     enqueuePersistence({
-       panelId,
-       positionWorld: finalWorld,
-       sizeWorld: finalWorldSize,
-       expectedRevision
-     })
-   )
-   ```
-   Use `screenToWorld` / `sizeScreenToWorld` helpers when deriving coordinates from pointer deltas (screen space). When reading from `panel.style.left/top`, the values are already world-space and can be used directly.
-2. **Batching:** Use a requestAnimationFrame or microtask batcher to combine multiple panel updates (e.g., while auto-scroll pans everything). Cap batch size (e.g., 20 panels) so payloads stay manageable, and record per-panel revision tokens.
-3. **API call & rate limiting:** Route persistence through a rate-limited queue (e.g., ≤3 concurrent requests, ≥100 ms spacing) to avoid spamming the backend. Retry transient failures with exponential backoff; if the retry window expires, mark the edit offline and leave the optimistic state in place.
-4. **Offline queue:** Persist failed/queued mutations in IndexedDB (`canvas-persistence-queue`). Deduplicate by panel (keep latest intent) and enforce queue limits (e.g., 1 000 entries or 5 MB). Store `{ queuedAt, expectedRevision, action }`.
-5. **Replay:** Before replaying, fetch latest server state (layout + camera). Drop queued edits older than the server’s `updated_at`, retain only the latest per panel, and apply in delete → create → update order so deletes win.
-6. **Conflict handling:** If a PATCH response reports conflicts, refetch conflicted panels, reconcile via policy (delete > newest timestamp > current user if timestamps close), gently nudge overlaps, update local stores via a transaction, and requeue remaining edits with fresh revisions.
-7. **Confirmation:** On success, update local revision tokens/`updated_at` to match server responses.
+1. **Drag end path:** Extend the existing `drag_end` handler to capture final world-space values (DOM `style.left/top`) under the composite ID (`noteId:panelId`). Wrap subsequent store mutations in a `StateTransaction` that updates the note’s LayerManager slice, DataStore, and branchesMap atomically. Persist via `enqueuePersistence({ noteId, panelId, positionWorld, sizeWorld, expectedRevision })`. Use `screenToWorld` / `sizeScreenToWorld` helpers when deriving coordinates from screen deltas.
+2. **Batching & Rate limiting:** Continue batching (`requestAnimationFrame`/microtask) and rate limiting persistence calls; payloads now include `noteId`.
+3. **Offline queue & replay:** IndexedDB queue stores composite IDs. Replay logic fetches latest server state per note, keeps only the newest intent per composite ID, and applies in delete → create → update order.
+4. **Conflict handling:** If a PATCH reports conflicts, refetch the affected note’s layout, reconcile per policy, update local stores via a transaction, and requeue edits with fresh revisions.
+5. **Confirmation:** On success, update local revision tokens/`updated_at` to match server responses.
 
 ### StateTransaction Contract
 ```typescript

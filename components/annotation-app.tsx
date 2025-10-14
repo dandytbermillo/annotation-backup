@@ -19,6 +19,7 @@ import {
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { CanvasWorkspaceProvider } from "./canvas/canvas-workspace-context"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -1927,7 +1928,9 @@ export function AnnotationApp() {
   // Always provide LayerProvider - it will internally check feature flag
   return (
     <LayerProvider initialPopupCount={0}>
-      <AnnotationAppContent />
+      <CanvasWorkspaceProvider>
+        <AnnotationAppContent />
+      </CanvasWorkspaceProvider>
     </LayerProvider>
   )
 } 
