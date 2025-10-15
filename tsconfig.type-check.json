@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "next-env.d.ts",
+    "app/api/canvas/**/*.ts",
+    "app/api/canvas/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "hooks/**/*.ts",
+    "hooks/**/*.tsx",
+    "lib/**/*.ts",
+    "lib/**/*.tsx",
+    "types/**/*.ts",
+    "context-os/**/*.ts",
+    "context-os/**/*.tsx"
+  ],
+  "exclude": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "app/test-*/**",
+    "app/api/health/**",
+    "app/api/offline-queue/**",
+    "app/api/search/**",
+    "tests",
+    "test-results",
+    "e2e",
+    "scripts",
+    "lib/offline/**",
+    "lib/providers/plain-offline-provider.ts",
+    "lib/workspace/**",
+    "lib/extensions/**",
+    "playwright/**"
+  ]
+}

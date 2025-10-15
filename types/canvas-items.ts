@@ -9,6 +9,8 @@ export interface CanvasItem {
   position: { x: number; y: number }
   zIndex?: number
   isVisible?: boolean
+  noteId?: string
+  storeKey?: string
   
   // For components
   componentType?: ComponentType
@@ -41,13 +43,17 @@ export function isComponent(item: CanvasItem): boolean {
 export function createPanelItem(
   panelId: string,
   position: { x: number; y: number } = { x: 2000, y: 1500 },
-  panelType: PanelType = 'note'
+  panelType: PanelType = 'note',
+  noteId?: string,
+  storeKey?: string
 ): CanvasItem {
   return {
     id: `panel-${panelId}-${Date.now()}`,
     itemType: 'panel',
     panelId,
     panelType,
+    noteId,
+    storeKey,
     position,
     dimensions: { width: 500, height: 400 }
   }

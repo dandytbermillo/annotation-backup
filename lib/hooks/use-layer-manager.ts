@@ -3,12 +3,21 @@
  * Provides layer management operations with React state updates
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { createContext, createElement, useCallback, useContext, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { getLayerManager, LayerManager } from '@/lib/canvas/layer-manager'
 import { CanvasNode } from '@/lib/canvas/canvas-node'
 import { debugLog } from '@/lib/utils/debug-logger'
 
+const LayerManagerContext = createContext<LayerManager | null>(null)
+
+export function LayerManagerProvider({ manager, children }: { manager: LayerManager; children: ReactNode }) {
+  return createElement(LayerManagerContext.Provider, { value: manager }, children)
+}
+
 export interface UseLayerManagerReturn {
+  /** Underlying manager instance (note-scoped when provided) */
+  manager: LayerManager
   /** Whether layer management is enabled */
   isEnabled: boolean
   
@@ -56,8 +65,9 @@ export function useLayerManager(): UseLayerManagerReturn {
   const [updateTrigger, setUpdateTrigger] = useState(0)
   const forceUpdate = useCallback(() => setUpdateTrigger(prev => prev + 1), [])
 
-  // Get the singleton LayerManager
-  const manager = getLayerManager()
+  const contextManager = useContext(LayerManagerContext)
+  // Fallback to singleton for legacy consumers
+  const manager = contextManager ?? getLayerManager()
   const isLayerModelEnabled = true
 
   // Wrapped operations that trigger React updates
@@ -140,6 +150,7 @@ export function useLayerManager(): UseLayerManagerReturn {
   }, [])
 
   return {
+    manager,
     isEnabled: isLayerModelEnabled,
     registerNode,
     getNode,

@@ -22,6 +22,7 @@ import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent, PanelType } from "@/types/canvas-items"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { 
   loadStateFromStorage, 
@@ -35,7 +36,7 @@ import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
-import { useLayerManager } from "@/lib/hooks/use-layer-manager"
+import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace } from "./canvas/canvas-workspace-context"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
@@ -78,14 +79,33 @@ const createDefaultCanvasState = () => ({
 })
 
 // Create default canvas items with main panel
-const createDefaultCanvasItems = (): CanvasItem[] => [
-  createPanelItem("main", { x: 2000, y: 1500 }, "main"),
+const DEFAULT_MAIN_POSITION = { x: 2000, y: 1500 }
+
+const createDefaultCanvasItems = (noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => [
+  createPanelItem(
+    "main",
+    mainPosition ?? DEFAULT_MAIN_POSITION,
+    "main",
+    noteId,
+    ensurePanelKey(noteId, "main"),
+  ),
 ]
 
 // Ensure main panel always exists in items array
-const ensureMainPanel = (items: CanvasItem[]): CanvasItem[] => {
+const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => {
   const hasMain = items.some((item) => item.itemType === "panel" && item.panelId === "main")
-  return hasMain ? items : [...items, createPanelItem("main", { x: 2000, y: 1500 }, "main")]
+  return hasMain
+    ? items
+    : [
+        ...items,
+        createPanelItem(
+          "main",
+          mainPosition ?? DEFAULT_MAIN_POSITION,
+          "main",
+          noteId,
+          ensurePanelKey(noteId, "main"),
+        ),
+      ]
 }
 
 const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({
@@ -97,6 +117,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onSnapshotLoadComplete
 }, ref) => {
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
+  const { openNotes, updateMainPosition } = useCanvasWorkspace()
+  const workspaceNote = useMemo(() => openNotes.find(note => note.noteId === noteId), [openNotes, noteId])
+  const workspaceMainPosition = workspaceNote?.mainPosition || null
 
   // Layer system for multi-layer canvas
   const layerContext = useLayer()
@@ -152,7 +175,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, noteId])
 
   // Unified canvas items state
-  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>(createDefaultCanvasItems)
+  const initialMainPositionRef = useRef<{ x: number; y: number } | null>(workspaceMainPosition)
+  const workspaceSeedAppliedRef = useRef(false)
+  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>(() =>
+    createDefaultCanvasItems(noteId, initialMainPositionRef.current ?? undefined),
+  )
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
@@ -166,20 +193,35 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   // Canvas state persistence - Get provider instances for hydration
   const provider = useMemo(() => UnifiedProvider.getInstance(), [])
   const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
-  const layerManager = useLayerManager()
+  const layerManagerApi = useLayerManager()
 
   // Hydrate canvas state on mount (panels + camera)
   const hydrationStatus = useCanvasHydration({
     noteId,
     dataStore,
     branchesMap,
-    layerManager,
+    layerManager: layerManagerApi.manager,
     enabled: true
   })
 
   const initialHydrationRef = useRef(true)
   const lastHydratedNoteRef = useRef<string | null>(null)
   const initialCanvasSetupRef = useRef(false)
+
+  useEffect(() => {
+    if (workspaceSeedAppliedRef.current) return
+    if (!workspaceMainPosition) return
+    if (hydrationStatus.success) return
+
+    setCanvasItems(prev =>
+      prev.map(item =>
+        item.itemType === "panel" && item.panelId === "main"
+          ? { ...item, position: workspaceMainPosition }
+          : item,
+      ),
+    )
+    workspaceSeedAppliedRef.current = true
+  }, [workspaceMainPosition, hydrationStatus.success])
 
   // Create CanvasItems from hydrated panels
   useEffect(() => {
@@ -225,7 +267,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         return createPanelItem(
           panel.id,
           panel.position,
-          panelType
+          panelType,
+          noteId,
+          ensurePanelKey(noteId, panel.id),
         )
       })
 
@@ -252,7 +296,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       initialHydrationRef.current = false
       lastHydratedNoteRef.current = noteId
     }
-  }, [hydrationStatus.success, hydrationStatus.panels, noteId])
+  }, [hydrationStatus.success, hydrationStatus.panels, noteId, workspaceMainPosition])
 
   // Enable camera persistence (debounced)
   useCameraPersistence({
@@ -265,7 +309,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const { persistPanelCreate, persistPanelUpdate, persistPanelDelete } = usePanelPersistence({
     dataStore,
     branchesMap,
-    layerManager,
+    layerManager: layerManagerApi.manager,
     noteId
   })
 
@@ -284,7 +328,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
         // Get current main panel position from canvas items
         const mainPanelItem = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
-        const mainPosition = mainPanelItem?.position || { x: 2000, y: 1500 }
+        const mainPosition = mainPanelItem?.position || workspaceMainPosition || DEFAULT_MAIN_POSITION
 
         persistPanelCreate({
           panelId: 'main',
@@ -301,9 +345,20 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
           })
         })
+
+        void updateMainPosition(noteId, mainPosition).catch(err => {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'workspace_main_position_update_failed',
+            metadata: {
+              error: err instanceof Error ? err.message : 'Unknown error',
+              noteId
+            }
+          })
+        })
       }
     }
-  }, [hydrationStatus.success, hydrationStatus.panels, noteId, canvasItems, persistPanelCreate])
+  }, [hydrationStatus.success, hydrationStatus.panels, noteId, canvasItems, persistPanelCreate, workspaceMainPosition, updateMainPosition])
 
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
@@ -487,7 +542,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
     if (!initialCanvasSetupRef.current) {
       setCanvasState(createDefaultCanvasState())
-      setCanvasItems(createDefaultCanvasItems())
+      setCanvasItems(createDefaultCanvasItems(noteId, workspaceMainPosition ?? undefined))
       initialCanvasSetupRef.current = true
     }
 
@@ -499,7 +554,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
     // DISABLED: Don't load old positions - always center panels instead
     // const snapshot = loadStateFromStorage(noteId)
-    const snapshot = null // Force treating every note as new (no saved positions)
+    const snapshot: any = null // Force treating every note as new (no saved positions)
     if (!snapshot) {
       debugLog({
         component: 'AnnotationCanvas',
@@ -742,7 +797,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         : item.position
     })) as CanvasItem[]
 
-    const restored = ensureMainPanel(restoredItems)
+    const restored = ensureMainPanel(restoredItems, noteId, workspaceMainPosition ?? undefined)
     setCanvasItems(restored)
 
     // CRITICAL: Also reset main panel position in dataStore so getPanelPosition reads correct value
@@ -1241,7 +1296,16 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       }
 
       // Panel doesn't exist - create it
-      return [...prev, createPanelItem(panelId, position, panelType)]
+      return [
+        ...prev,
+        createPanelItem(
+          panelId,
+          position,
+          panelType,
+          noteId,
+          ensurePanelKey(noteId, panelId),
+        ),
+      ]
     })
   }
   
@@ -1779,15 +1843,17 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 
   return (
     <IsolationProvider config={{ enabled: false }}>
-      <CanvasProvider
-        noteId={props.noteId}
-        onRegisterActiveEditor={props.onRegisterActiveEditor}
-        externalDataStore={workspace.dataStore}
-        externalEvents={workspace.events}
-      >
-        <ModernAnnotationCanvasInner {...props} ref={ref} />
-        {props.children}
-      </CanvasProvider>
+      <LayerManagerProvider manager={workspace.layerManager}>
+        <CanvasProvider
+          noteId={props.noteId}
+          onRegisterActiveEditor={props.onRegisterActiveEditor}
+          externalDataStore={workspace.dataStore}
+          externalEvents={workspace.events}
+        >
+          <ModernAnnotationCanvasInner {...props} ref={ref} />
+          {props.children}
+        </CanvasProvider>
+      </LayerManagerProvider>
     </IsolationProvider>
   )
 })
@@ -1821,9 +1887,12 @@ function PanelsRenderer({
     <>
       {panels.map((panel) => {
         const panelId = panel.panelId!
-        const branch = isPlainMode ? dataStore.get(panelId) : branchesMap?.get(panelId)
+        const storeKey = panel.storeKey ?? ensurePanelKey(noteId, panelId)
+        const branch = isPlainMode ? dataStore.get(storeKey) : branchesMap?.get(storeKey)
         if (!branch) {
-          console.warn(`[PanelsRenderer] Branch ${panelId} not found in ${isPlainMode ? 'plain' : 'yjs'} store`)
+          console.warn(
+            `[PanelsRenderer] Branch ${panelId} (storeKey=${storeKey}) not found in ${isPlainMode ? 'plain' : 'yjs'} store`,
+          )
           return null
         }
 

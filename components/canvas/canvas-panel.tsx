@@ -21,7 +21,6 @@ import { useIsolation, useRegisterWithIsolation } from "@/lib/isolation/context"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasCamera } from "@/lib/hooks/use-canvas-camera"
 import { useLayerManager, useCanvasNode } from "@/lib/hooks/use-layer-manager"
-import { getLayerManager } from "@/lib/canvas/layer-manager"
 import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
@@ -29,6 +28,8 @@ import { createNote } from "@/lib/utils/note-creator"
 import { Save, Pencil } from "lucide-react"
 import { TypeSelector, type AnnotationType } from "./type-selector"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { useCanvasWorkspace } from "./canvas-workspace-context"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -62,8 +63,10 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const branchesMap = provider.getBranchesMap()
   const effectiveNoteId = noteId || contextNoteId || ''
 
+  const { updateMainPosition } = useCanvasWorkspace()
+
   // Panel persistence hook - needs LayerManager instance, not the hook
-  const layerManagerInstance = getLayerManager()
+  const layerManagerInstance = layerManager.manager
   const { persistPanelUpdate } = usePanelPersistence({
     dataStore,
     branchesMap,
@@ -1955,6 +1958,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         console.error('[CanvasPanel] Panel persistence failed:', err)
       })
 
+      if (panelId === 'main' && effectiveNoteId) {
+        void updateMainPosition(effectiveNoteId, { x: finalX, y: finalY }).catch(error => {
+          console.error('[CanvasPanel] Failed to update workspace main position:', error)
+        })
+      }
+
       // Reset camera pan accumulation if using camera mode
       if (isCameraEnabled) {
         resetPanAccumulation()
@@ -1988,7 +1997,16 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [checkAutoScroll, stopAutoScroll, panelId, isCameraEnabled, resetPanAccumulation]) // Add auto-scroll functions, camera deps, and panelId as dependencies
+  }, [
+    checkAutoScroll,
+    stopAutoScroll,
+    panelId,
+    isCameraEnabled,
+    resetPanAccumulation,
+    persistPanelUpdate,
+    updateMainPosition,
+    effectiveNoteId
+  ]) // Add auto-scroll functions, camera deps, persistence helpers, and note context as dependencies
 
   // Update cursor when layer state changes
   useEffect(() => {

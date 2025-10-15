@@ -8,7 +8,7 @@ import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess } from "@/lib/utils/note-creator"
-import { Menu } from "lucide-react"
+import { Menu, X } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
   OverlayLayoutAdapter,
@@ -19,7 +19,7 @@ import {
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { CanvasWorkspaceProvider } from "./canvas/canvas-workspace-context"
+import { CanvasWorkspaceProvider, useCanvasWorkspace } from "./canvas/canvas-workspace-context"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -50,16 +50,28 @@ const ModernAnnotationCanvas = dynamic(
 )
 
 function AnnotationAppContent() {
-  // Initialize selectedNoteId from localStorage (persist which note canvas is open)
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(() => {
+  const {
+    openNotes,
+    openNote: openWorkspaceNote,
+    closeNote: closeWorkspaceNote,
+    isWorkspaceReady,
+    isWorkspaceLoading,
+    workspaceError,
+    refreshWorkspace
+  } = useCanvasWorkspace()
+
+  // Initialize focusedNoteId from localStorage (persist which note canvas is focused)
+  const [focusedNoteId, setFocusedNoteId] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem('annotation_selectedNoteId')
+        const stored =
+          localStorage.getItem('annotation_focusedNoteId') ??
+          localStorage.getItem('annotation_selectedNoteId')
         return stored || null
       } catch (err) {
         debugLog({
           component: 'AnnotationApp',
-          action: 'localStorage_load_failed',
+          action: 'localStorage_focus_load_failed',
           metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
         })
         return null
@@ -67,9 +79,23 @@ function AnnotationAppContent() {
     }
     return null
   })
+  const sortedOpenNotes = useMemo(() => {
+    return [...openNotes].sort((a, b) => {
+      if (a.noteId === b.noteId) return 0
+      if (!a.updatedAt && b.updatedAt) return 1
+      if (a.updatedAt && !b.updatedAt) return -1
+      if (a.updatedAt && b.updatedAt) {
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      }
+      return a.noteId.localeCompare(b.noteId)
+    })
+  }, [openNotes])
+
   const [canvasState, setCanvasState] = useState({
     zoom: 1,
-    showConnections: true
+    showConnections: true,
+    translateX: 0,
+    translateY: 0
   })
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
 
@@ -89,7 +115,7 @@ function AnnotationAppContent() {
   // Display settings state (backdrop style preference)
   const [backdropStyle, setBackdropStyle] = useState<string>('none')
 
-  // Overlay popups state - persists independently of toolbar (like selectedNoteId)
+  // Overlay popups state - persists independently of toolbar (like focusedNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -113,27 +139,62 @@ function AnnotationAppContent() {
     console.log('[AnnotationApp] overlayPersistenceEnabled =', overlayPersistenceEnabled)
   }, [overlayPersistenceEnabled])
 
-  // Persist selectedNoteId to localStorage when it changes
+  useEffect(() => {
+    if (!isWorkspaceReady && !isWorkspaceLoading) {
+      refreshWorkspace().catch(error => {
+        console.error('[AnnotationApp] Workspace refresh failed:', error)
+      })
+    }
+  }, [isWorkspaceReady, isWorkspaceLoading, refreshWorkspace])
+
+  useEffect(() => {
+    if (workspaceError) {
+      console.error('[AnnotationApp] Workspace error:', workspaceError)
+    }
+  }, [workspaceError])
+
+  useEffect(() => {
+    if (!isWorkspaceReady) return
+
+    const isFocusedOpen = focusedNoteId ? openNotes.some(note => note.noteId === focusedNoteId) : false
+
+    if (!initialWorkspaceSyncRef.current) {
+      initialWorkspaceSyncRef.current = true
+
+      if (focusedNoteId && !isFocusedOpen) {
+        void openWorkspaceNote(focusedNoteId, { persist: false }).catch(error => {
+          console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
+        })
+      } else if (!focusedNoteId && openNotes.length > 0) {
+        setFocusedNoteId(openNotes[0].noteId)
+      }
+    } else if (focusedNoteId && !isFocusedOpen) {
+      const fallback = openNotes[0]?.noteId ?? null
+      setFocusedNoteId(fallback ?? null)
+    }
+  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote])
+
+  // Persist focusedNoteId to localStorage when it changes
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        if (selectedNoteId) {
-          localStorage.setItem('annotation_selectedNoteId', selectedNoteId)
+        if (focusedNoteId) {
+          localStorage.setItem('annotation_focusedNoteId', focusedNoteId)
         } else {
-          localStorage.removeItem('annotation_selectedNoteId')
+          localStorage.removeItem('annotation_focusedNoteId')
         }
       } catch (err) {
         debugLog({
           component: 'AnnotationApp',
-          action: 'localStorage_save_failed',
+          action: 'localStorage_focus_save_failed',
           metadata: {
             error: err instanceof Error ? err.message : 'Unknown error',
-            operation: selectedNoteId ? 'setItem' : 'removeItem'
+            operation: focusedNoteId ? 'setItem' : 'removeItem'
           }
         })
       }
     }
-  }, [selectedNoteId])
+  }, [focusedNoteId])
 
   // Initialize overlay adapter
   useEffect(() => {
@@ -152,6 +213,7 @@ function AnnotationAppContent() {
 
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
+  const initialWorkspaceSyncRef = useRef(false)
 
   // Stable callback for snapshot load completion
   const handleSnapshotLoadComplete = useCallback(() => {
@@ -742,14 +804,20 @@ function AnnotationAppContent() {
   }, [overlayPopups, overlayPersistenceEnabled])
 
   // Handle note selection with force re-center support
+  const formatNoteLabel = useCallback((noteId: string) => {
+    if (!noteId) return "Untitled"
+    if (noteId.length <= 8) return noteId
+    return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
+  }, [])
+
   const handleNoteSelect = (noteId: string) => {
     debugLog({
       component: 'AnnotationApp',
       action: 'note_select',
       metadata: {
         noteId,
-        selectedNoteId,
-        isReselect: noteId === selectedNoteId
+        focusedNoteId,
+        isReselect: noteId === focusedNoteId
       }
     })
 
@@ -765,7 +833,7 @@ function AnnotationAppContent() {
         // Note will still open, just won't appear in recent notes
       })
 
-    if (noteId === selectedNoteId) {
+    if (noteId === focusedNoteId) {
       // Same note clicked - force re-center by incrementing trigger
       debugLog({
         component: 'AnnotationApp',
@@ -774,33 +842,42 @@ function AnnotationAppContent() {
       })
       setCenterTrigger(prev => prev + 1)
     } else {
-      // Different note - normal selection
-      debugLog({
-        component: 'AnnotationApp',
-        action: 'set_selected_note',
-        metadata: { noteId }
+      // Different note - ensure it's marked open and focus it
+      void openWorkspaceNote(noteId, { persist: true }).catch(error => {
+        console.error('[AnnotationApp] Failed to open note in workspace:', error)
       })
-      setSelectedNoteId(noteId)
+      setFocusedNoteId(noteId)
     }
   }
+
+  const handleCloseNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      void closeWorkspaceNote(noteId).catch(error => {
+        console.error('[AnnotationApp] Failed to close workspace note:', error)
+      })
+    },
+    [closeWorkspaceNote],
+  )
   
   // Center panel when note selection changes or when forced
   useEffect(() => {
-    if (!selectedNoteId) return
+    if (!focusedNoteId) return
 
     debugLog({
       component: 'AnnotationApp',
       action: 'center_effect_triggered',
       metadata: {
-        selectedNoteId,
+        focusedNoteId,
         centerTrigger,
         hasCanvasRef: !!canvasRef.current,
         hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
       }
     })
 
-    // Always center when this effect runs (triggered by selectedNoteId change or centerTrigger change)
-    lastCenteredRef.current = selectedNoteId
+    // Always center when this effect runs (triggered by focusedNoteId change or centerTrigger change)
+    lastCenteredRef.current = focusedNoteId
 
     // Retry mechanism to wait for canvas to mount AND viewport to reset
     let attempts = 0
@@ -873,7 +950,7 @@ function AnnotationAppContent() {
         clearTimeout(timeoutId)
       }
     }
-  }, [selectedNoteId, centerTrigger]) // Also watch centerTrigger
+  }, [focusedNoteId, centerTrigger]) // Also watch centerTrigger
 
   // Handle right-click to show notes widget
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -1813,113 +1890,177 @@ function AnnotationAppContent() {
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
   return (
-    <div
-      className="flex h-screen w-screen overflow-hidden relative"
-      onContextMenu={handleContextMenu}
-    >
-      {/* Canvas Area - Full width when explorer is closed */}
-      <div 
-        className="flex-1 relative transition-all duration-300 ease-in-out"
-        style={{
-          // Disable pointer events when popup layer is active
-          pointerEvents: isPopupLayerActive ? 'none' : 'auto',
-          // Ensure canvas stays below popups even with z-index escalation
-          position: 'relative',
-          zIndex: 1,
-          isolation: 'isolate',
-        }}
-      >
-        {selectedNoteId ? (
-          <ModernAnnotationCanvas
-            key={selectedNoteId}
-            noteId={selectedNoteId}
-            ref={canvasRef}
-            isNotesExplorerOpen={false}
-            onCanvasStateChange={setCanvasState}
-            showAddComponentMenu={showAddComponentMenu}
-            onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
-            onRegisterActiveEditor={handleRegisterActiveEditor}
-            onSnapshotLoadComplete={handleSnapshotLoadComplete}
-          >
-            {/* Floating Toolbar - rendered inside CanvasProvider tree */}
-            {showNotesWidget && (
-              <CanvasAwareFloatingToolbar
-                x={notesWidgetPosition.x}
-                y={notesWidgetPosition.y}
-                onClose={handleCloseNotesWidget}
-                onSelectNote={handleNoteSelect}
-                onCreateOverlayPopup={handleCreateOverlayPopup}
-                onAddComponent={handleAddComponentFromToolbar}
-                editorRef={activeEditorRef}
-                activePanelId={activePanelId}
-                onBackdropStyleChange={handleBackdropStyleChange}
-                onFolderRenamed={handleFolderRenamed}
-                activePanel={toolbarActivePanel}
-                onActivePanelChange={setToolbarActivePanel}
-                refreshRecentNotes={recentNotesRefreshTrigger}
-              />
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
+      <div className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+          <span className="text-xs uppercase tracking-wide text-neutral-400">Workspace</span>
+          {sortedOpenNotes.length === 0 ? (
+            <span className="text-sm text-neutral-500">No notes open</span>
+          ) : (
+            sortedOpenNotes.map(note => {
+              const isActive = note.noteId === focusedNoteId
+              const label = formatNoteLabel(note.noteId)
+              const baseClasses = isActive
+                ? 'border-indigo-400 bg-indigo-500/20 text-indigo-100'
+                : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100'
+
+              return (
+                <div
+                  key={note.noteId}
+                  className={`group flex items-center overflow-hidden rounded-md border text-sm transition ${baseClasses}`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleNoteSelect(note.noteId)}
+                    className="flex items-center gap-2 px-3 py-1"
+                  >
+                    <span className="font-medium">{label}</span>
+                    <span className="text-xs text-neutral-500 group-hover:text-neutral-300">
+                      {note.updatedAt ? new Date(note.updatedAt).toLocaleTimeString() : 'new'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation()
+                      handleCloseNote(note.noteId)
+                    }}
+                    aria-label={`Close ${label}`}
+                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )
+            })
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {isWorkspaceLoading && (
+              <span className="text-xs text-neutral-500">Syncing…</span>
             )}
-          </ModernAnnotationCanvas>
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gray-950">
-            <div className="text-center">
-              <h2 className="text-3xl font-bold text-gray-600 mb-4">
-                Welcome to Annotation Canvas
-              </h2>
-              <p className="text-gray-500 mb-6">
-                Right-click anywhere to open Notes Explorer and create a new note
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={() => refreshWorkspace().catch(error => {
+                console.error('[AnnotationApp] Manual workspace refresh failed:', error)
+              })}
+              className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 transition hover:border-neutral-500 hover:text-neutral-100"
+            >
+              Refresh
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Overlay canvas popups - always mounted to avoid re-initialization */}
-      {/* Shows empty Map when notes layer is active, popups when popups layer is active */}
-      {multiLayerEnabled && adaptedPopups && (
-        <PopupOverlay
-          popups={adaptedPopups}
-          draggingPopup={draggingPopup}
-          onClosePopup={handleCloseOverlayPopup}
-          onInitiateClose={handleInitiateClose}
-          onConfirmClose={handleConfirmClose}
-          onCancelClose={handleCancelClose}
-          onTogglePin={handleTogglePin}
-          onDragStart={handlePopupDragStart}
-          onHoverFolder={handleFolderHover}
-          onLeaveFolder={handleFolderHoverLeave}
-          onPopupHover={handlePopupHover}
-          onSelectNote={handleNoteSelect}
-          onDeleteSelected={handleDeleteSelected}
-          onBulkMove={handleBulkMove}
-          onFolderCreated={handleFolderCreated}
-          onFolderRenamed={handleFolderRenamed}
-          onPopupCardClick={handleCloseNotesWidget}
-          onContextMenu={handleContextMenu}
-          sidebarOpen={false}
-          backdropStyle={backdropStyle}
-        />
-      )}
+      <div
+        className="relative flex-1"
+        onContextMenu={handleContextMenu}
+      >
+        <div className="flex h-full w-full">
+          {/* Canvas Area */}
+          <div 
+            className="flex-1 relative transition-all duration-300 ease-in-out"
+            style={{
+              pointerEvents: isPopupLayerActive ? 'none' : 'auto',
+              position: 'relative',
+              zIndex: 1,
+              isolation: 'isolate',
+            }}
+          >
+            {focusedNoteId ? (
+              <ModernAnnotationCanvas
+                key={focusedNoteId}
+                noteId={focusedNoteId}
+                ref={canvasRef}
+                isNotesExplorerOpen={false}
+                onCanvasStateChange={stateUpdate =>
+                  setCanvasState(prev => ({ ...prev, ...stateUpdate }))
+                }
+                showAddComponentMenu={showAddComponentMenu}
+                onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+                onRegisterActiveEditor={handleRegisterActiveEditor}
+                onSnapshotLoadComplete={handleSnapshotLoadComplete}
+              >
+                {/* Floating Toolbar - rendered inside CanvasProvider tree */}
+                {showNotesWidget && (
+                  <CanvasAwareFloatingToolbar
+                    x={notesWidgetPosition.x}
+                    y={notesWidgetPosition.y}
+                    onClose={handleCloseNotesWidget}
+                    onSelectNote={handleNoteSelect}
+                    onCreateOverlayPopup={handleCreateOverlayPopup}
+                    onAddComponent={handleAddComponentFromToolbar}
+                    editorRef={activeEditorRef}
+                    activePanelId={activePanelId}
+                    onBackdropStyleChange={handleBackdropStyleChange}
+                    onFolderRenamed={handleFolderRenamed}
+                    activePanel={toolbarActivePanel}
+                    onActivePanelChange={setToolbarActivePanel}
+                    refreshRecentNotes={recentNotesRefreshTrigger}
+                  />
+                )}
+              </ModernAnnotationCanvas>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-gray-950">
+                <div className="text-center">
+                  <h2 className="mb-4 text-3xl font-bold text-gray-600">
+                    Welcome to Annotation Canvas
+                  </h2>
+                  <p className="mb-6 text-gray-500">
+                    Right-click anywhere to open Notes Explorer and create a new note
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
 
-      {/* Fallback Floating Toolbar - renders when no note is selected (selectedNoteId is null) */}
-      {/* This ensures right-click and Cmd+K work immediately after app reload */}
-      {showNotesWidget && !selectedNoteId && (
-        <FloatingToolbar
-          x={notesWidgetPosition.x}
-          y={notesWidgetPosition.y}
-          onClose={handleCloseNotesWidget}
-          onSelectNote={handleNoteSelect}
-          onCreateOverlayPopup={handleCreateOverlayPopup}
-          onAddComponent={handleAddComponentFromToolbar}
-          editorRef={activeEditorRef}
-          activePanelId={activePanelId}
-          onBackdropStyleChange={handleBackdropStyleChange}
-          onFolderRenamed={handleFolderRenamed}
-          activePanel={toolbarActivePanel}
-          onActivePanelChange={setToolbarActivePanel}
-          refreshRecentNotes={recentNotesRefreshTrigger}
-        />
-      )}
+        {/* Overlay canvas popups - always mounted to avoid re-initialization */}
+        {/* Shows empty Map when notes layer is active, popups when popups layer is active */}
+        {multiLayerEnabled && adaptedPopups && (
+          <PopupOverlay
+            popups={adaptedPopups}
+            draggingPopup={draggingPopup}
+            onClosePopup={handleCloseOverlayPopup}
+            onInitiateClose={handleInitiateClose}
+            onConfirmClose={handleConfirmClose}
+            onCancelClose={handleCancelClose}
+            onTogglePin={handleTogglePin}
+            onDragStart={handlePopupDragStart}
+            onHoverFolder={handleFolderHover}
+            onLeaveFolder={handleFolderHoverLeave}
+            onPopupHover={handlePopupHover}
+            onSelectNote={handleNoteSelect}
+            onDeleteSelected={handleDeleteSelected}
+            onBulkMove={handleBulkMove}
+            onFolderCreated={handleFolderCreated}
+            onFolderRenamed={handleFolderRenamed}
+            onPopupCardClick={handleCloseNotesWidget}
+            onContextMenu={handleContextMenu}
+            sidebarOpen={false}
+            backdropStyle={backdropStyle}
+          />
+        )}
+
+        {/* Fallback Floating Toolbar - renders when no note is focused (focusedNoteId is null) */}
+        {/* This ensures right-click and Cmd+K work immediately after app reload */}
+        {showNotesWidget && !focusedNoteId && (
+          <FloatingToolbar
+            x={notesWidgetPosition.x}
+            y={notesWidgetPosition.y}
+            onClose={handleCloseNotesWidget}
+            onSelectNote={handleNoteSelect}
+            onCreateOverlayPopup={handleCreateOverlayPopup}
+            onAddComponent={handleAddComponentFromToolbar}
+            editorRef={activeEditorRef}
+            activePanelId={activePanelId}
+            onBackdropStyleChange={handleBackdropStyleChange}
+            onFolderRenamed={handleFolderRenamed}
+            activePanel={toolbarActivePanel}
+            onActivePanelChange={setToolbarActivePanel}
+            refreshRecentNotes={recentNotesRefreshTrigger}
+          />
+        )}
+      </div>
     </div>
   )
 }
