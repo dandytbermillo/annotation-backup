@@ -333,3 +333,5 @@
 {"ts":"2025-10-15T05:45:54.489Z","type":"commit","sha":"1a4592c6618158d2acc80acb61b1420b58c87337","files_changed":34,"message":"implementing phase 2"}
 {"timestamp":"2025-10-15T20:09:55Z","note":"Starting Stage 1 type-check hardening per user approval; focusing on fixing existing canvas Stage 1 errors and documenting Phase 1 scope."}
 {"timestamp":"2025-10-15T20:26:15Z","note":"Stage 1 type-check passes after quarantining legacy modules; Stage 1 doc updated with manual smoke placeholder and Phase 2 deferral reminder."}
+{"ts":"2025-10-15T20:49:22.091Z","type":"commit","sha":"77448b34f4ab658d367574a77c8f6b93683fe086","files_changed":40,"message":"dragging release issue fixed"}
+{"timestamp":"2025-10-15T20:55:58Z","note":"Fixed document save workspace mismatch by aligning API workspace context with the note's workspace and backfilling null workspaces on save."}

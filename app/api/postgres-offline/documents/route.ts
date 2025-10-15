@@ -58,47 +58,79 @@ export async function POST(request: NextRequest) {
     const baseVersion = baseVersionRaw
 
     const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
-      const latest = await client.query(
-        `SELECT id, content, version
-           FROM document_saves
-          WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
-          ORDER BY version DESC
-          LIMIT 1`,
-        [noteKey, normalizedPanelId, workspaceId]
+      const noteRow = await client.query<{ workspace_id: string | null }>(
+        `SELECT workspace_id FROM notes WHERE id = $1`,
+        [noteKey]
       )
 
-      const latestRow = latest.rows[0]
-      const latestVersion: number = latestRow?.version ?? 0
-
-      if (latestRow && JSON.stringify(latestRow.content) === JSON.stringify(contentJson) && version === latestVersion) {
-        return { skipped: true, id: latestRow.id }
+      if (noteRow.rowCount === 0) {
+        const err = new Error(`Note ${noteId} not found`)
+        ;(err as any).status = 404
+        throw err
       }
 
-      const resolvedBase = baseVersion
+      const noteWorkspaceId = noteRow.rows[0].workspace_id
+      let effectiveWorkspaceId = workspaceId
+      let resetWorkspaceAtEnd = false
 
-      if (latestVersion > resolvedBase) {
-        throw new Error(`stale document save: baseVersion ${resolvedBase} behind latest ${latestVersion}`)
+      if (noteWorkspaceId && noteWorkspaceId !== workspaceId) {
+        await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', noteWorkspaceId])
+        effectiveWorkspaceId = noteWorkspaceId
+        resetWorkspaceAtEnd = true
+      } else if (!noteWorkspaceId) {
+        await client.query(
+          `UPDATE notes SET workspace_id = $1, updated_at = NOW() WHERE id = $2`,
+          [workspaceId, noteKey]
+        )
       }
 
-      if (version <= latestVersion) {
-        throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+      try {
+        const latest = await client.query(
+          `SELECT id, content, version
+             FROM document_saves
+            WHERE note_id = $1 AND panel_id = $2 AND workspace_id = $3
+            ORDER BY version DESC
+            LIMIT 1`,
+          [noteKey, normalizedPanelId, effectiveWorkspaceId]
+        )
+
+        const latestRow = latest.rows[0]
+        const latestVersion: number = latestRow?.version ?? 0
+
+        if (latestRow && JSON.stringify(latestRow.content) === JSON.stringify(contentJson) && version === latestVersion) {
+          return { skipped: true, id: latestRow.id }
+        }
+
+        const resolvedBase = baseVersion
+
+        if (latestVersion > resolvedBase) {
+          throw new Error(`stale document save: baseVersion ${resolvedBase} behind latest ${latestVersion}`)
+        }
+
+        if (version <= latestVersion) {
+          throw new Error(`non-incrementing version ${version} (latest ${latestVersion})`)
+        }
+
+        if (version !== resolvedBase + 1) {
+          console.warn(`[POST /api/postgres-offline/documents] Non-sequential version: base=${resolvedBase}, version=${version}`)
+        }
+
+        const documentText = extractFullText(contentJson)
+
+        const inserted = await client.query(
+          `INSERT INTO document_saves
+           (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
+           VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())
+           RETURNING id`,
+          [noteKey, normalizedPanelId, JSON.stringify(contentJson), documentText, version, effectiveWorkspaceId]
+        )
+
+        return { skipped: false, id: inserted.rows[0]?.id }
+      } finally {
+        if (resetWorkspaceAtEnd) {
+          await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', workspaceId])
+        }
       }
-
-      if (version !== resolvedBase + 1) {
-        console.warn(`[POST /api/postgres-offline/documents] Non-sequential version: base=${resolvedBase}, version=${version}`)
-      }
-
-      const documentText = extractFullText(contentJson)
-
-      const inserted = await client.query(
-        `INSERT INTO document_saves
-         (note_id, panel_id, content, document_text, search_tsv, version, workspace_id, created_at)
-         VALUES ($1, $2, $3::jsonb, $4, to_tsvector('english', $4), $5, $6, NOW())
-         RETURNING id`,
-        [noteKey, normalizedPanelId, JSON.stringify(contentJson), documentText, version, workspaceId]
-      )
-
-      return { skipped: false, id: inserted.rows[0]?.id }
     })
     
     if (result.skipped) {
@@ -109,11 +141,13 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[POST /api/postgres-offline/documents] Error:', error)
     const message = error instanceof Error ? error.message : 'Failed to save document'
-    const status = message.startsWith('stale document save') || message.startsWith('non-incrementing version')
+    const statusOverride = typeof (error as any)?.status === 'number' ? (error as any).status : undefined
+    const status = statusOverride
+      ?? (message.startsWith('stale document save') || message.startsWith('non-incrementing version')
       ? 409
       : message.includes('required') || message.includes('must be a number')
       ? 400
-      : 500
+      : 500)
     return NextResponse.json(
       { error: message },
       { status }

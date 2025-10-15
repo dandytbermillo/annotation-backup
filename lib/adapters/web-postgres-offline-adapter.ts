@@ -155,6 +155,26 @@ export class WebPostgresOfflineAdapter implements PlainCrudAdapter {
           // ignore parse errors; fall back to default message
         }
 
+        if (response.status === 404 && message.toLowerCase().includes('note')) {
+          if (AUTOSAVE_DEBUG) {
+            console.debug('[PlainAutosave][Adapter]', 'save:note-missing', {
+              key,
+              version,
+              baseVersion,
+              message,
+              payload,
+            })
+          } else {
+            console.warn('[PlainAutosave] Skipping save: note missing', {
+              noteId,
+              panelId,
+              message,
+            })
+          }
+          success = true
+          return
+        }
+
         const err = new Error(message)
         ;(err as any).status = response.status
         if (payload) {
