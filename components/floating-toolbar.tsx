@@ -17,6 +17,7 @@ import {
   TOOLBAR_HOVER_DELAY_MS,
 } from "@/lib/constants/ui-timings"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -79,6 +80,7 @@ type FloatingToolbarProps = {
   canvasState?: any // CanvasState from useCanvas()
   canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
   canvasDataStore?: any // DataStore from useCanvas()
+  canvasNoteId?: string // noteId from useCanvas()
 }
 
 interface RecentNote {
@@ -183,7 +185,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, canvasState, canvasDispatch, canvasDataStore }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, canvasState, canvasDispatch, canvasDataStore, canvasNoteId }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
@@ -2019,7 +2021,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
 
     // Get the current branch data
-    const currentBranch = dataStore.get(currentPanelId)
+    const panelStoreKey = ensurePanelKey(canvasNoteId || '', currentPanelId)
+    const currentBranch = dataStore.get(panelStoreKey)
 
     if (!currentBranch) {
       return (

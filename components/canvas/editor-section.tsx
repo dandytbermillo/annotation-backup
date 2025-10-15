@@ -7,6 +7,7 @@ import { useAutoSave } from "@/hooks/use-auto-save"
 import TiptapEditor, { TiptapEditorHandle } from "./tiptap-editor"
 import { EditorToolbar } from "./editor-toolbar"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 interface EditorSectionProps {
   panelId: string
@@ -14,7 +15,7 @@ interface EditorSectionProps {
 }
 
 export function EditorSection({ panelId, branch }: EditorSectionProps) {
-  const { dataStore, dispatch } = useCanvas()
+  const { dataStore, dispatch, noteId } = useCanvas()
   const editorRef = useRef<TiptapEditorHandle>(null)
   const [isEditing, setIsEditing] = useState(branch.isEditable !== false)
 
@@ -44,7 +45,8 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
         }
       }
 
-      const existingBranch = dataStore.get(panelId) || {}
+      const panelStoreKey = ensurePanelKey(noteId || '', panelId)
+      const existingBranch = dataStore.get(panelStoreKey) || {}
       const previewText = buildBranchPreview(previewSource)
       const normalizedPreview = previewText.replace(/\s+/g, ' ').trim()
 
@@ -58,7 +60,7 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
         delete nextMetadata.preview
       }
 
-      dataStore.update(panelId, {
+      dataStore.update(panelStoreKey, {
         content: serializedContent,
         preview: normalizedPreview,
         hasHydratedContent: true,
@@ -115,9 +117,10 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
       toggleBtn.innerHTML = newEditableState ? '💾 Save' : '📝 Edit'
       toggleBtn.title = newEditableState ? 'Save Changes' : 'Edit Content'
     }
-    
+
     // Update branch data
-    dataStore.update(panelId, { isEditable: newEditableState })
+    const panelStoreKey = ensurePanelKey(noteId || '', panelId)
+    dataStore.update(panelStoreKey, { isEditable: newEditableState })
     
     // Focus editor if now editable
     if (newEditableState) {
@@ -155,8 +158,10 @@ export function EditorSection({ panelId, branch }: EditorSectionProps) {
     const breadcrumbs = []
     let currentId = branchId
 
-    while (currentId && dataStore.has(currentId)) {
-      const currentBranch = dataStore.get(currentId)
+    while (currentId) {
+      const currentStoreKey = ensurePanelKey(noteId || '', currentId)
+      if (!dataStore.has(currentStoreKey)) break
+      const currentBranch = dataStore.get(currentStoreKey)
       breadcrumbs.unshift({
         id: currentId,
         title: currentBranch.title,

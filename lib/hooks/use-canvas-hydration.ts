@@ -21,9 +21,9 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useCanvas } from '@/components/canvas/canvas-context'
 import { DataStore } from '@/lib/data-store'
 import { LayerManager } from '@/lib/canvas/layer-manager'
-import { worldToScreen, sizeWorldToScreen } from '@/lib/canvas/coordinate-utils'
 import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 import { debugLog } from '@/lib/utils/debug-logger'
+import { makePanelKey } from '@/lib/canvas/composite-id'
 
 // Constants
 const HYDRATION_TIMEOUT_MS = 10000 // 10 seconds
@@ -175,6 +175,7 @@ export interface HydrationStatus {
   panels: Array<{
     id: string
     noteId: string
+    storeKey?: string // Composite key for multi-note canvas
     type: string
     position: { x: number; y: number }
     size: { width: number; height: number }
@@ -422,9 +423,8 @@ export function useCanvasHydration(options: HydrationOptions) {
 
     for (const panel of panels) {
       try {
-        // Convert world-space to screen-space for rendering
-        const screenPosition = worldToScreen(panel.position, camera, zoom)
-        const screenSize = sizeWorldToScreen(panel.size, zoom)
+        // Generate composite key for multi-note canvas support
+        const storeKey = makePanelKey(panel.noteId, panel.id)
 
         // Use annotation type from metadata for UI rendering (header colors, etc.)
         // Falls back to 'note' if no annotation type is stored
@@ -435,6 +435,7 @@ export function useCanvasHydration(options: HydrationOptions) {
           action: 'applying_panel_type',
           metadata: {
             panelId: panel.id,
+            storeKey,
             dbType: panel.type,
             annotationType,
             hasMetadata: !!panel.metadata
@@ -446,6 +447,7 @@ export function useCanvasHydration(options: HydrationOptions) {
         const panelData = {
           id: panel.id,
           noteId: panel.noteId,
+          storeKey, // Add composite key for store operations
           type: annotationType, // Use UI annotation type for rendering (note/explore/promote/main)
           dbType: panel.type, // Keep database type for reference (editor/branch/context/etc.)
           position: panel.position, // WORLD-SPACE coordinates (from database)
@@ -464,28 +466,29 @@ export function useCanvasHydration(options: HydrationOptions) {
           action: 'storing_panel_data',
           metadata: {
             panelId: panel.id,
+            storeKey,
             worldPosition: panel.position, // Stored in dataStore (world-space)
             cameraUsed: camera,
             zoom
           }
         })
 
-        // Update DataStore (preserve existing fields like parentId injected by branch loader)
+        // Update DataStore using composite key (preserve existing fields like parentId injected by branch loader)
         if (dataStore) {
-          const existing = dataStore.get(panel.id)
-          dataStore.set(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          const existing = dataStore.get(storeKey)
+          dataStore.set(storeKey, existing ? { ...existing, ...panelData } : panelData)
         }
 
-        // Update branchesMap (same merge semantics as dataStore for consistency)
+        // Update branchesMap using composite key (same merge semantics as dataStore for consistency)
         if (branchesMap) {
-          const existing = branchesMap.get(panel.id)
-          branchesMap.set(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          const existing = branchesMap.get(storeKey)
+          branchesMap.set(storeKey, existing ? { ...existing, ...panelData } : panelData)
         }
 
-        // Update LayerManager
+        // Update LayerManager using composite key
         if (layerManager) {
-          const existing = layerManager.getNode(panel.id)
-          layerManager.updateNode(panel.id, existing ? { ...existing, ...panelData } : panelData)
+          const existing = layerManager.getNode(storeKey)
+          layerManager.updateNode(storeKey, existing ? { ...existing, ...panelData } : panelData)
         }
 
         appliedCount++
@@ -581,12 +584,14 @@ export function useCanvasHydration(options: HydrationOptions) {
       // Initialize offline queue
       await canvasOfflineQueue.init()
 
-      // Get panels from dataStore (with world-space positions per implementation plan)
+      // Get panels from dataStore using composite keys (with world-space positions per implementation plan)
       const storedPanels = panels.map(panel => {
-        const storedPanel = dataStore?.get(panel.id)
+        const storeKey = makePanelKey(panel.noteId, panel.id)
+        const storedPanel = dataStore?.get(storeKey)
         return {
           id: panel.id,
           noteId: panel.noteId,
+          storeKey, // Include composite key for consumers
           type: panel.type,
           position: storedPanel?.position || panel.position, // World-space position
           size: storedPanel?.size || panel.size, // World-space size

@@ -15,6 +15,7 @@
     "test:integration": "jest __tests__/integration --testPathIgnorePatterns=__tests__/unit",
     "test:e2e": "echo 'E2E tests not configured yet - install Playwright or Cypress'",
     "type-check": "tsc --noEmit -p tsconfig.type-check.json",
+    "test:composite-keys": "node scripts/verify-composite-keys.js",
     "migrate": "tsx scripts/migrate-to-enhanced-architecture.ts",
     "db:migrate": "node scripts/run-migrations.js",
     "db:migrate:rollback": "node scripts/run-migrations.js --rollback",

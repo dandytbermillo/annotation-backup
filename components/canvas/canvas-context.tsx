@@ -10,6 +10,7 @@ import { initialData } from "@/lib/initial-data"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import type { AnnotationType } from "@/lib/models/annotation"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 interface CanvasContextType {
   state: CanvasState
@@ -229,8 +230,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       }
 
       const cachedMain = snapshotMap.get('main') as Record<string, any> | undefined
+      const mainStoreKey = ensurePanelKey(noteId || '', 'main')
 
-      dataStore.set('main', {
+      dataStore.set(mainStoreKey, {
         id: 'main',
         type: 'main' as const,
         title: cachedMain?.title || 'Main Document',
@@ -249,7 +251,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       snapshotMap.forEach((value, key) => {
         if (key === 'main') return
         const cachedBranch = value as Record<string, any>
-        const existing = dataStore.get(key)
+        const branchStoreKey = ensurePanelKey(noteId || '', key)
+        const existing = dataStore.get(branchStoreKey)
         const merged = {
           ...existing,
           id: key,
@@ -268,7 +271,7 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           worldPosition: existing?.worldPosition ?? cachedBranch.worldPosition,
           worldSize: existing?.worldSize ?? cachedBranch.worldSize
         }
-        dataStore.set(key, merged)
+        dataStore.set(branchStoreKey, merged)
       })
 
       persistPlainBranchSnapshot()
@@ -291,10 +294,10 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       try {
         plainProvider.adapter.getNote(noteId).then((note) => {
           if (note && note.title) {
-            const main = dataStore.get('main')
+            const main = dataStore.get(mainStoreKey)
             if (main) {
               main.title = note.title
-              dataStore.set('main', main)
+              dataStore.set(mainStoreKey, main)
               // Trigger a re-render to reflect the updated title
               dispatch({ type: 'BRANCH_UPDATED' })
               persistPlainBranchSnapshot()
@@ -384,7 +387,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
             delete branchMetadata.preview
           }
 
-          const existing = dataStore.get(uiId)
+          const branchStoreKey = ensurePanelKey(noteId || '', uiId)
+          const existing = dataStore.get(branchStoreKey)
 
           // Import debugLog at the top of the file if not already imported
           const { debugLog } = require('@/lib/utils/debug-logger')
@@ -407,7 +411,7 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           // If existing data exists (from hydration or previous load), only update annotation fields
           if (existing) {
             // Update only annotation-related fields, preserve all position data
-            dataStore.update(uiId, {
+            dataStore.update(branchStoreKey, {
               id: uiId,
               type: branch.type as 'note' | 'explore' | 'promote',
               originalText: branch.originalText || '',
@@ -434,7 +438,7 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           } else {
             // No existing data - this is a NEW branch, set minimal data
             // Position will be handled by panel creation in annotation-canvas-modern.tsx
-            dataStore.set(uiId, {
+            dataStore.set(branchStoreKey, {
               id: uiId,
               type: branch.type as 'note' | 'explore' | 'promote',
               originalText: branch.originalText || '',
@@ -480,18 +484,20 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         })
         
         // Update main panel's branches
-        const mainPanel = dataStore.get('main')
+        const mainStoreKey = ensurePanelKey(noteId || '', 'main')
+        const mainPanel = dataStore.get(mainStoreKey)
         if (mainPanel) {
           mainPanel.branches = mainBranches
-          dataStore.set('main', mainPanel)
+          dataStore.set(mainStoreKey, mainPanel)
         }
-        
+
         // Update all parent branches arrays
         branchesByParent.forEach((childIds, parentId) => {
-          const parent = dataStore.get(parentId)
+          const parentStoreKey = ensurePanelKey(noteId || '', parentId)
+          const parent = dataStore.get(parentStoreKey)
           if (parent) {
             parent.branches = childIds
-            dataStore.set(parentId, parent)
+            dataStore.set(parentStoreKey, parent)
           }
         })
         
@@ -514,7 +520,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
     } else {
       // Yjs mode: Initialize data store with initial data
       Object.entries(initialData).forEach(([id, data]) => {
-        dataStore.set(id, data)
+        const storeKey = ensurePanelKey(noteId || '', id)
+        dataStore.set(storeKey, data)
       })
     }
 

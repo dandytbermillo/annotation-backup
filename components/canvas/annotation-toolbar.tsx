@@ -6,6 +6,7 @@ import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { createAnnotationBranch } from "@/lib/models/annotation"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()
@@ -174,8 +175,10 @@ export function AnnotationToolbar() {
     }
 
     // Add the branch to data store with position already set
-    dataStore.set(branchId, branchData)
-    
+    const branchStoreKey = ensurePanelKey(noteId || '', branchId)
+    const panelStoreKey = ensurePanelKey(noteId || '', panel)
+    dataStore.set(branchStoreKey, branchData)
+
     if (isPlainMode && plainProvider && noteId) {
       // Plain mode: Create annotation in database
       // Use raw UUID for database ID, but keep branch-xxx format for UI
@@ -202,13 +205,13 @@ export function AnnotationToolbar() {
       }).catch(error => {
         console.error('[AnnotationToolbar] Failed to create branch or persist initial content:', error)
       })
-     
+
      // Update parent's branches list
-     const parentPanel = dataStore.get(panel)
+     const parentPanel = dataStore.get(panelStoreKey)
      if (parentPanel) {
         const branches = parentPanel.branches || []
         const newBranches = [...branches, branchId]
-        dataStore.update(panel, { branches: newBranches })
+        dataStore.update(panelStoreKey, { branches: newBranches })
       }
     } else {
       // Yjs mode: Use UnifiedProvider (collab)
@@ -216,19 +219,19 @@ export function AnnotationToolbar() {
       if (noteId) {
         provider.setCurrentNote(noteId)
       }
-      
+
       // Use the new addBranch method that handles YJS native types properly
       provider.addBranch(panel, branchId, branchData)
-      
+
       // Update DataStore for backward compatibility
-      const parentPanel = dataStore.get(panel)
+      const parentPanel = dataStore.get(panelStoreKey)
       if (parentPanel) {
         // Get current branches using the new YJS method (this will be consistent)
         const currentBranches = provider.getBranches(panel)
-        dataStore.update(panel, { branches: currentBranches })
+        dataStore.update(panelStoreKey, { branches: currentBranches })
       } else {
         // If parent doesn't exist in dataStore, create minimal entry
-        dataStore.set(panel, { 
+        dataStore.set(panelStoreKey, {
           branches: provider.getBranches(panel),
           position: { x: 2000, y: 1500 } // Default position
         })

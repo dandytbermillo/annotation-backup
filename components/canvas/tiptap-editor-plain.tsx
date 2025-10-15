@@ -38,6 +38,7 @@ import { PerformanceMonitor } from './performance-decorations'
 import { ClearStoredMarksAtBoundary } from './clear-stored-marks-plugin'
 import { AnnotationStartBoundaryFix } from './annotation-start-boundary-fix'
 import { WebKitAnnotationCursorFix } from './webkit-annotation-cursor-fix'
+import { ensurePanelKey } from '@/lib/canvas/composite-id'
 import { AnnotationArrowNavigationFix } from './annotation-arrow-navigation-fix'
 // import { BrowserSpecificCursorFix } from './browser-specific-cursor-fix'
 // import { WebKitAnnotationClickFix } from './webkit-annotation-click-fix'
@@ -554,8 +555,9 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
         metadata: { component: 'editor', action: 'start_load' }
       })
 
+      const storeKey = ensurePanelKey(noteId, panelId)
       const branchEntry = typeof window !== 'undefined'
-        ? (window as any).canvasDataStore?.get?.(panelId)
+        ? (window as any).canvasDataStore?.get?.(storeKey)
         : null
 
       provider.loadDocument(noteId, panelId).then(() => {

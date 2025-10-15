@@ -332,6 +332,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
         persistPanelCreate({
           panelId: 'main',
+          storeKey: ensurePanelKey(noteId, 'main'),  // Composite key for multi-note support
           type: 'editor',
           position: mainPosition,
           size: { width: 600, height: 800 },
@@ -788,7 +789,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }))
 
     // Restore canvas items but reset main panel to default position (will be centered by centerOnPanel)
-    const restoredItems = snapshot.items.map((item) => ({
+    const restoredItems = snapshot.items.map((item: CanvasItem) => ({
       ...item,
       itemType: item.itemType,
       // Reset main panel to default position - centerOnPanel will center it
@@ -803,10 +804,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     // CRITICAL: Also reset main panel position in dataStore so getPanelPosition reads correct value
     // (reuse plainProvider already declared above)
     if (plainProvider) {
-      const mainBranch = dataStore.get('main')
+      const mainStoreKey = ensurePanelKey(noteId, 'main')
+      const mainBranch = dataStore.get(mainStoreKey)
       if (mainBranch) {
         mainBranch.position = { x: 2000, y: 1500 }
-        dataStore.set('main', mainBranch)
+        dataStore.set(mainStoreKey, mainBranch)
         debugLog({
           component: 'AnnotationCanvas',
           action: 'reset_datastore_main_position',
@@ -1089,6 +1091,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     const isPlainMode = isPlainModeActive()
     
     setCanvasItems(prev => {
+      const newPanelStoreKey = ensurePanelKey(noteId, panelId)
       // Only add if not already present
       if (prev.some(item => isPanel(item) && item.panelId === panelId)) {
         return prev
@@ -1102,7 +1105,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         // If parent position is provided, update the dataStore
         if (parentPosition && (window as any).canvasDataStore) {
           const dataStore = (window as any).canvasDataStore
-          const existingPanelData = dataStore.get(panelId)
+          const existingPanelData = dataStore.get(newPanelStoreKey)
 
           if (!existingPanelData?.worldPosition) {
             const camera = {
@@ -1111,7 +1114,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             }
             const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
 
-            dataStore.update(panelId, {
+            dataStore.update(newPanelStoreKey, {
               id: panelId,
               position: worldPosition,
               worldPosition: worldPosition
@@ -1125,7 +1128,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         
         // Get the panel data from YJS
         const branchesMap = provider.getBranchesMap()
-        const panelData = branchesMap.get(panelId)
+        const panelData = branchesMap.get(newPanelStoreKey)
         
         if (!panelData) {
           console.warn(`No data found for panel ${panelId}`)
@@ -1135,7 +1138,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         // If parent position is provided, update the position
         if (parentPosition && panelData) {
           panelData.position = parentPosition
-          branchesMap.set(panelId, panelData)
+          branchesMap.set(newPanelStoreKey, panelData)
         }
       }
       
@@ -1171,9 +1174,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       // }, 100) // Small delay to ensure panel is rendered
       
       // Get branch data to determine annotation type
-      let branchData = dataStore?.get(panelId)
+      const hydratedStoreKey = ensurePanelKey(noteId, panelId)
+      let branchData = dataStore?.get(hydratedStoreKey)
       if (!branchData && branchesMap) {
-        branchData = branchesMap.get(panelId)
+        branchData = branchesMap.get(hydratedStoreKey)
       }
 
       // Determine panel type from branch data's type field (which contains the annotation type)
@@ -1260,6 +1264,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
       persistPanelCreate({
         panelId,
+        storeKey: hydratedStoreKey,  // Composite key for multi-note support
         type: dbPanelType,
         position,
         size: defaultDimensions,

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react"
 import type { CanvasState } from "@/types/canvas"
 import type { DataStore } from "@/lib/data-store"
 import { Pencil } from "lucide-react"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 interface BranchesSectionProps {
   panelId: string
@@ -17,14 +18,16 @@ interface BranchesSectionProps {
   dataStore?: DataStore
   state?: CanvasState
   dispatch?: React.Dispatch<any>
+  noteId?: string
 }
 
-export function BranchesSection({ panelId, branch, dataStore: propDataStore, state: propState, dispatch: propDispatch }: BranchesSectionProps) {
+export function BranchesSection({ panelId, branch, dataStore: propDataStore, state: propState, dispatch: propDispatch, noteId: propNoteId }: BranchesSectionProps) {
   // Try to use canvas context if available, otherwise use props
   const canvasContext = useCanvas ? (() => { try { return useCanvas() } catch { return null } })() : null
   const state = propState || canvasContext?.state
   const dispatch = propDispatch || canvasContext?.dispatch
   const dataStore = propDataStore || canvasContext?.dataStore
+  const noteId = propNoteId || canvasContext?.noteId || ''
 
   const [, forceUpdate] = useState({})
   const [editMode, setEditMode] = useState(false)
@@ -75,20 +78,23 @@ Features:
 
     if (isPlainMode) {
       // Plain mode: Get data from dataStore
-      currentBranch = dataStore.get(panelId) || branch
+      const panelStoreKey = ensurePanelKey(noteId, panelId)
+      currentBranch = dataStore.get(panelStoreKey) || branch
       branchesMap = dataStore
     } else {
       // Yjs mode: Get branch data from UnifiedProvider
       const provider = UnifiedProvider.getInstance()
       branchesMap = provider.getBranchesMap()
-      currentBranch = branchesMap.get(panelId) || dataStore.get(panelId) || branch
+      const panelStoreKey = ensurePanelKey(noteId, panelId)
+      currentBranch = branchesMap.get(panelStoreKey) || dataStore.get(panelStoreKey) || branch
     }
 
     if (!currentBranch.branches || currentBranch.branches.length === 0) return []
 
     const filtered = currentBranch.branches.filter((branchId: string) => {
       if (activeFilter === "all") return true
-      const childBranch = branchesMap.get(branchId) || dataStore.get(branchId)
+      const branchStoreKey = ensurePanelKey(noteId, branchId)
+      const childBranch = branchesMap.get(branchStoreKey) || dataStore.get(branchStoreKey)
       return childBranch && childBranch.type === activeFilter
     })
 
@@ -258,6 +264,7 @@ Features:
               state={state}
               dispatch={dispatch}
               editMode={editMode}
+              noteId={noteId}
             />
           ))
         )}

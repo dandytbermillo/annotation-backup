@@ -329,3 +329,4 @@
 {time:2025-10-14T19:08:53Z,note:Replaced WidgetStudioConnections with version that deduplicates parent/child links and listens for plain dataStore events, mirroring Phase 2 implementation.}
 {time:2025-10-14T19:40:45Z,note:Merged hydration panel data with existing store entries to preserve parentId before connections render.}
 {"ts":"2025-10-14T22:43:36.452Z","type":"commit","sha":"b8ddc48cea5f0c7b864dc025fc1a0a06713a3e60","files_changed":6,"message":"phase 1 implemented"}
+{"ts":"2025-10-15T01:17:25.728Z","type":"commit","sha":"cc1918fbb64cb0ebc7f5ad7c5448f208dd871ad1","files_changed":17,"message":"implementing phase 2"}

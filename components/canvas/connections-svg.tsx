@@ -2,9 +2,10 @@
 
 import { useCanvas } from "./canvas-context"
 import { useEffect, useRef } from "react"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 export function ConnectionsSvg() {
-  const { state, dataStore } = useCanvas()
+  const { state, dataStore, noteId } = useCanvas()
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
@@ -17,7 +18,8 @@ export function ConnectionsSvg() {
 
     // Draw connections
     state.panels.forEach((panel) => {
-      const branch = dataStore.get(panel.branchId)
+      const branchStoreKey = ensurePanelKey(noteId || '', panel.branchId)
+      const branch = dataStore.get(branchStoreKey)
       if (branch && branch.parentId) {
         const parentPanel = state.panels.get(branch.parentId)
         if (parentPanel) {
@@ -25,7 +27,7 @@ export function ConnectionsSvg() {
         }
       }
     })
-  }, [state.panels, state.canvasState.showConnections, dataStore])
+  }, [state.panels, state.canvasState.showConnections, dataStore, noteId])
 
   const drawConnection = (fromId: string, toId: string, type: string) => {
     const fromPanel = state.panels.get(toId)
@@ -34,8 +36,10 @@ export function ConnectionsSvg() {
 
     if (!fromPanel || !toPanel || !svg) return
 
-    const fromBranch = dataStore.get(toId)
-    const toBranch = dataStore.get(fromId)
+    const fromStoreKey = ensurePanelKey(noteId || '', toId)
+    const toStoreKey = ensurePanelKey(noteId || '', fromId)
+    const fromBranch = dataStore.get(fromStoreKey)
+    const toBranch = dataStore.get(toStoreKey)
 
     const fromX = fromBranch.position.x + 800 // PANEL_WIDTH
     const fromY = fromBranch.position.y + 300 // PANEL_HEIGHT / 2

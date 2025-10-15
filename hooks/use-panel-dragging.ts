@@ -2,9 +2,11 @@
 
 import { useEffect, type RefObject } from "react"
 import { useCanvas } from "@/components/canvas/canvas-context"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 export function usePanelDragging(panelRef: RefObject<HTMLDivElement>, panelId: string) {
-  const { state, dispatch, dataStore } = useCanvas()
+  const { state, dispatch, dataStore, noteId } = useCanvas()
+  const storeKey = ensurePanelKey(noteId || "", panelId)
 
   useEffect(() => {
     const panel = panelRef.current
@@ -34,7 +36,7 @@ export function usePanelDragging(panelRef: RefObject<HTMLDivElement>, panelId: s
       panel.style.top = newY + "px"
 
       // Update position in data store
-      dataStore.update(panelId, {
+      dataStore.update(storeKey, {
         position: { x: newX, y: newY },
       })
     }
@@ -57,9 +59,9 @@ export function usePanelDragging(panelRef: RefObject<HTMLDivElement>, panelId: s
       dragStartX = e.clientX
       dragStartY = e.clientY
 
-      const branch = dataStore.get(panelId)
-      panelStartX = branch.position.x
-      panelStartY = branch.position.y
+      const branch = dataStore.get(storeKey)
+      panelStartX = branch?.position?.x ?? panelStartX
+      panelStartY = branch?.position?.y ?? panelStartY
 
       panel.classList.add("dragging")
       document.body.classList.add("select-none")
@@ -83,5 +85,5 @@ export function usePanelDragging(panelRef: RefObject<HTMLDivElement>, panelId: s
       document.removeEventListener("mousemove", handleMouseMove)
       document.removeEventListener("mouseup", handleMouseUp)
     }
-  }, [panelId, state.canvasState.zoom, state.panelZIndex, dispatch, dataStore, panelRef])
+  }, [panelId, state.canvasState.zoom, state.panelZIndex, dispatch, dataStore, panelRef, storeKey])
 }

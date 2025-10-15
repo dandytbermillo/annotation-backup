@@ -7,6 +7,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import type { CanvasState } from "@/types/canvas"
 import type { DataStore } from "@/lib/data-store"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 interface BranchItemProps {
   branchId: string
@@ -16,14 +17,16 @@ interface BranchItemProps {
   state?: CanvasState
   dispatch?: React.Dispatch<any>
   editMode?: boolean
+  noteId?: string
 }
 
-export function BranchItem({ branchId, parentId, dataStore: propDataStore, state: propState, dispatch: propDispatch, editMode }: BranchItemProps) {
+export function BranchItem({ branchId, parentId, dataStore: propDataStore, state: propState, dispatch: propDispatch, editMode, noteId: propNoteId }: BranchItemProps) {
   // Try to use canvas context if available, otherwise use props
   const canvasContext = useCanvas ? (() => { try { return useCanvas() } catch { return null } })() : null
   const dataStore = propDataStore || canvasContext?.dataStore
   const dispatch = propDispatch || canvasContext?.dispatch
   const state = propState || canvasContext?.state
+  const noteId = propNoteId || canvasContext?.noteId || ''
 
   // State for preview functionality
   const [isPreview, setIsPreview] = useState(false)
@@ -44,16 +47,17 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   // Get branch data based on mode
   let branch
   let branchesMap
+  const branchStoreKey = ensurePanelKey(noteId, branchId)
 
   if (isPlainMode) {
     // Plain mode: Get from dataStore
-    branch = dataStore.get(branchId)
+    branch = dataStore.get(branchStoreKey)
     branchesMap = dataStore
   } else {
     // Yjs mode: Get from UnifiedProvider
     const provider = UnifiedProvider.getInstance()
     branchesMap = provider.getBranchesMap()
-    branch = branchesMap.get(branchId) || dataStore.get(branchId)
+    branch = branchesMap.get(branchStoreKey) || dataStore.get(branchStoreKey)
   }
 
   if (!branch) return null
@@ -88,18 +92,19 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     }
 
     console.log(`Creating new panel for branch ${branchId}`)
-    
+
     // Calculate position for new panel
-    const parentBranch = branchesMap.get(parentId) || dataStore.get(parentId)
+    const parentStoreKey = ensurePanelKey(noteId, parentId)
+    const parentBranch = branchesMap.get(parentStoreKey) || dataStore.get(parentStoreKey)
     if (!parentBranch) {
       console.error(`Parent branch ${parentId} not found`)
       return
     }
-    
+
     // Get sibling count based on mode
     let siblingCount
     if (isPlainMode) {
-      const parent = dataStore.get(parentId)
+      const parent = dataStore.get(parentStoreKey)
       const siblings = parent?.branches || []
       siblingCount = siblings.length
     } else {
@@ -113,14 +118,14 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     const targetY = parentBranch.position.y + siblingCount * 650 // PANEL_SPACING_Y
 
     // Update position in both stores
-    dataStore.update(branchId, {
+    dataStore.update(branchStoreKey, {
       position: { x: targetX, y: targetY },
     })
-    
-    const branchData = branchesMap.get(branchId)
+
+    const branchData = branchesMap.get(branchStoreKey)
     if (branchData) {
       branchData.position = { x: targetX, y: targetY }
-      branchesMap.set(branchId, branchData)
+      branchesMap.set(branchStoreKey, branchData)
     }
 
     // Add panel
@@ -221,7 +226,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   const handleSaveRename = () => {
     const trimmed = renamingValue.trim()
     if (trimmed && trimmed !== branch.title && dataStore) {
-      dataStore.update(branchId, { title: trimmed })
+      dataStore.update(branchStoreKey, { title: trimmed })
     }
     setIsRenaming(false)
   }

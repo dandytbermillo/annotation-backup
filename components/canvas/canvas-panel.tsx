@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect } from "react"
+import React, { useRef, useState, useEffect, useReducer, useCallback, useLayoutEffect, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { useCanvas } from "./canvas-context"
 import type { Branch } from "@/types/canvas"
@@ -53,15 +53,17 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   
+  const effectiveNoteId = noteId || contextNoteId || ''
+  const storeKey = useMemo(() => ensurePanelKey(effectiveNoteId, panelId), [effectiveNoteId, panelId])
+
   // Layer management integration
   const layerManager = useLayerManager()
-  const layerBandInfo = layerManager.getLayerBandInfo(panelId)
-  const { node: canvasNode } = useCanvasNode(panelId, 'panel', position)
+  const layerBandInfo = layerManager.getLayerBandInfo(storeKey)
+  const { node: canvasNode } = useCanvasNode(storeKey, 'panel', position)
 
   // Canvas state persistence - Get provider and branchesMap for persistence
   const provider = UnifiedProvider.getInstance()
   const branchesMap = provider.getBranchesMap()
-  const effectiveNoteId = noteId || contextNoteId || ''
 
   const { updateMainPosition } = useCanvasWorkspace()
 
@@ -80,7 +82,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
-  const actionsTimeoutRef = useRef<NodeJS.Timeout>()
+  const actionsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const actionsShowTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Panel hover state for hiding/showing buttons
@@ -131,7 +133,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           const panel = panels.find((p: any) => p.panel_id === panelId)
           if (panel?.title && panel.title !== currentBranch.title) {
             // Only update if title actually changed (prevent re-render loops)
-            dataStore.update(panelId, { title: panel.title })
+            dataStore.update(storeKey, { title: panel.title })
             console.log('[CanvasPanel] Loaded title from DB:', panel.title)
           }
         }
@@ -189,7 +191,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
 
           // Guard: Ensure dataStore.update doesn't throw
           try {
-            dataStore.update(panelId, { title: newTitle.trim() })
+            dataStore.update(storeKey, { title: newTitle.trim() })
             dispatch({ type: "BRANCH_UPDATED" })
           } catch (updateError) {
             console.error('[CanvasPanel] Failed to update panel title:', updateError)
@@ -217,7 +219,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   
   // Branch preview state
   const [previewBranchId, setPreviewBranchId] = useState<string | null>(null)
-  const previewTimeoutRef = useRef<NodeJS.Timeout>()
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [collapsibleSelection, setCollapsibleSelection] = useState<CollapsibleSelectionSnapshot | null>(null)
   const handleCollapsibleSelectionChange = useCallback((snapshot: CollapsibleSelectionSnapshot) => {
     if (snapshot.mode === 'none') {
@@ -954,7 +956,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       })
 
       if (loadedContent !== undefined && loadedContent !== null && !isContentEmptyValue(loadedContent)) {
-        const existing = dataStore.get(panelId) || {}
+        const existing = dataStore.get(storeKey) || {}
         const previewFallback = existing.preview
           || existing.metadata?.preview
           || ''
@@ -976,7 +978,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           hasHydratedContent: true
         })
 
-        dataStore.update(panelId, {
+        dataStore.update(storeKey, {
           content: loadedContent,
           preview: previewText,
           hasHydratedContent: true,
@@ -984,13 +986,13 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         })
       } else if (loadedContent !== undefined && loadedContent !== null) {
         // Ensure preview clears when empty content is applied
-        const existing = dataStore.get(panelId) || {}
+        const existing = dataStore.get(storeKey) || {}
         const nextMetadata = {
           ...(existing.metadata || {}),
         }
         delete nextMetadata.preview
 
-        dataStore.update(panelId, {
+        dataStore.update(storeKey, {
           content: loadedContent,
           preview: '',
           hasHydratedContent: false,
@@ -1047,8 +1049,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
 
   // Get current branch data - re-evaluate on each render
   const getBranchData = () => {
-    const providerData = branchesMap.get(panelId)
-    const storeData = dataStore.get(panelId)
+    const providerData = branchesMap.get(storeKey)
+    const storeData = dataStore.get(storeKey)
 
     // YJS returns proxy objects, convert to plain object for React
     if (providerData) {
@@ -1160,7 +1162,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       setIsSaving(true)
 
       // Optimistic update in-memory dataStore
-      dataStore.update(panelId, { title: trimmed })
+      dataStore.update(storeKey, { title: trimmed })
       dispatch({ type: "BRANCH_UPDATED" })
 
       // Persist to database via atomic transaction endpoint
@@ -1193,7 +1195,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           }
 
           // Update dataStore with confirmed server value (in case server modified it)
-          dataStore.update(panelId, { title: result.title })
+          dataStore.update(storeKey, { title: result.title })
 
           // Invalidate localStorage cache IMMEDIATELY with timestamped tombstone
           if (typeof window !== 'undefined') {
@@ -1243,7 +1245,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           }
 
           // Rollback optimistic update
-          dataStore.update(panelId, { title: oldTitle })
+          dataStore.update(storeKey, { title: oldTitle })
           dispatch({ type: "BRANCH_UPDATED" })
 
           // Show error to user
@@ -1289,9 +1291,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       await plainProvider.changeBranchType(branchId, newType)
 
       // Update local state immediately (provider already updated cache)
-      const current = dataStore.get(panelId)
+      const current = dataStore.get(storeKey)
       if (current) {
-        dataStore.update(panelId, { type: newType })
+        dataStore.update(storeKey, { type: newType })
       }
 
       // Force re-render
@@ -1311,7 +1313,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   }
 
   const handleUpdate = (payload: ProseMirrorJSON | string) => {
-    const existing = dataStore.get(panelId) || {}
+    const existing = dataStore.get(storeKey) || {}
 
     const previewFallback = existing.preview
       || existing.metadata?.preview
@@ -1345,17 +1347,17 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     }
 
     // Update both stores with panel-specific content + preview
-    dataStore.update(panelId, updatedData)
+    dataStore.update(storeKey, updatedData)
     
     // Also update in CollaborationProvider
-    const branchData = branchesMap.get(panelId)
+    const branchData = branchesMap.get(storeKey)
     if (branchData) {
       branchData.content = payload
       branchData.preview = previewText
-      branchesMap.set(panelId, branchData)
+      branchesMap.set(storeKey, branchData)
     } else {
       // If not in YJS yet, add the full data
-      branchesMap.set(panelId, updatedData)
+      branchesMap.set(storeKey, updatedData)
     }
     
     // Show auto-save indicator
@@ -1394,7 +1396,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       toggleBtn.title = newEditableState ? 'Save Changes' : 'Edit Content'
     }
 
-    dataStore.update(panelId, { isEditable: newEditableState })
+    dataStore.update(storeKey, { isEditable: newEditableState })
 
     if (newEditableState) {
       editorRef.current?.focus()
@@ -1521,7 +1523,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           console.log('[CanvasPanel] Content copied to new note successfully')
 
           // Update the current panel to reflect the new note
-          dataStore.update(panelId, {
+          dataStore.update(storeKey, {
             ...currentBranch,
             title: saveAsNoteName.trim() || "Untitled",
             noteId: result.noteId
@@ -1611,8 +1613,11 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     const breadcrumbs = []
     let currentId = panelId
 
-    while (currentId && dataStore.has(currentId)) {
-      const currentBranch = dataStore.get(currentId)
+    while (currentId) {
+      const currentStoreKey = ensurePanelKey(effectiveNoteId, currentId)
+      if (!dataStore.has(currentStoreKey)) break
+
+      const currentBranch = dataStore.get(currentStoreKey)
       breadcrumbs.unshift({
         id: currentId,
         title: currentBranch.title,
@@ -1744,7 +1749,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       // Bring panel to front while dragging
       // Always use LayerManager for focus/z-index management
       if (layerManager.isEnabled) {
-        layerManager.focusNode(panelId) // This brings to front and updates focus time
+        layerManager.focusNode(storeKey) // This brings to front and updates focus time
       }
       globalDraggingPanelId = panelId
 
@@ -1952,6 +1957,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       // finalX/finalY are already in world-space (from panel.style.left/top)
       persistPanelUpdate({
         panelId,
+        storeKey: ensurePanelKey(effectiveNoteId, panelId),  // Composite key for multi-note support
         position: { x: finalX, y: finalY },
         coordinateSpace: 'world'  // CRITICAL: These coordinates are already world-space
       }).catch(err => {
@@ -2044,15 +2050,16 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
 
   // Filter branches based on active filter
   // In plain mode, get branches from dataStore; otherwise use provider
-  const allBranches = isPlainMode 
-    ? (dataStore.get(panelId)?.branches || [])
+  const allBranches = isPlainMode
+    ? (dataStore.get(storeKey)?.branches || [])
     : (provider.getBranches ? provider.getBranches(panelId) : [])
   const filteredBranches = allBranches.filter((branchId: string) => {
     if (activeFilter === 'all') return true
-    
+
     // Try to get branch from provider first, then dataStore
-    const providerChild = branchesMap.get(branchId)
-    const storeChild = dataStore.get(branchId)
+    const branchStoreKey = ensurePanelKey(effectiveNoteId, branchId)
+    const providerChild = branchesMap.get(branchStoreKey)
+    const storeChild = dataStore.get(branchStoreKey)
     const childBranch = providerChild || storeChild
     
     // If we can't find the branch data, include it anyway for 'all' filter
@@ -2072,7 +2079,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         // Defer state updates to avoid React warning
         setTimeout(() => {
           // If this panel or its branches were updated, force re-render
-          if (updatedPanelId === panelId || dataStore.get(panelId)?.branches?.includes(updatedPanelId)) {
+          if (updatedPanelId === panelId || dataStore.get(storeKey)?.branches?.includes(updatedPanelId)) {
             setLastBranchUpdate(Date.now())
             forceUpdate()
           }
@@ -2235,8 +2242,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       } else {
         // Fallback: try to get position from data stores
         const panelData = isPlainMode 
-          ? dataStore.get(panelId) 
-          : branchesMap.get(panelId)
+          ? dataStore.get(storeKey) 
+          : branchesMap.get(storeKey)
         
         if (panelData?.position) {
           // Simple fallback logic when transform not available
@@ -2729,7 +2736,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                 onClick={(e) => {
                   e.stopPropagation()
                   if (layerManager.isEnabled) {
-                    layerManager.bringToFront(panelId)
+                  layerManager.bringToFront(storeKey)
                   }
                 }}
                 disabled={layerBandInfo?.isAtTop}
@@ -2764,7 +2771,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                 onClick={(e) => {
                   e.stopPropagation()
                   if (layerManager.isEnabled) {
-                    layerManager.sendToBack(panelId)
+                  layerManager.sendToBack(storeKey)
                   }
                 }}
                 disabled={layerBandInfo?.isAtBottom}

@@ -2,9 +2,11 @@
 
 import { useEffect, type RefObject } from "react"
 import { useCanvas } from "@/components/canvas/canvas-context"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 export function useAutoSave(panelId: string, contentRef: RefObject<HTMLDivElement>) {
-  const { dataStore } = useCanvas()
+  const { dataStore, noteId } = useCanvas()
+  const storeKey = ensurePanelKey(noteId || "", panelId)
 
   useEffect(() => {
     const content = contentRef.current
@@ -24,7 +26,7 @@ export function useAutoSave(panelId: string, contentRef: RefObject<HTMLDivElemen
       clearTimeout(saveTimeout)
       saveTimeout = setTimeout(() => {
         // Update content in data store
-        dataStore.update(panelId, { content: content.innerHTML })
+        dataStore.update(storeKey, { content: content.innerHTML })
 
         if (indicator) {
           indicator.textContent = "Saved"
@@ -45,5 +47,5 @@ export function useAutoSave(panelId: string, contentRef: RefObject<HTMLDivElemen
       content.removeEventListener("input", handleInput)
       clearTimeout(saveTimeout)
     }
-  }, [panelId, dataStore, contentRef])
+  }, [panelId, dataStore, contentRef, storeKey])
 }

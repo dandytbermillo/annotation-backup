@@ -3,6 +3,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { getPlainProvider } from '@/lib/provider-switcher'
 import { trackTooltipShown } from './performance-decorations'
 import { buildBranchPreview, extractPreviewFromContent, stripHtml } from '@/lib/utils/branch-preview'
+import { ensurePanelKey } from '@/lib/canvas/composite-id'
 
 export const annotationDecorationsKey = new PluginKey('annotationDecorations')
 
@@ -136,12 +137,13 @@ export const AnnotationDecorations = () => new Plugin({
 
       const noteId = (el as any).dataset?.noteId || resolveContextFrom(el).noteId || ''
       const { uiId } = normalizeIds(rawBranchId)
+      const storeKey = ensurePanelKey(noteId, uiId)
 
       if (tooltipElement) tooltipElement.dataset.branchId = uiId
 
       const ds = (window as any).canvasDataStore
       const plainProvider = getPlainProvider()
-      const dsBranch = ds?.get?.(uiId) || null
+      const dsBranch = ds?.get?.(storeKey) || null
       
       // Try to get provider document cache (but only as fallback)
       let docContent: any = null
@@ -215,7 +217,7 @@ export const AnnotationDecorations = () => new Plugin({
           try {
             // Re-check canvasDataStore which might have been populated
             const ds = (window as any).canvasDataStore
-            const retryBranch = ds?.get?.(uiId)
+            const retryBranch = ds?.get?.(storeKey)
             if (retryBranch) {
               const txt = retryBranch.preview && String(retryBranch.preview).trim()
                 ? String(retryBranch.preview).trim()

@@ -33,8 +33,10 @@ export interface PanelPersistOptions {
 }
 
 export interface PanelUpdateData {
-  /** Panel ID */
+  /** Panel ID (used for API calls) */
   panelId: string
+  /** Store key (composite noteId::panelId, used for store operations). If not provided, falls back to panelId. */
+  storeKey?: string
   /** Position coordinates */
   position: { x: number; y: number }
   /** Size dimensions (optional) */
@@ -59,10 +61,13 @@ export function usePanelPersistence(options: PanelPersistOptions) {
    */
   const persistPanelUpdate = useCallback(
     async (update: PanelUpdateData) => {
-      const { panelId, position, size, zIndex, coordinateSpace = 'screen', expectedRevision } = update
+      const { panelId, storeKey, position, size, zIndex, coordinateSpace = 'screen', expectedRevision } = update
+
+      // Use composite key for store operations, fallback to plain panelId
+      const key = storeKey || panelId
 
       // Get current panel data for revision token
-      const currentData = dataStore.get(panelId)
+      const currentData = dataStore.get(key)
       const revisionToken = expectedRevision || currentData?.revisionToken
 
       // Get current camera state
@@ -105,10 +110,10 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         updateData.zIndex = zIndex
       }
 
-      // Add updates to transaction
-      transaction.add('dataStore', panelId, updateData)
-      transaction.add('branchesMap', panelId, updateData)
-      transaction.add('layerManager', panelId, updateData)
+      // Add updates to transaction using composite key
+      transaction.add('dataStore', key, updateData)
+      transaction.add('branchesMap', key, updateData)
+      transaction.add('layerManager', key, updateData)
 
       // Prepare API payload
       const apiPayload = {
@@ -183,6 +188,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
   const persistPanelCreate = useCallback(
     async (panelData: {
       panelId: string
+      storeKey?: string
       type: 'editor' | 'branch' | 'context' | 'toolbar' | 'annotation'
       position: { x: number; y: number }
       size: { width: number; height: number }
@@ -191,7 +197,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       title?: string
       metadata?: Record<string, any>
     }) => {
-      const { panelId, type, position, size, zIndex = 0, state: panelState = 'active', title, metadata } = panelData
+      const { panelId, storeKey, type, position, size, zIndex = 0, state: panelState = 'active', title, metadata } = panelData
 
       // Get current camera state
       const camera = {
@@ -293,9 +299,11 @@ export function usePanelPersistence(options: PanelPersistOptions) {
 
   /**
    * Persist panel deletion
+   * Note: storeKey parameter is accepted for API consistency but not currently used
+   * as deletion only requires the backend panel ID
    */
   const persistPanelDelete = useCallback(
-    async (panelId: string) => {
+    async (panelId: string, _storeKey?: string) => {
       try {
         const response = await fetch(`/api/canvas/panels/${panelId}`, {
           method: 'DELETE'

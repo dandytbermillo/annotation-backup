@@ -5,6 +5,7 @@ import { useCanvas } from './canvas-context'
 import { ChevronUp, ChevronDown } from 'lucide-react'
 import { CanvasItem, isPanel, isComponent } from '@/types/canvas-items'
 import { useIsolatedIds } from '@/lib/isolation/context'
+import { ensurePanelKey } from '@/lib/canvas/composite-id'
 
 interface MinimapProps {
   canvasItems: CanvasItem[]
@@ -17,7 +18,7 @@ interface MinimapProps {
 }
 
 export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: MinimapProps) {
-  const { state, dataStore } = useCanvas()
+  const { state, dataStore, noteId } = useCanvas()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapSize = 280
   const minimapPadding = 20
@@ -80,7 +81,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Process panels
     panels.forEach(panel => {
-      const branch = dataStore.get(panel.panelId!)
+      const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
+      const branch = dataStore.get(panelStoreKey)
       if (branch) {
         minX = Math.min(minX, branch.position.x)
         maxX = Math.max(maxX, branch.position.x + (branch.dimensions?.width || 500))
@@ -173,7 +175,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Draw panels
     panels.forEach(panel => {
-      const branch = dataStore.get(panel.panelId!)
+      const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
+      const branch = dataStore.get(panelStoreKey)
       if (!branch) return
       
       const pos = worldToMinimap(branch.position.x, branch.position.y)
@@ -470,7 +473,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Check panels
     panels.forEach(panel => {
-      const branch = dataStore.get(panel.panelId!)
+      const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
+      const branch = dataStore.get(panelStoreKey)
       if (!branch) return
       
       const pos = worldToMinimap(branch.position.x, branch.position.y)

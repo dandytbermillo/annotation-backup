@@ -4,6 +4,7 @@ import { UnifiedProvider } from '@/lib/provider-switcher'
 import { trackTooltipShown } from './performance-decorations'
 import { getPlainProvider } from '@/lib/provider-switcher'
 import { buildBranchPreview } from '@/lib/utils/branch-preview'
+import { ensurePanelKey } from '@/lib/canvas/composite-id'
 
 export const annotationDecorationsKey = new PluginKey('annotationDecorations')
 
@@ -104,6 +105,14 @@ export const AnnotationDecorations = () => {
         
         // Add branch ID for async guard
         tooltipElement.dataset.branchId = uiId
+
+        const context = resolveContextFrom(element)
+        const noteIdAttr = (element as any).dataset?.noteId || context.noteId
+        const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+        const noteIdFromDom = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
+          document.querySelector('[data-note]')?.getAttribute('data-note')
+        const noteId = noteIdAttr || noteIdFromPath || noteIdFromDom || ''
+        const storeKey = ensurePanelKey(noteId, uiId)
         
         // Get branch data - try both providers
         let branchData = null
@@ -114,7 +123,7 @@ export const AnnotationDecorations = () => {
           const provider = UnifiedProvider.getInstance()
           if (provider && provider.getBranchesMap) {
             const branchesMap = provider.getBranchesMap()
-            branchData = branchesMap.get(uiId) // Use UI format for Yjs
+            branchData = branchesMap.get(storeKey)
           }
         } catch (e) {
           // CollaborationProvider not available
@@ -137,11 +146,6 @@ export const AnnotationDecorations = () => {
           
           // Extract noteId from the current page/context
           // Try multiple sources for better reliability
-          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
-          const noteIdFromAttr = document.querySelector('[data-note-id]')?.getAttribute('data-note-id') ||
-                                 document.querySelector('[data-note]')?.getAttribute('data-note')
-          const noteId = noteIdFromPath || noteIdFromAttr
-          
           if (noteId) {
             console.log('[showAnnotationTooltip] Fetching branches for noteId:', noteId)
             // First fetch branch metadata (API uses raw UUID)
@@ -686,3 +690,10 @@ export const AnnotationDecorations = () => {
 }
 
  
+function resolveContextFrom(el: HTMLElement) {
+  const root = el.closest('.tiptap-editor-wrapper') || document.body
+  const textbox = root.querySelector('[role="textbox"]') as HTMLElement | null
+  const noteId = textbox?.getAttribute('data-note') || textbox?.dataset?.noteId || ''
+  const panelId = textbox?.getAttribute('data-panel') || ''
+  return { noteId, panelId }
+}
