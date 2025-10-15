@@ -118,8 +118,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
   const [state, dispatch] = useReducer(canvasReducer, initialState)
   
   // Create stable instances that survive re-renders
-  const dataStoreRef = useRef<DataStore>()
-  const eventsRef = useRef<EventEmitter>()
+  const dataStoreRef = useRef<DataStore | null>(null)
+  const eventsRef = useRef<EventEmitter | null>(null)
 
   if (externalDataStore) {
     dataStoreRef.current = externalDataStore
@@ -133,8 +133,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
     eventsRef.current = new EventEmitter()
   }
 
-  const dataStore = dataStoreRef.current
-  const events = eventsRef.current
+  const dataStore = dataStoreRef.current!
+  const events = eventsRef.current!
 
   // Track if branches have been loaded for current note
   const loadedNotesRef = useRef(new Set<string>())
@@ -159,9 +159,11 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           const rawSnapshot = window.localStorage.getItem(`note-data-${noteId}`)
           if (rawSnapshot) {
             cachedSnapshot = JSON.parse(rawSnapshot)
-            Object.entries(cachedSnapshot).forEach(([branchId, value]) => {
-              snapshotMap.set(branchId, value as Record<string, any>)
-            })
+            if (cachedSnapshot) {
+              Object.entries(cachedSnapshot).forEach(([branchId, value]) => {
+                snapshotMap.set(branchId, value as Record<string, any>)
+              })
+            }
           }
         } catch (snapshotError) {
           console.warn('[CanvasProvider] Failed to parse cached plain snapshot:', snapshotError)
@@ -292,7 +294,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       // Update main panel title from the note metadata (keep familiar title like
       // 'AI in Healthcare Research' in Option A without Yjs involvement)
       try {
-        plainProvider.adapter.getNote(noteId).then((note) => {
+        const plainAdapter = (plainProvider as any)?.adapter
+        plainAdapter?.getNote?.(noteId).then((note: any) => {
           if (note && note.title) {
             const main = dataStore.get(mainStoreKey)
             if (main) {
@@ -319,7 +322,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       loadedNotesRef.current.add(noteId)
       
       // Load existing branches from database
-      plainProvider.adapter.listBranches(noteId).then(branches => {
+      const plainAdapter = (plainProvider as any)?.adapter
+      plainAdapter?.listBranches?.(noteId).then((branches: any[]) => {
         console.log(`[CanvasProvider] Loading ${branches.length} branches from database`)
         
         // Track which branches belong to main panel
@@ -504,7 +508,7 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         // Force re-render
         dispatch({ type: "BRANCH_UPDATED" })
         persistPlainBranchSnapshot()
-      }).catch(error => {
+      }).catch((error: unknown) => {
         console.error('[CanvasProvider] Failed to load branches:', error)
         if (typeof window !== 'undefined') {
           window.localStorage.removeItem(`note-data-${noteId}`)

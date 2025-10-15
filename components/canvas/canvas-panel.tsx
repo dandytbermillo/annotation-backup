@@ -33,6 +33,13 @@ import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
+const CORE_ANNOTATION_TYPES = ['note', 'explore', 'promote'] as const
+type CoreAnnotationType = typeof CORE_ANNOTATION_TYPES[number]
+
+function isCoreAnnotationType(value: string): value is CoreAnnotationType {
+  return CORE_ANNOTATION_TYPES.includes(value as CoreAnnotationType)
+}
+
 // Track which panel is currently being dragged globally
 let globalDraggingPanelId: string | null = null
 
@@ -1287,22 +1294,27 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       // Extract branch ID (remove 'branch-' prefix)
       const branchId = panelId.replace('branch-', '')
 
+      const appliedType: CoreAnnotationType = isCoreAnnotationType(newType) ? newType : 'note'
+      if (!isCoreAnnotationType(newType)) {
+        console.warn('[CanvasPanel] Falling back to core annotation type for provider update', { branchId, requestedType: newType, appliedType })
+      }
+
       // Call provider method which handles API call
-      await plainProvider.changeBranchType(branchId, newType)
+      await plainProvider.changeBranchType(branchId, appliedType)
 
       // Update local state immediately (provider already updated cache)
       const current = dataStore.get(storeKey)
       if (current) {
-        dataStore.update(storeKey, { type: newType })
+        dataStore.update(storeKey, { type: appliedType })
       }
 
       // Force re-render
       dispatch({ type: "BRANCH_UPDATED" })
 
       // Update annotation color in main editor via context (type-safe)
-      updateAnnotationType?.(branchId, newType)
+      updateAnnotationType?.(branchId, appliedType)
 
-      console.log(`✓ Changed annotation type to ${newType}`)
+      console.log(`✓ Changed annotation type to ${appliedType}`)
     } catch (error) {
       console.error('[CanvasPanel] Failed to change type:', error)
       alert(`Failed to change type: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -1502,7 +1514,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         console.log('[CanvasPanel] Note created, saving content to:', result.noteId)
 
         // Get current content from editor or branch
-        const currentContent = editorRef.current?.getJSON?.() || currentBranch.content
+        const currentContent = (editorRef.current as any)?.getJSON?.() || currentBranch.content
 
         if (!currentContent) {
           console.warn('[CanvasPanel] No content to save')
@@ -1680,8 +1692,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       dragState.current.isDragging = true
 
       // Notify editor to defer heavy operations
-      if (editorRef.current && typeof editorRef.current.setPerformanceMode === 'function') {
-        editorRef.current.setPerformanceMode(true)
+      const perfSetter = (editorRef.current as any)?.setPerformanceMode
+      if (typeof perfSetter === 'function') {
+        perfSetter(true)
       }
 
       // Get current panel position from style
@@ -1891,7 +1904,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       e.preventDefault()
     }
 
-    const handleMouseUp = (e: MouseEvent) => {
+    const finalizeDrag = (event?: MouseEvent | PointerEvent | FocusEvent) => {
       if (!dragState.current.isDragging) return
 
       // Cancel any pending RAF update
@@ -1909,8 +1922,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       globalDraggingPanelId = null
       
       // Re-enable normal editor operations
-      if (editorRef.current && typeof editorRef.current.setPerformanceMode === 'function') {
-        editorRef.current.setPerformanceMode(false)
+      const perfSetter = (editorRef.current as any)?.setPerformanceMode
+      if (typeof perfSetter === 'function') {
+        perfSetter(false)
       }
       
       // Get final position from current style
@@ -1981,20 +1995,38 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       // Reset cursor
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
-      
-      e.preventDefault()
+
+      if (event instanceof MouseEvent) {
+        event.preventDefault()
+      }
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      finalizeDrag(e)
+    }
+
+    const handlePointerUp = (e: PointerEvent) => {
+      finalizeDrag(e)
+    }
+
+    const handleWindowBlur = (e: FocusEvent) => {
+      finalizeDrag(e)
     }
 
     // Add event listeners
     header.addEventListener('mousedown', handleMouseDown)
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+    window.addEventListener('pointerup', handlePointerUp, { capture: true })
+    window.addEventListener('blur', handleWindowBlur)
 
     return () => {
       // Clean up event listeners
       header.removeEventListener('mousedown', handleMouseDown)
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      window.removeEventListener('pointerup', handlePointerUp, true)
+      window.removeEventListener('blur', handleWindowBlur)
       
       // Stop auto-scroll on cleanup
       stopAutoScroll()
@@ -2064,7 +2096,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     
     // If we can't find the branch data, include it anyway for 'all' filter
     if (!childBranch) {
-      return activeFilter === 'all'
+      return false
     }
     
     return childBranch.type === activeFilter

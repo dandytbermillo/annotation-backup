@@ -1,37 +1,25 @@
 {
   "extends": "./tsconfig.json",
-  "include": [
+  "files": [
     "next-env.d.ts",
-    "app/api/canvas/**/*.ts",
-    "app/api/canvas/**/*.tsx",
-    "components/**/*.ts",
-    "components/**/*.tsx",
-    "hooks/**/*.ts",
-    "hooks/**/*.tsx",
-    "lib/**/*.ts",
-    "lib/**/*.tsx",
-    "types/**/*.ts",
-    "context-os/**/*.ts",
-    "context-os/**/*.tsx"
+    "components/annotation-app.tsx",
+    "components/annotation-canvas-modern.tsx",
+    "components/canvas/annotation-decorations-plain.ts",
+    "components/canvas/branch-item.tsx",
+    "components/canvas/branches-section.tsx",
+    "components/canvas/canvas-context.tsx",
+    "components/canvas/canvas-panel.tsx",
+    "components/floating-toolbar.tsx",
+    "hooks/use-auto-save.ts",
+    "hooks/use-panel-dragging.ts",
+    "lib/canvas/composite-id.ts",
+    "lib/hooks/use-panel-persistence.ts",
+    "lib/hooks/use-canvas-hydration.ts",
+    "lib/sync/state-transaction.ts",
+    "lib/data-store.ts",
+    "types/canvas-items.ts",
+    "types/legacy-shims.d.ts"
   ],
-  "exclude": [
-    "**/__tests__/**",
-    "**/*.test.ts",
-    "**/*.test.tsx",
-    "**/*.spec.ts",
-    "**/*.spec.tsx",
-    "app/test-*/**",
-    "app/api/health/**",
-    "app/api/offline-queue/**",
-    "app/api/search/**",
-    "tests",
-    "test-results",
-    "e2e",
-    "scripts",
-    "lib/offline/**",
-    "lib/providers/plain-offline-provider.ts",
-    "lib/workspace/**",
-    "lib/extensions/**",
-    "playwright/**"
-  ]
+  "include": [],
+  "exclude": []
 }

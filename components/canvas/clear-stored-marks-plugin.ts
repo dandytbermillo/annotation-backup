@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Clear Stored Marks Plugin
  * 

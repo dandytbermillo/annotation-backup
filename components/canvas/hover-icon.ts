@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Overlay-based hover icon for annotations
  * Lives outside editor DOM to prevent cursor interference

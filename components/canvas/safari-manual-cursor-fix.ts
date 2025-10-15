@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Plugin } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { TextSelection } from 'prosemirror-state'

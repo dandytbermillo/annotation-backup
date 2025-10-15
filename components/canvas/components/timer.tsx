@@ -5,15 +5,21 @@ import { Timer as TimerIcon, Play, Pause, RotateCcw } from 'lucide-react'
 
 interface TimerProps {
   componentId: string
-  state?: any
-  onStateUpdate?: (state: any) => void
+  state?: Partial<TimerState>
+  onStateUpdate?: (state: TimerState) => void
+}
+
+interface TimerState {
+  minutes: number
+  seconds: number
+  isRunning: boolean
 }
 
 export function Timer({ componentId, state, onStateUpdate }: TimerProps) {
-  const [minutes, setMinutes] = useState(state?.minutes || 5)
-  const [seconds, setSeconds] = useState(state?.seconds || 0)
-  const [isRunning, setIsRunning] = useState(state?.isRunning || false)
-  const [inputMinutes, setInputMinutes] = useState('5')
+  const [minutes, setMinutes] = useState<number>(state?.minutes ?? 5)
+  const [seconds, setSeconds] = useState<number>(state?.seconds ?? 0)
+  const [isRunning, setIsRunning] = useState<boolean>(state?.isRunning ?? false)
+  const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? 5))
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {

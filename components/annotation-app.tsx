@@ -1550,19 +1550,20 @@ function AnnotationAppContent() {
         }))
 
         setOverlayPopups(prev =>
-          prev.map(p =>
-            p.id === popupId
-              ? {
-                  ...p,
-                  children: formattedChildren,
-                  isLoading: false,
-                  folder: {
-                    ...p.folder,  // Preserve existing folder object (has inherited color)
-                    children: formattedChildren
+          prev.map(p => {
+            if (p.id !== popupId) return p
+            return {
+              ...p,
+              children: formattedChildren,
+              isLoading: false,
+              folder: p.folder
+                ? {
+                    ...p.folder,
+                    children: formattedChildren,
                   }
-                }
-              : p
-          )
+                : null,
+            }
+          })
         )
       } catch (error) {
         console.error('Error fetching child popup contents:', error)

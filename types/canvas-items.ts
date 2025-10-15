@@ -1,6 +1,6 @@
 // Unified canvas item types
 
-export type ComponentType = 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest'
+export type ComponentType = 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest' | 'editor'
 export type PanelType = 'main' | 'editor' | 'note' | 'explore' | 'promote'
 
 export interface CanvasItem {

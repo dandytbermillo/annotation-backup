@@ -7,10 +7,17 @@ interface PerformanceTestProps {
   componentId: string
 }
 
+interface Particle {
+  x: number
+  y: number
+  vx: number
+  vy: number
+}
+
 export function PerformanceTest({ componentId }: PerformanceTestProps) {
-  const [intensity, setIntensity] = useState(0)
-  const [particles, setParticles] = useState<Array<{x: number, y: number, vx: number, vy: number}>>([])
-  const animationRef = useRef<number>()
+  const [intensity, setIntensity] = useState<number>(0)
+  const [particles, setParticles] = useState<Particle[]>([])
+  const animationRef = useRef<number | null>(null)
   const intensityRef = useRef<number>(0)
   
   // Track intensity in ref to avoid closure issues
@@ -21,9 +28,9 @@ export function PerformanceTest({ componentId }: PerformanceTestProps) {
   // Create performance issues without blocking
   useEffect(() => {
     // Cancel any existing animation
-    if (animationRef.current) {
+    if (animationRef.current !== null) {
       cancelAnimationFrame(animationRef.current)
-      animationRef.current = undefined
+      animationRef.current = null
     }
     
     if (intensity === 0) {
@@ -32,7 +39,7 @@ export function PerformanceTest({ componentId }: PerformanceTestProps) {
     }
     
     // Create particles based on intensity
-    const newParticles = Array.from({length: intensity * 50}, () => ({
+    const newParticles: Particle[] = Array.from({ length: intensity * 50 }, () => ({
       x: Math.random() * 300,
       y: Math.random() * 200,
       vx: (Math.random() - 0.5) * 4, // Increased speed
@@ -44,7 +51,7 @@ export function PerformanceTest({ componentId }: PerformanceTestProps) {
     const animate = () => {
       // Use ref to get current intensity value
       if (intensityRef.current > 0) {
-        setParticles(prev => prev.map(p => ({
+        setParticles(prev => prev.map((p): Particle => ({
           x: (p.x + p.vx + 300) % 300,
           y: (p.y + p.vy + 200) % 200,
           vx: p.vx,
@@ -58,9 +65,9 @@ export function PerformanceTest({ componentId }: PerformanceTestProps) {
     animationRef.current = requestAnimationFrame(animate)
     
     return () => {
-      if (animationRef.current) {
+      if (animationRef.current !== null) {
         cancelAnimationFrame(animationRef.current)
-        animationRef.current = undefined
+        animationRef.current = null
       }
     }
   }, [intensity])
@@ -95,7 +102,7 @@ export function PerformanceTest({ componentId }: PerformanceTestProps) {
   
   useEffect(() => {
     if (intensity >= 3) {
-      const interval = setInterval(heavyDOMWork, 50) // More frequent updates
+      const interval: ReturnType<typeof setInterval> = setInterval(heavyDOMWork, 50) // More frequent updates
       return () => clearInterval(interval)
     }
   }, [intensity, heavyDOMWork])

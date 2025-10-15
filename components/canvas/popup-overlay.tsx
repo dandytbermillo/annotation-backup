@@ -179,6 +179,8 @@ interface PreviewEntry {
   }>;
 }
 
+type PreviewChildEntry = PreviewEntry['entries'][string];
+
 const TOOLTIP_PREVIEW_MAX_LENGTH = Number.MAX_SAFE_INTEGER; // allow full content inside scrollable tooltip
 
 /**
@@ -506,26 +508,28 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
 
     setPreviewState(prev => {
-      const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
-      const prevChild = entry.entries[child.id];
-      const updatedEntries = {
-        ...entry.entries,
-        [child.id]: shouldFetch
-          ? {
-              status: 'loading',
-              content: prevChild?.content,
-              previewText: prevChild?.previewText,
-              error: undefined,
-              requestedAt: now,
-            }
-          : (prevChild || { status: 'loading' }),
-      };
+      const previousEntry: PreviewEntry =
+        prev[popupId] ?? { activeChildId: null, entries: {} as Record<string, PreviewChildEntry> };
+      const prevChild: PreviewChildEntry | undefined = previousEntry.entries[child.id];
+
+      const nextChildEntry: PreviewChildEntry = shouldFetch
+        ? {
+            status: 'loading',
+            content: prevChild?.content,
+            previewText: prevChild?.previewText,
+            error: undefined,
+            requestedAt: now,
+          }
+        : prevChild ?? { status: 'loading', content: undefined, previewText: undefined };
 
       return {
         ...prev,
         [popupId]: {
           activeChildId: child.id,
-          entries: updatedEntries,
+          entries: {
+            ...previousEntry.entries,
+            [child.id]: nextChildEntry,
+          },
         },
       };
     });
@@ -2120,9 +2124,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         overlayRef.current.setPointerCapture(e.pointerId);
       }
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
       // Fallback: pointer capture not available or synthetic event
       debugLog('PopupOverlay', 'pointer_capture_failed', { 
-        error: err.message,
+        error: message,
         pointerId: e.pointerId 
       });
     }
@@ -2239,9 +2244,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       try {
         overlayRef.current.releasePointerCapture(pointerIdRef.current);
       } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
         // Pointer was never captured or already released
         debugLog('PopupOverlay', 'pointer_release_failed', { 
-          error: err.message,
+          error: message,
           pointerId: pointerIdRef.current 
         });
       }
@@ -2427,9 +2433,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
     if (!sidebarEl) return;
 
-    const handleTransitionEnd = (e: TransitionEvent) => {
+    const handleTransitionEnd = (event: Event) => {
+      const transitionEvent = event as TransitionEvent
       // Recalculate bounds after sidebar animation completes
-      if (e.propertyName === 'transform') {
+      if (transitionEvent.propertyName === 'transform') {
         // Small delay to ensure getBoundingClientRect returns final values
         setTimeout(() => {
           recomputeOverlayBounds();

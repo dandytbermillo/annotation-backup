@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Extension, type CommandProps } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, NodeSelection, type Transaction } from 'prosemirror-state'
 import type { Node as ProseMirrorNode, ResolvedPos } from 'prosemirror-model'

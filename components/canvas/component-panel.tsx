@@ -12,10 +12,11 @@ import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
 import { Z_INDEX } from '@/lib/constants/z-index'
 import { useCanvasCamera } from '@/lib/hooks/use-canvas-camera'
 import { useLayerManager, useCanvasNode } from '@/lib/hooks/use-layer-manager'
+import type { ComponentType } from '@/types/canvas-items'
 
 interface ComponentPanelProps {
   id: string
-  type: 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest'
+  type: ComponentType
   position: { x: number; y: number }
   onClose?: (id: string) => void
   onPositionChange?: (id: string, position: { x: number; y: number }) => void
@@ -128,7 +129,7 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
     enabled: true,
     threshold: 80,
-    speed: 8,
+    speedPxPerSec: 480,
     onScroll: handleAutoScroll
   })
   

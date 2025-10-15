@@ -5,25 +5,30 @@ import { MousePointer2, Zap, Activity, Move } from 'lucide-react'
 
 interface DragTestProps {
   componentId: string
-  state?: any
-  onStateUpdate?: (state: any) => void
+  state?: Partial<DragTestState>
+  onStateUpdate?: (state: DragTestState) => void
+}
+
+interface DragTestState {
+  dragCount: number
+  totalDistance: number
 }
 
 export function DragTest({ componentId, state, onStateUpdate }: DragTestProps) {
-  const [dragCount, setDragCount] = useState(state?.dragCount || 0)
+  const [dragCount, setDragCount] = useState<number>(state?.dragCount ?? 0)
   const [lastDragTime, setLastDragTime] = useState<number | null>(null)
-  const [dragSpeed, setDragSpeed] = useState(0)
+  const [dragSpeed, setDragSpeed] = useState<number>(0)
   const [isDragging, setIsDragging] = useState(false)
-  const [position, setPosition] = useState({ x: 0, y: 0 })
-  const [dragDistance, setDragDistance] = useState(0)
+  const [position, setPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [dragDistance, setDragDistance] = useState<number>(state?.totalDistance ?? 0)
 
-  const handleDragStart = (e: React.MouseEvent) => {
+  const handleDragStart = (e: React.MouseEvent<HTMLDivElement>) => {
     setIsDragging(true)
     setLastDragTime(Date.now())
     setPosition({ x: e.clientX, y: e.clientY })
   }
 
-  const handleDragMove = (e: React.MouseEvent) => {
+  const handleDragMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isDragging) return
     
     const now = Date.now()
@@ -47,10 +52,11 @@ export function DragTest({ componentId, state, onStateUpdate }: DragTestProps) {
     if (isDragging) {
       setDragCount(prev => prev + 1)
       setIsDragging(false)
-      onStateUpdate?.({ 
+      const nextState: DragTestState = {
         dragCount: dragCount + 1,
-        totalDistance: dragDistance
-      })
+        totalDistance: dragDistance,
+      }
+      onStateUpdate?.(nextState)
     }
   }
 

@@ -58,10 +58,15 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
     if (!visible) return
     
     const checkMemory = () => {
-      // @ts-ignore
-      if (performance.memory) {
-        const memoryMB = Math.round(performance.memory.usedJSHeapSize / 1048576)
+      const perfWithMemory = performance as Performance & {
+        memory?: { usedJSHeapSize: number }
+      }
+      const usedBytes = perfWithMemory.memory?.usedJSHeapSize
+      if (typeof usedBytes === 'number' && Number.isFinite(usedBytes)) {
+        const memoryMB = Math.round(usedBytes / 1048576)
         setMemory(memoryMB)
+      } else {
+        setMemory(null)
       }
     }
     
@@ -511,7 +516,7 @@ export function EnhancedControlPanelV2({ visible, onClose, canvasItems, onAddCom
                     const debug = (window as any).__isolationDebug
                     if (debug) {
                       const list = debug.list()
-                      list.forEach(id => debug.restore(id))
+                      list.forEach((id: string) => debug.restore(id))
                       console.table([{
                         Action: 'Clear All',
                         Cleared: list.length + ' components',

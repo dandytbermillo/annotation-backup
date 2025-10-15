@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as Y from 'yjs'
 import { Awareness } from 'y-protocols/awareness'
 

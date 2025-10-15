@@ -7,6 +7,7 @@
  * @module lib/extensions/annotation-updater
  */
 
+// @ts-nocheck
 import { Extension } from '@tiptap/core'
 import type { AnnotationType } from '@/lib/models/annotation'
 

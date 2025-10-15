@@ -148,8 +148,6 @@ export class PlainOfflineProvider extends EventEmitter {
 
   public readonly isEmptyContent = this._isEmptyContent.bind(this)
 
-  public readonly isEmptyContent = this._isEmptyContent.bind(this)
-
   // Fix #2 & #5: Composite key storage
   private documents = new Map<string, ProseMirrorJSON | HtmlString>()
   private documentVersions = new Map<string, number>()
