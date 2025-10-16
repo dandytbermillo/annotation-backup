@@ -395,9 +395,37 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920
         const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080
 
-        // Panel dimensions (estimated)
-        const panelWidth = 600
-        const panelHeight = 800
+        const measureMainPanel = () => {
+          if (typeof window === 'undefined') {
+            return null
+          }
+          const element = document.querySelector(`[data-panel-id="main"]`) as HTMLElement | null
+          if (element) {
+            return {
+              width: element.offsetWidth,
+              height: element.offsetHeight,
+            }
+          }
+          const mainStoreKey = ensurePanelKey(noteId, 'main')
+          const mainBranch = dataStore.get(mainStoreKey)
+          if (mainBranch?.dimensions && typeof mainBranch.dimensions.width === 'number' && typeof mainBranch.dimensions.height === 'number') {
+            return {
+              width: mainBranch.dimensions.width,
+              height: mainBranch.dimensions.height,
+            }
+          }
+          if (mainPanelItem?.dimensions && typeof mainPanelItem.dimensions.width === 'number' && typeof mainPanelItem.dimensions.height === 'number') {
+            return {
+              width: mainPanelItem.dimensions.width,
+              height: mainPanelItem.dimensions.height,
+            }
+          }
+          return null
+        }
+
+        const screenDimensions = measureMainPanel() ?? { width: 520, height: 440 }
+        const worldPanelWidth = screenDimensions.width / canvasState.zoom
+        const worldPanelHeight = screenDimensions.height / canvasState.zoom
 
         // Calculate world position that will appear centered with current viewport
         // Screen center position (where we want panel center to appear)
@@ -412,8 +440,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
         // Offset by half panel size to center the panel (not just top-left corner)
         const centeredPosition = {
-          x: worldCenterX - (panelWidth / 2),
-          y: worldCenterY - (panelHeight / 2)
+          x: worldCenterX - (worldPanelWidth / 2),
+          y: worldCenterY - (worldPanelHeight / 2)
         }
 
         // Get current main panel position from canvas items (if already set)
@@ -490,7 +518,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           storeKey: ensurePanelKey(noteId, 'main'),  // Composite key for multi-note support
           type: 'editor',
           position: screenPosition,
-          size: { width: 600, height: 800 },
+          size: { width: screenDimensions.width, height: screenDimensions.height },
           zIndex: 0,
           title: resolvedTitle,
           metadata: { annotationType: 'main' }
