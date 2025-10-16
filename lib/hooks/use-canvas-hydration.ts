@@ -768,7 +768,7 @@ export function useCanvasHydration(options: HydrationOptions) {
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, noteId]) // hydrate intentionally omitted to prevent infinite loops
+  }, [enabled, noteId, userId]) // hydrate intentionally omitted to prevent infinite loops; userId ensures scope-aware refresh
 
   /**
    * Manual re-hydration function (useful for refresh)

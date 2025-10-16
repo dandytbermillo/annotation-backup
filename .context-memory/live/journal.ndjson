@@ -342,3 +342,4 @@
 {"timestamp":"2025-10-16T04:45:05Z","note":"Seeded restored camera to /api/canvas/camera before hydration and updated main-panel seeding to respect stored titles and world coordinates."}
 {"ts":"2025-10-16T04:57:07.143Z","type":"commit","sha":"0da3f91b592a19707d4c3267ad78c2558d70195d","files_changed":35,"message":"working!"}
 {"timestamp":"2025-10-16T05:23:45Z","note":"Removed main-panel size constants; we now measure DOM/stored dimensions so seeded world coordinates match actual panel size and reloading no longer creeps upward."}
+{"ts":"2025-10-16T05:27:01.149Z","type":"commit","sha":"38d6c7137b01fc35597ef97aef27e5b76b161ff6","files_changed":3,"message":"fixed error when new note appeared in the wrong position"}

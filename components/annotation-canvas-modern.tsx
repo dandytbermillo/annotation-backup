@@ -38,6 +38,7 @@ import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace } from "./canvas/canvas-workspace-context"
+import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -243,10 +244,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const provider = useMemo(() => UnifiedProvider.getInstance(), [])
   const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
   const layerManagerApi = useLayerManager()
+  const cameraUserId = useCameraUserId()
 
   // Hydrate canvas state on mount (panels + camera)
   const hydrationStatus = useCanvasHydration({
     noteId,
+    userId: cameraUserId ?? undefined,
     dataStore,
     branchesMap,
     layerManager: layerManagerApi.manager,
@@ -350,16 +353,19 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   // Enable camera persistence (debounced)
   useCameraPersistence({
     noteId,
+    userId: cameraUserId ?? undefined,
     debounceMs: 500,
     enabled: true
   })
 
   // Enable panel persistence
-  const { persistPanelCreate, persistPanelUpdate, persistPanelDelete } = usePanelPersistence({
+  const { persistPanelCreate, persistPanelUpdate, persistPanelDelete, getPanelDimensions } = usePanelPersistence({
     dataStore,
     branchesMap,
     layerManager: layerManagerApi.manager,
-    noteId
+    noteId,
+    canvasItems,
+    userId: cameraUserId ?? undefined
   })
 
   const persistCameraSnapshot = useCallback(
@@ -369,13 +375,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         await fetch(`/api/canvas/camera/${noteId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ camera })
+          body: JSON.stringify({ camera, userId: cameraUserId ?? null })
         })
       } catch (error) {
         console.warn('[AnnotationCanvas] Failed to persist restored camera snapshot', error)
       }
     },
-    [noteId]
+    [noteId, cameraUserId]
   )
 
   // Persist main panel if it doesn't exist in database (first-time note open)
@@ -395,35 +401,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920
         const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080
 
-        const measureMainPanel = () => {
-          if (typeof window === 'undefined') {
-            return null
-          }
-          const element = document.querySelector(`[data-panel-id="main"]`) as HTMLElement | null
-          if (element) {
-            return {
-              width: element.offsetWidth,
-              height: element.offsetHeight,
-            }
-          }
-          const mainStoreKey = ensurePanelKey(noteId, 'main')
-          const mainBranch = dataStore.get(mainStoreKey)
-          if (mainBranch?.dimensions && typeof mainBranch.dimensions.width === 'number' && typeof mainBranch.dimensions.height === 'number') {
-            return {
-              width: mainBranch.dimensions.width,
-              height: mainBranch.dimensions.height,
-            }
-          }
-          if (mainPanelItem?.dimensions && typeof mainPanelItem.dimensions.width === 'number' && typeof mainPanelItem.dimensions.height === 'number') {
-            return {
-              width: mainPanelItem.dimensions.width,
-              height: mainPanelItem.dimensions.height,
-            }
-          }
-          return null
-        }
+        const mainPanelItem = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
 
-        const screenDimensions = measureMainPanel() ?? { width: 520, height: 440 }
+        const screenDimensions = getPanelDimensions('main')
         const worldPanelWidth = screenDimensions.width / canvasState.zoom
         const worldPanelHeight = screenDimensions.height / canvasState.zoom
 
@@ -445,8 +425,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         }
 
         // Get current main panel position from canvas items (if already set)
-        const mainPanelItem = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
-
         const existingMainPanelPosition = mainPanelItem?.position && !isDefaultOffscreenPosition(mainPanelItem.position)
           ? mainPanelItem.position
           : null
@@ -512,6 +490,29 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           (mainBranch && typeof mainBranch.title === 'string' && mainBranch.title.trim().length > 0
             ? mainBranch.title
             : mainPanelItem?.title) ?? undefined
+
+        const seedReason = existingMainPanelPosition
+          ? 'existing_position'
+          : workspacePosition
+            ? 'workspace_position'
+            : 'centered_position'
+
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'workspace_main_panel_seeded',
+          metadata: {
+            noteId,
+            seedReason,
+            screenDimensions,
+            worldPanelSize: { width: worldPanelWidth, height: worldPanelHeight },
+            mainPosition,
+            viewport: {
+              translateX: canvasState.translateX,
+              translateY: canvasState.translateY,
+              zoom: canvasState.zoom
+            }
+          }
+        })
 
         persistPanelCreate({
           panelId: 'main',

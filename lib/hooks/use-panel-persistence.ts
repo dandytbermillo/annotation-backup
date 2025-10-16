@@ -18,6 +18,8 @@ import { StateTransactionImpl } from '@/lib/sync/state-transaction'
 import { screenToWorld, sizeScreenToWorld } from '@/lib/canvas/coordinate-utils'
 import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 import { debugLog } from '@/lib/utils/debug-logger'
+import type { CanvasItem } from '@/types/canvas-items'
+import { resolvePanelDimensions, type PanelDimensions } from '@/lib/canvas/panel-metrics'
 
 export interface PanelPersistOptions {
   /** Data store instance */
@@ -30,6 +32,8 @@ export interface PanelPersistOptions {
   noteId: string
   /** Optional user ID for multi-user scenarios */
   userId?: string
+  /** Current canvas items (used for dimension inference) */
+  canvasItems?: CanvasItem[]
 }
 
 export interface PanelUpdateData {
@@ -53,8 +57,22 @@ export interface PanelUpdateData {
  * Hook to persist panel position/size changes
  */
 export function usePanelPersistence(options: PanelPersistOptions) {
-  const { dataStore, branchesMap, layerManager, noteId, userId } = options
+  const { dataStore, branchesMap, layerManager, noteId, userId, canvasItems } = options
   const { state } = useCanvas()
+  const cachedCanvasItems = canvasItems
+
+  const getPanelDimensions = useCallback(
+    (panelId: string, defaultDimensions?: PanelDimensions) => {
+      return resolvePanelDimensions({
+        noteId,
+        panelId,
+        dataStore,
+        canvasItems: cachedCanvasItems,
+        defaultDimensions
+      })
+    },
+    [noteId, dataStore, cachedCanvasItems]
+  )
 
   /**
    * Persist panel update with atomic transaction and world-space coordinates
@@ -425,6 +443,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
     persistPanelUpdate,
     persistPanelCreate,
     persistPanelDelete,
-    persistBatchUpdates
+    persistBatchUpdates,
+    getPanelDimensions
   }
 }

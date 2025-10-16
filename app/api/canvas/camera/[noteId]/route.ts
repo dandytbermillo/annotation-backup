@@ -21,6 +21,22 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 })
 
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+function parseUserId(value: string | null): { valid: string | null; error?: string } {
+  if (!value) {
+    return { valid: null }
+  }
+  const trimmed = value.trim()
+  if (trimmed.length === 0) {
+    return { valid: null }
+  }
+  if (!UUID_REGEX.test(trimmed)) {
+    return { valid: null, error: 'Invalid userId format (expected UUID)' }
+  }
+  return { valid: trimmed }
+}
+
 /**
  * GET /api/canvas/camera/:noteId
  *
@@ -37,7 +53,16 @@ export async function GET(
   try {
     const { noteId } = await params
     const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('userId')
+    const headerUserId = request.headers.get('x-user-id')
+    const rawUserId = searchParams.get('userId') || headerUserId
+    const { valid: userId, error: userIdError } = parseUserId(rawUserId)
+
+    if (rawUserId && userIdError) {
+      return NextResponse.json(
+        { error: userIdError },
+        { status: 400 }
+      )
+    }
 
     if (!noteId) {
       return NextResponse.json(
@@ -127,6 +152,15 @@ export async function PATCH(
   try {
     const { noteId } = await params
     const { camera, userId } = await request.json()
+    const headerUserId = request.headers.get('x-user-id')
+    const { valid: normalizedUserId, error: userIdError } = parseUserId(userId ?? headerUserId)
+
+    if ((userId ?? headerUserId) && userIdError) {
+      return NextResponse.json(
+        { error: userIdError },
+        { status: 400 }
+      )
+    }
 
     if (!noteId) {
       return NextResponse.json(
@@ -177,7 +211,7 @@ export async function PATCH(
       RETURNING id, updated_at`,
       [
         noteId,
-        userId || null,
+        normalizedUserId || null,
         camera.x,
         camera.y,
         camera.zoom
@@ -189,7 +223,7 @@ export async function PATCH(
     return NextResponse.json({
       success: true,
       noteId,
-      userId: userId || null,
+      userId: normalizedUserId || null,
       camera,
       updatedAt: result.rows[0].updated_at
     })

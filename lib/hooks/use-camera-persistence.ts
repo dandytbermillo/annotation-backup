@@ -13,6 +13,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useCanvas } from '@/components/canvas/canvas-context'
 import { debugLog } from '@/lib/utils/debug-logger'
+import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 
 export interface CameraPersistenceOptions {
   /** Note ID for camera state persistence */
@@ -76,6 +77,33 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
   const persistCameraState = useCallback(async (camera: CameraState) => {
     if (!enabled) return
 
+    const enqueueCameraUpdate = async () => {
+      try {
+        await canvasOfflineQueue.enqueue({
+          type: 'camera_update',
+          noteId,
+          data: {
+            camera,
+            userId: userId ?? null
+          }
+        })
+        debugLog({
+          component: 'CameraPersistence',
+          action: 'queued_offline_camera_update',
+          metadata: { noteId, userId: userId ?? null }
+        })
+      } catch (queueError) {
+        debugLog({
+          component: 'CameraPersistence',
+          action: 'queue_enqueue_failed',
+          metadata: {
+            noteId,
+            error: queueError instanceof Error ? queueError.message : 'Unknown error'
+          }
+        })
+      }
+    }
+
     try {
       const url = `/api/canvas/camera/${noteId}`
       const body = JSON.stringify({
@@ -97,8 +125,11 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
         debugLog({
           component: 'CameraPersistence',
           action: 'persist_failed',
-          metadata: { error, noteId }
+          metadata: { error, noteId, userId: userId ?? null }
         })
+        if (response.status >= 500) {
+          await enqueueCameraUpdate()
+        }
         // Don't throw - allow offline operation
         return
       }
@@ -109,7 +140,7 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
       debugLog({
         component: 'CameraPersistence',
         action: 'persisted_camera_state',
-        metadata: { camera, noteId }
+        metadata: { camera, noteId, userId: userId ?? null }
       })
     } catch (error) {
       // Handle network errors gracefully (offline mode)
@@ -118,10 +149,11 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
         action: 'network_error',
         metadata: {
           error: error instanceof Error ? error.message : 'Unknown error',
-          noteId
+          noteId,
+          userId: userId ?? null
         }
       })
-      // TODO: Queue for offline replay once Phase 5 (IndexedDB queue) is implemented
+      await enqueueCameraUpdate()
     }
   }, [noteId, userId, enabled])
 
