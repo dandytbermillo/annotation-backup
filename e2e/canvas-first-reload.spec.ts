@@ -10,34 +10,51 @@ async function ensurePlainMode(page: Page) {
   })
 }
 
-async function openNotesExplorer(page: Page) {
-  const openExplorerButton = page.getByRole('button', { name: /Open Notes Explorer/i })
-  if (await openExplorerButton.isVisible()) {
-    await openExplorerButton.click()
+async function openFloatingToolbar(page: Page) {
+  const canvas = page.locator('#canvas-container')
+  await expect(canvas).toBeVisible({ timeout: 10000 })
+
+  const box = await canvas.boundingBox()
+  if (!box) {
+    throw new Error('Canvas bounding box unavailable')
   }
-  await expect(page.getByRole('button', { name: /Create New Note/i })).toBeVisible()
+
+  const centerX = box.x + box.width / 2
+  const centerY = box.y + box.height / 2
+
+  await page.mouse.click(centerX, centerY, { button: 'right' })
+  await expect(page.getByRole('button', { name: /\+ Note/i })).toBeVisible({ timeout: 5000 })
 }
 
+const makeMainStoreKey = (noteId: string) => `${noteId}::main`
+
 async function createNewNote(page: Page) {
-  await openNotesExplorer(page)
+  const awaitNoteCreation = () =>
+    page.waitForResponse((response) =>
+      response.url().includes('/api/items') && response.request().method() === 'POST'
+    )
 
-  const createResponse = page.waitForResponse((response) =>
-    response.url().includes('/api/postgres-offline/notes') && response.request().method() === 'POST'
-  )
+  await openFloatingToolbar(page)
 
-  await page.getByRole('button', { name: /Create New Note/i }).click()
+  const createResponse = awaitNoteCreation()
+  await page.getByRole('button', { name: /\+ Note/i }).click()
   const response = await createResponse
-  const payload = await response.json()
 
-  const noteTitle: string = payload.title
+  let noteId: string | null = null
+  try {
+    const payload = await response.json()
+    noteId = payload?.item?.id ?? null
+  } catch {
+    // ignore JSON parse errors; we'll assert noteId below
+  }
 
-  // Wait for the note item to appear and select it to open the canvas
-  const noteListItem = page.getByText(noteTitle, { exact: true }).first()
-  await noteListItem.waitFor()
-  await noteListItem.click()
-
-  await page.waitForURL('**/notes/**', { timeout: 10000 })
   await expect(page.locator('[data-panel-id="main"]')).toBeVisible({ timeout: 10000 })
+
+  if (!noteId || typeof noteId !== 'string') {
+    throw new Error('Failed to determine newly created note ID from /api/items response')
+  }
+
+  return noteId
 }
 
 async function getViewportSize(page: Page) {
@@ -57,18 +74,6 @@ async function getMainPanelRect(page: Page) {
       width: rect.width,
       height: rect.height,
     }
-  })
-}
-
-async function getMainStoreKey(page: Page) {
-  return page.evaluate(() => {
-    const path = window.location.pathname || ''
-    const marker = '/notes/'
-    const idx = path.indexOf(marker)
-    if (idx === -1) return null
-    const slug = path.slice(idx + marker.length).split(/[/?#]/)[0]
-    if (!slug) return null
-    return `${slug}::main`
   })
 }
 
@@ -116,14 +121,14 @@ test.describe('Canvas workspace first-reload behaviour', () => {
   test('fresh note stays centered on first reload without dragging', async ({ page }) => {
     await ensurePlainMode(page)
     await page.goto('/')
-    await createNewNote(page)
+    const noteId = await createNewNote(page)
+    const storeKey = makeMainStoreKey(noteId)
 
-    await waitForCanvasDataStore(page, (await getMainStoreKey(page))!)
+    await waitForCanvasDataStore(page, storeKey)
 
     await page.reload()
-    await page.waitForURL('**/notes/**', { timeout: 10000 })
     await expect(page.locator('[data-panel-id="main"]')).toBeVisible({ timeout: 10000 })
-    await waitForCanvasDataStore(page, (await getMainStoreKey(page))!)
+    await waitForCanvasDataStore(page, storeKey)
 
     const rect = await getMainPanelRect(page)
     expect(rect).toBeTruthy()
@@ -139,13 +144,12 @@ test.describe('Canvas workspace first-reload behaviour', () => {
   test('dragged main panel persists position across immediate reload', async ({ page }) => {
     await ensurePlainMode(page)
     await page.goto('/')
-    await createNewNote(page)
+    const noteId = await createNewNote(page)
 
-    const storeKey = await getMainStoreKey(page)
-    expect(storeKey).toBeTruthy()
-    await waitForCanvasDataStore(page, storeKey!)
+    const storeKey = makeMainStoreKey(noteId)
+    await waitForCanvasDataStore(page, storeKey)
 
-    const initial = await getMainWorldPosition(page, storeKey!)
+    const initial = await getMainWorldPosition(page, storeKey)
 
     await dragMainPanel(page, 280, 180)
 
@@ -160,19 +164,18 @@ test.describe('Canvas workspace first-reload behaviour', () => {
         const dy = Math.abs(entry.worldPosition.y - previous.worldPosition.y)
         return dx > 5 || dy > 5
       },
-      storeKey!,
+      storeKey,
       initial,
       { timeout: 10000 }
     )
 
-    const beforeReload = await getMainWorldPosition(page, storeKey!)
+    const beforeReload = await getMainWorldPosition(page, storeKey)
     expect(beforeReload?.worldPosition).toBeTruthy()
 
     await page.reload()
-    await page.waitForURL('**/notes/**', { timeout: 10000 })
-    await waitForCanvasDataStore(page, storeKey!)
+    await waitForCanvasDataStore(page, storeKey)
 
-    const afterReload = await getMainWorldPosition(page, storeKey!)
+    const afterReload = await getMainWorldPosition(page, storeKey)
     expect(afterReload?.worldPosition).toBeTruthy()
 
     const tolerance = 2
