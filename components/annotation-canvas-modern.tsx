@@ -22,7 +22,7 @@ import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent, PanelType } from "@/types/canvas-items"
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { 
   loadStateFromStorage, 
@@ -37,13 +37,14 @@ import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
-import { useCanvasWorkspace } from "./canvas/canvas-workspace-context"
+import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
 interface ModernAnnotationCanvasProps {
-  noteId: string
+  noteIds: string[]
+  primaryNoteId: string | null
   isNotesExplorerOpen?: boolean
   onCanvasStateChange?: (state: { zoom: number; showConnections: boolean }) => void
   showAddComponentMenu?: boolean
@@ -109,38 +110,57 @@ const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x
       ]
 }
 
-const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({
-  noteId,
+const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
+  noteIds,
+  primaryNoteId,
   isNotesExplorerOpen = false,
   onCanvasStateChange,
   showAddComponentMenu: externalShowAddComponentMenu,
   onToggleAddComponentMenu,
   onSnapshotLoadComplete
 }, ref) => {
+  const noteId = primaryNoteId ?? noteIds[0] ?? ""
+  const hasNotes = noteIds.length > 0 && noteId.length > 0
+
+  if (!hasNotes) {
+    return null
+  }
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
   const { openNotes, updateMainPosition, getPendingPosition, getCachedPosition } = useCanvasWorkspace()
-  const workspaceNote = useMemo(
-    () => openNotes.find(note => note.noteId === noteId),
-    [openNotes, noteId],
-  )
+  const workspaceNoteMap = useMemo(() => {
+    const map = new Map<string, OpenWorkspaceNote>()
+    openNotes.forEach(note => map.set(note.noteId, note))
+    return map
+  }, [openNotes])
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
     if (!position) return false
     return position.x === DEFAULT_MAIN_POSITION.x && position.y === DEFAULT_MAIN_POSITION.y
   }, [])
 
-  const workspaceMainPosition = useMemo(() => {
-    const pending = getPendingPosition(noteId)
+  const resolveWorkspacePosition = useCallback((targetNoteId: string): { x: number; y: number } | null => {
+    const pending = getPendingPosition(targetNoteId)
     if (pending && !isDefaultOffscreenPosition(pending)) return pending
 
-    const cached = getCachedPosition(noteId)
+    const cached = getCachedPosition(targetNoteId)
     if (cached && !isDefaultOffscreenPosition(cached)) return cached
 
-    if (workspaceNote?.mainPosition && !isDefaultOffscreenPosition(workspaceNote.mainPosition)) {
-      return workspaceNote.mainPosition
+    const workspaceEntry = workspaceNoteMap.get(targetNoteId)
+    if (workspaceEntry?.mainPosition && !isDefaultOffscreenPosition(workspaceEntry.mainPosition)) {
+      return workspaceEntry.mainPosition
     }
 
     return null
-  }, [workspaceNote, getPendingPosition, getCachedPosition, isDefaultOffscreenPosition, noteId])
+  }, [workspaceNoteMap, getPendingPosition, getCachedPosition, isDefaultOffscreenPosition])
+
+  const workspaceMainPosition = useMemo(() => resolveWorkspacePosition(noteId), [noteId, resolveWorkspacePosition])
+  const getItemNoteId = useCallback((item: CanvasItem): string | null => {
+    if (item.noteId) return item.noteId
+    if (item.storeKey) {
+      const parsed = parsePanelKey(item.storeKey)
+      if (parsed.noteId) return parsed.noteId
+    }
+    return null
+  }, [])
 
   // Layer system for multi-layer canvas
   const layerContext = useLayer()
@@ -219,16 +239,84 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, noteId])
 
   // Unified canvas items state
-  const initialMainPositionRef = useRef<{ x: number; y: number } | null>(workspaceMainPosition)
-  const workspaceSeedAppliedRef = useRef(false)
-  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>(() =>
-    createDefaultCanvasItems(noteId, initialMainPositionRef.current ?? undefined),
-  )
-  const [isStateLoaded, setIsStateLoaded] = useState(false)
-  const autoSaveTimerRef = useRef<number | null>(null)
-  const [showControlPanel, setShowControlPanel] = useState(false)
-  const [internalShowAddComponentMenu, setInternalShowAddComponentMenu] = useState(false)
-  const mainPanelSeededRef = useRef(false)
+const workspaceSeedAppliedRef = useRef(false)
+const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([])
+const [isStateLoaded, setIsStateLoaded] = useState(false)
+const autoSaveTimerRef = useRef<number | null>(null)
+const [showControlPanel, setShowControlPanel] = useState(false)
+const [internalShowAddComponentMenu, setInternalShowAddComponentMenu] = useState(false)
+const mainPanelSeededRef = useRef(false)
+
+  useEffect(() => {
+    if (!hasNotes) {
+      setCanvasItems([])
+      return
+    }
+
+    setCanvasItems(prev => {
+      const allowedNoteIds = new Set(noteIds)
+      let changed = false
+
+      const mainByNote = new Map<string, CanvasItem>()
+      const otherItems: CanvasItem[] = []
+
+      prev.forEach(item => {
+        if (item.itemType === 'panel' && item.panelId === 'main') {
+          const itemNoteId = getItemNoteId(item)
+          if (itemNoteId && allowedNoteIds.has(itemNoteId)) {
+            mainByNote.set(itemNoteId, item)
+          } else {
+            changed = true
+          }
+          return
+        }
+
+        const itemNoteId = getItemNoteId(item)
+        if (itemNoteId && !allowedNoteIds.has(itemNoteId)) {
+          changed = true
+          return
+        }
+
+        otherItems.push(item)
+      })
+
+      const nextMainItems: CanvasItem[] = []
+      noteIds.forEach(id => {
+        const existing = mainByNote.get(id)
+        const targetPosition = resolveWorkspacePosition(id) ?? DEFAULT_MAIN_POSITION
+        const targetStoreKey = ensurePanelKey(id, 'main')
+
+        if (existing) {
+          const currentPosition = existing.position ?? DEFAULT_MAIN_POSITION
+          const needsPositionUpdate = currentPosition.x !== targetPosition.x || currentPosition.y !== targetPosition.y
+          const needsMetaUpdate = existing.noteId !== id || existing.storeKey !== targetStoreKey
+
+          if (needsPositionUpdate || needsMetaUpdate) {
+            nextMainItems.push({
+              ...existing,
+              position: targetPosition,
+              noteId: id,
+              storeKey: targetStoreKey
+            })
+            changed = true
+          } else {
+            nextMainItems.push(existing)
+          }
+        } else {
+          nextMainItems.push(
+            createPanelItem('main', targetPosition, 'main', id, targetStoreKey)
+          )
+          changed = true
+        }
+      })
+
+      const newItems = [...nextMainItems, ...otherItems]
+      if (!changed && newItems.length === prev.length) {
+        return prev
+      }
+      return newItems
+    })
+  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition])
 
   useEffect(() => {
     mainPanelSeededRef.current = false
@@ -1254,26 +1342,45 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }
   }, [])
 
-  const handlePanelClose = (panelId: string) => {
-    setCanvasItems(prev => prev.filter(item => !(isPanel(item) && item.panelId === panelId)))
+  const handlePanelClose = (panelId: string, panelNoteId?: string) => {
+    let storeKeyToDelete: string | undefined
+    setCanvasItems(prev => prev.filter(item => {
+      if (isPanel(item) && item.panelId === panelId) {
+        const itemNoteId = getItemNoteId(item) || panelNoteId
+        if (!panelNoteId || itemNoteId === panelNoteId) {
+          storeKeyToDelete = item.storeKey ?? (itemNoteId ? ensurePanelKey(itemNoteId, panelId) : undefined)
+          return false
+        }
+      }
+      return true
+    }))
+
+    const targetNoteId = panelNoteId || noteId
+    const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
 
     // Persist panel deletion to database
-    persistPanelDelete(panelId).catch(err => {
+    persistPanelDelete(panelId, storeKey).catch(err => {
       debugLog({
         component: 'AnnotationCanvas',
         action: 'panel_delete_persist_failed',
         metadata: {
           panelId,
+          noteId: targetNoteId,
           error: err instanceof Error ? err.message : 'Unknown error'
         }
       })
     })
   }
 
-  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }) => {
-    console.log('[AnnotationCanvas] Creating panel:', panelId, 'with parent:', parentPanelId, 'at position:', parentPosition)
-    
-    // Log to debug_logs table
+  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string) => {
+    const targetNoteId = sourceNoteId || noteId
+    if (!targetNoteId) {
+      console.warn('[AnnotationCanvas] Cannot create panel without target note id', panelId)
+      return
+    }
+
+    console.log('[AnnotationCanvas] Creating panel:', panelId, 'for note:', targetNoteId, 'with parent:', parentPanelId, 'at position:', parentPosition)
+
     fetch('/api/debug/log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1281,165 +1388,95 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         component: 'AnnotationCanvas',
         action: 'handle_create_panel',
         metadata: {
-          panelId: panelId,
-          parentPanelId: parentPanelId,
-          parentPosition: parentPosition,
-          isPlainMode: isPlainModeActive()
+          panelId,
+          parentPanelId,
+          parentPosition,
+          isPlainMode: isPlainModeActive(),
+          noteId: targetNoteId
         },
         content_preview: `Creating panel ${panelId} at x=${parentPosition?.x}, y=${parentPosition?.y}`,
-        note_id: noteId
+        note_id: targetNoteId
       })
     }).catch(console.error)
-    
-    // Check if we're in plain mode
+
     const isPlainMode = isPlainModeActive()
-    
+
     setCanvasItems(prev => {
-      const newPanelStoreKey = ensurePanelKey(noteId, panelId)
-      // Only add if not already present
-      if (prev.some(item => isPanel(item) && item.panelId === panelId)) {
+      const newPanelStoreKey = ensurePanelKey(targetNoteId, panelId)
+
+      if (prev.some(item => isPanel(item) && item.panelId === panelId && getItemNoteId(item) === targetNoteId)) {
         return prev
       }
-      
+
       if (isPlainMode) {
-        // Plain mode: Check if panel data exists
-        // Note: We'll need to get dataStore from context provider
-        console.log('[Plain mode] Creating panel:', panelId)
-        
-        // If parent position is provided, update the dataStore
         if (parentPosition && (window as any).canvasDataStore) {
           const dataStore = (window as any).canvasDataStore
           const existingPanelData = dataStore.get(newPanelStoreKey)
 
           if (!existingPanelData?.worldPosition) {
-            const camera = {
-              x: canvasState.translateX,
-              y: canvasState.translateY
-            }
+            const camera = { x: canvasState.translateX, y: canvasState.translateY }
             const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
 
             dataStore.update(newPanelStoreKey, {
               id: panelId,
               position: worldPosition,
-              worldPosition: worldPosition
+              worldPosition
             })
           }
         }
       } else {
-        // Ensure the provider knows about the current note
         const provider = UnifiedProvider.getInstance()
-        provider.setCurrentNote(noteId)
-        
-        // Get the panel data from YJS
-        const branchesMap = provider.getBranchesMap()
-        const panelData = branchesMap.get(newPanelStoreKey)
-        
+        provider.setCurrentNote(targetNoteId)
+
+        const yjsBranches = provider.getBranchesMap()
+        const panelData = yjsBranches.get(newPanelStoreKey)
+
         if (!panelData) {
-          console.warn(`No data found for panel ${panelId}`)
+          console.warn(`No data found for panel ${panelId} (note ${targetNoteId})`)
           return prev
         }
-        
-        // If parent position is provided, update the position
-        if (parentPosition && panelData) {
+
+        if (parentPosition) {
           panelData.position = parentPosition
-          branchesMap.set(newPanelStoreKey, panelData)
+          yjsBranches.set(newPanelStoreKey, panelData)
         }
       }
-      
-      // DISABLED: Auto-pan to newly created panels
-      // This was causing unwanted viewport movement when opening branch panels or floating toolbar
-      // Users expect panels to appear without moving the viewport
-      //
-      // setTimeout(() => {
-      //   const getPanelPosition = (id: string) => {
-      //     if (isPlainMode) {
-      //       // In plain mode, use dataStore position
-      //       const dataStore = (window as any).canvasDataStore
-      //       const panel = dataStore?.get(id)
-      //       return panel?.position || { x: 2000, y: 1500 }
-      //     } else {
-      //       const panel = UnifiedProvider.getInstance().getBranchesMap().get(id)
-      //       return panel?.position || null
-      //     }
-      //   }
-      //
-      //   panToPanel(
-      //     panelId,
-      //     getPanelPosition,
-      //     canvasState,
-      //     (updates) => setCanvasState(prev => ({ ...prev, ...updates })),
-      //     {
-      //       duration: 600,
-      //       callback: () => {
-      //         console.log('[AnnotationCanvas] Finished panning to panel:', panelId)
-      //       }
-      //     }
-      //   )
-      // }, 100) // Small delay to ensure panel is rendered
-      
-      // Get branch data to determine annotation type
-      const hydratedStoreKey = ensurePanelKey(noteId, panelId)
+
+      const hydratedStoreKey = newPanelStoreKey
       let branchData = dataStore?.get(hydratedStoreKey)
       if (!branchData && branchesMap) {
         branchData = branchesMap.get(hydratedStoreKey)
       }
 
-      // Determine panel type from branch data's type field (which contains the annotation type)
-      // Fallback to panelId string matching if branch data doesn't have type
       let panelType: PanelType
       if (panelId === 'main') {
         panelType = 'main'
       } else if (branchData?.type) {
-        // Use the type from branch data (this is the annotation type: note/explore/promote)
         panelType = branchData.type as PanelType
       } else {
-        // Fallback to string matching (for backward compatibility)
-        panelType = panelId.includes('explore') ? 'explore' :
-                    panelId.includes('promote') ? 'promote' : 'note'
+        panelType = panelId.includes('explore') ? 'explore' : panelId.includes('promote') ? 'promote' : 'note'
       }
 
-      // Map UI panel type to database panel type
       const dbPanelType: 'editor' | 'branch' | 'context' | 'toolbar' | 'annotation' =
         panelId === 'main' ? 'editor' :
         panelType === 'explore' ? 'context' :
         panelType === 'promote' ? 'annotation' : 'branch'
 
-      // Determine position: CanvasItem.position should be WORLD-SPACE coordinates
-      // The canvas transform (translate3d) handles world→screen conversion during rendering
-      // Priority: 1) position/worldPosition from store (world), 2) parentPosition (screen needs conversion), 3) default (world)
       const position = (branchData?.position || branchData?.worldPosition)
-        ? (branchData.position || branchData.worldPosition)  // Already world-space
+        ? (branchData.position || branchData.worldPosition)
         : parentPosition
           ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
-          : { x: 2000, y: 1500 }  // Default world position
+          : { x: 2000, y: 1500 }
 
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'determining_panel_position',
-        metadata: {
-          panelId,
-          branchDataKeys: branchData ? Object.keys(branchData) : [],
-          branchDataPosition: branchData?.position,
-          branchDataWorldPosition: branchData?.worldPosition,
-          parentPosition,
-          finalPosition: position,
-          hasBranchData: !!branchData,
-          hasWorldPosition: !!branchData?.worldPosition,
-          hasPosition: !!branchData?.position
-        }
-      })
-
-      // Get panel title from branch data (for branch panels) or note title (for main panel)
       let panelTitle: string | undefined
       if (panelType !== 'main') {
-        // Try to get title from branch data
         if (branchData?.preview) {
           panelTitle = branchData.preview
         } else if (branchData?.title) {
           panelTitle = branchData.title
         }
       } else {
-        const mainStoreKey = ensurePanelKey(noteId, 'main')
+        const mainStoreKey = ensurePanelKey(targetNoteId, 'main')
         const mainBranch = dataStore.get(mainStoreKey)
         panelTitle =
           (mainBranch && typeof mainBranch.title === 'string' && mainBranch.title.trim().length > 0
@@ -1447,59 +1484,35 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             : undefined) ?? 'Main'
       }
 
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'creating_panel_with_title',
-        metadata: {
-          panelId,
-          panelType,
-          panelTitle,
-          branchDataType: branchData?.type,
-          hasBranchData: !!branchData,
-          hasDataStore: !!dataStore,
-          hasBranchesMap: !!branchesMap,
-          dataStoreHasPanel: dataStore?.has(panelId),
-          branchesMapHasPanel: branchesMap?.has(panelId)
-        }
-      })
-
-      // Persist panel to database with annotation type in metadata
-      const defaultDimensions = { width: 500, height: 400 }
-      const metadata = {
-        annotationType: panelType  // Store UI panel type (note/explore/promote) for color
-      }
-
       persistPanelCreate({
         panelId,
-        storeKey: hydratedStoreKey,  // Composite key for multi-note support
+        storeKey: hydratedStoreKey,
         type: dbPanelType,
         position,
-        size: defaultDimensions,
+        size: { width: 500, height: 400 },
         zIndex: 1,
         title: panelTitle,
-        metadata
+        metadata: { annotationType: panelType }
       }).catch(err => {
         debugLog({
           component: 'AnnotationCanvas',
           action: 'panel_create_persist_failed',
           metadata: {
             panelId,
+            noteId: targetNoteId,
             error: err instanceof Error ? err.message : 'Unknown error'
           }
         })
       })
 
-      // Check if panel already exists in canvas items (e.g., from hydration)
-      const existingPanel = prev.find(item => item.itemType === 'panel' && item.panelId === panelId)
-
+      const existingPanel = prev.find(item => item.itemType === 'panel' && item.panelId === panelId && getItemNoteId(item) === targetNoteId)
       if (existingPanel) {
-        // Panel already exists - don't create duplicate
-        // This happens when clicking annotation icon after hydration loaded the panel
         debugLog({
           component: 'AnnotationCanvas',
           action: 'panel_already_exists',
           metadata: {
             panelId,
+            noteId: targetNoteId,
             existingPosition: existingPanel.position,
             requestedPosition: position
           }
@@ -1507,15 +1520,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         return prev
       }
 
-      // Panel doesn't exist - create it
       return [
         ...prev,
         createPanelItem(
           panelId,
           position,
           panelType,
-          noteId,
-          ensurePanelKey(noteId, panelId),
+          targetNoteId,
+          hydratedStoreKey,
         ),
       ]
     })
@@ -1583,9 +1595,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     const handlePanelEvent = (event: CustomEvent) => {
       if (event.detail?.panelId) {
         handleCreatePanel(
-          event.detail.panelId, 
-          event.detail.parentPanelId, 
-          event.detail.parentPosition
+          event.detail.panelId,
+          event.detail.parentPanelId,
+          event.detail.parentPosition,
+          event.detail.noteId
         )
       }
     }
@@ -1598,7 +1611,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         handleCreatePanel(
           event.detail.panelId, 
           event.detail.parentPanelId, 
-          event.detail.parentPosition
+          event.detail.parentPosition,
+          event.detail.noteId
         )
       }
     }
@@ -2002,7 +2016,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
             {/* Panels */}
         <PanelsRenderer
-          noteId={noteId}
+          defaultNoteId={noteId}
           canvasItems={canvasItems}
           dataStore={dataStore}
           onClose={handlePanelClose}
@@ -2044,13 +2058,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => {
   const { getWorkspace } = useCanvasWorkspace()
-  const workspace = useMemo(() => getWorkspace(props.noteId), [getWorkspace, props.noteId])
+  const workspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
+  const activeNoteId = props.primaryNoteId ?? props.noteIds[0] ?? ""
 
   return (
     <IsolationProvider config={{ enabled: false }}>
       <LayerManagerProvider manager={workspace.layerManager}>
         <CanvasProvider
-          noteId={props.noteId}
+          noteId={activeNoteId}
           onRegisterActiveEditor={props.onRegisterActiveEditor}
           externalDataStore={workspace.dataStore}
           externalEvents={workspace.events}
@@ -2067,22 +2082,22 @@ ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 
 // Renders panels using plain dataStore in plain mode, Yjs map otherwise
 function PanelsRenderer({
-  noteId,
+  defaultNoteId,
   canvasItems,
   dataStore,
   onClose,
 }: {
-  noteId: string
+  defaultNoteId: string
   canvasItems: CanvasItem[]
   dataStore: DataStore
-  onClose: (id: string) => void
+  onClose: (id: string, noteId?: string) => void
 }) {
   const isPlainMode = isPlainModeActive()
   
   // Yjs access only when not in plain mode
   const provider = UnifiedProvider.getInstance()
   if (!isPlainMode) {
-    provider.setCurrentNote(noteId)
+    provider.setCurrentNote(defaultNoteId)
   }
   const branchesMap = !isPlainMode ? provider.getBranchesMap() : null
   
@@ -2092,11 +2107,12 @@ function PanelsRenderer({
     <>
       {panels.map((panel) => {
         const panelId = panel.panelId!
-        const storeKey = panel.storeKey ?? ensurePanelKey(noteId, panelId)
+        const panelNoteId = panel.noteId ?? defaultNoteId
+        const storeKey = panel.storeKey ?? ensurePanelKey(panelNoteId, panelId)
         const branch = isPlainMode ? dataStore.get(storeKey) : branchesMap?.get(storeKey)
         if (!branch) {
           console.warn(
-            `[PanelsRenderer] Branch ${panelId} (storeKey=${storeKey}) not found in ${isPlainMode ? 'plain' : 'yjs'} store`,
+            `[PanelsRenderer] Branch ${panelId} (note=${panelNoteId}, storeKey=${storeKey}) not found in ${isPlainMode ? 'plain' : 'yjs'} store`,
           )
           return null
         }
@@ -2124,12 +2140,12 @@ function PanelsRenderer({
         const position = branch.position || { x: 2000, y: 1500 }
         return (
           <CanvasPanel
-            key={panelId}
+            key={storeKey}
             panelId={panelId}
             branch={branch}
             position={position}
-            noteId={noteId}
-            onClose={() => onClose(panelId)}
+            noteId={panelNoteId}
+            onClose={() => onClose(panelId, panelNoteId)}
           />
         )
       })}

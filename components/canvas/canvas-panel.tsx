@@ -2310,7 +2310,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       detail: { 
         panelId: branchId,
         parentPanelId: panelId,
-        parentPosition: parentPosition
+        parentPosition: parentPosition,
+        noteId
       },
       bubbles: true 
     }))

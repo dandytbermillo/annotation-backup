@@ -989,12 +989,20 @@ function NotesExplorerContent({
   
   // Hybrid sync: Auto-switch layers based on popup count changes
   const prevPopupCountRef = useRef(hoverPopovers.size)
-  
+  const isInitialMountRef = useRef(true)
+
   useEffect(() => {
     if (!multiLayerEnabled || !layerContext) return
 
     const currentPopupCount = hoverPopovers.size
     const prevPopupCount = prevPopupCountRef.current
+
+    // Skip auto-switch on initial mount to stay on notes layer
+    if (isInitialMountRef.current) {
+      isInitialMountRef.current = false
+      prevPopupCountRef.current = currentPopupCount
+      return
+    }
 
     if (skipNextAutoSwitchRef.current) {
       skipNextAutoSwitchRef.current = false
@@ -1002,7 +1010,7 @@ function NotesExplorerContent({
       return
     }
 
-    // Only auto-switch when popup count actually changes
+    // Only auto-switch when popup count actually changes (after initial mount)
     if (prevPopupCount !== currentPopupCount) {
       prevPopupCountRef.current = currentPopupCount
 

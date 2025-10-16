@@ -983,7 +983,7 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
           metadata: { branchId }
         })
             window.dispatchEvent(new CustomEvent('create-panel', { 
-              detail: { panelId: branchId } 
+              detail: { panelId: branchId, noteId } 
             }))
             
             // Hide tooltip after opening panel

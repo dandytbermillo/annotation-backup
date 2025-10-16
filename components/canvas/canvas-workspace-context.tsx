@@ -13,6 +13,8 @@ export interface NoteWorkspace {
   layerManager: LayerManager
 }
 
+export const SHARED_WORKSPACE_ID = "__workspace__"
+
 export interface WorkspacePosition {
   x: number
   y: number
@@ -69,6 +71,7 @@ const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>
 
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
+  const sharedWorkspaceRef = useRef<NoteWorkspace | null>(null)
   const [openNotes, setOpenNotes] = useState<OpenWorkspaceNote[]>([])
   const [isWorkspaceReady, setIsWorkspaceReady] = useState(false)
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
@@ -112,6 +115,17 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
+    if (noteId === SHARED_WORKSPACE_ID) {
+      if (!sharedWorkspaceRef.current) {
+        sharedWorkspaceRef.current = {
+          dataStore: new DataStore(),
+          events: new EventEmitter(),
+          layerManager: new LayerManager(),
+        }
+      }
+      return sharedWorkspaceRef.current
+    }
+
     let workspace = workspacesRef.current.get(noteId)
     if (!workspace) {
       workspace = {

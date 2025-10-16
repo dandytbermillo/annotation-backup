@@ -16,6 +16,7 @@ import { DataStore } from '@/lib/data-store'
 import { LayerManager } from '@/lib/canvas/layer-manager'
 import { StateTransactionImpl } from '@/lib/sync/state-transaction'
 import { screenToWorld, sizeScreenToWorld } from '@/lib/canvas/coordinate-utils'
+import { parsePanelKey } from '@/lib/canvas/composite-id'
 import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 import { debugLog } from '@/lib/utils/debug-logger'
 import type { CanvasItem } from '@/types/canvas-items'
@@ -83,6 +84,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
 
       // Use composite key for store operations, fallback to plain panelId
       const key = storeKey || panelId
+      const parsedKey = storeKey ? parsePanelKey(storeKey) : null
+      const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
 
       // Get current panel data for revision token
       const currentData = dataStore.get(key)
@@ -146,7 +149,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       // Commit transaction with API persistence
       try {
         await transaction.commit(async () => {
-          const response = await fetch(`/api/canvas/layout/${noteId}`, {
+          const response = await fetch(`/api/canvas/layout/${effectiveNoteId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -170,7 +173,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           debugLog({
             component: 'PanelPersistence',
             action: 'persisted_to_api',
-            metadata: { panelId, noteId }
+            metadata: { panelId, noteId: effectiveNoteId }
           })
         })
       } catch (error) {
@@ -179,21 +182,22 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           action: 'persistence_failed',
           metadata: {
             error: error instanceof Error ? error.message : 'Unknown error',
-            panelId
+            panelId,
+            noteId: effectiveNoteId
           }
         })
 
         // Queue for offline replay
         await canvasOfflineQueue.enqueue({
           type: 'panel_update',
-          noteId,
+          noteId: effectiveNoteId,
           data: apiPayload
         })
 
         debugLog({
           component: 'PanelPersistence',
           action: 'queued_for_offline',
-          metadata: { panelId, noteId }
+          metadata: { panelId, noteId: effectiveNoteId }
         })
       }
     },
@@ -216,6 +220,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       metadata?: Record<string, any>
     }) => {
       const { panelId, storeKey, type, position, size, zIndex = 0, state: panelState = 'active', title, metadata } = panelData
+      const parsedKey = storeKey ? parsePanelKey(storeKey) : null
+      const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
 
       // Get current camera state
       const camera = {
@@ -231,7 +237,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
 
       const payload = {
         id: panelId,
-        noteId,
+        noteId: effectiveNoteId,
         type,
         position: worldPosition,
         size: worldSize,
@@ -275,7 +281,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         debugLog({
           component: 'PanelPersistence',
           action: 'panel_created',
-          metadata: { panelId, noteId, type }
+          metadata: { panelId, noteId: effectiveNoteId, type }
         })
       } catch (error) {
         debugLog({
@@ -285,17 +291,17 @@ export function usePanelPersistence(options: PanelPersistOptions) {
             error: error instanceof Error ? error.message : 'Unknown error',
             errorStack: error instanceof Error ? error.stack : undefined,
             panelId,
-            noteId
+            noteId: effectiveNoteId
           }
         })
 
         // Queue for offline replay
         await canvasOfflineQueue.enqueue({
           type: 'panel_create',
-          noteId,
+          noteId: effectiveNoteId,
           data: {
             id: panelId,
-            noteId,
+            noteId: effectiveNoteId,
             type,
             position: worldPosition,
             size: worldSize,
@@ -308,7 +314,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         debugLog({
           component: 'PanelPersistence',
           action: 'panel_creation_queued',
-          metadata: { panelId, noteId }
+          metadata: { panelId, noteId: effectiveNoteId }
         })
       }
     },
@@ -321,7 +327,9 @@ export function usePanelPersistence(options: PanelPersistOptions) {
    * as deletion only requires the backend panel ID
    */
   const persistPanelDelete = useCallback(
-    async (panelId: string, _storeKey?: string) => {
+    async (panelId: string, storeKey?: string) => {
+      const parsedKey = storeKey ? parsePanelKey(storeKey) : null
+      const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
       try {
         const response = await fetch(`/api/canvas/panels/${panelId}`, {
           method: 'DELETE'
@@ -334,7 +342,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         debugLog({
           component: 'PanelPersistence',
           action: 'panel_deleted',
-          metadata: { panelId, noteId }
+          metadata: { panelId, noteId: effectiveNoteId }
         })
       } catch (error) {
         debugLog({
@@ -342,21 +350,22 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           action: 'panel_deletion_failed',
           metadata: {
             error: error instanceof Error ? error.message : 'Unknown error',
-            panelId
+            panelId,
+            noteId: effectiveNoteId
           }
         })
 
         // Queue for offline replay
         await canvasOfflineQueue.enqueue({
           type: 'panel_delete',
-          noteId,
+          noteId: effectiveNoteId,
           data: { panelId }
         })
 
         debugLog({
           component: 'PanelPersistence',
           action: 'panel_deletion_queued',
-          metadata: { panelId, noteId }
+          metadata: { panelId, noteId: effectiveNoteId }
         })
       }
     },

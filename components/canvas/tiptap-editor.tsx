@@ -238,7 +238,7 @@ const TiptapEditor = forwardRef<TiptapEditorHandle, TiptapEditorProps>(
             
             if (branchId) {
               // Dispatch event to open panel
-              window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId } }))
+              window.dispatchEvent(new CustomEvent('create-panel', { detail: { panelId: branchId, noteId } }))
             }
             
             // Prevent text selection on click

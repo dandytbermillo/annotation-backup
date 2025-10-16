@@ -272,7 +272,8 @@ export function AnnotationToolbar() {
       detail: { 
         panelId: branchId,
         parentPanelId: panel,
-        parentPosition: smartPosition
+        parentPosition: smartPosition,
+        noteId
       } 
     }))
 

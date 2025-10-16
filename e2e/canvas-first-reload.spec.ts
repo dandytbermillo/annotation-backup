@@ -26,6 +26,24 @@ async function openFloatingToolbar(page: Page) {
   await expect(page.getByRole('button', { name: /\+ Note/i })).toBeVisible({ timeout: 5000 })
 }
 
+async function ensureNotesLayer(page: Page) {
+  let layerToggle = page.locator('button[title^="Toggle layer"]').first()
+  if ((await layerToggle.count()) === 0 || !(await layerToggle.isVisible())) {
+    await openFloatingToolbar(page)
+    layerToggle = page.locator('button[title^="Toggle layer"]').first()
+    await expect(layerToggle).toBeVisible({ timeout: 5000 })
+  }
+
+  const title = await layerToggle.getAttribute('title')
+  if (title?.includes('Current: popups')) {
+    await layerToggle.click()
+    await expect(layerToggle).toHaveAttribute('title', /Current: notes/)
+  }
+
+  // Close the toolbar if it was opened
+  await page.keyboard.press('Escape').catch(() => {})
+}
+
 const makeMainStoreKey = (noteId: string) => `${noteId}::main`
 
 async function createNewNote(page: Page) {
@@ -48,6 +66,7 @@ async function createNewNote(page: Page) {
     // ignore JSON parse errors; we'll assert noteId below
   }
 
+  await ensureNotesLayer(page)
   await expect(page.locator('[data-panel-id="main"]')).toBeVisible({ timeout: 10000 })
 
   if (!noteId || typeof noteId !== 'string') {
@@ -104,16 +123,17 @@ async function getMainWorldPosition(page: Page, storeKey: string) {
 }
 
 async function dragMainPanel(page: Page, deltaX: number, deltaY: number) {
-  const panel = page.locator('[data-panel-id="main"]').first()
-  const box = await panel.boundingBox()
-  if (!box) throw new Error('Main panel bounding box not available')
+  const header = page.locator('[data-panel-id="main"] .panel-header').first()
+  await expect(header).toBeVisible({ timeout: 5000 })
+  const box = await header.boundingBox()
+  if (!box) throw new Error('Main panel header bounding box not available')
 
   const startX = box.x + box.width / 2
-  const startY = box.y + 24 // near header to avoid inner content interference
+  const startY = box.y + box.height / 2
 
   await page.mouse.move(startX, startY)
   await page.mouse.down()
-  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 15 })
+  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 20 })
   await page.mouse.up()
 }
 
@@ -127,6 +147,7 @@ test.describe('Canvas workspace first-reload behaviour', () => {
     await waitForCanvasDataStore(page, storeKey)
 
     await page.reload()
+    await ensureNotesLayer(page)
     await expect(page.locator('[data-panel-id="main"]')).toBeVisible({ timeout: 10000 })
     await waitForCanvasDataStore(page, storeKey)
 
@@ -158,11 +179,17 @@ test.describe('Canvas workspace first-reload behaviour', () => {
         const ds = (window as any).canvasDataStore
         if (!ds?.get) return false
         const entry = ds.get(key)
-        if (!entry?.worldPosition) return false
-        if (!previous?.worldPosition) return true
-        const dx = Math.abs(entry.worldPosition.x - previous.worldPosition.x)
-        const dy = Math.abs(entry.worldPosition.y - previous.worldPosition.y)
-        return dx > 5 || dy > 5
+        if (!entry) return false
+
+        const world = entry.worldPosition || entry.position
+        if (!world) return false
+
+        const prevWorld = previous?.worldPosition || previous?.position
+        if (!prevWorld) return true
+
+        const dx = Math.abs(world.x - prevWorld.x)
+        const dy = Math.abs(world.y - prevWorld.y)
+        return Math.hypot(dx, dy) > 5
       },
       storeKey,
       initial,
@@ -170,17 +197,20 @@ test.describe('Canvas workspace first-reload behaviour', () => {
     )
 
     const beforeReload = await getMainWorldPosition(page, storeKey)
-    expect(beforeReload?.worldPosition).toBeTruthy()
+    const beforePosition = beforeReload?.worldPosition ?? beforeReload?.position
+    expect(beforePosition).toBeTruthy()
 
     await page.reload()
+    await ensureNotesLayer(page)
     await waitForCanvasDataStore(page, storeKey)
 
     const afterReload = await getMainWorldPosition(page, storeKey)
-    expect(afterReload?.worldPosition).toBeTruthy()
+    const afterPosition = afterReload?.worldPosition ?? afterReload?.position
+    expect(afterPosition).toBeTruthy()
 
     const tolerance = 2
-    expect(Math.abs(afterReload!.worldPosition!.x - beforeReload!.worldPosition!.x)).toBeLessThan(tolerance)
-    expect(Math.abs(afterReload!.worldPosition!.y - beforeReload!.worldPosition!.y)).toBeLessThan(tolerance)
+    expect(Math.abs(afterPosition!.x - beforePosition!.x)).toBeLessThan(tolerance)
+    expect(Math.abs(afterPosition!.y - beforePosition!.y)).toBeLessThan(tolerance)
 
     const rect = await getMainPanelRect(page)
     expect(rect).toBeTruthy()

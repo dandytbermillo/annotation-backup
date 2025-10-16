@@ -112,8 +112,10 @@ function createHoverIconManager(): HoverIconManager {
     
     if (currentBranchId) {
       console.log('[HoverPlugin] Opening panel for branch:', currentBranchId)
+      const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+      const noteId = noteIdFromPath || document.querySelector('[data-note-id]')?.getAttribute('data-note-id')
       window.dispatchEvent(new CustomEvent('create-panel', { 
-        detail: { panelId: currentBranchId } 
+        detail: { panelId: currentBranchId, noteId } 
       }))
     }
   })

@@ -135,6 +135,7 @@ function AnnotationAppContent() {
   const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
   const saveInFlightRef = useRef(false)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isInitialLoadRef = useRef(false) // Track if we're in initial database load
 
   // Debug: Log persistence state on mount
   useEffect(() => {
@@ -286,7 +287,14 @@ function AnnotationAppContent() {
     const currentCount = overlayPopups.length
     const previousCount = prevPopupCountRef.current
 
-    // Only auto-switch when a new popup is ADDED (count increases)
+    // Skip auto-switch while layout is still loading from database (initial hydration)
+    // This prevents auto-switch when restoring saved popups on app load
+    if (!layoutLoadedRef.current) {
+      prevPopupCountRef.current = currentCount
+      return
+    }
+
+    // Only auto-switch when a new popup is ADDED (count increases) AFTER layout loaded
     if (currentCount > previousCount && currentCount > 0) {
       if (layerContext.activeLayer !== 'popups') {
         console.log('[AnnotationApp] New popup created, auto-switching to popups layer')
@@ -451,7 +459,9 @@ function AnnotationAppContent() {
     })
 
     lastSavedLayoutHashRef.current = coreHash
-    layoutLoadedRef.current = true
+    // NOTE: Do NOT set layoutLoadedRef.current = true here!
+    // It must be set AFTER setOverlayPopups completes, to prevent auto-switch during hydration
+    // The load effect (lines 562-604) sets it correctly at line 596
 
     if (sanitizedPopups.length === 0) {
       console.log('[Layout Restoration] No saved popups, clearing overlay popups')
@@ -758,14 +768,17 @@ function AnnotationAppContent() {
           popups: envelope.layout.popups,
           inspectors: envelope.layout.inspectors,
         })
+
+        // Set flag to indicate initial load is in progress
+        // This prevents auto-switch during hydration
+        isInitialLoadRef.current = true
         applyOverlayLayout(envelope.layout)
+        // NOTE: Do NOT set layoutLoadedRef.current = true here!
+        // It will be set by the useEffect below after overlayPopups state update completes
       } catch (error) {
         if (!cancelled) {
           console.error('[AnnotationApp] Failed to load overlay layout:', error)
-        }
-      } finally {
-        if (!cancelled) {
-          layoutLoadedRef.current = true
+          layoutLoadedRef.current = true // Set on error so we don't block saves
         }
       }
     })()
@@ -774,6 +787,17 @@ function AnnotationAppContent() {
       cancelled = true
     }
   }, [applyOverlayLayout, overlayPersistenceEnabled])
+
+  // Set layoutLoadedRef.current = true AFTER initial popups load completes
+  // This ensures auto-switch doesn't trigger during database hydration
+  useEffect(() => {
+    if (isInitialLoadRef.current && overlayPopups.length >= 0) {
+      // Initial load completed (popups state has been updated)
+      console.log('[AnnotationApp] Initial layout load complete, enabling auto-switch')
+      layoutLoadedRef.current = true
+      isInitialLoadRef.current = false
+    }
+  }, [overlayPopups.length])
 
   // Save layout when overlayPopups changes
   // Use a ref to track if we need to save, to avoid infinite loops
@@ -1980,10 +2004,11 @@ function AnnotationAppContent() {
               isolation: 'isolate',
             }}
           >
-            {focusedNoteId ? (
+            {openNotes.length > 0 ? (
               <ModernAnnotationCanvas
-                key={focusedNoteId}
-                noteId={focusedNoteId}
+                key="workspace"
+                noteIds={openNotes.map(note => note.noteId)}
+                primaryNoteId={focusedNoteId ?? openNotes[0].noteId}
                 ref={canvasRef}
                 isNotesExplorerOpen={false}
                 onCanvasStateChange={stateUpdate =>

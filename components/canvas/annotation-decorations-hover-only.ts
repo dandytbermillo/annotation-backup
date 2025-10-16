@@ -117,8 +117,10 @@ export const AnnotationDecorationsHoverOnly = () => {
         const branchId = hoverIcon!.getAttribute('data-branch-id')
         if (branchId) {
           // Open panel
+          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+          const noteId = noteIdFromPath || document.querySelector('[data-note-id]')?.getAttribute('data-note-id')
           window.dispatchEvent(new CustomEvent('create-panel', { 
-            detail: { panelId: branchId } 
+            detail: { panelId: branchId, noteId } 
           }))
         }
       })

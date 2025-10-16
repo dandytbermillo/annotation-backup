@@ -139,7 +139,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     
     // Also dispatch create-panel event for modern canvas
     window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { panelId: branchId },
+      detail: { panelId: branchId, noteId },
       bubbles: true
     }))
   }

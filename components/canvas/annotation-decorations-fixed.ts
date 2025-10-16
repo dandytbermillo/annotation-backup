@@ -123,8 +123,10 @@ export const AnnotationDecorationsFixed = () => {
         const branchId = hoverIcon!.getAttribute('data-branch-id')
         if (branchId) {
           console.log('[AnnotationDecorationsFixed] Opening branch panel:', branchId)
+          const noteIdFromPath = window.location.pathname.match(/note\/([^/]+)/)?.[1]
+          const noteId = noteIdFromPath || document.querySelector('[data-note-id]')?.getAttribute('data-note-id')
           window.dispatchEvent(new CustomEvent('create-panel', { 
-            detail: { panelId: branchId } 
+            detail: { panelId: branchId, noteId } 
           }))
         }
       })
