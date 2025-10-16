@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Check Snapshot</title>
+</head>
+<body>
+  <h1>Snapshot Checker</h1>
+  <pre id="output"></pre>
+
+  <script>
+    const noteId = "7f3b3118-ab2e-41f2-9d02-f214f88ac13c";
+    const key = `annotation-canvas-state:${noteId}`;
+    const raw = localStorage.getItem(key);
+
+    if (raw) {
+      const snapshot = JSON.parse(raw);
+      const output = document.getElementById('output');
+      output.textContent = JSON.stringify(snapshot, null, 2);
+
+      console.log('Snapshot viewport:', snapshot.viewport);
+      console.log('Snapshot items:', snapshot.items);
+      console.log('Main panel position:', snapshot.items.find(i => i.panelId === 'main')?.position);
+    } else {
+      document.getElementById('output').textContent = 'No snapshot found';
+    }
+  </script>
+</body>
+</html>

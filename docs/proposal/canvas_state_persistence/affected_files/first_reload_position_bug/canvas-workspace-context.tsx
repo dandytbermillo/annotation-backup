@@ -5,7 +5,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
 import { LayerManager } from "@/lib/canvas/layer-manager"
-import { debugLog } from "@/lib/utils/debug-logger"
 
 export interface NoteWorkspace {
   dataStore: DataStore
@@ -59,10 +58,6 @@ interface CanvasWorkspaceContextValue {
   closeNote(noteId: string, options?: CloseNoteOptions): Promise<void>
   /** Update the stored main position for an open note */
   updateMainPosition(noteId: string, position: WorkspacePosition, persist?: boolean): Promise<void>
-  /** Retrieve an unsaved workspace position if one exists */
-  getPendingPosition(noteId: string): WorkspacePosition | null
-  /** Retrieve a cached workspace position if one exists */
-  getCachedPosition(noteId: string): WorkspacePosition | null
 }
 
 const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>(null)
@@ -75,9 +70,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaceError, setWorkspaceError] = useState<Error | null>(null)
   const scheduledPersistRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPersistsRef = useRef<Map<string, WorkspacePosition>>(new Map())
-  const positionCacheRef = useRef<Map<string, WorkspacePosition>>(new Map())
   const PENDING_STORAGE_KEY = 'canvas_workspace_pending'
-  const POSITION_CACHE_KEY = 'canvas_workspace_position_cache'
 
   const syncPendingToStorage = useCallback(() => {
     if (typeof window === 'undefined') return
@@ -92,22 +85,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       window.localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(entries))
     } catch (error) {
       console.warn('[CanvasWorkspace] Failed to persist pending map to storage', error)
-    }
-  }, [])
-
-  const syncPositionCacheToStorage = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const entries = Array.from(positionCacheRef.current.entries())
-    if (entries.length === 0) {
-      window.localStorage.removeItem(POSITION_CACHE_KEY)
-      return
-    }
-
-    try {
-      window.localStorage.setItem(POSITION_CACHE_KEY, JSON.stringify(entries))
-    } catch (error) {
-      console.warn('[CanvasWorkspace] Failed to persist position cache to storage', error)
     }
   }, [])
 
@@ -167,12 +144,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       try {
-        await debugLog({
-          component: 'CanvasWorkspace',
-          action: 'persist_attempt',
-          metadata: payload,
-        })
-
         const response = await fetch("/api/canvas/workspace", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -186,17 +157,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           const statusMessage = `${response.status} ${response.statusText}`.trim()
           const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
 
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_failed',
-            metadata: {
-              status: response.status,
-              statusText: response.statusText,
-              payload,
-              message: combinedMessage,
-            },
-          })
-
           const err = new Error(combinedMessage)
           ;(err as any).status = response.status
           throw err
@@ -209,41 +169,12 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         })
         syncPendingToStorage()
 
-        await debugLog({
-          component: 'CanvasWorkspace',
-          action: 'persist_succeeded',
-          metadata: {
-            noteIds: updates.map(u => u.noteId),
-          },
-        })
-
         setWorkspaceError(null)
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error))
         const status = (err as any).status
 
-        if (status === 404 || status === 409) {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_retry_scheduled',
-            metadata: {
-              status,
-              payload,
-              pending: Array.from(pendingPersistsRef.current.entries()),
-              message: err.message,
-            },
-          })
-        } else {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_error',
-            metadata: {
-              status,
-              payload,
-              pending: Array.from(pendingPersistsRef.current.entries()),
-              message: err.message,
-            },
-          })
+        if (status !== 404 && status !== 409) {
           setWorkspaceError(err)
         }
 
@@ -283,41 +214,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       })
 
-      const merged: OpenWorkspaceNote[] = [...normalized]
-
-      // First, apply position cache (all known positions)
-      positionCacheRef.current.forEach((position, noteId) => {
-        if (!position) return
-        const existingIndex = merged.findIndex(note => note.noteId === noteId)
-        if (existingIndex >= 0) {
-          merged[existingIndex] = {
-            ...merged[existingIndex],
-            mainPosition: position,
-          }
-        }
-      })
-
-      // Then, override with pending persists (unsaved changes take priority)
-      pendingPersistsRef.current.forEach((position, noteId) => {
-        if (!position) return
-        const existingIndex = merged.findIndex(note => note.noteId === noteId)
-        if (existingIndex >= 0) {
-          merged[existingIndex] = {
-            ...merged[existingIndex],
-            mainPosition: position,
-          }
-        } else {
-          console.log(`[DEBUG refreshWorkspace] Adding note ${noteId} from pending only:`, position)
-          merged.push({
-            noteId,
-            mainPosition: position,
-            updatedAt: null,
-          })
-        }
-      })
-
-      ensureWorkspaceForOpenNotes(merged)
-      setOpenNotes(merged)
+      ensureWorkspaceForOpenNotes(normalized)
+      setOpenNotes(normalized)
       setWorkspaceError(null)
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
@@ -366,23 +264,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
 
-    // Restore position cache
-    try {
-      const cachedPositions = window.localStorage.getItem(POSITION_CACHE_KEY)
-      if (cachedPositions) {
-        const entries = JSON.parse(cachedPositions) as Array<[string, WorkspacePosition]>
-        entries.forEach(([noteId, position]) => {
-          if (!noteId || !position) return
-          const { x, y } = position
-          if (!Number.isFinite(x) || !Number.isFinite(y)) return
-          positionCacheRef.current.set(noteId, position)
-        })
-      }
-    } catch (error) {
-      console.warn('[CanvasWorkspace] Failed to restore position cache', error)
-    }
-
-    // Restore pending persists
     try {
       const stored = window.localStorage.getItem(PENDING_STORAGE_KEY)
       if (!stored) return
@@ -406,16 +287,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const openNote = useCallback(
     async (noteId: string, options?: OpenNoteOptions) => {
       const { mainPosition = null, persist = true } = options ?? {}
-      const pendingPosition = pendingPersistsRef.current.get(noteId) ?? null
-      const cachedPosition = positionCacheRef.current.get(noteId) ?? null
-      const normalizedPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? { x: 2000, y: 1500 }
-
-      console.log(`[DEBUG openNote] Position resolution for ${noteId}:`, {
-        mainPosition,
-        pendingPosition,
-        cachedPosition,
-        normalizedPosition,
-      })
+      const normalizedPosition = mainPosition ?? { x: 2000, y: 1500 }
       if (!noteId) {
         return
       }
@@ -492,16 +364,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const updateMainPosition = useCallback(
     async (noteId: string, position: WorkspacePosition, persist = true) => {
-      await debugLog({
-        component: 'CanvasWorkspace',
-        action: 'update_main_position_called',
-        metadata: { noteId, position, persist },
-      })
-
-      // ALWAYS cache the position immediately to localStorage
-      positionCacheRef.current.set(noteId, position)
-      syncPositionCacheToStorage()
-
       setOpenNotes(prev =>
         prev.map(note =>
           note.noteId === noteId
@@ -517,40 +379,21 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         try {
           await persistWorkspace([{ noteId, isOpen: true, mainPosition: position }])
           clearScheduledPersist(noteId)
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'update_main_position_persist_succeeded',
-            metadata: { noteId },
-          })
           // SUCCESS: Don't refresh workspace - position is already in local state
           // Refreshing causes unnecessary loading states and potential loops
         } catch (error) {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'update_main_position_persist_failed',
-            metadata: {
-              noteId,
-              error: error instanceof Error ? error.message : String(error),
-            },
+          console.warn('[CanvasWorkspace] Panel position persist failed, scheduling retry', {
+            noteId,
+            error: error instanceof Error ? error.message : String(error),
           })
+          // CRITICAL: Don't call refreshWorkspace on failure - it would overwrite our local state
+          // Keep the new position in pendingPersistsRef for retry and beforeunload
           scheduleWorkspacePersist(noteId, position)
         }
       }
     },
-    [persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, syncPositionCacheToStorage],
+    [persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist],
   )
-
-  const getPendingPosition = useCallback((noteId: string): WorkspacePosition | null => {
-    const position = pendingPersistsRef.current.get(noteId)
-    if (!position) return null
-    return { ...position }
-  }, [])
-
-  const getCachedPosition = useCallback((noteId: string): WorkspacePosition | null => {
-    const position = positionCacheRef.current.get(noteId)
-    if (!position) return null
-    return { ...position }
-  }, [])
 
   useEffect(() => {
     const persistActiveNotes = () => {
@@ -620,8 +463,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       openNote,
       closeNote,
       updateMainPosition,
-      getPendingPosition,
-      getCachedPosition,
     }),
     [
       getWorkspace,
@@ -636,8 +477,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       openNote,
       closeNote,
       updateMainPosition,
-      getPendingPosition,
-      getCachedPosition,
     ],
   )
 

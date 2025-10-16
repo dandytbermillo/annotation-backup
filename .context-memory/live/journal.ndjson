@@ -335,3 +335,8 @@
 {"timestamp":"2025-10-15T20:26:15Z","note":"Stage 1 type-check passes after quarantining legacy modules; Stage 1 doc updated with manual smoke placeholder and Phase 2 deferral reminder."}
 {"ts":"2025-10-15T20:49:22.091Z","type":"commit","sha":"77448b34f4ab658d367574a77c8f6b93683fe086","files_changed":40,"message":"dragging release issue fixed"}
 {"timestamp":"2025-10-15T20:55:58Z","note":"Fixed document save workspace mismatch by aligning API workspace context with the note's workspace and backfilling null workspaces on save."}
+{"ts":"2025-10-15T21:01:30.121Z","type":"commit","sha":"3bfeab5a7ce31c2e0ae2f832163de53cea8de9c0","files_changed":4,"message":"fixed workspaces related error"}
+{"timestamp":"2025-10-16T02:13:57Z","note":"Restored camera snapshot hydration in components/annotation-canvas-modern.tsx and synced datastore to stored main panel positions; npm run type-check clean."}
+{"timestamp":"2025-10-16T02:24:13Z","note":"Removed provider content guard that reset viewport defaults so stored camera snaps load even when plain provider already has content."}
+{"timestamp":"2025-10-16T02:27:38Z","note":"Re-enabled debounced auto-save to local storage once canvas state hydrated so viewport snapshots update after drags."}
+{"timestamp":"2025-10-16T04:45:05Z","note":"Seeded restored camera to /api/canvas/camera before hydration and updated main-panel seeding to respect stored titles and world coordinates."}

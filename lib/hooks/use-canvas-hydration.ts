@@ -24,6 +24,7 @@ import { LayerManager } from '@/lib/canvas/layer-manager'
 import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 import { debugLog } from '@/lib/utils/debug-logger'
 import { makePanelKey } from '@/lib/canvas/composite-id'
+import { loadStateFromStorage } from '@/lib/canvas/canvas-storage'
 
 // Constants
 const HYDRATION_TIMEOUT_MS = 10000 // 10 seconds
@@ -212,9 +213,9 @@ export function useCanvasHydration(options: HydrationOptions) {
    * Load camera state from API with timeout, validation, and cache fallback
    */
   const loadCameraState = useCallback(async (signal?: AbortSignal): Promise<{
-    x: number
-    y: number
-    zoom: number
+    camera: { x: number; y: number; zoom: number }
+    updatedAt: string | null
+    exists: boolean
   } | null> => {
     try {
       const url = userId
@@ -250,10 +251,14 @@ export function useCanvasHydration(options: HydrationOptions) {
           metadata: { camera: result.camera }
         })
 
-        // Cache successful result
+        // Cache successful result (camera data only, not metadata)
         saveToCacheWithExpiry(getCacheKey(noteId, 'camera'), result.camera)
 
-        return result.camera
+        return {
+          camera: result.camera,
+          updatedAt: result.updatedAt || null,
+          exists: result.exists
+        }
       }
 
       // No saved camera state, use defaults
@@ -262,7 +267,11 @@ export function useCanvasHydration(options: HydrationOptions) {
         action: 'no_saved_camera',
         metadata: { noteId }
       })
-      return null
+      return {
+        camera: { x: 0, y: 0, zoom: 1.0 },
+        updatedAt: null,
+        exists: false
+      }
     } catch (error) {
       debugLog({
         component: 'CanvasHydration',
@@ -284,12 +293,20 @@ export function useCanvasHydration(options: HydrationOptions) {
             action: 'using_cached_camera',
             metadata: { camera: cached }
           })
-          return cached
+          return {
+            camera: cached,
+            updatedAt: null, // Cache doesn't store timestamp
+            exists: true
+          }
         }
       }
 
       // Don't fail hydration if camera load fails
-      return null
+      return {
+        camera: { x: 0, y: 0, zoom: 1.0 },
+        updatedAt: null,
+        exists: false
+      }
     }
   }, [noteId, userId])
 
@@ -533,16 +550,70 @@ export function useCanvasHydration(options: HydrationOptions) {
 
     try {
       // Load camera state first (needed for coordinate conversion)
-      const camera = await loadCameraState(signal)
+      const cameraResult = await loadCameraState(signal)
 
-      const cameraLoaded = camera !== null
+      const cameraLoaded = cameraResult !== null && cameraResult.exists
+
+      // Check if local snapshot exists and is newer than server camera
+      const localSnapshot = loadStateFromStorage(noteId)
+      let shouldApplyServerCamera = false
+
+      if (cameraResult && cameraResult.exists && cameraResult.updatedAt) {
+        // Server has camera data
+        if (localSnapshot && localSnapshot.savedAt) {
+          // Local snapshot also exists - compare timestamps
+          const serverTime = new Date(cameraResult.updatedAt).getTime()
+          const localTime = localSnapshot.savedAt
+
+          if (serverTime > localTime) {
+            // Server camera is newer - use it
+            shouldApplyServerCamera = true
+            debugLog({
+              component: 'CanvasHydration',
+              action: 'preferring_server_camera_newer',
+              metadata: {
+                serverTime: new Date(serverTime).toISOString(),
+                localTime: new Date(localTime).toISOString(),
+                diff: serverTime - localTime
+              }
+            })
+          } else {
+            // Local snapshot is newer or same age - skip server camera
+            debugLog({
+              component: 'CanvasHydration',
+              action: 'skip_server_camera_snapshot_newer',
+              metadata: {
+                serverTime: new Date(serverTime).toISOString(),
+                localTime: new Date(localTime).toISOString(),
+                diff: localTime - serverTime,
+                reason: 'local_snapshot_is_newer_or_equal'
+              }
+            })
+          }
+        } else {
+          // No local snapshot - use server camera
+          shouldApplyServerCamera = true
+          debugLog({
+            component: 'CanvasHydration',
+            action: 'using_server_camera_no_snapshot',
+            metadata: { reason: 'no_local_snapshot_found' }
+          })
+        }
+      } else if (localSnapshot) {
+        // No server camera but local snapshot exists
+        debugLog({
+          component: 'CanvasHydration',
+          action: 'skip_server_camera_not_exists',
+          metadata: { reason: 'server_camera_does_not_exist' }
+        })
+      }
 
       // Use loaded camera or default canvas translation
       // CRITICAL: When no camera state is saved, use the canvas's default translation
       // offsets (-1000, -1200) instead of (0, 0). Otherwise world→screen conversion
       // will be wrong and panels will appear at incorrect positions.
-      const effectiveCamera = cameraLoaded
-        ? camera
+      const effectiveCamera = cameraLoaded && cameraResult
+        ? cameraResult.camera
         : {
             x: state.canvasState?.translateX || -1000,
             y: state.canvasState?.translateY || -1200,
@@ -559,9 +630,9 @@ export function useCanvasHydration(options: HydrationOptions) {
         }
       })
 
-      // Apply camera to canvas context
-      if (camera) {
-        applyCameraState(camera)
+      // Apply camera to canvas context only if server camera is newer than local snapshot
+      if (cameraResult && shouldApplyServerCamera) {
+        applyCameraState(cameraResult.camera)
       }
 
       // Load panel layout (don't check abort until after both camera and panels are loaded)

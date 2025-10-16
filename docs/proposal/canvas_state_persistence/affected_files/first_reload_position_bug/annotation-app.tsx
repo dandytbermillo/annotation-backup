@@ -57,9 +57,7 @@ function AnnotationAppContent() {
     isWorkspaceReady,
     isWorkspaceLoading,
     workspaceError,
-    refreshWorkspace,
-    getPendingPosition,
-    getCachedPosition
+    refreshWorkspace
   } = useCanvasWorkspace()
 
   // Initialize focusedNoteId from localStorage (persist which note canvas is focused)
@@ -163,29 +161,18 @@ function AnnotationAppContent() {
     if (!initialWorkspaceSyncRef.current) {
       initialWorkspaceSyncRef.current = true
 
-          if (focusedNoteId && !isFocusedOpen) {
-            const pendingPosition = getPendingPosition(focusedNoteId)
-            const cachedPosition = getCachedPosition(focusedNoteId)
-            const positionToUse = pendingPosition ?? cachedPosition ?? undefined
-            console.log(`[DEBUG AnnotationApp] Hydration position for ${focusedNoteId}:`, {
-              pendingPosition,
-              cachedPosition,
-              positionToUse
-            })
-            void openWorkspaceNote(focusedNoteId, {
-              persist: true,
-              mainPosition: positionToUse,
-            }).catch(error => {
-              console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
-            })
-          } else if (!focusedNoteId && openNotes.length > 0) {
+      if (focusedNoteId && !isFocusedOpen) {
+        void openWorkspaceNote(focusedNoteId, { persist: false }).catch(error => {
+          console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
+        })
+      } else if (!focusedNoteId && openNotes.length > 0) {
         setFocusedNoteId(openNotes[0].noteId)
       }
     } else if (focusedNoteId && !isFocusedOpen) {
       const fallback = openNotes[0]?.noteId ?? null
       setFocusedNoteId(fallback ?? null)
     }
-  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition])
+  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote])
 
   // Persist focusedNoteId to localStorage when it changes
   useEffect(() => {
