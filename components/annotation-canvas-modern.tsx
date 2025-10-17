@@ -229,6 +229,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     return createDefaultCanvasState()
   })
 
+  const canvasStateRef = useRef(canvasState)
+
+  useEffect(() => {
+    canvasStateRef.current = canvasState
+  }, [canvasState])
+
   // Wrap setCanvasState to log all calls
   const setCanvasState: typeof _setCanvasState = useCallback((update) => {
     const stack = new Error().stack
@@ -279,6 +285,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   // Unified canvas items state
 const workspaceSeedAppliedRef = useRef(false)
 const [canvasItems, _setCanvasItems] = useState<CanvasItem[]>([])
+const canvasItemsRef = useRef<CanvasItem[]>(canvasItems)
+
+useEffect(() => {
+  canvasItemsRef.current = canvasItems
+}, [canvasItems])
+
 const setCanvasItems: typeof _setCanvasItems = useCallback((update) => {
   const stack = new Error().stack
   const caller = stack?.split('\n').slice(2, 4).join(' | ') || 'unknown'
@@ -2058,44 +2070,92 @@ const mainPanelSeededRef = useRef(false)
       })
     },
     centerOnPanel: (storeKeyOrPanelId: string) => {
+      const normalizePosition = (value: any): { x: number; y: number } | null => {
+        if (!value || typeof value !== 'object') return null
+        const { x, y } = value as { x?: number; y?: number }
+        if (typeof x !== 'number' || typeof y !== 'number') return null
+        return { x, y }
+      }
+
       const getPanelPosition = (key: string): { x: number; y: number } | null => {
-        // 0) FIRST: Try to find the panel directly in canvasItems array (most reliable!)
-        // This gives us the world position directly without coordinate conversion
-        const panel = canvasItems.find(item => {
-          if (item.itemType === 'panel') {
-            // If key is composite (noteId::panelId), match by storeKey
-            if (key.includes('::')) {
-              return item.storeKey === key
-            }
-            // Otherwise match by panelId
-            return item.panelId === key
+        const items = canvasItemsRef.current
+        const parsedKey = key.includes('::') ? parsePanelKey(key) : null
+        const targetNoteId = parsedKey?.noteId ?? noteId
+        const targetPanelId = parsedKey?.panelId ?? key
+        const storeKey = ensurePanelKey(targetNoteId, targetPanelId)
+
+        // 0) Matrix data - check current canvas items first
+        const panel = items.find(item => {
+          if (item.itemType !== 'panel') return false
+          if (key.includes('::')) {
+            return item.storeKey === key
           }
-          return false
+          if (item.storeKey === storeKey) {
+            return true
+          }
+          return item.panelId === targetPanelId
         })
 
         if (panel?.position) {
           console.log('[Canvas] Found panel in canvasItems:', {
             key,
+            matchedStoreKey: storeKey,
             position: panel.position,
             storeKey: panel.storeKey
           })
-          return panel.position
+          return { ...panel.position }
         }
 
-        // 1) Try collaboration map if not in plain mode
-        const provider = UnifiedProvider.getInstance()
-        if (!isPlainModeActive()) {
-          const branchesMap = provider.getBranchesMap()
-          const branch = branchesMap?.get(key)
-          if (branch?.position) {
-            console.log('[Canvas] Found panel in branchesMap:', { key, position: branch.position })
-            return branch.position
+        // 1) Shared dataStore fallback
+        if (dataStore) {
+          const record = dataStore.get(storeKey)
+          if (record && typeof record === 'object') {
+            const candidates = [
+              normalizePosition((record as any)?.position),
+              normalizePosition((record as any)?.worldPosition),
+              normalizePosition((record as any)?.mainPosition),
+            ]
+
+            for (const candidate of candidates) {
+              if (candidate) {
+                console.log('[Canvas] Found panel in dataStore:', {
+                  key,
+                  matchedStoreKey: storeKey,
+                  position: candidate
+                })
+                return { ...candidate }
+              }
+            }
           }
         }
 
-        // 2) Fallback: DOM lookup (less reliable due to coordinate conversion)
-        const panelStoreKey = key.includes('::') ? key : ensurePanelKey(noteId, key)
-        const el = document.querySelector(`[data-store-key="${panelStoreKey}"]`) as HTMLElement | null
+        // 2) Collaboration provider (Yjs) map
+        const provider = UnifiedProvider.getInstance()
+        if (!isPlainModeActive()) {
+          const branchesMap = provider.getBranchesMap()
+          const branch = branchesMap?.get(storeKey) ?? branchesMap?.get(key)
+          if (branch?.position) {
+            console.log('[Canvas] Found panel in branchesMap:', { key, storeKey, position: branch.position })
+            return { ...branch.position }
+          }
+        }
+
+        // 3) Workspace persistence (main panel only)
+        if (targetPanelId === 'main') {
+          const workspacePosition = resolveWorkspacePosition(targetNoteId)
+          if (workspacePosition) {
+            console.log('[Canvas] Using workspace position for panel:', {
+              key,
+              storeKey,
+              position: workspacePosition
+            })
+            return { ...workspacePosition }
+          }
+        }
+
+        // 4) DOM measurement fallback
+        const state = canvasStateRef.current
+        const el = document.querySelector(`[data-store-key="${storeKey}"]`) as HTMLElement | null
         if (el) {
           const rect = el.getBoundingClientRect()
           const container = document.getElementById('canvas-container')
@@ -2104,27 +2164,29 @@ const mainPanelSeededRef = useRef(false)
           const screenX = (rect.left + rect.width / 2) - (containerRect?.left ?? 0)
           const screenY = (rect.top + rect.height / 2) - (containerRect?.top ?? 0)
 
-          const worldX = (screenX - canvasState.translateX) / canvasState.zoom
-          const worldY = (screenY - canvasState.translateY) / canvasState.zoom
+          const worldX = (screenX - state.translateX) / state.zoom
+          const worldY = (screenY - state.translateY) / state.zoom
 
           console.log('[Canvas] Calculated panel position from DOM:', {
             key,
+            storeKey,
             screenPos: { x: screenX, y: screenY },
             worldPos: { x: worldX, y: worldY },
-            viewport: { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom }
+            viewport: { x: state.translateX, y: state.translateY, zoom: state.zoom }
           })
 
           return { x: worldX, y: worldY }
         }
 
-        // 3) Not found - return null to trigger retry
-        console.warn('[Canvas] Panel not found in canvasItems, branchesMap, or DOM:', key)
+        console.warn('[Canvas] Panel not found via canvasItems/dataStore/provider/workspace/DOM:', {
+          key,
+          storeKey,
+        })
         return null
       }
 
       console.log(`[Canvas] Attempting to center on panel '${storeKeyOrPanelId}'`)
 
-      // Retry mechanism: wait for panel to be in DOM
       let retryCount = 0
       const maxRetries = 10
       const retryDelay = 100 // ms
@@ -2133,6 +2195,7 @@ const mainPanelSeededRef = useRef(false)
         const position = getPanelPosition(storeKeyOrPanelId)
 
         if (position) {
+          const state = canvasStateRef.current
           console.log(`[Canvas] Panel '${storeKeyOrPanelId}' found, centering with slow animation...`)
 
           debugLog({
@@ -2144,14 +2207,13 @@ const mainPanelSeededRef = useRef(false)
             }
           })
 
-          // Get actual panel dimensions from DOM
           const selector = storeKeyOrPanelId.includes('::')
             ? `[data-store-key="${storeKeyOrPanelId}"]`
             : `[data-panel-id="${storeKeyOrPanelId}"]`
           const panelElement = document.querySelector(selector) as HTMLElement
           const panelDimensions = panelElement
             ? { width: panelElement.offsetWidth, height: panelElement.offsetHeight }
-            : { width: 500, height: 400 }  // Fallback if panel not found
+            : { width: 500, height: 400 }
 
           const viewportDimensions = { width: window.innerWidth, height: window.innerHeight }
 
@@ -2163,17 +2225,15 @@ const mainPanelSeededRef = useRef(false)
               panelFound: !!panelElement,
               panelDimensions,
               viewportDimensions,
-              zoom: canvasState.zoom
+              zoom: state.zoom
             }
           })
 
-          // Calculate offset to center the panel (from panToPanel)
           const centerOffset = {
-            x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / canvasState.zoom,
-            y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / canvasState.zoom
+            x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / state.zoom,
+            y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / state.zoom
           }
 
-          // Calculate target viewport position (from smoothPanTo)
           const targetX = -position.x + centerOffset.x
           const targetY = -position.y + centerOffset.y
 
@@ -2185,21 +2245,16 @@ const mainPanelSeededRef = useRef(false)
               position,
               targetX,
               targetY,
-              currentX: canvasState.translateX,
-              currentY: canvasState.translateY
+              currentX: state.translateX,
+              currentY: state.translateY
             }
           })
 
-          // Get canvas DOM element for direct manipulation
           const canvasEl = document.getElementById('infinite-canvas')
 
           if (canvasEl) {
-            // DEBUG MODE: Enable SLOW transition to clearly see camera pan
-            // In production, this would be 'none' for instant panning
             const originalTransition = canvasEl.style.transition
-            canvasEl.style.transition = 'transform 2s ease-in-out' // 2 second slow pan for debugging
-
-            // Force reflow to apply transition change
+            canvasEl.style.transition = 'transform 2s ease-in-out'
             void canvasEl.offsetHeight
 
             debugLog({
@@ -2209,18 +2264,14 @@ const mainPanelSeededRef = useRef(false)
             })
           }
 
-          // Step 2: Update React state with new coordinates
           flushSync(() => {
-            setCanvasState(prev => ({
-              ...prev,
-              translateX: targetX,
-              translateY: targetY
-            }))
+            setCanvasState(prev => {
+              const next = { ...prev, translateX: targetX, translateY: targetY }
+              canvasStateRef.current = next
+              return next
+            })
           })
 
-          // ✅ CRITICAL FIX: Sync to context to prevent stale state on first drag
-          // Without this, panCameraBy reads old translateX=-1000 from context
-          // causing panels to snap on first auto-scroll
           dispatch({
             type: 'SET_CANVAS_STATE',
             payload: {
@@ -2241,48 +2292,42 @@ const mainPanelSeededRef = useRef(false)
             metadata: { storeKeyOrPanelId, targetX, targetY }
           })
 
-          // Step 3: Restore transition after animation completes (2s in debug mode)
           if (canvasEl) {
-            // Wait for the 2s animation to complete before clearing transition
             setTimeout(() => {
-              canvasEl.style.transition = ''  // Clear inline style, let React control it
+              canvasEl.style.transition = ''
               debugLog({
                 component: 'AnnotationCanvas',
                 action: 'transition_restored_dom',
                 metadata: { storeKeyOrPanelId }
               })
-            }, 2100) // Wait for 2s animation + 100ms buffer
+            }, 2100)
           }
         } else if (retryCount < maxRetries) {
           retryCount++
           console.log(`[Canvas] Panel '${storeKeyOrPanelId}' not found, retry ${retryCount}/${maxRetries}`)
           setTimeout(attemptCenter, retryDelay)
         } else {
-          // Final fallback: calculate viewport-centered position
+          const state = canvasStateRef.current
           console.warn(`[Canvas] Panel '${storeKeyOrPanelId}' not found after ${maxRetries} retries, using viewport center`)
-          
-          // Calculate position to place panel at viewport center
+
           const viewportWidth = window.innerWidth
           const viewportHeight = window.innerHeight
           const panelWidth = 800
           const panelHeight = 600
-          
-          // Calculate world position that would appear centered
-          const centerWorldX = (viewportWidth / 2 - panelWidth / 2) / canvasState.zoom - canvasState.translateX
-          const centerWorldY = (viewportHeight / 2 - panelHeight / 2) / canvasState.zoom - canvasState.translateY
-          
-          // For new panels, we actually want them to appear centered
-          // So we don't pan, we just note where they should be created
+
+          const centerWorldX = (viewportWidth / 2 - panelWidth / 2) / state.zoom - state.translateX
+          const centerWorldY = (viewportHeight / 2 - panelHeight / 2) / state.zoom - state.translateY
+
           console.log(`[Canvas] Panel should be created at world position (${centerWorldX}, ${centerWorldY}) to appear centered`)
         }
       }
-      
+
       attemptCenter()
     },
     addComponent: (type: string, position?: { x: number; y: number }) => {
       handleAddComponent(type, position)
     }
-  }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent])
+  }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent, resolveWorkspacePosition, dataStore, noteId])
 
   useEffect(() => {
     debugLog({

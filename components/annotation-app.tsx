@@ -269,6 +269,50 @@ function AnnotationAppContent() {
     [sharedWorkspace, sortedOpenNotes, focusedNoteId],
   )
 
+  const resolveMainPanelPosition = useCallback(
+    (noteId: string): { x: number; y: number } | null => {
+      if (!noteId) return null
+
+      const normalize = (value: any): { x: number; y: number } | null => {
+        if (!value || typeof value !== 'object') return null
+        const { x, y } = value as { x?: number; y?: number }
+        if (typeof x !== 'number' || typeof y !== 'number') {
+          return null
+        }
+        return { x, y }
+      }
+
+      const pending = normalize(getPendingPosition(noteId))
+      if (pending) return pending
+
+      const cached = normalize(getCachedPosition(noteId))
+      if (cached) return cached
+
+      const openNote = openNotes.find(note => note.noteId === noteId)
+      const openPosition = normalize(openNote?.mainPosition)
+      if (openPosition) return openPosition
+
+      const dataStore = sharedWorkspace?.dataStore
+      if (dataStore) {
+        const storeKey = ensurePanelKey(noteId, 'main')
+        const record = dataStore.get(storeKey)
+        if (record && typeof record === 'object') {
+          const candidates = [
+            normalize((record as any)?.position),
+            normalize((record as any)?.worldPosition),
+            normalize((record as any)?.mainPosition),
+          ]
+          for (const candidate of candidates) {
+            if (candidate) return candidate
+          }
+        }
+      }
+
+      return null
+    },
+    [getPendingPosition, getCachedPosition, openNotes, sharedWorkspace],
+  )
+
   useEffect(() => {
     if (sortedOpenNotes.length === 0) {
       if (noteTitleMapRef.current.size > 0) {
@@ -395,31 +439,29 @@ function AnnotationAppContent() {
     if (!initialWorkspaceSyncRef.current) {
       initialWorkspaceSyncRef.current = true
 
-          if (focusedNoteId && !isFocusedOpen) {
-            const pendingPosition = getPendingPosition(focusedNoteId)
-            const cachedPosition = getCachedPosition(focusedNoteId)
-            const positionToUse = pendingPosition ?? cachedPosition ?? undefined
-            console.log(`[DEBUG AnnotationApp] Hydration position for ${focusedNoteId}:`, {
-              pendingPosition,
-              cachedPosition,
-              positionToUse
-            })
-            void openWorkspaceNote(focusedNoteId, {
-              persist: true,
-              mainPosition: positionToUse,
-            }).catch(error => {
-              console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
-            })
-          } else if (!focusedNoteId && openNotes.length > 0) {
-        focusSourceRef.current = 'auto'
+      if (focusedNoteId && !isFocusedOpen) {
+        const pendingPosition = getPendingPosition(focusedNoteId)
+        const cachedPosition = getCachedPosition(focusedNoteId)
+        const resolvedPosition = resolveMainPanelPosition(focusedNoteId)
+        console.log(`[DEBUG AnnotationApp] Hydration position for ${focusedNoteId}:`, {
+          pendingPosition,
+          cachedPosition,
+          resolvedPosition
+        })
+        void openWorkspaceNote(focusedNoteId, {
+          persist: true,
+          mainPosition: resolvedPosition ?? undefined,
+        }).catch(error => {
+          console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
+        })
+      } else if (!focusedNoteId && openNotes.length > 0) {
         setFocusedNoteId(openNotes[0].noteId)
       }
     } else if (focusedNoteId && !isFocusedOpen) {
       const fallback = openNotes[0]?.noteId ?? null
-      focusSourceRef.current = 'auto'
       setFocusedNoteId(fallback ?? null)
     }
-  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition])
+  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition, resolveMainPanelPosition])
 
   // Persist focusedNoteId to localStorage when it changes
   useEffect(() => {
@@ -459,7 +501,6 @@ function AnnotationAppContent() {
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
   const initialWorkspaceSyncRef = useRef(false)
-  const focusSourceRef = useRef<'auto' | 'tab'>('auto')
 
   // Stable callback for snapshot load completion
   const handleSnapshotLoadComplete = useCallback(() => {
@@ -1122,8 +1163,11 @@ function AnnotationAppContent() {
     }
 
     // Different note - ensure it's marked open, focus it, and pan camera to it
-    focusSourceRef.current = 'tab'
-    void openWorkspaceNote(noteId, { persist: true }).catch(error => {
+    const resolvedPosition = resolveMainPanelPosition(noteId)
+    void openWorkspaceNote(noteId, {
+      persist: true,
+      mainPosition: resolvedPosition ?? undefined,
+    }).catch(error => {
       console.error('[AnnotationApp] Failed to open note in workspace:', error)
     })
     setFocusedNoteId(noteId)
@@ -1132,22 +1176,8 @@ function AnnotationAppContent() {
     // Let the canvas find the panel and move the viewport to show it
     // Use composite storeKey (noteId::panelId) to uniquely identify the panel across multiple notes
     const storeKey = ensurePanelKey(noteId, 'main')
-
-    console.log('[AnnotationApp] Tab clicked, attempting to center on panel:', {
-      noteId,
-      storeKey,
-      hasCanvasRef: !!canvasRef.current,
-      hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
-    })
-
     if (canvasRef.current?.centerOnPanel) {
-      // Small delay to ensure canvas has updated with the new focused note
-      setTimeout(() => {
-        console.log('[AnnotationApp] Calling centerOnPanel for storeKey:', storeKey)
-        canvasRef.current?.centerOnPanel(storeKey)
-      }, 100)
-    } else {
-      console.warn('[AnnotationApp] centerOnPanel not available on canvasRef')
+      canvasRef.current.centerOnPanel(storeKey)
     }
   }
 
@@ -1176,7 +1206,6 @@ function AnnotationAppContent() {
       })
 
       if (noteId !== focusedNoteId) {
-        focusSourceRef.current = 'auto'
         setFocusedNoteId(noteId)
       }
 
@@ -1190,17 +1219,8 @@ function AnnotationAppContent() {
       }
 
       if (canvasRef.current?.centerOnPanel) {
-        try {
-          canvasRef.current.centerOnPanel('main')
-        } catch (error) {
-          console.warn('[AnnotationApp] Failed to center on panel manually:', error)
-        }
-      } else {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'manual_center_skipped_canvas_unready',
-          metadata: { noteId },
-        })
+        const storeKey = ensurePanelKey(noteId, 'main')
+        canvasRef.current.centerOnPanel(storeKey)
       }
     },
     [focusedNoteId, setFocusedNoteId, sharedWorkspace],
@@ -1209,98 +1229,7 @@ function AnnotationAppContent() {
   // Center panel when note selection changes
   useEffect(() => {
     if (!focusedNoteId) return
-
-    const focusSource = focusSourceRef.current
-    if (focusSource === 'tab') {
-      logWorkspaceNotePositions('center_skip_tab_focus')
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'center_effect_skipped_tab_focus',
-      metadata: { focusedNoteId },
-    })
-      focusSourceRef.current = 'auto'
-      return
-    }
-
-    focusSourceRef.current = 'auto'
-
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'center_effect_triggered',
-      metadata: {
-        focusedNoteId,
-        hasCanvasRef: !!canvasRef.current,
-        hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
-      }
-    })
-
     lastCenteredRef.current = focusedNoteId
-
-    let attempts = 0
-    const maxAttempts = 10 // Max 1 second (10 * 100ms)
-    let timeoutId: NodeJS.Timeout
-
-    const attemptCenter = () => {
-      attempts++
-
-      const timeSinceLoad = Date.now() - lastCanvasLoadTimeRef.current
-      if (timeSinceLoad < 300) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'centering_skipped_recent_snapshot_load',
-          metadata: {
-            timeSinceLoad,
-            reason: 'snapshot centering already handled it'
-          }
-        })
-        return
-      }
-
-      debugLog({
-        component: 'AnnotationApp',
-        action: 'attempt_center_on_panel',
-        metadata: {
-          attempt: attempts,
-          maxAttempts,
-          hasCanvasRef: !!canvasRef.current,
-          hasCenterOnPanel: !!canvasRef.current?.centerOnPanel,
-          timeSinceLoad
-        }
-      })
-
-      if (canvasRef.current?.centerOnPanel) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'calling_center_on_panel',
-          metadata: { panelId: 'main', attempt: attempts }
-        })
-        canvasRef.current.centerOnPanel('main')
-        return
-      }
-
-      if (attempts < maxAttempts) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'canvas_not_ready_retry',
-          metadata: { attempt: attempts, nextRetryIn: '100ms' }
-        })
-        timeoutId = setTimeout(attemptCenter, 100)
-      } else {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'canvas_not_ready_timeout',
-          metadata: { totalAttempts: attempts, timeElapsed: `${attempts * 100}ms` }
-        })
-      }
-    }
-
-    timeoutId = setTimeout(attemptCenter, 50)
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
-    }
   }, [focusedNoteId])
 
   // Handle right-click to show notes widget
