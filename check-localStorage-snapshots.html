@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Check localStorage Snapshots</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .snapshot { margin-bottom: 30px; border: 1px solid #ccc; padding: 10px; }
+    .note-id { font-weight: bold; color: blue; }
+    .position { color: green; }
+  </style>
+</head>
+<body>
+  <h1>localStorage Canvas Snapshots</h1>
+  <div id="output"></div>
+
+  <script>
+    const output = document.getElementById('output');
+
+    // Get all keys from localStorage
+    const keys = Object.keys(localStorage).filter(key =>
+      key.startsWith('canvas_state_') || key.startsWith('canvas_workspace_')
+    );
+
+    if (keys.length === 0) {
+      output.innerHTML = '<p>No canvas snapshots found in localStorage</p>';
+    } else {
+      keys.forEach(key => {
+        const data = localStorage.getItem(key);
+        try {
+          const parsed = JSON.parse(data);
+
+          const div = document.createElement('div');
+          div.className = 'snapshot';
+
+          let html = `<h3>${key}</h3>`;
+
+          if (key.startsWith('canvas_state_')) {
+            const noteId = key.replace('canvas_state_', '');
+            html += `<div class="note-id">Note ID: ${noteId}</div>`;
+
+            if (parsed.items) {
+              html += `<h4>Items (${parsed.items.length}):</h4>`;
+              parsed.items.forEach((item, idx) => {
+                if (item.itemType === 'panel') {
+                  html += `<div class="position">Panel ${idx}: ${item.panelId} - Position: (${item.position?.x}, ${item.position?.y}) - noteId: ${item.noteId || 'undefined'}</div>`;
+                }
+              });
+            }
+
+            if (parsed.viewport) {
+              html += `<div>Viewport: translate(${parsed.viewport.translateX}, ${parsed.viewport.translateY}) zoom: ${parsed.viewport.zoom}</div>`;
+            }
+          } else {
+            html += `<pre>${JSON.stringify(parsed, null, 2)}</pre>`;
+          }
+
+          div.innerHTML = html;
+          output.appendChild(div);
+        } catch (e) {
+          const div = document.createElement('div');
+          div.className = 'snapshot';
+          div.innerHTML = `<h3>${key}</h3><p>Error parsing: ${e.message}</p>`;
+          output.appendChild(div);
+        }
+      });
+    }
+  </script>
+</body>
+</html>

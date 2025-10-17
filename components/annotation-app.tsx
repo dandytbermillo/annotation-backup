@@ -1121,12 +1121,34 @@ function AnnotationAppContent() {
       return
     }
 
-    // Different note - ensure it's marked open and focus it
+    // Different note - ensure it's marked open, focus it, and pan camera to it
     focusSourceRef.current = 'tab'
     void openWorkspaceNote(noteId, { persist: true }).catch(error => {
       console.error('[AnnotationApp] Failed to open note in workspace:', error)
     })
     setFocusedNoteId(noteId)
+
+    // SIMPLE FIX: Pan camera to center the note's panel (just like dragging canvas)
+    // Let the canvas find the panel and move the viewport to show it
+    // Use composite storeKey (noteId::panelId) to uniquely identify the panel across multiple notes
+    const storeKey = ensurePanelKey(noteId, 'main')
+
+    console.log('[AnnotationApp] Tab clicked, attempting to center on panel:', {
+      noteId,
+      storeKey,
+      hasCanvasRef: !!canvasRef.current,
+      hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
+    })
+
+    if (canvasRef.current?.centerOnPanel) {
+      // Small delay to ensure canvas has updated with the new focused note
+      setTimeout(() => {
+        console.log('[AnnotationApp] Calling centerOnPanel for storeKey:', storeKey)
+        canvasRef.current?.centerOnPanel(storeKey)
+      }, 100)
+    } else {
+      console.warn('[AnnotationApp] centerOnPanel not available on canvasRef')
+    }
   }
 
   const handleCloseNote = useCallback(

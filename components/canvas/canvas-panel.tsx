@@ -1413,7 +1413,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     }
     
     // Show auto-save indicator
-    const autoSave = document.getElementById(`auto-save-${panelId}`)
+    // CRITICAL FIX: Use storeKey (which includes noteId) to ensure unique ID across multiple notes
+    const autoSave = document.getElementById(`auto-save-${storeKey}`)
     if (autoSave) {
       autoSave.style.opacity = '1'
       setTimeout(() => {
@@ -2497,6 +2498,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         className={`panel ${currentBranch.type}`}
         id={`panel-${panelId}`}
         data-panel-id={panelId}
+        data-store-key={storeKey}
       onClick={() => {
         // Register this panel's editor as active when panel is clicked
         if (editorRef.current && onRegisterActiveEditor) {
@@ -2936,7 +2938,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           }}>
           {/* Auto Save Indicator */}
           <div
-            id={`auto-save-${panelId}`}
+            id={`auto-save-${storeKey}`}
             style={{
               position: 'absolute',
               top: '12px',

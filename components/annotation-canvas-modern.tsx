@@ -278,14 +278,71 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   // Unified canvas items state
 const workspaceSeedAppliedRef = useRef(false)
-const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([])
+const [canvasItems, _setCanvasItems] = useState<CanvasItem[]>([])
+const setCanvasItems: typeof _setCanvasItems = useCallback((update) => {
+  const stack = new Error().stack
+  const caller = stack?.split('\n').slice(2, 4).join(' | ') || 'unknown'
+
+  // Capture the result to log panel positions
+  _setCanvasItems(prev => {
+    const next = typeof update === 'function' ? update(prev) : update
+
+    // CRITICAL FIX: If the update function returned the same array reference,
+    // don't trigger a re-render. This prevents unnecessary React updates.
+    if (next === prev) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'setCanvasItems_SKIPPED_SAME_REF',
+        metadata: {
+          noteId,
+          reason: 'update_returned_same_array_reference',
+          caller: caller.substring(0, 200)
+        }
+      })
+      return prev
+    }
+
+    const mainPanels = next.filter(item => item.itemType === 'panel' && item.panelId === 'main')
+
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'setCanvasItems_called',
+      metadata: {
+        noteId,
+        isFunction: typeof update === 'function',
+        prevItemCount: prev.length,
+        nextItemCount: next.length,
+        mainPanelPositions: mainPanels.map(p => ({
+          noteId: p.noteId,
+          position: p.position
+        })),
+        caller: caller.substring(0, 300)
+      }
+    })
+
+    return next
+  })
+}, [noteId])
 const [isStateLoaded, setIsStateLoaded] = useState(false)
 const autoSaveTimerRef = useRef<number | null>(null)
 const [showControlPanel, setShowControlPanel] = useState(false)
 const [internalShowAddComponentMenu, setInternalShowAddComponentMenu] = useState(false)
 const mainPanelSeededRef = useRef(false)
 
+  // CRITICAL: This effect syncs canvasItems with noteIds
+  // It should NEVER update positions for existing panels (only metadata)
   useEffect(() => {
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'noteIds_sync_effect_triggered',
+      metadata: {
+        hasNotes,
+        noteIds,
+        currentItemsCount: canvasItems.length,
+        currentNoteIdProp: noteId  // Track the current noteId prop
+      }
+    })
+
     if (!hasNotes) {
       setCanvasItems([])
       return
@@ -297,6 +354,14 @@ const mainPanelSeededRef = useRef(false)
 
       const mainByNote = new Map<string, CanvasItem>()
       const otherItems: CanvasItem[] = []
+
+      // Track what panels we start with
+      const prevMainPanels = prev
+        .filter(item => item.itemType === 'panel' && item.panelId === 'main')
+        .map(item => ({
+          noteId: getItemNoteId(item),
+          position: item.position
+        }))
 
       prev.forEach(item => {
         if (item.itemType === 'panel' && item.panelId === 'main') {
@@ -321,18 +386,30 @@ const mainPanelSeededRef = useRef(false)
       const nextMainItems: CanvasItem[] = []
       noteIds.forEach(id => {
         const existing = mainByNote.get(id)
-        const targetPosition = resolveWorkspacePosition(id) ?? DEFAULT_MAIN_POSITION
         const targetStoreKey = ensurePanelKey(id, 'main')
 
         if (existing) {
-          const currentPosition = existing.position ?? DEFAULT_MAIN_POSITION
-          const needsPositionUpdate = currentPosition.x !== targetPosition.x || currentPosition.y !== targetPosition.y
+          // CRITICAL FIX: Only update metadata (noteId, storeKey), NOT position
+          // Position updates should only happen via explicit user actions (drag)
+          // or initial hydration, NOT on every tab click/note switch
           const needsMetaUpdate = existing.noteId !== id || existing.storeKey !== targetStoreKey
 
-          if (needsPositionUpdate || needsMetaUpdate) {
+          if (needsMetaUpdate) {
+            debugLog({
+              component: 'AnnotationCanvas',
+              action: 'noteIds_sync_updating_metadata_only',
+              metadata: {
+                noteId: id,
+                existingNoteId: existing.noteId,  // Track BEFORE
+                existingPosition: existing.position,
+                keepingPosition: true
+              }
+            })
+
             nextMainItems.push({
               ...existing,
-              position: targetPosition,
+              // Keep existing position - do NOT update from workspace
+              position: existing.position,
               noteId: id,
               storeKey: targetStoreKey
             })
@@ -341,6 +418,19 @@ const mainPanelSeededRef = useRef(false)
             nextMainItems.push(existing)
           }
         } else {
+          // New panel - use workspace position if available, otherwise default
+          const targetPosition = resolveWorkspacePosition(id) ?? DEFAULT_MAIN_POSITION
+
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'noteIds_sync_creating_new_panel',
+            metadata: {
+              noteId: id,
+              targetPosition,
+              source: targetPosition === DEFAULT_MAIN_POSITION ? 'default' : 'workspace'
+            }
+          })
+
           nextMainItems.push(
             createPanelItem('main', targetPosition, 'main', id, targetStoreKey)
           )
@@ -349,15 +439,61 @@ const mainPanelSeededRef = useRef(false)
       })
 
       const newItems = [...nextMainItems, ...otherItems]
+
+      // CRITICAL: Only return new array if something actually changed
+      // Returning the same array prevents unnecessary React re-renders
       if (!changed && newItems.length === prev.length) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'noteIds_sync_NO_CHANGE',
+          metadata: {
+            noteIds,
+            itemCount: prev.length,
+            reason: 'items_unchanged_returning_prev'
+          }
+        })
         return prev
       }
+
+      // Track what panels we're returning
+      const nextMainPanels = nextMainItems.map(item => ({
+        noteId: getItemNoteId(item),
+        position: item.position
+      }))
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'noteIds_sync_updated_items',
+        metadata: {
+          prevCount: prev.length,
+          newCount: newItems.length,
+          changed,
+          noteIdsInput: noteIds,
+          currentNoteIdProp: noteId,
+          prevMainPanels,
+          nextMainPanels,
+          mainByNoteKeys: Array.from(mainByNote.keys())
+        }
+      })
+
       return newItems
     })
-  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition])
+  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId])
 
+  // Reset per-note refs when noteId changes
   useEffect(() => {
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'noteId_changed_resetting_refs',
+      metadata: {
+        noteId,
+        prevMainPanelSeeded: mainPanelSeededRef.current,
+        prevWorkspaceSeedApplied: workspaceSeedAppliedRef.current
+      }
+    })
+
     mainPanelSeededRef.current = false
+    workspaceSeedAppliedRef.current = false  // CRITICAL FIX: Reset this per-note too
   }, [noteId])
   const isRestoringSnapshotRef = useRef(false)
   
@@ -386,20 +522,73 @@ const mainPanelSeededRef = useRef(false)
   const lastHydratedNoteRef = useRef<string | null>(null)
   const initialCanvasSetupRef = useRef(false)
 
+  // CRITICAL: This effect updates main panel positions from workspace
+  // It should ONLY run for BRAND NEW notes (first time opening), NOT when switching between already-open notes!
   useEffect(() => {
+    // Check if main panel for this note already exists in canvasItems
+    const mainPanelExists = canvasItems.some(item => {
+      if (item.itemType === "panel" && item.panelId === "main") {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId === noteId
+      }
+      return false
+    })
+
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'workspaceSeedAppliedRef_effect_triggered',
+      metadata: {
+        noteId,
+        mainPanelExists,
+        workspaceSeedApplied: workspaceSeedAppliedRef.current,
+        hasWorkspacePosition: !!workspaceMainPosition,
+        workspacePosition: workspaceMainPosition,
+        hydrationSuccess: hydrationStatus.success,
+        willUpdatePosition: !workspaceSeedAppliedRef.current && !!workspaceMainPosition && !hydrationStatus.success && !mainPanelExists
+      }
+    })
+
+    // CRITICAL FIX: Do NOT run if panel already exists (switching between open notes)
+    if (mainPanelExists) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'WORKSPACE_SEED_SKIPPED_PANEL_EXISTS',
+        metadata: {
+          noteId,
+          reason: 'main_panel_already_exists_in_canvas'
+        }
+      })
+      return
+    }
+
     if (workspaceSeedAppliedRef.current) return
     if (!workspaceMainPosition) return
     if (hydrationStatus.success) return
 
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'WORKSPACE_SEED_UPDATING_POSITIONS',
+      metadata: {
+        noteId,
+        workspaceMainPosition,
+        reason: 'workspace_seed_applied_new_note'
+      }
+    })
+
     setCanvasItems(prev =>
-      prev.map(item =>
-        item.itemType === "panel" && item.panelId === "main"
-          ? { ...item, position: workspaceMainPosition }
-          : item,
-      ),
+      prev.map(item => {
+        // Only update main panel for the CURRENT note
+        if (item.itemType === "panel" && item.panelId === "main") {
+          const itemNoteId = getItemNoteId(item)
+          if (itemNoteId === noteId) {
+            return { ...item, position: workspaceMainPosition }
+          }
+        }
+        return item
+      }),
     )
     workspaceSeedAppliedRef.current = true
-  }, [workspaceMainPosition, hydrationStatus.success])
+  }, [noteId, workspaceMainPosition, hydrationStatus.success, getItemNoteId, canvasItems])
 
   // Create CanvasItems from hydrated panels
   useEffect(() => {
@@ -477,6 +666,16 @@ const mainPanelSeededRef = useRef(false)
             item.panelId ?? 'main'
           )
           if (existingStoreKeys.has(key)) {
+            debugLog({
+              component: 'AnnotationCanvas',
+              action: 'HYDRATION_SKIPPED_DUPLICATE',
+              metadata: {
+                noteId,
+                panelId: item.panelId,
+                storeKey: key,
+                reason: 'panel_already_exists_in_canvas'
+              }
+            })
             return false
           }
           existingStoreKeys.add(key)
@@ -486,8 +685,17 @@ const mainPanelSeededRef = useRef(false)
         if (itemsToAdd.length > 0) {
           debugLog({
             component: 'AnnotationCanvas',
-            action: 'added_panels_to_canvas_items',
-            metadata: { addedCount: itemsToAdd.length, totalItems: prev.length + itemsToAdd.length }
+            action: 'HYDRATION_ADDING_PANELS',
+            metadata: {
+              noteId,
+              addedCount: itemsToAdd.length,
+              totalItems: prev.length + itemsToAdd.length,
+              addedPanels: itemsToAdd.map(p => ({
+                panelId: p.panelId,
+                position: p.position,
+                noteId: p.noteId
+              }))
+            }
           })
           return [...prev, ...itemsToAdd]
         }
@@ -551,7 +759,14 @@ const mainPanelSeededRef = useRef(false)
         const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920
         const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080
 
-        const mainPanelItem = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
+        // CRITICAL FIX: Find the main panel for THIS note, not just any main panel
+        const mainPanelItem = canvasItems.find(item => {
+          if (item.itemType === 'panel' && item.panelId === 'main') {
+            const itemNoteId = getItemNoteId(item)
+            return itemNoteId === noteId
+          }
+          return false
+        })
 
         const screenDimensions = getPanelDimensions('main')
         const worldPanelWidth = screenDimensions.width / canvasState.zoom
@@ -614,11 +829,14 @@ const mainPanelSeededRef = useRef(false)
           const currentPosition = mainPanelItem?.position
           if (!currentPosition || currentPosition.x !== mainPosition.x || currentPosition.y !== mainPosition.y) {
             setCanvasItems(prev =>
-              prev.map(item =>
-                item.itemType === 'panel' && item.panelId === 'main'
-                  ? { ...item, position: mainPosition }
-                  : item
-              )
+              prev.map(item => {
+                // CRITICAL FIX: Only update the main panel for THIS noteId, not all main panels!
+                const itemNoteId = getItemNoteId(item)
+                if (item.itemType === 'panel' && item.panelId === 'main' && itemNoteId === noteId) {
+                  return { ...item, position: mainPosition }
+                }
+                return item
+              })
             )
             debugLog({
               component: 'AnnotationCanvas',
@@ -703,9 +921,10 @@ const mainPanelSeededRef = useRef(false)
     persistPanelCreate,
     workspaceMainPosition,
     updateMainPosition,
-    canvasState.zoom,
-    canvasState.translateX,
-    canvasState.translateY,
+    // CRITICAL FIX: DO NOT include canvasState.zoom/translateX/translateY
+    // Including viewport state causes this effect to re-run on every camera pan,
+    // which recalculates positions and causes panels to jump when switching tabs!
+    // This effect should ONLY run when hydration completes or note changes.
     dataStore
   ])
 
@@ -977,7 +1196,14 @@ const mainPanelSeededRef = useRef(false)
           height: window.innerHeight
         }
 
-        const mainPanel = canvasItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
+        // CRITICAL FIX: Find the main panel for THIS note, not just any main panel
+        const mainPanel = canvasItems.find(item => {
+          if (item.itemType === 'panel' && item.panelId === 'main') {
+            const itemNoteId = getItemNoteId(item)
+            return itemNoteId === noteId
+          }
+          return false
+        })
         const position: { x: number; y: number } = (() => {
           if (mainPanel?.position && !isDefaultOffscreenPosition(mainPanel.position)) {
             return mainPanel.position
@@ -1199,6 +1425,8 @@ const mainPanelSeededRef = useRef(false)
       isRestoringSnapshotRef.current = false
     })
 
+    // Restore items from snapshot, preserving their original noteIds
+    // DON'T force-change noteIds - this breaks multi-note display!
     let restoredItems = ensureMainPanel(
       snapshot.items.map((item) => ({ ...item })) as CanvasItem[],
       noteId,
@@ -1255,7 +1483,46 @@ const mainPanelSeededRef = useRef(false)
       }
     })
 
-    setCanvasItems(restoredItems)
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'SNAPSHOT_RESTORE_SETTING_CANVAS_ITEMS',
+      metadata: {
+        noteId,
+        itemCount: restoredItems.length,
+        mainPanelPosition: restoredItems.find(item => item.itemType === 'panel' && item.panelId === 'main')?.position,
+        allPanelPositions: restoredItems
+          .filter(item => item.itemType === 'panel')
+          .map(item => ({
+            panelId: item.panelId,
+            noteId: item.noteId,
+            position: item.position
+          }))
+      }
+    })
+
+    // CRITICAL FIX: Merge restored items with existing items from OTHER notes
+    // Do NOT replace entire canvasItems array - this causes other notes' panels to unmount!
+    setCanvasItems(prev => {
+      // Keep items from OTHER notes unchanged
+      const otherNotesItems = prev.filter(item => {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId && itemNoteId !== noteId
+      })
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'SNAPSHOT_RESTORE_MERGE',
+        metadata: {
+          noteId,
+          restoredItemsCount: restoredItems.length,
+          otherNotesItemsCount: otherNotesItems.length,
+          totalItemsCount: otherNotesItems.length + restoredItems.length
+        }
+      })
+
+      // Merge: other notes' items + this note's restored items
+      return [...otherNotesItems, ...restoredItems]
+    })
 
     const mainPanel = restoredItems.find((item) => item.itemType === 'panel' && item.panelId === 'main')
 
@@ -1771,65 +2038,100 @@ const mainPanelSeededRef = useRef(false)
         return newState
       })
     },
-    centerOnPanel: (panelId: string) => {
-      const getPanelPosition = (id: string): { x: number; y: number } | null => {
+    centerOnPanel: (storeKeyOrPanelId: string) => {
+      const getPanelPosition = (key: string): { x: number; y: number } | null => {
+        // 0) FIRST: Try to find the panel directly in canvasItems array (most reliable!)
+        // This gives us the world position directly without coordinate conversion
+        const panel = canvasItems.find(item => {
+          if (item.itemType === 'panel') {
+            // If key is composite (noteId::panelId), match by storeKey
+            if (key.includes('::')) {
+              return item.storeKey === key
+            }
+            // Otherwise match by panelId
+            return item.panelId === key
+          }
+          return false
+        })
+
+        if (panel?.position) {
+          console.log('[Canvas] Found panel in canvasItems:', {
+            key,
+            position: panel.position,
+            storeKey: panel.storeKey
+          })
+          return panel.position
+        }
+
         // 1) Try collaboration map if not in plain mode
         const provider = UnifiedProvider.getInstance()
         if (!isPlainModeActive()) {
           const branchesMap = provider.getBranchesMap()
-          const branch = branchesMap?.get(id)
-          if (branch?.position) return branch.position
+          const branch = branchesMap?.get(key)
+          if (branch?.position) {
+            console.log('[Canvas] Found panel in branchesMap:', { key, position: branch.position })
+            return branch.position
+          }
         }
-        
-        // 2) DOM lookup (plain mode)
-        const el = document.querySelector(`[data-panel-id="${id}"]`) as HTMLElement | null
+
+        // 2) Fallback: DOM lookup (less reliable due to coordinate conversion)
+        const selector = key.includes('::')
+          ? `[data-store-key="${key}"]`
+          : `[data-panel-id="${key}"]`
+        const el = document.querySelector(selector) as HTMLElement | null
         if (el) {
           const rect = el.getBoundingClientRect()
           const container = document.getElementById('canvas-container')
           const containerRect = container?.getBoundingClientRect()
-          
-          // Get the center of the panel relative to the container
+
           const screenX = (rect.left + rect.width / 2) - (containerRect?.left ?? 0)
           const screenY = (rect.top + rect.height / 2) - (containerRect?.top ?? 0)
-          
-          // Convert screen coordinates to world coordinates
-          // The panel's world position when canvas has translate(tx, ty) scale(zoom):
-          // screenPos = (worldPos + translate) * zoom
-          // Therefore: worldPos = screenPos / zoom - translate
-          const worldX = (screenX / canvasState.zoom) - canvasState.translateX
-          const worldY = (screenY / canvasState.zoom) - canvasState.translateY
-          
+
+          const worldX = (screenX - canvasState.translateX) / canvasState.zoom
+          const worldY = (screenY - canvasState.translateY) / canvasState.zoom
+
+          console.log('[Canvas] Calculated panel position from DOM:', {
+            key,
+            screenPos: { x: screenX, y: screenY },
+            worldPos: { x: worldX, y: worldY },
+            viewport: { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom }
+          })
+
           return { x: worldX, y: worldY }
         }
-        
-        // 3) Don't use fallback immediately - return null to trigger retry
+
+        // 3) Not found - return null to trigger retry
+        console.warn('[Canvas] Panel not found in canvasItems, branchesMap, or DOM:', key)
         return null
       }
 
-      console.log(`[Canvas] Attempting to center on panel '${panelId}'`)
-      
+      console.log(`[Canvas] Attempting to center on panel '${storeKeyOrPanelId}'`)
+
       // Retry mechanism: wait for panel to be in DOM
       let retryCount = 0
       const maxRetries = 10
       const retryDelay = 100 // ms
-      
+
       const attemptCenter = () => {
-        const position = getPanelPosition(panelId)
+        const position = getPanelPosition(storeKeyOrPanelId)
 
         if (position) {
-          console.log(`[Canvas] Panel '${panelId}' found, centering instantly (no animation)...`)
+          console.log(`[Canvas] Panel '${storeKeyOrPanelId}' found, centering with slow animation...`)
 
           debugLog({
             component: 'AnnotationCanvas',
             action: 'center_on_panel',
             metadata: {
-              panelId,
+              storeKeyOrPanelId,
               position
             }
           })
 
           // Get actual panel dimensions from DOM
-          const panelElement = document.querySelector(`[data-panel-id="${panelId}"]`) as HTMLElement
+          const selector = storeKeyOrPanelId.includes('::')
+            ? `[data-store-key="${storeKeyOrPanelId}"]`
+            : `[data-panel-id="${storeKeyOrPanelId}"]`
+          const panelElement = document.querySelector(selector) as HTMLElement
           const panelDimensions = panelElement
             ? { width: panelElement.offsetWidth, height: panelElement.offsetHeight }
             : { width: 500, height: 400 }  // Fallback if panel not found
@@ -1840,7 +2142,7 @@ const mainPanelSeededRef = useRef(false)
             component: 'AnnotationCanvas',
             action: 'panel_dimensions',
             metadata: {
-              panelId,
+              storeKeyOrPanelId,
               panelFound: !!panelElement,
               panelDimensions,
               viewportDimensions,
@@ -1862,7 +2164,7 @@ const mainPanelSeededRef = useRef(false)
             component: 'AnnotationCanvas',
             action: 'calculated_target',
             metadata: {
-              panelId,
+              storeKeyOrPanelId,
               position,
               targetX,
               targetY,
@@ -1875,17 +2177,18 @@ const mainPanelSeededRef = useRef(false)
           const canvasEl = document.getElementById('infinite-canvas')
 
           if (canvasEl) {
-            // Step 1: Disable transition directly on DOM
+            // DEBUG MODE: Enable SLOW transition to clearly see camera pan
+            // In production, this would be 'none' for instant panning
             const originalTransition = canvasEl.style.transition
-            canvasEl.style.transition = 'none'
+            canvasEl.style.transition = 'transform 2s ease-in-out' // 2 second slow pan for debugging
 
             // Force reflow to apply transition change
             void canvasEl.offsetHeight
 
             debugLog({
               component: 'AnnotationCanvas',
-              action: 'transition_disabled_dom',
-              metadata: { panelId, originalTransition }
+              action: 'transition_enabled_slow_debug',
+              metadata: { storeKeyOrPanelId, originalTransition, debugTransition: '2s ease-in-out' }
             })
           }
 
@@ -1912,33 +2215,34 @@ const mainPanelSeededRef = useRef(false)
           debugLog({
             component: 'AnnotationCanvas',
             action: 'viewport_updated_instant',
-            metadata: { panelId, targetX, targetY }
+            metadata: { storeKeyOrPanelId, targetX, targetY }
           })
 
           debugLog({
             component: 'AnnotationCanvas',
             action: 'centerOnPanel_context_synced',
-            metadata: { panelId, targetX, targetY }
+            metadata: { storeKeyOrPanelId, targetX, targetY }
           })
 
-          // Step 3: Restore transition after transform is applied
+          // Step 3: Restore transition after animation completes (2s in debug mode)
           if (canvasEl) {
-            requestAnimationFrame(() => {
+            // Wait for the 2s animation to complete before clearing transition
+            setTimeout(() => {
               canvasEl.style.transition = ''  // Clear inline style, let React control it
               debugLog({
                 component: 'AnnotationCanvas',
                 action: 'transition_restored_dom',
-                metadata: { panelId }
+                metadata: { storeKeyOrPanelId }
               })
-            })
+            }, 2100) // Wait for 2s animation + 100ms buffer
           }
         } else if (retryCount < maxRetries) {
           retryCount++
-          console.log(`[Canvas] Panel '${panelId}' not found, retry ${retryCount}/${maxRetries}`)
+          console.log(`[Canvas] Panel '${storeKeyOrPanelId}' not found, retry ${retryCount}/${maxRetries}`)
           setTimeout(attemptCenter, retryDelay)
         } else {
           // Final fallback: calculate viewport-centered position
-          console.warn(`[Canvas] Panel '${panelId}' not found after ${maxRetries} retries, using viewport center`)
+          console.warn(`[Canvas] Panel '${storeKeyOrPanelId}' not found after ${maxRetries} retries, using viewport center`)
           
           // Calculate position to place panel at viewport center
           const viewportWidth = window.innerWidth
