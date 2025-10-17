@@ -19,7 +19,7 @@ import {
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { CanvasWorkspaceProvider, useCanvasWorkspace } from "./canvas/canvas-workspace-context"
+import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -59,8 +59,10 @@ function AnnotationAppContent() {
     workspaceError,
     refreshWorkspace,
     getPendingPosition,
-    getCachedPosition
+    getCachedPosition,
+    getWorkspace
   } = useCanvasWorkspace()
+  const sharedWorkspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
 
   // Initialize focusedNoteId from localStorage (persist which note canvas is focused)
   const [focusedNoteId, setFocusedNoteId] = useState<string | null>(() => {
@@ -217,8 +219,6 @@ function AnnotationAppContent() {
   }, [overlayPersistenceEnabled])
 
   // Force re-center trigger - increment to force effect to run
-  const [centerTrigger, setCenterTrigger] = useState(0)
-  
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
 
@@ -871,20 +871,24 @@ function AnnotationAppContent() {
       })
 
     if (noteId === focusedNoteId) {
-      // Same note clicked - force re-center by incrementing trigger
       debugLog({
         component: 'AnnotationApp',
-        action: 'force_recenter',
-        metadata: { noteId, centerTrigger }
+        action: 'highlight_note',
+        metadata: { noteId }
       })
-      setCenterTrigger(prev => prev + 1)
-    } else {
-      // Different note - ensure it's marked open and focus it
-      void openWorkspaceNote(noteId, { persist: true }).catch(error => {
-        console.error('[AnnotationApp] Failed to open note in workspace:', error)
-      })
-      setFocusedNoteId(noteId)
+      try {
+        sharedWorkspace.events.emit('workspace:highlight-note', { noteId })
+      } catch (error) {
+        console.warn('[AnnotationApp] Failed to emit highlight event:', error)
+      }
+      return
     }
+
+    // Different note - ensure it's marked open and focus it
+    void openWorkspaceNote(noteId, { persist: true }).catch(error => {
+      console.error('[AnnotationApp] Failed to open note in workspace:', error)
+    })
+    setFocusedNoteId(noteId)
   }
 
   const handleCloseNote = useCallback(
@@ -898,7 +902,7 @@ function AnnotationAppContent() {
     [closeWorkspaceNote],
   )
   
-  // Center panel when note selection changes or when forced
+  // Center panel when note selection changes
   useEffect(() => {
     if (!focusedNoteId) return
 
@@ -907,16 +911,13 @@ function AnnotationAppContent() {
       action: 'center_effect_triggered',
       metadata: {
         focusedNoteId,
-        centerTrigger,
         hasCanvasRef: !!canvasRef.current,
         hasCenterOnPanel: !!canvasRef.current?.centerOnPanel
       }
     })
 
-    // Always center when this effect runs (triggered by focusedNoteId change or centerTrigger change)
     lastCenteredRef.current = focusedNoteId
 
-    // Retry mechanism to wait for canvas to mount AND viewport to reset
     let attempts = 0
     const maxAttempts = 10 // Max 1 second (10 * 100ms)
     let timeoutId: NodeJS.Timeout
@@ -924,7 +925,6 @@ function AnnotationAppContent() {
     const attemptCenter = () => {
       attempts++
 
-      // Skip if canvas recently loaded a snapshot (snapshot centering already ran)
       const timeSinceLoad = Date.now() - lastCanvasLoadTimeRef.current
       if (timeSinceLoad < 300) {
         debugLog({
@@ -950,7 +950,6 @@ function AnnotationAppContent() {
         }
       })
 
-      // Check if canvas is ready
       if (canvasRef.current?.centerOnPanel) {
         debugLog({
           component: 'AnnotationApp',
@@ -961,7 +960,6 @@ function AnnotationAppContent() {
         return
       }
 
-      // Canvas not ready yet, retry if we haven't exceeded max attempts
       if (attempts < maxAttempts) {
         debugLog({
           component: 'AnnotationApp',
@@ -978,8 +976,6 @@ function AnnotationAppContent() {
       }
     }
 
-    // Add small delay before first attempt to allow canvas viewport reset to complete
-    // This prevents race condition where centering runs before viewport is reset
     timeoutId = setTimeout(attemptCenter, 50)
 
     return () => {
@@ -987,7 +983,7 @@ function AnnotationAppContent() {
         clearTimeout(timeoutId)
       }
     }
-  }, [focusedNoteId, centerTrigger]) // Also watch centerTrigger
+  }, [focusedNoteId])
 
   // Handle right-click to show notes widget
   const handleContextMenu = useCallback((e: React.MouseEvent) => {

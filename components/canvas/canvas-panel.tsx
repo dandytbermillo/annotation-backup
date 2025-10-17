@@ -28,8 +28,9 @@ import { createNote } from "@/lib/utils/note-creator"
 import { Save, Pencil } from "lucide-react"
 import { TypeSelector, type AnnotationType } from "./type-selector"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { useCanvasWorkspace } from "./canvas-workspace-context"
+import { useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas-workspace-context"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { HOVER_HIGHLIGHT_DURATION_MS } from "@/lib/constants/ui-timings"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -72,7 +73,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const provider = UnifiedProvider.getInstance()
   const branchesMap = provider.getBranchesMap()
 
-  const { updateMainPosition } = useCanvasWorkspace()
+  const { updateMainPosition, getWorkspace } = useCanvasWorkspace()
+  const sharedWorkspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
 
   // Panel persistence hook - needs LayerManager instance, not the hook
   const layerManagerInstance = layerManager.manager
@@ -123,6 +125,38 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   //
   // Result: Only the LATEST rename wins, user's final input is preserved
   const renameAbortControllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    const events = sharedWorkspace?.events
+    if (!events || !effectiveNoteId) {
+      return
+    }
+
+    const handleHighlight = (payload: { noteId?: string } | undefined) => {
+      if (!payload || payload.noteId !== effectiveNoteId || panelId !== 'main') {
+        return
+      }
+
+      setIsHighlighting(true)
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+      highlightTimeoutRef.current = setTimeout(() => {
+        setIsHighlighting(false)
+        highlightTimeoutRef.current = null
+      }, HOVER_HIGHLIGHT_DURATION_MS)
+    }
+
+    events.on('workspace:highlight-note', handleHighlight)
+
+    return () => {
+      events.off('workspace:highlight-note', handleHighlight)
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+        highlightTimeoutRef.current = null
+      }
+    }
+  }, [sharedWorkspace, effectiveNoteId, panelId])
 
   // Load panel title from database on mount - force re-fetch on every mount
   useEffect(() => {
@@ -539,6 +573,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
+  const [isHighlighting, setIsHighlighting] = useState(false)
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const defaultShadow = isIsolated ? '0 8px 32px rgba(239, 68, 68, 0.25)' : '0 8px 32px rgba(0,0,0,0.15)'
+  const panelBoxShadow = isHighlighting
+    ? `0 0 0 3px rgba(129, 140, 248, 0.85), ${defaultShadow}`
+    : defaultShadow
 
   // Save As dialog state (matching notes-explorer implementation)
   const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
@@ -2508,9 +2548,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
-        boxShadow: isIsolated
-          ? '0 8px 32px rgba(239, 68, 68, 0.25)'
-          : '0 8px 32px rgba(0,0,0,0.15)',
+        boxShadow: panelBoxShadow,
+        transition: 'box-shadow 0.3s ease, transform 0.3s ease',
+        transform: isHighlighting ? 'scale(1.01)' : 'none',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
