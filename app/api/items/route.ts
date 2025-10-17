@@ -203,8 +203,7 @@ export async function POST(request: NextRequest) {
           `SELECT id FROM items
            WHERE workspace_id = $1
              AND ${parentId ? 'parent_id = $2' : 'parent_id IS NULL'}
-             AND LOWER(name) = LOWER($${parentId ? '3' : '2'})
-             AND deleted_at IS NULL`,
+             AND LOWER(name) = LOWER($${parentId ? '3' : '2'})`,
           parentId ? [workspaceId, parentId, candidateName] : [workspaceId, candidateName]
         )
 

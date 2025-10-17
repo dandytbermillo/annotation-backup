@@ -15,6 +15,8 @@ const STORAGE_PREFIX = "annotation-canvas-state"
 const STATE_VERSION = "1.1.0"
 const LEGACY_KEY = STORAGE_PREFIX
 const AUTO_SAVE_DEBOUNCE = 800 // Increased from 450ms for better performance
+const STORAGE_BUDGET_BYTES = 2.5 * 1024 * 1024 // ~2.5MB budget for canvas snapshots
+let lastQuotaWarningAt = 0
 
 interface PersistedViewport {
   zoom: number
@@ -206,37 +208,90 @@ export function saveStateToStorage(
       layerNodes
     }
 
-    const serialized = JSON.stringify(payload)
     const key = storageKey(noteId)
-    
-    // Try to save with quota handling
-    try {
-      window.localStorage.setItem(key, serialized)
-    } catch (e) {
-      // Handle quota exceeded error
-      if (e instanceof DOMException && (
-        e.code === 22 || // Legacy code
-        e.code === 1014 || // Firefox
-        e.name === 'QuotaExceededError' || // Standard
-        e.name === 'NS_ERROR_DOM_QUOTA_REACHED' // Firefox
-      )) {
-        console.error("[canvas-storage] Storage quota exceeded", {
-          noteId,
-          dataSize: serialized.length,
-          availableSpace: getAvailableStorageSpace()
-        })
-        
-        // Try to clean up old data and retry once
-        try {
-          cleanupOldSnapshots(noteId)
-          window.localStorage.setItem(key, serialized)
-          console.log("[canvas-storage] Saved after cleanup")
-        } catch {
+
+    let lastSavedSize = 0
+
+    const attemptSave = (data: PersistedCanvasState, logLabel: string): boolean => {
+      const serialized = JSON.stringify(data)
+      try {
+        window.localStorage.setItem(key, serialized)
+        if (logLabel) {
+          console.log(`[canvas-storage] ${logLabel}`)
+        }
+        lastSavedSize = serialized.length
+        return true
+      } catch (error) {
+        if (error instanceof DOMException && (
+          error.code === 22 ||
+          error.code === 1014 ||
+          error.name === 'QuotaExceededError' ||
+          error.name === 'NS_ERROR_DOM_QUOTA_REACHED'
+        )) {
+          console.warn('[canvas-storage] Quota attempt failed', {
+            noteId,
+            dataSize: serialized.length,
+            attempt: logLabel || 'initial'
+          })
           return false
         }
-      } else {
-        throw e
+        throw error
       }
+    }
+
+    const saveWithFallbacks = (): boolean => {
+      if (attemptSave(payload, 'saved snapshot')) {
+        return true
+      }
+
+      const now = Date.now()
+      if (now - lastQuotaWarningAt > 60_000) {
+        console.warn('[canvas-storage] Storage quota exceeded', {
+          noteId,
+          availableSpace: getAvailableStorageSpace()
+        })
+        lastQuotaWarningAt = now
+      }
+
+      cleanupOldSnapshots(noteId)
+      if (attemptSave(payload, 'saved after cleanup')) {
+        return true
+      }
+
+      enforceStorageBudget(noteId)
+      if (attemptSave(payload, 'saved after budget enforcement')) {
+        return true
+      }
+
+      if (payload.layerNodes) {
+        const slimPayload: PersistedCanvasState = {
+          ...payload,
+          layerNodes: undefined
+        }
+        if (attemptSave(slimPayload, 'saved without layer nodes')) {
+          return true
+        }
+      }
+
+      cleanupOldSnapshots(noteId, 0)
+      enforceStorageBudget(noteId, STORAGE_BUDGET_BYTES * 0.9)
+      if (attemptSave({ ...payload, layerNodes: undefined }, 'saved after aggressive cleanup')) {
+        return true
+      }
+
+      if (now - lastQuotaWarningAt > 5_000) {
+        console.warn('[canvas-storage] Unable to persist snapshot after cleanup', {
+          noteId,
+          totalSnapshots: getStorageStats().totalSnapshots
+        })
+        lastQuotaWarningAt = now
+      }
+
+      return false
+    }
+
+    if (!saveWithFallbacks()) {
+      return false
     }
     
     // Migrate from legacy key after successful save (with grace period)
@@ -267,7 +322,7 @@ export function saveStateToStorage(
         Action: "State Saved",
         NoteId: noteId,
         Items: payload.items.length,
-        Size: `${(serialized.length / 1024).toFixed(1)}KB`,
+        Size: `${(lastSavedSize / 1024).toFixed(1)}KB`,
         SavedAt: new Date(payload.savedAt).toLocaleTimeString(),
       },
     ])
@@ -330,6 +385,78 @@ function cleanupOldSnapshots(currentNoteId: string, keepCount: number = 10): voi
     }
   } catch (error) {
     console.error("[canvas-storage] Cleanup failed", error)
+  }
+}
+
+function enforceStorageBudget(currentNoteId: string, budget: number = STORAGE_BUDGET_BYTES): boolean {
+  if (!isBrowser()) return false
+  if (!Number.isFinite(budget) || budget <= 0) return false
+
+  try {
+    const entries: Array<{ key: string; size: number; savedAt: number; isCurrent: boolean }> = []
+    let totalSize = 0
+
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i)
+      if (!key || !key.startsWith(STORAGE_PREFIX)) continue
+
+      const value = window.localStorage.getItem(key) ?? ''
+      const size = key.length + value.length
+      totalSize += size
+
+      let savedAt = 0
+      try {
+        const parsed = JSON.parse(value) as Partial<PersistedCanvasState>
+        if (parsed && typeof parsed.savedAt === 'number') {
+          savedAt = parsed.savedAt
+        }
+      } catch {
+        savedAt = 0
+      }
+
+      entries.push({
+        key,
+        size,
+        savedAt,
+        isCurrent: key === storageKey(currentNoteId),
+      })
+    }
+
+    if (totalSize <= budget) {
+      return false
+    }
+
+    const removable = entries.filter(entry => !entry.isCurrent)
+    removable.sort((a, b) => a.savedAt - b.savedAt)
+
+    let budgetFreed = false
+    for (const entry of removable) {
+      if (totalSize <= budget) {
+        break
+      }
+      window.localStorage.removeItem(entry.key)
+      totalSize -= entry.size
+      budgetFreed = true
+      console.log('[canvas-storage] Removed old snapshot to free space', { key: entry.key, freed: entry.size })
+    }
+
+    if (totalSize <= budget) {
+      return budgetFreed
+    }
+
+    // If still over budget, remove the current entry (we will rewrite it immediately)
+    const currentEntry = entries.find(entry => entry.isCurrent)
+    if (currentEntry) {
+      window.localStorage.removeItem(currentEntry.key)
+      totalSize -= currentEntry.size
+      console.log('[canvas-storage] Cleared current snapshot to free space', { key: currentEntry.key })
+      budgetFreed = true
+    }
+
+    return budgetFreed
+  } catch (error) {
+    console.warn('[canvas-storage] enforceStorageBudget failed', error)
+    return false
   }
 }
 
