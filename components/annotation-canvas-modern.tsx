@@ -1963,6 +1963,17 @@ const mainPanelSeededRef = useRef(false)
     }
   }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent])
 
+  useEffect(() => {
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'canvas_outline_applied',
+      metadata: {
+        outline: 'rgba(99, 102, 241, 0.85) solid 4px',
+        outlineOffset: '6px'
+      }
+    })
+  }, [])
+
   return (
       <div
         className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500"
@@ -2035,7 +2046,7 @@ const mainPanelSeededRef = useRef(false)
         />
 
         {/* Canvas Container */}
-        <div 
+        <div
           id="canvas-container"
           className={`relative w-full h-full cursor-grab overflow-hidden ${canvasState.isDragging ? 'cursor-grabbing' : ''}`}
           style={{
@@ -2045,6 +2056,9 @@ const mainPanelSeededRef = useRef(false)
             // Stabilize font rendering during transforms
             WebkitFontSmoothing: 'antialiased',
             textRendering: 'optimizeLegibility',
+            // Canvas boundary - thick border around viewport
+            outline: 'rgba(99, 102, 241, 0.85) solid 4px',
+            outlineOffset: '6px',
           }}
           onMouseDown={handleCanvasMouseDown}
           onWheel={handleWheel}
@@ -2067,6 +2081,52 @@ const mainPanelSeededRef = useRef(false)
               transformStyle: 'preserve-3d' as const,
             }}
           >
+            {/* Grid Background - Moves with canvas */}
+            <div
+              style={{
+                position: 'absolute',
+                left: '-5000px',
+                top: '-5000px',
+                width: '20000px',
+                height: '16000px',
+                backgroundImage: `
+                  linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+                  linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px)
+                `,
+                backgroundSize: '100px 100px',
+                pointerEvents: 'none',
+                zIndex: 0,
+              }}
+            />
+
+            {/* Grid Coordinate Labels - Shows world coordinates */}
+            {/* X-axis labels across multiple Y positions */}
+            {Array.from({ length: 20 }, (_, xi) => xi * 1000).flatMap(x =>
+              Array.from({ length: 10 }, (_, yi) => yi * 1000).map(y => (
+                <div
+                  key={`label-x${x}-y${y}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${x}px`,
+                    top: `${y}px`,
+                    color: 'rgba(255, 255, 255, 0.6)',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    fontFamily: 'monospace',
+                    pointerEvents: 'none',
+                    padding: '4px 8px',
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    borderRadius: '4px',
+                    whiteSpace: 'nowrap',
+                    zIndex: 1,
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                  }}
+                >
+                  ({x}, {y})
+                </div>
+              ))
+            )}
+
             {/* Connection Lines - Widget Studio Style */}
             {canvasState.showConnections && (!isPlainModeActive() || hydrationStatus.success) && (
               <WidgetStudioConnections

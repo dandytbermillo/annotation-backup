@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "react"
 import dynamic from 'next/dynamic'
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
 import { FloatingToolbar } from "./floating-toolbar"
@@ -20,6 +20,7 @@ import {
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -94,6 +95,234 @@ function AnnotationAppContent() {
       return a.noteId.localeCompare(b.noteId)
     })
   }, [openNotes])
+
+  const noteTitleMapRef = useRef<Map<string, string>>(new Map())
+  const [, forceNoteTitleUpdate] = useReducer((count: number) => count + 1, 0)
+  const pendingTitleFetchesRef = useRef<Map<string, Promise<string | null>>>(new Map())
+
+  const setTitleForNote = useCallback(
+    (noteId: string, title: string | null) => {
+      if (!noteId) return
+      const map = noteTitleMapRef.current
+      if (title && title.trim()) {
+        const normalized = title.trim()
+        if (map.get(noteId) !== normalized) {
+          map.set(noteId, normalized)
+          forceNoteTitleUpdate()
+        }
+        return
+      }
+
+      if (map.has(noteId)) {
+        map.delete(noteId)
+        forceNoteTitleUpdate()
+      }
+    },
+    [forceNoteTitleUpdate],
+  )
+
+  const ensureTitleFromServer = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+      const fetches = pendingTitleFetchesRef.current
+      if (fetches.has(noteId)) {
+        return
+      }
+
+      const fetchPromise = (async () => {
+        try {
+          const response = await fetch(`/api/items/${encodeURIComponent(noteId)}`)
+          if (!response.ok) {
+            console.warn('[AnnotationApp] Failed to fetch note metadata for title', {
+              noteId,
+              status: response.status,
+              statusText: response.statusText,
+            })
+            return null
+          }
+          const data = await response.json()
+          const rawName = data?.item?.name
+          if (typeof rawName === 'string') {
+            const trimmed = rawName.trim()
+            if (trimmed.length > 0) {
+              return trimmed
+            }
+          }
+          return null
+        } catch (error) {
+          console.warn('[AnnotationApp] Error fetching note title', { noteId, error })
+          return null
+        }
+      })()
+
+      fetches.set(noteId, fetchPromise)
+
+      fetchPromise
+        .then(title => {
+          fetches.delete(noteId)
+          if (!title) return
+
+          setTitleForNote(noteId, title)
+
+          const dataStore = sharedWorkspace?.dataStore
+          if (!dataStore) return
+
+          const storeKey = ensurePanelKey(noteId, 'main')
+          const existing = dataStore.get(storeKey)
+          if (existing) {
+            dataStore.update(storeKey, { title })
+          }
+        })
+        .catch(error => {
+          fetches.delete(noteId)
+          console.warn('[AnnotationApp] Failed to resolve note title fetch promise', { noteId, error })
+        })
+    },
+    [setTitleForNote, sharedWorkspace],
+  )
+
+  const deriveTitleFromRecord = useCallback((record: any): string | null => {
+    if (!record || typeof record !== 'object') return null
+    const candidates = [
+      record.title,
+      record.name,
+      record.metadata?.noteTitle,
+      record.metadata?.title,
+      record.metadata?.displayName,
+      record.metadata?.displayId,
+    ]
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim()
+        if (trimmed) {
+          return trimmed
+        }
+      }
+    }
+
+    return null
+  }, [])
+
+  const updateTitleForNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return
+      const storeKey = ensurePanelKey(noteId, 'main')
+      const record = dataStore.get(storeKey)
+      const derived = deriveTitleFromRecord(record)
+      if (derived) {
+        setTitleForNote(noteId, derived)
+        return
+      }
+
+      const existingTitle = noteTitleMapRef.current.get(noteId)
+
+      if (existingTitle) {
+        if (record && typeof record === 'object') {
+          const currentStoreTitle = typeof record.title === 'string' ? record.title.trim() : ''
+          if (currentStoreTitle !== existingTitle) {
+            dataStore.update(storeKey, { title: existingTitle })
+          }
+        }
+        return
+      }
+
+      setTitleForNote(noteId, null)
+      ensureTitleFromServer(noteId)
+    },
+    [sharedWorkspace, deriveTitleFromRecord, setTitleForNote, ensureTitleFromServer],
+  )
+
+  const logWorkspaceNotePositions = useCallback(
+    (context: string) => {
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return
+
+      const positions = sortedOpenNotes.map(note => {
+        const storeKey = ensurePanelKey(note.noteId, 'main')
+        const record = dataStore.get(storeKey)
+        const position =
+          record?.position ??
+          record?.worldPosition ??
+          record?.mainPosition ??
+          null
+
+        return {
+          noteId: note.noteId,
+          hasRecord: Boolean(record),
+          position,
+        }
+      })
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'panel_position_snapshot',
+        metadata: {
+          context,
+          focusedNoteId,
+          positions,
+        },
+      })
+    },
+    [sharedWorkspace, sortedOpenNotes, focusedNoteId],
+  )
+
+  useEffect(() => {
+    if (sortedOpenNotes.length === 0) {
+      if (noteTitleMapRef.current.size > 0) {
+        noteTitleMapRef.current.clear()
+        forceNoteTitleUpdate()
+      }
+      return
+    }
+
+    sortedOpenNotes.forEach(note => {
+      updateTitleForNote(note.noteId)
+    })
+
+    const activeIds = new Set(sortedOpenNotes.map(note => note.noteId))
+    let removed = false
+    noteTitleMapRef.current.forEach((_value, noteId) => {
+      if (!activeIds.has(noteId)) {
+        noteTitleMapRef.current.delete(noteId)
+        removed = true
+      }
+    })
+    if (removed) {
+      forceNoteTitleUpdate()
+    }
+  }, [sortedOpenNotes, updateTitleForNote, forceNoteTitleUpdate])
+
+  useEffect(() => {
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore) return
+
+    const handleMutation = (key: unknown) => {
+      if (typeof key !== 'string') return
+      const { noteId, panelId } = parsePanelKey(key)
+      if (!noteId || panelId !== 'main') return
+      updateTitleForNote(noteId)
+    }
+
+    const handleDelete = (key: unknown) => {
+      if (typeof key !== 'string') return
+      const { noteId, panelId } = parsePanelKey(key)
+      if (!noteId || panelId !== 'main') return
+      setTitleForNote(noteId, null)
+    }
+
+    dataStore.on('set', handleMutation)
+    dataStore.on('update', handleMutation)
+    dataStore.on('delete', handleDelete)
+
+    return () => {
+      dataStore.off('set', handleMutation)
+      dataStore.off('update', handleMutation)
+      dataStore.off('delete', handleDelete)
+    }
+  }, [sharedWorkspace, updateTitleForNote, setTitleForNote])
 
   const [canvasState, setCanvasState] = useState({
     zoom: 1,
@@ -212,7 +441,7 @@ function AnnotationAppContent() {
         })
       }
     }
-  }, [focusedNoteId])
+  }, [focusedNoteId, logWorkspaceNotePositions])
 
   // Initialize overlay adapter
   useEffect(() => {
@@ -846,6 +1075,10 @@ function AnnotationAppContent() {
   // Handle note selection with force re-center support
   const formatNoteLabel = useCallback((noteId: string) => {
     if (!noteId) return "Untitled"
+    const stored = noteTitleMapRef.current.get(noteId)
+    if (stored && stored.trim()) {
+      return stored.trim()
+    }
     if (noteId.length <= 8) return noteId
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
@@ -874,6 +1107,7 @@ function AnnotationAppContent() {
       })
 
     if (noteId === focusedNoteId) {
+      logWorkspaceNotePositions('tab_click_reselect')
       debugLog({
         component: 'AnnotationApp',
         action: 'highlight_note',
@@ -956,11 +1190,12 @@ function AnnotationAppContent() {
 
     const focusSource = focusSourceRef.current
     if (focusSource === 'tab') {
-      debugLog({
-        component: 'AnnotationApp',
-        action: 'center_effect_skipped_tab_focus',
-        metadata: { focusedNoteId },
-      })
+      logWorkspaceNotePositions('center_skip_tab_focus')
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'center_effect_skipped_tab_focus',
+      metadata: { focusedNoteId },
+    })
       focusSourceRef.current = 'auto'
       return
     }
