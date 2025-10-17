@@ -8,7 +8,7 @@ import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess } from "@/lib/utils/note-creator"
-import { Menu, X } from "lucide-react"
+import { Menu, X, Crosshair } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
   OverlayLayoutAdapter,
@@ -182,10 +182,12 @@ function AnnotationAppContent() {
               console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
             })
           } else if (!focusedNoteId && openNotes.length > 0) {
+        focusSourceRef.current = 'auto'
         setFocusedNoteId(openNotes[0].noteId)
       }
     } else if (focusedNoteId && !isFocusedOpen) {
       const fallback = openNotes[0]?.noteId ?? null
+      focusSourceRef.current = 'auto'
       setFocusedNoteId(fallback ?? null)
     }
   }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition])
@@ -228,6 +230,7 @@ function AnnotationAppContent() {
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
   const initialWorkspaceSyncRef = useRef(false)
+  const focusSourceRef = useRef<'auto' | 'tab'>('auto')
 
   // Stable callback for snapshot load completion
   const handleSnapshotLoadComplete = useCallback(() => {
@@ -885,6 +888,7 @@ function AnnotationAppContent() {
     }
 
     // Different note - ensure it's marked open and focus it
+    focusSourceRef.current = 'tab'
     void openWorkspaceNote(noteId, { persist: true }).catch(error => {
       console.error('[AnnotationApp] Failed to open note in workspace:', error)
     })
@@ -901,10 +905,67 @@ function AnnotationAppContent() {
     },
     [closeWorkspaceNote],
   )
+
+  const handleCenterNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'manual_center_request',
+        metadata: {
+          noteId,
+          focusedNoteId,
+        },
+      })
+
+      if (noteId !== focusedNoteId) {
+        focusSourceRef.current = 'auto'
+        setFocusedNoteId(noteId)
+      }
+
+      const events = sharedWorkspace?.events
+      if (events) {
+        try {
+          events.emit('workspace:highlight-note', { noteId })
+        } catch (error) {
+          console.warn('[AnnotationApp] Failed to emit manual highlight event:', error)
+        }
+      }
+
+      if (canvasRef.current?.centerOnPanel) {
+        try {
+          canvasRef.current.centerOnPanel('main')
+        } catch (error) {
+          console.warn('[AnnotationApp] Failed to center on panel manually:', error)
+        }
+      } else {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'manual_center_skipped_canvas_unready',
+          metadata: { noteId },
+        })
+      }
+    },
+    [focusedNoteId, setFocusedNoteId, sharedWorkspace],
+  )
   
   // Center panel when note selection changes
   useEffect(() => {
     if (!focusedNoteId) return
+
+    const focusSource = focusSourceRef.current
+    if (focusSource === 'tab') {
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'center_effect_skipped_tab_focus',
+        metadata: { focusedNoteId },
+      })
+      focusSourceRef.current = 'auto'
+      return
+    }
+
+    focusSourceRef.current = 'auto'
 
     debugLog({
       component: 'AnnotationApp',
@@ -1957,10 +2018,21 @@ function AnnotationAppContent() {
                     type="button"
                     onClick={event => {
                       event.stopPropagation()
+                      handleCenterNote(note.noteId)
+                    }}
+                    aria-label={`Center ${label}`}
+                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100 -ml-px"
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation()
                       handleCloseNote(note.noteId)
                     }}
                     aria-label={`Close ${label}`}
-                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100"
+                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100 -ml-px"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
