@@ -2497,7 +2497,6 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         ref={panelRef}
         className={`panel ${currentBranch.type}`}
         id={`panel-${panelId}`}
-        data-panel-id={panelId}
         data-store-key={storeKey}
       onClick={() => {
         // Register this panel's editor as active when panel is clicked

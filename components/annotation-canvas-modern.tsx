@@ -481,19 +481,29 @@ const mainPanelSeededRef = useRef(false)
   }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId])
 
   // Reset per-note refs when noteId changes
+  const initialNoteRef = useRef<string | null>(null)
+
   useEffect(() => {
+    const isFirstNote = initialNoteRef.current === null
+    if (isFirstNote) {
+      initialNoteRef.current = noteId
+    }
+
     debugLog({
       component: 'AnnotationCanvas',
       action: 'noteId_changed_resetting_refs',
       metadata: {
         noteId,
         prevMainPanelSeeded: mainPanelSeededRef.current,
-        prevWorkspaceSeedApplied: workspaceSeedAppliedRef.current
+        prevWorkspaceSeedApplied: workspaceSeedAppliedRef.current,
+        isFirstNote,
       }
     })
 
     mainPanelSeededRef.current = false
-    workspaceSeedAppliedRef.current = false  // CRITICAL FIX: Reset this per-note too
+    if (isFirstNote) {
+      workspaceSeedAppliedRef.current = false
+    }
   }, [noteId])
   const isRestoringSnapshotRef = useRef(false)
   
@@ -564,6 +574,7 @@ const mainPanelSeededRef = useRef(false)
     if (workspaceSeedAppliedRef.current) return
     if (!workspaceMainPosition) return
     if (hydrationStatus.success) return
+    if (initialNoteRef.current !== noteId) return
 
     debugLog({
       component: 'AnnotationCanvas',
@@ -593,22 +604,30 @@ const mainPanelSeededRef = useRef(false)
   // Create CanvasItems from hydrated panels
   useEffect(() => {
     if (hydrationStatus.success && hydrationStatus.panels.length > 0) {
-      const isInitialHydration = initialHydrationRef.current
-      const isSameNote = lastHydratedNoteRef.current === noteId
+    const isInitialHydration = initialHydrationRef.current
+    const isSameNote = lastHydratedNoteRef.current === noteId
+    const mainPanelExists = canvasItems.some(item => item.itemType === 'panel' && item.panelId === 'main' && getItemNoteId(item) === noteId)
+    const skipHydration = !isInitialHydration && mainPanelExists
 
-      const panelsToHydrate = isInitialHydration || !isSameNote
-        ? (isInitialHydration ? hydrationStatus.panels : hydrationStatus.panels.filter(panel => panel.id === 'main'))
-        : hydrationStatus.panels.filter(panel => panel.id === 'main')
+    const panelsToHydrate = skipHydration
+      ? []
+      : (isInitialHydration || !isSameNote
+          ? (isInitialHydration ? hydrationStatus.panels : hydrationStatus.panels.filter(panel => panel.id === 'main'))
+          : hydrationStatus.panels.filter(panel => panel.id === 'main'))
 
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'creating_canvas_items_from_hydration',
-        metadata: {
-          panelCount: hydrationStatus.panels.length,
-          panelsHydrated: panelsToHydrate.map(panel => panel.id),
-          mode: isInitialHydration ? 'initial_restore' : (isSameNote ? 'same_note_refresh' : 'note_switch')
-        }
-      })
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'creating_canvas_items_from_hydration',
+      metadata: {
+        panelCount: hydrationStatus.panels.length,
+        panelsHydrated: panelsToHydrate.map(panel => panel.id),
+        mode: skipHydration
+          ? 'skip_existing_panel'
+          : isInitialHydration
+            ? 'initial_restore'
+            : (isSameNote ? 'same_note_refresh' : 'note_switch')
+      }
+    })
 
       if (panelsToHydrate.length === 0) {
         initialHydrationRef.current = false
@@ -2075,10 +2094,8 @@ const mainPanelSeededRef = useRef(false)
         }
 
         // 2) Fallback: DOM lookup (less reliable due to coordinate conversion)
-        const selector = key.includes('::')
-          ? `[data-store-key="${key}"]`
-          : `[data-panel-id="${key}"]`
-        const el = document.querySelector(selector) as HTMLElement | null
+        const panelStoreKey = key.includes('::') ? key : ensurePanelKey(noteId, key)
+        const el = document.querySelector(`[data-store-key="${panelStoreKey}"]`) as HTMLElement | null
         if (el) {
           const rect = el.getBoundingClientRect()
           const container = document.getElementById('canvas-container')
