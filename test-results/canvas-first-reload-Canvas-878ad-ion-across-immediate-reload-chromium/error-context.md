@@ -1,0 +1,59 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: Workspace
+      - generic [ref=e6]:
+        - button "d7d9…7b2 4:53:33 PM" [ref=e7] [cursor=pointer]:
+          - generic [ref=e8] [cursor=pointer]: d7d9…7b2
+          - generic [ref=e9] [cursor=pointer]: 4:53:33 PM
+        - button "Close d7d9…7b2" [ref=e10] [cursor=pointer]:
+          - img [ref=e11] [cursor=pointer]
+      - generic [ref=e14]:
+        - button "8886…5cc 4:53:33 PM" [ref=e15] [cursor=pointer]:
+          - generic [ref=e16] [cursor=pointer]: 8886…5cc
+          - generic [ref=e17] [cursor=pointer]: 4:53:33 PM
+        - button "Close 8886…5cc" [ref=e18] [cursor=pointer]:
+          - img [ref=e19] [cursor=pointer]
+      - generic [ref=e22]:
+        - button "34c3…d0a 4:51:38 PM" [ref=e23] [cursor=pointer]:
+          - generic [ref=e24] [cursor=pointer]: 34c3…d0a
+          - generic [ref=e25] [cursor=pointer]: 4:51:38 PM
+        - button "Close 34c3…d0a" [ref=e26] [cursor=pointer]:
+          - img [ref=e27] [cursor=pointer]
+      - generic [ref=e30]:
+        - button "7ffe…b18 4:51:36 PM" [ref=e31] [cursor=pointer]:
+          - generic [ref=e32] [cursor=pointer]: 7ffe…b18
+          - generic [ref=e33] [cursor=pointer]: 4:51:36 PM
+        - button "Close 7ffe…b18" [ref=e34] [cursor=pointer]:
+          - img [ref=e35] [cursor=pointer]
+      - button "Refresh" [ref=e39] [cursor=pointer]
+    - generic [ref=e43]:
+      - button "Toggle Control Panel" [ref=e44] [cursor=pointer]:
+        - img [ref=e45] [cursor=pointer]
+      - generic [ref=e48]:
+        - generic [ref=e49]:
+          - heading "Minimap" [level=3] [ref=e50]
+          - button [ref=e51] [cursor=pointer]:
+            - img [ref=e52] [cursor=pointer]
+        - generic [ref=e57]:
+          - paragraph [ref=e58]: Click to focus
+          - paragraph [ref=e59]: Hold Shift + hover for preview
+          - button "Reset Preview" [ref=e60] [cursor=pointer]
+      - generic [ref=e61]:
+        - generic:
+          - img
+      - generic:
+        - button "📝 Note"
+        - button "🔍 Explore"
+        - button "⭐ Promote"
+  - generic [ref=e62]:
+    - generic [ref=e63]: PostgreSQL Persistence Monitor
+    - button "Start Monitoring" [ref=e64] [cursor=pointer]
+    - generic [ref=e65]: Check console for details
+  - button "Open Next.js Dev Tools" [ref=e71] [cursor=pointer]:
+    - img [ref=e72] [cursor=pointer]
+  - alert [ref=e75]
+```

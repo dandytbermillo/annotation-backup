@@ -95,19 +95,57 @@ const createDefaultCanvasItems = (noteId: string, mainPosition?: { x: number; y:
 
 // Ensure main panel always exists in items array
 const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => {
-  const hasMain = items.some((item) => item.itemType === "panel" && item.panelId === "main")
-  return hasMain
-    ? items
-    : [
-        ...items,
-        createPanelItem(
-          "main",
-          mainPosition ?? DEFAULT_MAIN_POSITION,
-          "main",
-          noteId,
-          ensurePanelKey(noteId, "main"),
-        ),
-      ]
+  let hasMain = false
+
+  const normalizedItems = items.map((item) => {
+    if (item.itemType !== "panel") {
+      return item
+    }
+
+    const parsedFromStoreKey = item.storeKey ? parsePanelKey(item.storeKey) : null
+    const parsedFromPanelId =
+      item.panelId && item.panelId.includes("::") ? parsePanelKey(item.panelId) : null
+
+    const resolvedNoteId =
+      parsedFromStoreKey?.noteId || parsedFromPanelId?.noteId || item.noteId || noteId
+    const resolvedPanelId =
+      parsedFromStoreKey?.panelId || parsedFromPanelId?.panelId || item.panelId || "main"
+    const nextStoreKey = ensurePanelKey(resolvedNoteId, resolvedPanelId)
+
+    if (resolvedPanelId === "main" && resolvedNoteId === noteId) {
+      hasMain = true
+    }
+
+    if (
+      item.noteId !== resolvedNoteId ||
+      item.panelId !== resolvedPanelId ||
+      item.storeKey !== nextStoreKey
+    ) {
+      return {
+        ...item,
+        noteId: resolvedNoteId,
+        panelId: resolvedPanelId,
+        storeKey: nextStoreKey,
+      }
+    }
+
+    return item
+  })
+
+  if (hasMain) {
+    return normalizedItems
+  }
+
+  return [
+    ...normalizedItems,
+    createPanelItem(
+      "main",
+      mainPosition ?? DEFAULT_MAIN_POSITION,
+      "main",
+      noteId,
+      ensurePanelKey(noteId, "main"),
+    ),
+  ]
 }
 
 const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
@@ -404,22 +442,46 @@ const mainPanelSeededRef = useRef(false)
           }
         })
 
+        const parsedId = panel.id.includes('::') ? parsePanelKey(panel.id) : null
+        const hydratedNoteId = panel.noteId || parsedId?.noteId || noteId
+        const hydratedPanelId = parsedId?.panelId || panel.id
+        const storeKey = ensurePanelKey(hydratedNoteId, hydratedPanelId)
+
         return createPanelItem(
-          panel.id,
+          hydratedPanelId,
           panel.position,
           panelType,
-          noteId,
-          ensurePanelKey(noteId, panel.id),
+          hydratedNoteId,
+          storeKey,
         )
       })
 
       setCanvasItems(prev => {
-        // Avoid duplicates - only add panels that don't exist
-        const existingPanelIds = new Set(
-          prev.filter(item => item.itemType === 'panel').map(item => item.panelId)
+        // Avoid duplicates - only add panels that don't exist (compare by store key)
+        const existingStoreKeys = new Set(
+          prev
+            .filter(item => item.itemType === 'panel')
+            .map(item => {
+              if (item.storeKey) {
+                return item.storeKey
+              }
+              const resolvedNoteId = getItemNoteId(item) ?? noteId
+              const resolvedPanelId = item.panelId ?? 'main'
+              return ensurePanelKey(resolvedNoteId, resolvedPanelId)
+            })
         )
 
-        const itemsToAdd = newItems.filter(item => !existingPanelIds.has(item.panelId))
+        const itemsToAdd = newItems.filter(item => {
+          const key = item.storeKey ?? ensurePanelKey(
+            item.noteId ?? noteId,
+            item.panelId ?? 'main'
+          )
+          if (existingStoreKeys.has(key)) {
+            return false
+          }
+          existingStoreKeys.add(key)
+          return true
+        })
 
         if (itemsToAdd.length > 0) {
           debugLog({
@@ -2093,6 +2155,7 @@ function PanelsRenderer({
   onClose: (id: string, noteId?: string) => void
 }) {
   const isPlainMode = isPlainModeActive()
+  const seenStoreKeys = new Set<string>()
   
   // Yjs access only when not in plain mode
   const provider = UnifiedProvider.getInstance()
@@ -2116,6 +2179,15 @@ function PanelsRenderer({
           )
           return null
         }
+
+        if (seenStoreKeys.has(storeKey)) {
+          console.warn(
+            `[PanelsRenderer] Duplicate store key detected; skipping render`,
+            { panelId, panelNoteId, storeKey },
+          )
+          return null
+        }
+        seenStoreKeys.add(storeKey)
 
         // Debug: Log branch type being passed to CanvasPanel
         debugLog({
