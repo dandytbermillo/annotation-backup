@@ -94,7 +94,6 @@ function AnnotationAppContent() {
     }
     return null
   })
-  const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
   const activeNoteIdRef = useRef<string | null>(activeNoteId)
   useEffect(() => {
     activeNoteIdRef.current = activeNoteId
@@ -517,7 +516,7 @@ function AnnotationAppContent() {
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
   const pendingCenterAfterLoadRef = useRef<string | null>(null)
-const initialWorkspaceSyncRef = useRef(false)
+  const initialWorkspaceSyncRef = useRef(false)
 
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
@@ -1212,8 +1211,6 @@ const initialWorkspaceSyncRef = useRef(false)
 
     // Track note access in recent notes and refresh toolbar's recent notes list
     // Only refresh if tracking succeeds (promise resolves)
-    const isReselect = noteId === activeNoteId
-
     trackNoteAccess(noteId)
       .then(() => {
         // Increment refresh trigger after tracking completes to update toolbar's recent notes
@@ -1223,6 +1220,8 @@ const initialWorkspaceSyncRef = useRef(false)
         // Error already logged by trackNoteAccess, silently skip refresh
         // Note will still open, just won't appear in recent notes
       })
+
+    const isReselect = noteId === activeNoteId
 
     const emitHighlight = () => {
       const events = sharedWorkspace?.events
@@ -1242,7 +1241,7 @@ const initialWorkspaceSyncRef = useRef(false)
     }
 
     if (isReselect) {
-      pendingCenterAfterLoadRef.current = noteId
+      pendingCenterAfterLoadRef.current = null
       logWorkspaceNotePositions('tab_click_reselect')
       debugLog({
         component: 'AnnotationApp',
@@ -1255,7 +1254,6 @@ const initialWorkspaceSyncRef = useRef(false)
     }
 
     // Different note - ensure it's marked open and marked as focused
-    setSkipSnapshotForNote(noteId)
     pendingCenterAfterLoadRef.current = noteId
     const alreadyOpen = openNotes.some(open => open.noteId === noteId)
     if (!alreadyOpen) {
@@ -1289,7 +1287,7 @@ const initialWorkspaceSyncRef = useRef(false)
     [closeWorkspaceNote],
   )
 
-const handleCenterNote = useCallback(
+  const handleCenterNote = useCallback(
     (noteId: string) => {
       if (!noteId) return
 
@@ -1319,10 +1317,6 @@ const handleCenterNote = useCallback(
     },
     [activeNoteId, setActiveNoteId, sharedWorkspace],
   )
-
-  const handleSnapshotSettled = useCallback((noteId: string) => {
-    setSkipSnapshotForNote(current => (current === noteId ? null : current))
-  }, [])
   
   // Center panel when note selection changes
 
@@ -2320,8 +2314,6 @@ const handleCenterNote = useCallback(
                 onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
                 onRegisterActiveEditor={handleRegisterActiveEditor}
                 onSnapshotLoadComplete={handleSnapshotLoadComplete}
-                skipSnapshotForNote={skipSnapshotForNote}
-                onSnapshotSettled={handleSnapshotSettled}
               >
                 {/* Floating Toolbar - rendered inside CanvasProvider tree */}
                 {showNotesWidget && (

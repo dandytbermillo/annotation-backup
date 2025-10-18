@@ -51,8 +51,6 @@ interface ModernAnnotationCanvasProps {
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
   onSnapshotLoadComplete?: () => void  // Called after snapshot load + centering completes
-  skipSnapshotForNote?: string | null
-  onSnapshotSettled?: (noteId: string) => void
   children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
 }
 
@@ -157,9 +155,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onCanvasStateChange,
   showAddComponentMenu: externalShowAddComponentMenu,
   onToggleAddComponentMenu,
-  onSnapshotLoadComplete,
-  skipSnapshotForNote,
-  onSnapshotSettled
+  onSnapshotLoadComplete
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -1164,22 +1160,6 @@ const mainPanelSeededRef = useRef(false)
     // Check for snapshot FIRST before initializing to default
     const snapshot = loadStateFromStorage(noteId)
 
-    if (snapshot && skipSnapshotForNote === noteId) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'snapshot_restore_skipped',
-        metadata: { noteId }
-      })
-      initialCanvasSetupRef.current = true
-      isRestoringSnapshotRef.current = false
-      setIsStateLoaded(true)
-      if (onSnapshotLoadComplete) {
-        onSnapshotLoadComplete()
-      }
-      onSnapshotSettled?.(noteId)
-      return
-    }
-
     // Only initialize to default if no snapshot exists AND this is first setup
     if (!initialCanvasSetupRef.current && !snapshot) {
       setCanvasState(createDefaultCanvasState())
@@ -1233,7 +1213,6 @@ const mainPanelSeededRef = useRef(false)
           if (onSnapshotLoadComplete) {
             onSnapshotLoadComplete()
           }
-          onSnapshotSettled?.(noteId)
           return
         }
 
@@ -1610,10 +1589,8 @@ const mainPanelSeededRef = useRef(false)
       onSnapshotLoadComplete()
     }
 
-    onSnapshotSettled?.(noteId)
-
     return
-  }, [noteId, onSnapshotLoadComplete, skipSnapshotForNote, onSnapshotSettled])
+  }, [noteId, onSnapshotLoadComplete])
 
   // Cleanup auto-save timer on unmount
   useEffect(() => {
