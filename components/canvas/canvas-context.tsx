@@ -177,16 +177,23 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
     const plainProvider = getPlainProvider()
     const isPlainMode = !!plainProvider
 
+    // Check if dataStore already has data for this note's main panel
+    const mainStoreKey = ensurePanelKey(noteId || '', 'main')
+    const existingMainPanel = noteId ? dataStore.get(mainStoreKey) : null
+    const shouldSkipInit = loadedNotes.has(noteId || '') || !!existingMainPanel
+
     // DEBUG: Log every time effect runs
     console.log('[CanvasProvider] useEffect triggered', {
       noteId,
       isPlainMode,
       hasLoadedBefore: noteId ? loadedNotes.has(noteId) : null,
+      hasExistingData: !!existingMainPanel,
+      shouldSkipInit,
       loadedNotes: Array.from(loadedNotes),
-      willRunInitialization: isPlainMode && noteId && !loadedNotes.has(noteId)
+      willRunInitialization: isPlainMode && noteId && !shouldSkipInit
     })
 
-    if (isPlainMode && noteId && !loadedNotes.has(noteId)) {
+    if (isPlainMode && noteId && !shouldSkipInit) {
       // Plain mode: Initialize main panel and load branches from database
       console.log('[CanvasProvider] Plain mode: Initializing main panel and loading branches for FIRST TIME')
       
