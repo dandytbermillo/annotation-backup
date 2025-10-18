@@ -11,6 +11,7 @@ export interface NoteWorkspace {
   dataStore: DataStore
   events: EventEmitter
   layerManager: LayerManager
+  loadedNotes: Set<string>  // Track which notes have been initialized to prevent re-init on mount/unmount
 }
 
 export const SHARED_WORKSPACE_ID = "__workspace__"
@@ -121,6 +122,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           dataStore: new DataStore(),
           events: new EventEmitter(),
           layerManager: new LayerManager(),
+          loadedNotes: new Set<string>(),
         }
       }
       return sharedWorkspaceRef.current
@@ -132,6 +134,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         dataStore: new DataStore(),
         events: new EventEmitter(),
         layerManager: new LayerManager(),
+        loadedNotes: new Set<string>(),
       }
       workspacesRef.current.set(noteId, workspace)
     }

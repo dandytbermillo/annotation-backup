@@ -115,8 +115,14 @@ interface CanvasProviderProps {
 }
 
 export function CanvasProvider({ children, noteId, onRegisterActiveEditor, externalDataStore, externalEvents }: CanvasProviderProps) {
+  console.log('[CanvasProvider] Component render', {
+    noteId,
+    hasExternalDataStore: !!externalDataStore,
+    timestamp: Date.now()
+  })
+
   const [state, dispatch] = useReducer(canvasReducer, initialState)
-  
+
   // Create stable instances that survive re-renders
   const dataStoreRef = useRef<DataStore | null>(null)
   const eventsRef = useRef<EventEmitter | null>(null)
@@ -136,20 +142,53 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
   const dataStore = dataStoreRef.current!
   const events = eventsRef.current!
 
-  // Track if branches have been loaded for current note
-  const loadedNotesRef = useRef(new Set<string>())
+  // Get loadedNotes from external dataStore's workspace (survives unmount/remount)
+  // This is critical: if CanvasProvider unmounts/remounts, we don't lose track of which notes are loaded
+  const loadedNotesSet = (dataStore as any).__loadedNotes as Set<string> | undefined
+  if (!loadedNotesSet) {
+    (dataStore as any).__loadedNotes = new Set<string>()
+  }
+  const loadedNotes = (dataStore as any).__loadedNotes as Set<string>
 
   // Track editor instances for annotation updates
   const editorsRef = useRef<Map<string, any>>(new Map())
+
+  // Log mount/unmount to detect if component is being recreated
+  useEffect(() => {
+    const mountId = Math.random().toString(36).substring(7)
+    console.log('[CanvasProvider] Component MOUNTED', {
+      mountId,
+      noteId,
+      timestamp: Date.now(),
+      loadedNotes: Array.from(loadedNotes)
+    })
+    return () => {
+      console.log('[CanvasProvider] Component UNMOUNTING', {
+        mountId,
+        noteId,
+        loadedNotes: Array.from(loadedNotes),
+        timestamp: Date.now()
+      })
+    }
+  }, []) // Empty deps = mount/unmount only
   
   useEffect(() => {
     // Check if we're in plain mode
     const plainProvider = getPlainProvider()
     const isPlainMode = !!plainProvider
-    
-    if (isPlainMode && noteId && !loadedNotesRef.current.has(noteId)) {
+
+    // DEBUG: Log every time effect runs
+    console.log('[CanvasProvider] useEffect triggered', {
+      noteId,
+      isPlainMode,
+      hasLoadedBefore: noteId ? loadedNotes.has(noteId) : null,
+      loadedNotes: Array.from(loadedNotes),
+      willRunInitialization: isPlainMode && noteId && !loadedNotes.has(noteId)
+    })
+
+    if (isPlainMode && noteId && !loadedNotes.has(noteId)) {
       // Plain mode: Initialize main panel and load branches from database
-      console.log('[CanvasProvider] Plain mode: Initializing main panel and loading branches')
+      console.log('[CanvasProvider] Plain mode: Initializing main panel and loading branches for FIRST TIME')
       
       // Restore any cached snapshot before building data
       let cachedSnapshot: Record<string, any> | null = null
@@ -234,11 +273,24 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       const cachedMain = snapshotMap.get('main') as Record<string, any> | undefined
       const mainStoreKey = ensurePanelKey(noteId || '', 'main')
 
+      const titleValue = cachedMain?.title || 'Main Document'
+      const positionValue = cachedMain?.position || { x: 2000, y: 1500 }
+
+      console.log('[CanvasProvider] Setting initial dataStore for main panel', {
+        noteId,
+        mainStoreKey,
+        hasCachedMain: !!cachedMain,
+        titleValue,
+        positionValue,
+        usingDefaultTitle: titleValue === 'Main Document',
+        usingDefaultPosition: positionValue.x === 2000 && positionValue.y === 1500
+      })
+
       dataStore.set(mainStoreKey, {
         id: 'main',
         type: 'main' as const,
-        title: cachedMain?.title || 'Main Document',
-        position: cachedMain?.position || { x: 2000, y: 1500 },
+        title: titleValue,
+        position: positionValue,
         dimensions: cachedMain?.dimensions || { width: 420, height: 350 },
         originalText: cachedMain?.originalText || '',
         isEditable: cachedMain?.isEditable ?? true,
@@ -317,9 +369,13 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         ;(window as any).canvasState = state
         ;(window as any).canvasDispatch = dispatch
       }
-      
+
       // Mark this note as loaded
-      loadedNotesRef.current.add(noteId)
+      loadedNotes.add(noteId)
+      console.log('[CanvasProvider] Marked note as loaded', {
+        noteId,
+        loadedNotes: Array.from(loadedNotes)
+      })
       
       // Load existing branches from database
       const plainAdapter = (plainProvider as any)?.adapter
@@ -521,6 +577,12 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         dataStore.off('delete', handleDataStoreChange)
         if (snapshotTimeout) clearTimeout(snapshotTimeout)
       }
+    } else if (isPlainMode && noteId) {
+      // Plain mode but note already loaded - SKIP initialization
+      console.log('[CanvasProvider] Skipping initialization - note already loaded', {
+        noteId,
+        loadedNotes: Array.from(loadedNotes)
+      })
     } else {
       // Yjs mode: Initialize data store with initial data
       Object.entries(initialData).forEach(([id, data]) => {
