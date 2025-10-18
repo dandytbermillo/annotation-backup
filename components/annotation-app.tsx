@@ -511,18 +511,8 @@ function AnnotationAppContent() {
 
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
+  const pendingCenterAfterLoadRef = useRef<string | null>(null)
   const initialWorkspaceSyncRef = useRef(false)
-
-  // Stable callback for snapshot load completion
-  const handleSnapshotLoadComplete = useCallback(() => {
-    // Track when snapshot load completes to avoid duplicate centering
-    lastCanvasLoadTimeRef.current = Date.now()
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'snapshot_load_complete',
-      metadata: { timestamp: lastCanvasLoadTimeRef.current }
-    })
-  }, [])
 
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
@@ -1167,6 +1157,27 @@ function AnnotationAppContent() {
     [],
   )
 
+  const handleSnapshotLoadComplete = useCallback(() => {
+    lastCanvasLoadTimeRef.current = Date.now()
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'snapshot_load_complete',
+      metadata: { timestamp: lastCanvasLoadTimeRef.current }
+    })
+
+    const pendingNoteId = pendingCenterAfterLoadRef.current
+    if (pendingNoteId && activeNoteIdRef.current === pendingNoteId) {
+      setTimeout(() => {
+        if (activeNoteIdRef.current === pendingNoteId) {
+          centerNoteOnCanvas(pendingNoteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
+        }
+        if (pendingCenterAfterLoadRef.current === pendingNoteId) {
+          pendingCenterAfterLoadRef.current = null
+        }
+      }, 30)
+    }
+  }, [centerNoteOnCanvas])
+
   const handleNoteSelect = (noteId: string) => {
     debugLog({
       component: 'AnnotationApp',
@@ -1206,6 +1217,8 @@ function AnnotationAppContent() {
         console.warn('[AnnotationApp] Failed to emit highlight event:', error)
       }
     }
+
+    pendingCenterAfterLoadRef.current = noteId
 
     if (noteId === activeNoteId) {
       logWorkspaceNotePositions('tab_click_reselect')
