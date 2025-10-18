@@ -8,7 +8,7 @@ import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess } from "@/lib/utils/note-creator"
-import { Menu, X, Crosshair } from "lucide-react"
+import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
   OverlayLayoutAdapter,
@@ -21,6 +21,7 @@ import {
 import { debugLog } from "@/lib/utils/debug-logger"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -2174,62 +2175,16 @@ function AnnotationAppContent() {
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
       <div className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
         <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-          <span className="text-xs uppercase tracking-wide text-neutral-400">Workspace</span>
-          {sortedOpenNotes.length === 0 ? (
-            <span className="text-sm text-neutral-500">No notes open</span>
-          ) : (
-            sortedOpenNotes.map(note => {
-              const isActive = note.noteId === focusedNoteId
-              const label = formatNoteLabel(note.noteId)
-              const baseClasses = isActive
-                ? 'border-indigo-400 bg-indigo-500/20 text-indigo-100'
-                : 'border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100'
-
-              return (
-                <div
-                  key={note.noteId}
-                  className={`group flex items-center overflow-hidden rounded-md border text-sm transition ${baseClasses}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleNoteSelect(note.noteId)}
-                    className="flex items-center gap-2 px-3 py-1"
-                  >
-                    <span className="font-medium">{label}</span>
-                    <span className="text-xs text-neutral-500 group-hover:text-neutral-300">
-                      {note.updatedAt ? new Date(note.updatedAt).toLocaleTimeString() : 'new'}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation()
-                      handleCenterNote(note.noteId)
-                    }}
-                    aria-label={`Center ${label}`}
-                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100 -ml-px"
-                  >
-                    <Crosshair className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation()
-                      handleCloseNote(note.noteId)
-                    }}
-                    aria-label={`Close ${label}`}
-                    className="h-full border-l border-l-neutral-700/60 px-1.5 py-1 text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-100 -ml-px"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )
-            })
-          )}
+          <WorkspaceToolbar
+            notes={sortedOpenNotes}
+            focusedNoteId={focusedNoteId}
+            isLoading={isWorkspaceLoading}
+            formatNoteLabel={formatNoteLabel}
+            onActivateNote={handleNoteSelect}
+            onCenterNote={handleCenterNote}
+            onCloseNote={handleCloseNote}
+          />
           <div className="ml-auto flex items-center gap-2">
-            {isWorkspaceLoading && (
-              <span className="text-xs text-neutral-500">Syncing…</span>
-            )}
             <button
               type="button"
               onClick={() => refreshWorkspace().catch(error => {
