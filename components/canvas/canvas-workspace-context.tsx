@@ -193,15 +193,31 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
         if (FEATURE_ENABLED) {
           // New path: Use POST /update with optimistic locking retry (TDD §5.1)
-          // Map to server's expected schema: { updates: [ { noteId, mainPositionX, mainPositionY } ] }
+          // Map to server's expected schema
           const updatePayload = {
-            updates: updates
-              .filter(u => u.isOpen && u.mainPosition) // Only send position updates
-              .map(update => ({
+            updates: updates.map(update => {
+              // Close operation
+              if (!update.isOpen) {
+                return {
+                  noteId: update.noteId,
+                  isOpen: false,
+                }
+              }
+
+              // Position update
+              if (update.mainPosition) {
+                return {
+                  noteId: update.noteId,
+                  mainPositionX: update.mainPosition.x,
+                  mainPositionY: update.mainPosition.y,
+                }
+              }
+
+              // Fallback (shouldn't happen, but handle gracefully)
+              return {
                 noteId: update.noteId,
-                mainPositionX: update.mainPosition!.x,
-                mainPositionY: update.mainPosition!.y,
-              })),
+              }
+            }),
           }
 
           let retries = 0

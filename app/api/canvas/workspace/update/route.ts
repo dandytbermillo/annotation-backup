@@ -22,6 +22,7 @@ const pool = new Pool({
 
 interface WorkspaceUpdate {
   noteId: string
+  isOpen?: boolean         // For close operations
   toolbarSequence?: number
   isFocused?: boolean
   mainPositionX?: number
@@ -109,6 +110,54 @@ export async function POST(request: NextRequest) {
         await client.query('BEGIN')
 
         for (const update of updates) {
+          // Handle close operation (isOpen: false)
+          if (update.isOpen === false) {
+            if (optimisticLock) {
+              const currentResult = await client.query<{ updated_at: Date }>(
+                'SELECT updated_at FROM canvas_workspace_notes WHERE note_id = $1',
+                [update.noteId]
+              )
+
+              if (currentResult.rows.length === 0) {
+                continue // Note doesn't exist, skip
+              }
+
+              const currentUpdatedAt = currentResult.rows[0].updated_at
+
+              const result = await client.query(
+                `UPDATE canvas_workspace_notes
+                 SET
+                   is_open = FALSE,
+                   toolbar_sequence = NULL,
+                   is_focused = FALSE,
+                   updated_at = NOW()
+                 WHERE note_id = $1
+                   AND updated_at = $2
+                 RETURNING note_id`,
+                [update.noteId, currentUpdatedAt]
+              )
+
+              if (result.rowCount === 0) {
+                throw new Error('CONFLICT')
+              }
+            } else {
+              await client.query(
+                `UPDATE canvas_workspace_notes
+                 SET
+                   is_open = FALSE,
+                   toolbar_sequence = NULL,
+                   is_focused = FALSE,
+                   updated_at = NOW()
+                 WHERE note_id = $1`,
+                [update.noteId]
+              )
+            }
+
+            updated++
+            continue
+          }
+
+          // Handle position/focus updates (isOpen: true or undefined)
           if (optimisticLock) {
             // Read current updated_at for optimistic locking
             const currentResult = await client.query<{ updated_at: Date }>(

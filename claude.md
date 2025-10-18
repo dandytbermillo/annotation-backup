@@ -529,6 +529,7 @@ Agents must cite relevant files for the active phase and reference exact paths/l
 
 ## NOTES
 - Keep `CLAUDE.md` short and prescriptive. This file is the single-source policy the agent must obey — if a PR or change diverges from it, it must be documented and justified in the PR description and associated reports.
+- Feature flags: when a temporary flag (e.g., `NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY`) has been fully implemented, tested, and confirmed stable, agents must remind the user to schedule removal of the flag or switch it off before closing out the work.
 
 ## References / Knowledge Sources
  When fixing or extending the codebase, always consult the following sources for context:
