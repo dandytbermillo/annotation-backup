@@ -10,7 +10,7 @@ type WorkspaceToolbarNote = {
 
 interface WorkspaceToolbarProps {
   notes: WorkspaceToolbarNote[]
-  focusedNoteId: string | null
+  activeNoteId: string | null
   isLoading?: boolean
   formatNoteLabel: (noteId: string) => string
   onActivateNote: (noteId: string) => void
@@ -24,7 +24,7 @@ interface WorkspaceToolbarProps {
  */
 export function WorkspaceToolbar({
   notes,
-  focusedNoteId,
+  activeNoteId,
   isLoading,
   formatNoteLabel,
   onActivateNote,
@@ -49,7 +49,7 @@ export function WorkspaceToolbar({
           No notes open
         </span>
       ) : notes.map(note => {
-        const isActive = note.noteId === focusedNoteId
+        const isActive = note.noteId === activeNoteId
         const label = formatNoteLabel(note.noteId)
         const timestampLabel = note.updatedAt
           ? new Date(note.updatedAt).toLocaleTimeString()

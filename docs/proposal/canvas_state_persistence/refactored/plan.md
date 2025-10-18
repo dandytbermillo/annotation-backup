@@ -1,7 +1,7 @@
 # Canvas Workspace Tabs → Toolbar Refactor Plan
 
 **Goal**  
-Eliminate tab-specific focus behaviour (centering, layer reordering) by replacing the current “workspace tabs” strip with a lightweight toolbar that lists open notes on a single board. Clicking an item should behave exactly like clicking a toolbar button: highlight the note, do not alter panel coordinates, and keep the camera untouched unless the user explicitly requests a center-on-note action.
+Eliminate tab-specific focus behaviour (legacy center triggers, layer reordering) by replacing the current “workspace tabs” strip with a lightweight toolbar that lists open notes on a single board. Clicking an item should behave exactly like clicking a toolbar button: highlight the note and pan the canvas so the note’s main panel is brought into view via the composite key (`noteId::main`). A separate control may still provide an explicit “center again” action, but the primary click must center once.
 
 ---
 
@@ -26,14 +26,14 @@ Eliminate tab-specific focus behaviour (centering, layer reordering) by replacin
 - Responsive layout (overflow handling when many notes are open).
 
 ## 3. State Management Changes
-- Decide where to hold “highlighted note” vs. “focused note” (if focus is still needed for other features).
+- Decide where to hold “highlighted note” vs. “active note” (if legacy focus semantics are still needed elsewhere).
 - Review consumers of `focusedNoteId` (e.g., floating toolbar, text selection logic) and outline how they adapt when tabs go away.
 - Ensure workspace persistence remains accurate: open/close events still update `canvas_workspace_notes`, but toolbar clicks do not re-open notes.
 
 ## 4. Camera Behaviour
 - Toolbar click must pan the canvas directly to the selected note using the composite store key (`noteId::main`). Avoid any DOM selectors that can match another panel.
-- Ensure subsequent centering attempts (manual buttons, keyboard shortcuts) use the same composite key.
-- Remove legacy tab-specific centering hooks (`focusSourceRef`, retry loops).
+- Ensure subsequent centering attempts (manual buttons, keyboard shortcuts) reuse the same helper but avoid duplicate panning when the first attempt succeeds.
+- Remove legacy tab-specific centering hooks (`focusSourceRef`, retry loops) and consolidate centering in a single utility.
 - Audit other effects for unintended auto-centering and strip them unless explicitly invoked.
 
 ## 5. UI Implementation Plan
@@ -54,8 +54,8 @@ Eliminate tab-specific focus behaviour (centering, layer reordering) by replacin
 ## 7. Testing Strategy
 - Unit Tests:
   - Toolbar renders correct entries for open notes.
-  - Clicking toolbar entry emits highlight only (no camera change).
-  - Center button pans to correct note (use composite key).
+  - Clicking toolbar entry emits highlight and triggers the centering helper with the correct composite key.
+  - Center button delegates to the same helper and succeeds when the note is already active.
 - Integration / E2E:
   - Open, close, reopen notes via toolbar; ensure panel positions persist.
   - Drag panels, switch toolbar entries, confirm no jumps.
@@ -71,7 +71,7 @@ Eliminate tab-specific focus behaviour (centering, layer reordering) by replacin
 - Monitor telemetry for time spent re-centering after toolbar launch.
 
 ## 9. Risks & Mitigations
-- **Hidden panels:** Without auto-centering, users may lose sight of off-screen notes → mitigate with explicit “Center” action and mini-map hints.
+- **Hidden panels:** Ensure centering fires reliably even when snapshots finish asynchronously; add retries/telemetry rather than removing the auto-pan.
 - **Dependent features:** Ensure other systems relying on `focusedNoteId` (e.g., selection widgets) receive a safe default or alternative signal.
 - **Snapshot migrations:** Removing tabs should not break saved snapshots; verify no hard-coded expectations exist in storage schemas.
 

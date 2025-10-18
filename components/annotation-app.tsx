@@ -20,6 +20,7 @@ import {
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
+import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 
@@ -51,6 +52,9 @@ const ModernAnnotationCanvas = dynamic(
   }
 )
 
+const CENTER_RETRY_ATTEMPTS = 2
+const CENTER_RETRY_DELAY_MS = 160
+
 function AnnotationAppContent() {
   const {
     openNotes,
@@ -66,11 +70,12 @@ function AnnotationAppContent() {
   } = useCanvasWorkspace()
   const sharedWorkspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
 
-  // Initialize focusedNoteId from localStorage (persist which note canvas is focused)
-  const [focusedNoteId, setFocusedNoteId] = useState<string | null>(() => {
+  // Initialize activeNoteId from localStorage (persist which note canvas is focused)
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
       try {
         const stored =
+          localStorage.getItem('annotation_activeNoteId') ??
           localStorage.getItem('annotation_focusedNoteId') ??
           localStorage.getItem('annotation_selectedNoteId')
         return stored || null
@@ -85,6 +90,10 @@ function AnnotationAppContent() {
     }
     return null
   })
+  const activeNoteIdRef = useRef<string | null>(activeNoteId)
+  useEffect(() => {
+    activeNoteIdRef.current = activeNoteId
+  }, [activeNoteId])
   const sortedOpenNotes = useMemo(() => {
     return [...openNotes].sort((a, b) => {
       if (a.noteId === b.noteId) return 0
@@ -262,12 +271,12 @@ function AnnotationAppContent() {
         action: 'panel_position_snapshot',
         metadata: {
           context,
-          focusedNoteId,
+          activeNoteId,
           positions,
         },
       })
     },
-    [sharedWorkspace, sortedOpenNotes, focusedNoteId],
+    [sharedWorkspace, sortedOpenNotes, activeNoteId],
   )
 
   const resolveMainPanelPosition = useCallback(
@@ -393,7 +402,7 @@ function AnnotationAppContent() {
   // Display settings state (backdrop style preference)
   const [backdropStyle, setBackdropStyle] = useState<string>('none')
 
-  // Overlay popups state - persists independently of toolbar (like focusedNoteId)
+  // Overlay popups state - persists independently of toolbar (like activeNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -435,42 +444,44 @@ function AnnotationAppContent() {
   useEffect(() => {
     if (!isWorkspaceReady) return
 
-    const isFocusedOpen = focusedNoteId ? openNotes.some(note => note.noteId === focusedNoteId) : false
+    const isFocusedOpen = activeNoteId ? openNotes.some(note => note.noteId === activeNoteId) : false
 
     if (!initialWorkspaceSyncRef.current) {
       initialWorkspaceSyncRef.current = true
 
-      if (focusedNoteId && !isFocusedOpen) {
-        const pendingPosition = getPendingPosition(focusedNoteId)
-        const cachedPosition = getCachedPosition(focusedNoteId)
-        const resolvedPosition = resolveMainPanelPosition(focusedNoteId)
-        console.log(`[DEBUG AnnotationApp] Hydration position for ${focusedNoteId}:`, {
+      if (activeNoteId && !isFocusedOpen) {
+        const pendingPosition = getPendingPosition(activeNoteId)
+        const cachedPosition = getCachedPosition(activeNoteId)
+        const resolvedPosition = resolveMainPanelPosition(activeNoteId)
+        console.log(`[DEBUG AnnotationApp] Hydration position for ${activeNoteId}:`, {
           pendingPosition,
           cachedPosition,
           resolvedPosition
         })
-        void openWorkspaceNote(focusedNoteId, {
+        void openWorkspaceNote(activeNoteId, {
           persist: true,
           mainPosition: resolvedPosition ?? undefined,
         }).catch(error => {
           console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
         })
-      } else if (!focusedNoteId && openNotes.length > 0) {
-        setFocusedNoteId(openNotes[0].noteId)
+      } else if (!activeNoteId && openNotes.length > 0) {
+        setActiveNoteId(openNotes[0].noteId)
       }
-    } else if (focusedNoteId && !isFocusedOpen) {
+    } else if (activeNoteId && !isFocusedOpen) {
       const fallback = openNotes[0]?.noteId ?? null
-      setFocusedNoteId(fallback ?? null)
+      setActiveNoteId(fallback ?? null)
     }
-  }, [isWorkspaceReady, openNotes, focusedNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition, resolveMainPanelPosition])
+  }, [isWorkspaceReady, openNotes, activeNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition, resolveMainPanelPosition])
 
-  // Persist focusedNoteId to localStorage when it changes
+  // Persist activeNoteId to localStorage when it changes
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
-        if (focusedNoteId) {
-          localStorage.setItem('annotation_focusedNoteId', focusedNoteId)
+        if (activeNoteId) {
+          localStorage.setItem('annotation_activeNoteId', activeNoteId)
+          localStorage.setItem('annotation_focusedNoteId', activeNoteId)
         } else {
+          localStorage.removeItem('annotation_activeNoteId')
           localStorage.removeItem('annotation_focusedNoteId')
         }
       } catch (err) {
@@ -479,12 +490,12 @@ function AnnotationAppContent() {
           action: 'localStorage_focus_save_failed',
           metadata: {
             error: err instanceof Error ? err.message : 'Unknown error',
-            operation: focusedNoteId ? 'setItem' : 'removeItem'
+            operation: activeNoteId ? 'setItem' : 'removeItem'
           }
         })
       }
     }
-  }, [focusedNoteId, logWorkspaceNotePositions])
+  }, [activeNoteId, logWorkspaceNotePositions])
 
   // Initialize overlay adapter
   useEffect(() => {
@@ -497,7 +508,6 @@ function AnnotationAppContent() {
   const canvasRef = useRef<any>(null)
 
   // Ref to track last centered note to avoid repeated centering during normal flow
-  const lastCenteredRef = useRef<string | null>(null)
 
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
@@ -1125,14 +1135,46 @@ function AnnotationAppContent() {
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
 
+  const centerNoteOnCanvas = useCallback(
+    (noteId: string, overrides?: CenterOnNoteOptions) => {
+      const attempts = overrides?.attempts ?? CENTER_RETRY_ATTEMPTS
+      const delayMs = overrides?.delayMs ?? CENTER_RETRY_DELAY_MS
+      const extraShouldRetry = overrides?.shouldRetry
+
+      const shouldRetry = () => {
+        if (activeNoteIdRef.current !== noteId) return false
+        return extraShouldRetry ? extraShouldRetry() : true
+      }
+
+      const handled = centerOnNotePanel(canvasRef.current, noteId, {
+        attempts,
+        delayMs,
+        shouldRetry,
+        onError: overrides?.onError,
+      })
+
+      if (!handled) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'center_on_panel_skipped',
+          metadata: {
+            noteId,
+            reason: 'canvas_unavailable'
+          }
+        })
+      }
+    },
+    [],
+  )
+
   const handleNoteSelect = (noteId: string) => {
     debugLog({
       component: 'AnnotationApp',
       action: 'note_select',
       metadata: {
         noteId,
-        focusedNoteId,
-        isReselect: noteId === focusedNoteId
+        activeNoteId,
+        isReselect: noteId === activeNoteId
       }
     })
 
@@ -1148,38 +1190,55 @@ function AnnotationAppContent() {
         // Note will still open, just won't appear in recent notes
       })
 
-    if (noteId === focusedNoteId) {
+    const emitHighlight = () => {
+      const events = sharedWorkspace?.events
+      if (!events) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'no_workspace_events' }
+        })
+        return
+      }
+      try {
+        events.emit('workspace:highlight-note', { noteId })
+      } catch (error) {
+        console.warn('[AnnotationApp] Failed to emit highlight event:', error)
+      }
+    }
+
+    if (noteId === activeNoteId) {
       logWorkspaceNotePositions('tab_click_reselect')
       debugLog({
         component: 'AnnotationApp',
         action: 'highlight_note',
         metadata: { noteId }
       })
-      try {
-        sharedWorkspace.events.emit('workspace:highlight-note', { noteId })
-      } catch (error) {
-        console.warn('[AnnotationApp] Failed to emit highlight event:', error)
-      }
+      emitHighlight()
+      centerNoteOnCanvas(noteId)
       return
     }
 
-    // Different note - ensure it's marked open, focus it, and pan camera to it
-    const resolvedPosition = resolveMainPanelPosition(noteId)
-    void openWorkspaceNote(noteId, {
-      persist: true,
-      mainPosition: resolvedPosition ?? undefined,
-    }).catch(error => {
-      console.error('[AnnotationApp] Failed to open note in workspace:', error)
-    })
-    setFocusedNoteId(noteId)
-
-    // SIMPLE FIX: Pan camera to center the note's panel (just like dragging canvas)
-    // Let the canvas find the panel and move the viewport to show it
-    // Use composite storeKey (noteId::panelId) to uniquely identify the panel across multiple notes
-    const storeKey = ensurePanelKey(noteId, 'main')
-    if (canvasRef.current?.centerOnPanel) {
-      canvasRef.current.centerOnPanel(storeKey)
+    // Different note - ensure it's marked open and marked as focused
+    const alreadyOpen = openNotes.some(open => open.noteId === noteId)
+    if (!alreadyOpen) {
+      const resolvedPosition = resolveMainPanelPosition(noteId)
+      void openWorkspaceNote(noteId, {
+        persist: true,
+        mainPosition: resolvedPosition ?? undefined,
+      }).catch(error => {
+        console.error('[AnnotationApp] Failed to open note in workspace:', error)
+      })
     }
+    setActiveNoteId(noteId)
+    emitHighlight()
+    centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
+    setTimeout(() => {
+      if (activeNoteIdRef.current === noteId) {
+        emitHighlight()
+        centerNoteOnCanvas(noteId, { attempts: 1 })
+      }
+    }, 150)
   }
 
   const handleCloseNote = useCallback(
@@ -1202,12 +1261,12 @@ function AnnotationAppContent() {
         action: 'manual_center_request',
         metadata: {
           noteId,
-          focusedNoteId,
+          activeNoteId,
         },
       })
 
-      if (noteId !== focusedNoteId) {
-        setFocusedNoteId(noteId)
+      if (noteId !== activeNoteId) {
+        setActiveNoteId(noteId)
       }
 
       const events = sharedWorkspace?.events
@@ -1219,19 +1278,12 @@ function AnnotationAppContent() {
         }
       }
 
-      if (canvasRef.current?.centerOnPanel) {
-        const storeKey = ensurePanelKey(noteId, 'main')
-        canvasRef.current.centerOnPanel(storeKey)
-      }
+      centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
     },
-    [focusedNoteId, setFocusedNoteId, sharedWorkspace],
+    [activeNoteId, setActiveNoteId, sharedWorkspace],
   )
   
   // Center panel when note selection changes
-  useEffect(() => {
-    if (!focusedNoteId) return
-    lastCenteredRef.current = focusedNoteId
-  }, [focusedNoteId])
 
   // Handle right-click to show notes widget
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -2177,7 +2229,7 @@ function AnnotationAppContent() {
         <div className="flex flex-wrap items-center gap-2 px-4 py-2">
           <WorkspaceToolbar
             notes={sortedOpenNotes}
-            focusedNoteId={focusedNoteId}
+            activeNoteId={activeNoteId}
             isLoading={isWorkspaceLoading}
             formatNoteLabel={formatNoteLabel}
             onActivateNote={handleNoteSelect}
@@ -2217,7 +2269,7 @@ function AnnotationAppContent() {
               <ModernAnnotationCanvas
                 key="workspace"
                 noteIds={openNotes.map(note => note.noteId)}
-                primaryNoteId={focusedNoteId ?? openNotes[0].noteId}
+                primaryNoteId={activeNoteId ?? openNotes[0].noteId}
                 ref={canvasRef}
                 isNotesExplorerOpen={false}
                 onCanvasStateChange={stateUpdate =>
@@ -2289,9 +2341,9 @@ function AnnotationAppContent() {
           />
         )}
 
-        {/* Fallback Floating Toolbar - renders when no note is focused (focusedNoteId is null) */}
+        {/* Fallback Floating Toolbar - renders when no note is focused (activeNoteId is null) */}
         {/* This ensures right-click and Cmd+K work immediately after app reload */}
-        {showNotesWidget && !focusedNoteId && (
+        {showNotesWidget && !activeNoteId && (
           <FloatingToolbar
             x={notesWidgetPosition.x}
             y={notesWidgetPosition.y}
