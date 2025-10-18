@@ -108,8 +108,21 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     })
 
     if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Failed to create note: ${errorText}`)
+      let errorDetails = `HTTP ${response.status} ${response.statusText}`
+      try {
+        const text = await response.text()
+        if (text) {
+          try {
+            const errorData = JSON.parse(text)
+            errorDetails = errorData.error || text
+          } catch {
+            errorDetails = text
+          }
+        }
+      } catch (e) {
+        console.error('[createNote] Failed to read error response:', e)
+      }
+      throw new Error(`Failed to create note: ${errorDetails}`)
     }
 
     const data = await response.json()
