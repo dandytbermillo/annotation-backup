@@ -54,6 +54,10 @@ const ModernAnnotationCanvas = dynamic(
 
 const CENTER_RETRY_ATTEMPTS = 2
 const CENTER_RETRY_DELAY_MS = 160
+const POST_LOAD_CENTER_ATTEMPTS = 6
+const POST_LOAD_CENTER_DELAY_MS = 180
+const POST_LOAD_SECOND_PASS_DELAY_MS = 420
+const POST_LOAD_PENDING_CLEAR_DELAY_MS = 2200
 
 function AnnotationAppContent() {
   const {
@@ -1167,14 +1171,30 @@ function AnnotationAppContent() {
 
     const pendingNoteId = pendingCenterAfterLoadRef.current
     if (pendingNoteId && activeNoteIdRef.current === pendingNoteId) {
+      const scheduleCenter = (attempts = POST_LOAD_CENTER_ATTEMPTS) => {
+        centerNoteOnCanvas(pendingNoteId, {
+          attempts,
+          delayMs: POST_LOAD_CENTER_DELAY_MS,
+        })
+      }
+
       setTimeout(() => {
         if (activeNoteIdRef.current === pendingNoteId) {
-          centerNoteOnCanvas(pendingNoteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
+          scheduleCenter()
         }
+      }, 30)
+
+      setTimeout(() => {
+        if (activeNoteIdRef.current === pendingNoteId) {
+          scheduleCenter(POST_LOAD_CENTER_ATTEMPTS)
+        }
+      }, POST_LOAD_SECOND_PASS_DELAY_MS)
+
+      setTimeout(() => {
         if (pendingCenterAfterLoadRef.current === pendingNoteId) {
           pendingCenterAfterLoadRef.current = null
         }
-      }, 30)
+      }, POST_LOAD_PENDING_CLEAR_DELAY_MS)
     }
   }, [centerNoteOnCanvas])
 
