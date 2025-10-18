@@ -66,6 +66,7 @@ function AnnotationAppContent() {
     closeNote: closeWorkspaceNote,
     isWorkspaceReady,
     isWorkspaceLoading,
+    isHydrating,
     workspaceError,
     refreshWorkspace,
     getPendingPosition,
@@ -1225,6 +1226,16 @@ const initialWorkspaceSyncRef = useRef(false)
       })
 
     const emitHighlight = () => {
+      // Skip highlight during workspace hydration (TDD §4.1)
+      if (isHydrating) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'workspace_hydrating' }
+        })
+        return
+      }
+
       const events = sharedWorkspace?.events
       if (!events) {
         debugLog({

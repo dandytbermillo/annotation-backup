@@ -52,6 +52,8 @@ interface CanvasWorkspaceContextValue {
   isWorkspaceReady: boolean
   /** Whether workspace operations are in-flight */
   isWorkspaceLoading: boolean
+  /** Whether workspace is currently hydrating (blocks highlight events) - TDD §4.1 */
+  isHydrating: boolean
   /** Last workspace error, if any */
   workspaceError: Error | null
   /** Refresh workspace notes from backend */
@@ -70,18 +72,25 @@ interface CanvasWorkspaceContextValue {
 
 const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>(null)
 
+// Feature flag for new ordered toolbar behavior (TDD §5.4 line 227)
+const FEATURE_ENABLED = typeof window !== 'undefined' &&
+  process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY === 'enabled'
+
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
   const sharedWorkspaceRef = useRef<NoteWorkspace | null>(null)
   const [openNotes, setOpenNotes] = useState<OpenWorkspaceNote[]>([])
   const [isWorkspaceReady, setIsWorkspaceReady] = useState(false)
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
+  const [isHydrating, setIsHydrating] = useState(false)
   const [workspaceError, setWorkspaceError] = useState<Error | null>(null)
   const scheduledPersistRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPersistsRef = useRef<Map<string, WorkspacePosition>>(new Map())
   const positionCacheRef = useRef<Map<string, WorkspacePosition>>(new Map())
+  const pendingBatchRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Shared 300ms batch timer (TDD §5.1)
   const PENDING_STORAGE_KEY = 'canvas_workspace_pending'
   const POSITION_CACHE_KEY = 'canvas_workspace_position_cache'
+  const BATCH_DEBOUNCE_MS = 300 // TDD §5.1 line 216
 
   const syncPendingToStorage = useCallback(() => {
     if (typeof window === 'undefined') return
@@ -175,66 +184,153 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       })
       syncPendingToStorage()
 
-      const payload = {
-        notes: updates.map(update => ({
-          noteId: update.noteId,
-          isOpen: update.isOpen,
-          mainPosition: update.mainPosition ?? undefined,
-        })),
-      }
-
       try {
         await debugLog({
           component: 'CanvasWorkspace',
           action: 'persist_attempt',
-          metadata: payload,
+          metadata: { updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })) },
         })
 
-        const response = await fetch("/api/canvas/workspace", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          keepalive: true,
-          body: JSON.stringify(payload),
-        })
+        if (FEATURE_ENABLED) {
+          // New path: Use POST /update with optimistic locking retry (TDD §5.1)
+          // Map to server's expected schema: { updates: [ { noteId, mainPositionX, mainPositionY } ] }
+          const updatePayload = {
+            updates: updates
+              .filter(u => u.isOpen && u.mainPosition) // Only send position updates
+              .map(update => ({
+                noteId: update.noteId,
+                mainPositionX: update.mainPosition!.x,
+                mainPositionY: update.mainPosition!.y,
+              })),
+          }
 
-        if (!response.ok) {
-          const messageRaw = await response.text()
-          const trimmedMessage = messageRaw.trim()
-          const statusMessage = `${response.status} ${response.statusText}`.trim()
-          const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
+          let retries = 0
+          const maxRetries = 3
+
+          while (retries <= maxRetries) {
+            const response = await fetch("/api/canvas/workspace/update", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              keepalive: true,
+              body: JSON.stringify(updatePayload),
+            })
+
+            if (response.ok) {
+              // Success - clear pending
+              updates.forEach(update => {
+                if (update.isOpen && update.mainPosition) {
+                  pendingPersistsRef.current.delete(update.noteId)
+                }
+              })
+              syncPendingToStorage()
+
+              await debugLog({
+                component: 'CanvasWorkspace',
+                action: 'workspace_snapshot_persisted',
+                metadata: {
+                  noteIds: updates.map(u => u.noteId),
+                  retryCount: retries,
+                },
+              })
+
+              setWorkspaceError(null)
+              return
+            }
+
+            // Handle 409 Conflict (optimistic lock failure) - TDD §5.2
+            if (response.status === 409 && retries < maxRetries) {
+              retries++
+              await debugLog({
+                component: 'CanvasWorkspace',
+                action: 'persist_retry_conflict',
+                metadata: {
+                  retryCount: retries,
+                  maxRetries,
+                },
+              })
+              // Wait 50ms before retry
+              await new Promise(resolve => setTimeout(resolve, 50))
+              continue
+            }
+
+            // All other errors or max retries exceeded
+            const messageRaw = await response.text()
+            const trimmedMessage = messageRaw.trim()
+            const statusMessage = `${response.status} ${response.statusText}`.trim()
+            const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
+
+            await debugLog({
+              component: 'CanvasWorkspace',
+              action: 'persist_failed',
+              metadata: {
+                status: response.status,
+                statusText: response.statusText,
+                payload: updatePayload,
+                retries,
+                message: combinedMessage,
+              },
+            })
+
+            const err = new Error(combinedMessage)
+            ;(err as any).status = response.status
+            throw err
+          }
+        } else {
+          // Legacy path: Use PATCH endpoint with original schema
+          const patchPayload = {
+            notes: updates.map(update => ({
+              noteId: update.noteId,
+              isOpen: update.isOpen,
+              mainPosition: update.mainPosition ?? undefined,
+            })),
+          }
+
+          const response = await fetch("/api/canvas/workspace", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            keepalive: true,
+            body: JSON.stringify(patchPayload),
+          })
+
+          if (!response.ok) {
+            const messageRaw = await response.text()
+            const trimmedMessage = messageRaw.trim()
+            const statusMessage = `${response.status} ${response.statusText}`.trim()
+            const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
+
+            await debugLog({
+              component: 'CanvasWorkspace',
+              action: 'persist_failed',
+              metadata: {
+                status: response.status,
+                statusText: response.statusText,
+                payload: patchPayload,
+                message: combinedMessage,
+              },
+            })
+
+            const err = new Error(combinedMessage)
+            ;(err as any).status = response.status
+            throw err
+          }
+
+          updates.forEach(update => {
+            if (update.isOpen && update.mainPosition) {
+              pendingPersistsRef.current.delete(update.noteId)
+            }
+          })
+          syncPendingToStorage()
 
           await debugLog({
             component: 'CanvasWorkspace',
-            action: 'persist_failed',
+            action: 'persist_succeeded',
             metadata: {
-              status: response.status,
-              statusText: response.statusText,
-              payload,
-              message: combinedMessage,
+              noteIds: updates.map(u => u.noteId),
             },
           })
 
-          const err = new Error(combinedMessage)
-          ;(err as any).status = response.status
-          throw err
+          setWorkspaceError(null)
         }
-
-        updates.forEach(update => {
-          if (update.isOpen && update.mainPosition) {
-            pendingPersistsRef.current.delete(update.noteId)
-          }
-        })
-        syncPendingToStorage()
-
-        await debugLog({
-          component: 'CanvasWorkspace',
-          action: 'persist_succeeded',
-          metadata: {
-            noteIds: updates.map(u => u.noteId),
-          },
-        })
-
-        setWorkspaceError(null)
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error))
         const status = (err as any).status
@@ -245,7 +341,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             action: 'persist_retry_scheduled',
             metadata: {
               status,
-              payload,
+              updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })),
               pending: Array.from(pendingPersistsRef.current.entries()),
               message: err.message,
             },
@@ -256,7 +352,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             action: 'persist_error',
             metadata: {
               status,
-              payload,
+              updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })),
               pending: Array.from(pendingPersistsRef.current.entries()),
               message: err.message,
             },
@@ -271,7 +367,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const refreshWorkspace = useCallback(async () => {
+    const hydrationStartTime = Date.now()
     setIsWorkspaceLoading(true)
+    setIsHydrating(true)
+
     try {
       const response = await fetch("/api/canvas/workspace", {
         method: "GET",
@@ -287,54 +386,133 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       const result = await response.json()
       const notes = Array.isArray(result?.openNotes) ? result.openNotes : []
 
-      const normalized: OpenWorkspaceNote[] = notes.map((note: any) => {
-        const rawPosition = note?.mainPosition
-        const rawX = Number(rawPosition?.x)
-        const rawY = Number(rawPosition?.y)
-        const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+      if (FEATURE_ENABLED) {
+        // New path: Ordered toolbar with full snapshot replay (TDD §3)
+        const panels = Array.isArray(result?.panels) ? result.panels : []
 
-        return {
-          noteId: String(note.noteId),
-          mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
-          updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
-        }
-      })
+        const normalized: OpenWorkspaceNote[] = notes.map((note: any) => {
+          const rawPosition = note?.mainPosition
+          const rawX = Number(rawPosition?.x)
+          const rawY = Number(rawPosition?.y)
+          const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
 
-      const merged: OpenWorkspaceNote[] = [...normalized]
-
-      // First, apply position cache (all known positions)
-      positionCacheRef.current.forEach((position, noteId) => {
-        if (!position) return
-        const existingIndex = merged.findIndex(note => note.noteId === noteId)
-        if (existingIndex >= 0) {
-          merged[existingIndex] = {
-            ...merged[existingIndex],
-            mainPosition: position,
+          return {
+            noteId: String(note.noteId),
+            mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
+            updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
           }
-        }
-      })
+        })
 
-      // Then, override with pending persists (unsaved changes take priority)
-      pendingPersistsRef.current.forEach((position, noteId) => {
-        if (!position) return
-        const existingIndex = merged.findIndex(note => note.noteId === noteId)
-        if (existingIndex >= 0) {
-          merged[existingIndex] = {
-            ...merged[existingIndex],
-            mainPosition: position,
+        // Pre-populate dataStore for all panels (TDD §4.1 line 177)
+        const workspace = getWorkspace(SHARED_WORKSPACE_ID)
+
+        // Seed panels from snapshot (prevents (2000,1500) default jump)
+        panels.forEach((panel: any) => {
+          const panelKey = `${panel.noteId}::${panel.panelId}`
+          const existing = workspace.dataStore.get(panelKey)
+
+          // Skip if already exists (idempotent - TDD §4.1 line 197)
+          if (existing) {
+            return
           }
-        } else {
-          console.log(`[DEBUG refreshWorkspace] Adding note ${noteId} from pending only:`, position)
-          merged.push({
-            noteId,
-            mainPosition: position,
-            updatedAt: null,
+
+          workspace.dataStore.set(panelKey, {
+            id: panel.panelId,
+            type: panel.type,
+            title: panel.title || '',
+            position: { x: panel.positionXWorld, y: panel.positionYWorld },
+            dimensions: { width: panel.widthWorld, height: panel.heightWorld },
+            zIndex: panel.zIndex,
+            metadata: panel.metadata || {},
+            worldPosition: { x: panel.positionXWorld, y: panel.positionYWorld },
+            worldSize: { width: panel.widthWorld, height: panel.heightWorld },
           })
-        }
-      })
 
-      ensureWorkspaceForOpenNotes(merged)
-      setOpenNotes(merged)
+          // Mark as loaded
+          workspace.loadedNotes.add(panel.noteId)
+        })
+
+        ensureWorkspaceForOpenNotes(normalized)
+        setOpenNotes(normalized)
+
+        // Emit telemetry (TDD §8)
+        const hydrationDuration = Date.now() - hydrationStartTime
+        const componentBreakdown: Record<string, number> = {}
+
+        panels.forEach((panel: any) => {
+          const type = panel.type === 'main' || panel.type === 'branch' ? 'note' : panel.type
+          componentBreakdown[type] = (componentBreakdown[type] || 0) + 1
+        })
+
+        try {
+          await debugLog({
+            component: 'CanvasWorkspace',
+            action: 'workspace_toolbar_state_rehydrated',
+            metadata: {
+              workspaceId: SHARED_WORKSPACE_ID,
+              focusedNoteId: notes.find((n: any) => n.isFocused)?.noteId || null,
+              tabOrder: notes.map((n: any) => n.noteId),
+              panelCount: panels.length,
+              componentBreakdown,
+              snapshotTimestamp: new Date().toISOString(),
+              hydrationDurationMs: hydrationDuration
+            }
+          })
+        } catch (logError) {
+          console.warn('[CanvasWorkspace] Failed to emit hydration telemetry:', logError)
+        }
+      } else {
+        // Legacy path: Unordered loading (TDD §5.4 line 228)
+        const normalized: OpenWorkspaceNote[] = notes.map((note: any) => {
+          const rawPosition = note?.mainPosition
+          const rawX = Number(rawPosition?.x)
+          const rawY = Number(rawPosition?.y)
+          const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+
+          return {
+            noteId: String(note.noteId),
+            mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
+            updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
+          }
+        })
+
+        const merged: OpenWorkspaceNote[] = [...normalized]
+
+        // First, apply position cache (all known positions)
+        positionCacheRef.current.forEach((position, noteId) => {
+          if (!position) return
+          const existingIndex = merged.findIndex(note => note.noteId === noteId)
+          if (existingIndex >= 0) {
+            merged[existingIndex] = {
+              ...merged[existingIndex],
+              mainPosition: position,
+            }
+          }
+        })
+
+        // Then, override with pending persists (unsaved changes take priority)
+        pendingPersistsRef.current.forEach((position, noteId) => {
+          if (!position) return
+          const existingIndex = merged.findIndex(note => note.noteId === noteId)
+          if (existingIndex >= 0) {
+            merged[existingIndex] = {
+              ...merged[existingIndex],
+              mainPosition: position,
+            }
+          } else {
+            console.log(`[DEBUG refreshWorkspace] Adding note ${noteId} from pending only:`, position)
+            merged.push({
+              noteId,
+              mainPosition: position,
+              updatedAt: null,
+            })
+          }
+        })
+
+        ensureWorkspaceForOpenNotes(merged)
+        setOpenNotes(merged)
+      }
+
       setWorkspaceError(null)
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error))
@@ -343,8 +521,9 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsWorkspaceLoading(false)
       setIsWorkspaceReady(true)
+      setIsHydrating(false)
     }
-  }, [ensureWorkspaceForOpenNotes])
+  }, [ensureWorkspaceForOpenNotes, getWorkspace])
 
   const clearScheduledPersist = useCallback((noteId: string) => {
     const existing = scheduledPersistRef.current.get(noteId)
@@ -356,28 +535,43 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const scheduleWorkspacePersist = useCallback(
     (noteId: string, position: WorkspacePosition) => {
-      clearScheduledPersist(noteId)
+      // Add to pending batch queue
       pendingPersistsRef.current.set(noteId, position)
       syncPendingToStorage()
 
-      const timeout = setTimeout(async () => {
+      // Clear existing batch timer
+      if (pendingBatchRef.current !== null) {
+        clearTimeout(pendingBatchRef.current)
+      }
+
+      // Start new shared 300ms batch timer (TDD §5.1 line 216)
+      pendingBatchRef.current = setTimeout(async () => {
+        const batch = Array.from(pendingPersistsRef.current.entries()).map(([id, pos]) => ({
+          noteId: id,
+          isOpen: true,
+          mainPosition: pos,
+        }))
+
+        if (batch.length === 0) {
+          pendingBatchRef.current = null
+          return
+        }
+
         try {
-          await persistWorkspace([{ noteId, isOpen: true, mainPosition: position }])
+          await persistWorkspace(batch)
           // Don't call refreshWorkspace here - it causes infinite loops
           // The position is already in local state, no need to reload from DB
         } catch (error) {
-          console.warn('[CanvasWorkspace] Delayed workspace persist failed', {
-            noteId,
+          console.warn('[CanvasWorkspace] Batched workspace persist failed', {
+            batchSize: batch.length,
             error: error instanceof Error ? error.message : String(error),
           })
         } finally {
-          scheduledPersistRef.current.delete(noteId)
+          pendingBatchRef.current = null
         }
-      }, 750)
-
-      scheduledPersistRef.current.set(noteId, timeout)
+      }, BATCH_DEBOUNCE_MS)
     },
-    [clearScheduledPersist, persistWorkspace, syncPendingToStorage],
+    [persistWorkspace, syncPendingToStorage],
   )
 
   useEffect(() => {
@@ -575,25 +769,63 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         return
       }
 
-      const payload = Array.from(pendingPersistsRef.current.entries()).map(([noteId, position]) => ({
-        noteId,
-        isOpen: true,
-        mainPosition: position,
-      }))
+      if (FEATURE_ENABLED) {
+        // New path: Use sendBeacon with flush endpoint (TDD §5.1 line 216)
+        const updates = Array.from(pendingPersistsRef.current.entries()).map(([noteId, position]) => ({
+          noteId,
+          mainPositionX: position.x,
+          mainPositionY: position.y,
+        }))
 
-      if (payload.length === 0) return
+        if (updates.length === 0) return
 
-      const body = JSON.stringify({ notes: payload })
+        const body = JSON.stringify(updates)
 
-      try {
-        void fetch('/api/canvas/workspace', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body,
-          keepalive: true,
-        })
-      } catch (error) {
-        // Silent - nothing we can do during unload
+        // Check sendBeacon payload size (64KB limit, use 60KB for safety)
+        if (body.length > 60 * 1024) {
+          console.warn('[CanvasWorkspace] Beacon payload exceeds size limit, truncating to first update')
+          // Truncate to just the first update to stay within limit
+          const truncatedBody = JSON.stringify([updates[0]])
+          const blob = new Blob([truncatedBody], { type: 'application/json' })
+          try {
+            navigator.sendBeacon('/api/canvas/workspace/flush', blob)
+          } catch (error) {
+            console.warn('[CanvasWorkspace] sendBeacon failed:', error)
+          }
+          return
+        }
+
+        try {
+          // sendBeacon for emergency flush (TDD §5.7)
+          // Use Blob with correct Content-Type to ensure proper parsing
+          const blob = new Blob([body], { type: 'application/json' })
+          navigator.sendBeacon('/api/canvas/workspace/flush', blob)
+        } catch (error) {
+          // Silent - nothing we can do during unload
+          console.warn('[CanvasWorkspace] sendBeacon failed:', error)
+        }
+      } else {
+        // Legacy path: Use keepalive fetch
+        const payload = Array.from(pendingPersistsRef.current.entries()).map(([noteId, position]) => ({
+          noteId,
+          isOpen: true,
+          mainPosition: position,
+        }))
+
+        if (payload.length === 0) return
+
+        const body = JSON.stringify({ notes: payload })
+
+        try {
+          void fetch('/api/canvas/workspace', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body,
+            keepalive: true,
+          })
+        } catch (error) {
+          // Silent - nothing we can do during unload
+        }
       }
     }
 
@@ -607,6 +839,11 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
+      // Clear shared batch timer (TDD §5.1)
+      if (pendingBatchRef.current !== null) {
+        clearTimeout(pendingBatchRef.current)
+        pendingBatchRef.current = null
+      }
       scheduledPersistRef.current.forEach(timeout => clearTimeout(timeout))
       scheduledPersistRef.current.clear()
       window.removeEventListener('beforeunload', persistActiveNotes)
@@ -632,6 +869,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       openNotes,
       isWorkspaceReady,
       isWorkspaceLoading,
+      isHydrating,
       workspaceError,
       refreshWorkspace,
       openNote,
@@ -648,6 +886,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       openNotes,
       isWorkspaceReady,
       isWorkspaceLoading,
+      isHydrating,
       workspaceError,
       refreshWorkspace,
       openNote,
