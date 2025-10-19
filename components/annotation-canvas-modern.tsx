@@ -1755,7 +1755,7 @@ const mainPanelSeededRef = useRef(false)
     })
   }
 
-  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string) => {
+  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string, isPreview?: boolean) => {
     const targetNoteId = sourceNoteId || noteId
     if (!targetNoteId) {
       console.warn('[AnnotationCanvas] Cannot create panel without target note id', panelId)
@@ -1845,11 +1845,14 @@ const mainPanelSeededRef = useRef(false)
         panelType === 'explore' ? 'context' :
         panelType === 'promote' ? 'annotation' : 'branch'
 
-      const position = (branchData?.position || branchData?.worldPosition)
-        ? (branchData.position || branchData.worldPosition)
-        : parentPosition
-          ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
-          : { x: 2000, y: 1500 }
+      // For preview panels, always use the provided position (don't use stored position)
+      const position = isPreview && parentPosition
+        ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
+        : (branchData?.position || branchData?.worldPosition)
+          ? (branchData.position || branchData.worldPosition)
+          : parentPosition
+            ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
+            : { x: 2000, y: 1500 }
 
       let panelTitle: string | undefined
       if (panelType !== 'main') {
@@ -1989,13 +1992,15 @@ const mainPanelSeededRef = useRef(false)
     const handlePreviewPanelEvent = (event: CustomEvent) => {
       if (event.detail?.panelId) {
         // Create a temporary preview panel
-        // For now, just create a regular panel - you can enhance this later
-        // to show it in a special preview mode (e.g., semi-transparent, different position)
+        // Use previewPosition if provided (viewport-relative), otherwise use parentPosition
+        const position = event.detail.previewPosition || event.detail.parentPosition
+
         handleCreatePanel(
-          event.detail.panelId, 
-          event.detail.parentPanelId, 
-          event.detail.parentPosition,
-          event.detail.noteId
+          event.detail.panelId,
+          event.detail.parentPanelId,
+          position,
+          event.detail.noteId,
+          true  // isPreview = true, forces use of provided position
         )
       }
     }

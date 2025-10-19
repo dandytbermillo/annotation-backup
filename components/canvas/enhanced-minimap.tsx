@@ -83,7 +83,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     panels.forEach(panel => {
       const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
       const branch = dataStore.get(panelStoreKey)
-      if (branch) {
+      if (branch && branch.position) {
         minX = Math.min(minX, branch.position.x)
         maxX = Math.max(maxX, branch.position.x + (branch.dimensions?.width || 500))
         minY = Math.min(minY, branch.position.y)
@@ -93,6 +93,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Process components
     components.forEach(component => {
+      if (!component.position) return
       const width = component.dimensions?.width || 350
       const height = component.dimensions?.height || 300
       minX = Math.min(minX, component.position.x)
@@ -177,8 +178,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     panels.forEach(panel => {
       const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
       const branch = dataStore.get(panelStoreKey)
-      if (!branch) return
-      
+      if (!branch || !branch.position) return
+
       const pos = worldToMinimap(branch.position.x, branch.position.y)
       const width = (branch.dimensions?.width || 500) * scale
       const height = (branch.dimensions?.height || 400) * scale
@@ -254,6 +255,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Draw components
     components.forEach(component => {
+      if (!component.position) return
       const pos = worldToMinimap(component.position.x, component.position.y)
       const width = (component.dimensions?.width || 350) * scale
       const height = (component.dimensions?.height || 300) * scale
@@ -475,8 +477,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     panels.forEach(panel => {
       const panelStoreKey = ensurePanelKey(noteId || '', panel.panelId!)
       const branch = dataStore.get(panelStoreKey)
-      if (!branch) return
-      
+      if (!branch || !branch.position) return
+
       const pos = worldToMinimap(branch.position.x, branch.position.y)
       const width = (branch.dimensions?.width || 500) * scale
       const height = (branch.dimensions?.height || 400) * scale
@@ -489,6 +491,7 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     
     // Check components
     components.forEach(component => {
+      if (!component.position) return
       const pos = worldToMinimap(component.position.x, component.position.y)
       const width = (component.dimensions?.width || 350) * scale
       const height = (component.dimensions?.height || 300) * scale

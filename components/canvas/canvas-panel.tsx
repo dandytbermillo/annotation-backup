@@ -109,7 +109,42 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const [isSaving, setIsSaving] = useState(false)
   const [showToolsDropdown, setShowToolsDropdown] = useState(false)
   const [activeToolPanel, setActiveToolPanel] = useState<'layer' | 'format' | 'resize' | 'branches' | 'actions' | null>(null)
+  const [toolsButtonPosition, setToolsButtonPosition] = useState<{ top: number; left: number } | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const toolsButtonRef = useRef<HTMLButtonElement>(null)
+  const toolsDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close Tools dropdown when clicking outside
+  useEffect(() => {
+    if (!showToolsDropdown) return
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        toolsDropdownRef.current &&
+        !toolsDropdownRef.current.contains(event.target as Node) &&
+        toolsButtonRef.current &&
+        !toolsButtonRef.current.contains(event.target as Node)
+      ) {
+        setShowToolsDropdown(false)
+        setActiveToolPanel(null)
+
+        // Clear any pending override when modal closes without creating annotation
+        window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+          detail: { panelId: null, noteId: null }
+        }))
+      }
+    }
+
+    // Add slight delay to prevent immediate closure from the same click that opened it
+    const timer = setTimeout(() => {
+      document.addEventListener('mousedown', handleClickOutside)
+    }, 0)
+
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showToolsDropdown])
 
   // Type change state - prevents race conditions from rapid clicks
   const [isChangingType, setIsChangingType] = useState(false)
@@ -2579,20 +2614,19 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           flexShrink: 0,
         }}
       >
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
           gap: '8px',
-          flex: '0 0 auto',
+          flex: 1,
+          overflow: 'hidden',
         }}>
           {/* Lock and Close buttons - moved to left side before title */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
+          <div style={{
+            display: headerControlsActive ? 'flex' : 'none',
+            alignItems: 'center',
             gap: '6px',
-            opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
-            pointerEvents: headerControlsActive ? 'auto' : 'none'
           }}>
             {/* Lock/Unlock button */}
             <button
@@ -2724,8 +2758,59 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                   gap: '6px',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
-                  maxWidth: '300px',
+                  flex: 1,
+                  minWidth: 0,
                 }}>
+                  {/* Type Badge */}
+                  <div style={{
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: panelId === 'main' ? '16px' : '11px',
+                    fontWeight: 600,
+                    flexShrink: 0,
+                    background: panelId === 'main'
+                      ? 'linear-gradient(135deg, #5ca9ff, #3f7fff)'
+                      : currentBranch.type === 'note'
+                      ? 'rgba(85, 163, 255, 0.12)'
+                      : currentBranch.type === 'explore'
+                      ? 'rgba(255, 140, 50, 0.12)'
+                      : currentBranch.type === 'promote'
+                      ? 'rgba(50, 200, 80, 0.12)'
+                      : 'rgba(255, 255, 255, 0.1)',
+                    color: panelId === 'main'
+                      ? '#ffffff'
+                      : currentBranch.type === 'note'
+                      ? '#3f7fff'
+                      : currentBranch.type === 'explore'
+                      ? '#e07500'
+                      : currentBranch.type === 'promote'
+                      ? '#2a9d4a'
+                      : '#ffffff',
+                    border: panelId === 'main'
+                      ? 'none'
+                      : currentBranch.type === 'note'
+                      ? '1px solid rgba(85, 163, 255, 0.4)'
+                      : currentBranch.type === 'explore'
+                      ? '1px solid rgba(255, 140, 50, 0.4)'
+                      : currentBranch.type === 'promote'
+                      ? '1px solid rgba(50, 200, 80, 0.4)'
+                      : '1px solid rgba(255, 255, 255, 0.2)',
+                  }}>
+                    {panelId === 'main'
+                      ? '●'
+                      : currentBranch.type === 'note'
+                      ? 'N'
+                      : currentBranch.type === 'explore'
+                      ? 'E'
+                      : currentBranch.type === 'promote'
+                      ? 'P'
+                      : '?'}
+                  </div>
+
                   <span style={{
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -2784,15 +2869,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         {/* Right side buttons */}
         <div
           style={{
-            display: 'flex',
+            display: headerControlsActive ? 'flex' : 'none',
             alignItems: 'center',
             gap: '8px',
-            opacity: headerControlsActive ? 1 : 0,
             transition: 'opacity 0.2s ease',
-            pointerEvents: headerControlsActive ? 'auto' : 'none',
             position: 'relative',
             justifyContent: 'flex-end',
-            flex: (currentBranch.type === 'main' || headerControlsActive) ? '1 1 auto' : '0 1 auto',
             marginLeft: 'auto'
           }}
         >
@@ -2872,8 +2954,19 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
 
           {/* Tools button */}
           <button
+              ref={toolsButtonRef}
               onClick={(e) => {
                 e.stopPropagation()
+
+                // Calculate button position for dropdown placement
+                if (toolsButtonRef.current) {
+                  const rect = toolsButtonRef.current.getBoundingClientRect()
+                  setToolsButtonPosition({
+                    top: rect.bottom + 8, // 8px below button
+                    left: rect.left + (rect.width / 2), // Center of button
+                  })
+                }
+
                 setShowToolsDropdown(!showToolsDropdown)
               }}
               style={{
@@ -3326,24 +3419,22 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
               right: 0,
               bottom: 0,
               zIndex: 9999,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(0, 0, 0, 0.5)',
-            }}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setShowToolsDropdown(false)
-                setActiveToolPanel(null)
-
-                // Clear any pending override when modal closes without creating annotation
-                window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                  detail: { panelId: null, noteId: null }
-                }))
-              }
+              pointerEvents: 'none', // Transparent overlay - clicks pass through to canvas
             }}
           >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div
+              ref={toolsDropdownRef}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                position: 'fixed',
+                top: toolsButtonPosition ? `${toolsButtonPosition.top}px` : '50%',
+                left: toolsButtonPosition ? `${toolsButtonPosition.left}px` : '50%',
+                transform: 'translateX(-50%)', // Center horizontally relative to button
+                pointerEvents: 'auto', // Re-enable pointer events for dropdown content
+              }}
+            >
               {/* Tool Categories */}
               <div
                 style={{

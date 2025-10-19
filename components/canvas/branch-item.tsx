@@ -179,16 +179,55 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     // Only show preview if panel doesn't already exist
     const panelExists = document.querySelector(`[data-panel-id="${branchId}"]`)
     if (!panelExists) {
+      // Capture the target element before setTimeout (React reuses events)
+      const target = e.currentTarget as HTMLElement
+      const branchItem = target.closest('[style*="background"]') as HTMLElement
+
       // Show preview after short delay
       previewTimeoutRef.current = setTimeout(() => {
         setIsPreview(true)
+
+        let previewPosition = { x: 150, y: 150 } // Default fallback
+
+        if (branchItem) {
+          // Get the branch item's bounding rect
+          const itemRect = branchItem.getBoundingClientRect()
+
+          // Try to find a parent popup/panel container
+          const popupContainer = branchItem.closest('[style*="position: fixed"]') as HTMLElement
+
+          if (popupContainer) {
+            const popupRect = popupContainer.getBoundingClientRect()
+            const viewportWidth = window.innerWidth
+            const panelWidth = 520 // Panel width including padding
+            const gap = 20
+
+            // Check if there's space on the right side of the popup
+            const spaceOnRight = viewportWidth - (popupRect.right + gap + panelWidth)
+
+            if (spaceOnRight > 50) {
+              // Position on the right side of popup, aligned with the branch item
+              previewPosition = {
+                x: popupRect.right + gap,
+                y: itemRect.top - 20 // Slight offset above the item
+              }
+            } else {
+              // Position on the left side of popup, aligned with the branch item
+              previewPosition = {
+                x: popupRect.left - panelWidth - gap,
+                y: itemRect.top - 20
+              }
+            }
+          }
+        }
 
         // Dispatch event to create temporary preview panel
         window.dispatchEvent(new CustomEvent('preview-panel', {
           detail: {
             panelId: branchId,
             parentPanelId: parentId,
-            isPreview: true
+            isPreview: true,
+            previewPosition: previewPosition  // Pass viewport-relative position
           },
           bubbles: true
         }))
