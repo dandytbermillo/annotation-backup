@@ -6,6 +6,8 @@ import { useCanvas } from "./canvas-context"
 import { CanvasItem, isPanel } from "@/types/canvas-items"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 interface WidgetStudioConnectionsProps {
   canvasItems: CanvasItem[]
@@ -36,7 +38,7 @@ const PANEL_DEFAULT_HEIGHT = 600
  * - Hover effects
  */
 export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: WidgetStudioConnectionsProps) {
-  const { dataStore } = useCanvas()
+  const { dataStore, noteId } = useCanvas()
   const isPlainMode = isPlainModeActive()
 
   // Force recomputation when the plain data store mutates while the reference stays stable.
@@ -78,40 +80,145 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
 
   const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])
 
-  const branches = useMemo(() => {
-    return (isPlainMode
-      ? dataStore
-      : UnifiedProvider.getInstance().getBranchesMap()) as {
-      get: (key: string) => any
+  // Helper to get branch data using the correct noteId
+  const getBranchData = useMemo(() => {
+    return (panelId: string, panelNoteId?: string) => {
+      if (isPlainMode) {
+        // Use the panel's noteId if available, otherwise fallback to canvas noteId
+        const effectiveNoteId = panelNoteId || noteId || ''
+        const compositeKey = ensurePanelKey(effectiveNoteId, panelId)
+        return dataStore.get(compositeKey)
+      } else {
+        const branchesMap = UnifiedProvider.getInstance().getBranchesMap()
+        const effectiveNoteId = panelNoteId || noteId || ''
+        const compositeKey = ensurePanelKey(effectiveNoteId, panelId)
+        return branchesMap.get(compositeKey) || dataStore.get(compositeKey)
+      }
     }
-  }, [dataStore, isPlainMode])
+  }, [dataStore, isPlainMode, noteId])
 
   const connections: Connection[] = useMemo(() => {
+    debugLog({
+      component: 'WidgetStudioConnections',
+      action: 'recompute_connections_start',
+      metadata: {
+        panelsCount: panels.length,
+        noteId: noteId || 'NO_NOTE_ID',
+        branchVersion,
+        dataStoreVersion
+      },
+      content_preview: `Recomputing connections for ${panels.length} panels`
+    })
+
     if (panels.length === 0) {
       return []
     }
 
+    // Use composite keys to avoid collisions when multiple notes have panels with same panelId
     const panelMap = new Map<string, CanvasItem>()
     panels.forEach((panel) => {
       if (panel.panelId) {
-        panelMap.set(panel.panelId, panel)
+        const key = panel.storeKey || ensurePanelKey(panel.noteId || noteId || '', panel.panelId)
+        panelMap.set(key, panel)
       }
+    })
+
+    debugLog({
+      component: 'WidgetStudioConnections',
+      action: 'panelMap_built',
+      metadata: {
+        panelMapSize: panelMap.size,
+        panelMapKeys: Array.from(panelMap.keys()),
+        panelDetails: Array.from(panelMap.entries()).map(([key, panel]) => ({
+          key,
+          panelId: panel.panelId,
+          noteId: panel.noteId,
+          hasPosition: !!panel.position
+        }))
+      },
+      content_preview: `Built panelMap with ${panelMap.size} entries`
     })
 
     const seen = new Set<string>()
     const result: Connection[] = []
 
-    const addConnection = (parentId: string, childId: string) => {
+    const addConnection = (parentId: string, childId: string, childNoteId: string) => {
       const key = `${parentId}::${childId}`
-      if (seen.has(key)) return
 
-      const parentPanel = panelMap.get(parentId)
-      const childPanel = panelMap.get(childId)
-      if (!parentPanel || !childPanel) return
+      debugLog({
+        component: 'WidgetStudioConnections',
+        action: 'addConnection_start',
+        metadata: {
+          parentId,
+          childId,
+          childNoteId,
+          connectionKey: key,
+          alreadySeen: seen.has(key)
+        },
+        content_preview: `Attempting connection: ${parentId} → ${childId}`
+      })
 
-      const parentBranch = branches.get(parentId)
-      const childBranch = branches.get(childId)
-      if (!parentBranch || !childBranch) return
+      if (seen.has(key)) {
+        debugLog({
+          component: 'WidgetStudioConnections',
+          action: 'addConnection_skipped_duplicate',
+          metadata: { key },
+          content_preview: `Connection ${key} already exists`
+        })
+        return
+      }
+
+      // Use composite keys for panel lookup to avoid confusion across different notes
+      const parentKey = ensurePanelKey(childNoteId, parentId)
+      const childKey = ensurePanelKey(childNoteId, childId)
+
+      debugLog({
+        component: 'WidgetStudioConnections',
+        action: 'panel_lookup',
+        metadata: {
+          parentKey,
+          childKey,
+          panelMapSize: panelMap.size,
+          panelMapKeys: Array.from(panelMap.keys())
+        },
+        content_preview: `Looking up panels: parent=${parentKey}, child=${childKey}`
+      })
+
+      const parentPanel = panelMap.get(parentKey)
+      const childPanel = panelMap.get(childKey)
+
+      if (!parentPanel || !childPanel) {
+        debugLog({
+          component: 'WidgetStudioConnections',
+          action: 'addConnection_failed_panel_not_found',
+          metadata: {
+            parentKey,
+            childKey,
+            hasParentPanel: !!parentPanel,
+            hasChildPanel: !!childPanel
+          },
+          content_preview: `Panel not found: parent=${!!parentPanel}, child=${!!childPanel}`
+        })
+        return
+      }
+
+      const parentBranch = getBranchData(parentId, childNoteId)
+      const childBranch = getBranchData(childId, childNoteId)
+
+      if (!parentBranch || !childBranch) {
+        debugLog({
+          component: 'WidgetStudioConnections',
+          action: 'addConnection_failed_branch_not_found',
+          metadata: {
+            parentId,
+            childId,
+            hasParentBranch: !!parentBranch,
+            hasChildBranch: !!childBranch
+          },
+          content_preview: `Branch not found: parent=${!!parentBranch}, child=${!!childBranch}`
+        })
+        return
+      }
 
       const parentPos =
         parentPanel.position ??
@@ -145,28 +252,75 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
         label: undefined,
       })
       seen.add(key)
+
+      debugLog({
+        component: 'WidgetStudioConnections',
+        action: 'addConnection_success',
+        metadata: {
+          connectionKey: key,
+          from,
+          to,
+          type: normalizeType(childBranch.type)
+        },
+        content_preview: `Connection created: ${parentId} → ${childId}`
+      })
     }
 
     panels.forEach((panel) => {
       const panelId = panel.panelId
       if (!panelId) return
 
-      const branch = branches.get(panelId)
+      debugLog({
+        component: 'WidgetStudioConnections',
+        action: 'processing_panel',
+        metadata: {
+          panelId,
+          noteId: panel.noteId,
+          storeKey: panel.storeKey,
+          hasPosition: !!panel.position
+        },
+        content_preview: `Processing panel: ${panelId}`
+      })
+
+      const branch = getBranchData(panelId, panel.noteId)
       if (!branch) {
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] branch not found", { panelId })
-        }
+        debugLog({
+          component: 'WidgetStudioConnections',
+          action: 'panel_branch_not_found',
+          metadata: {
+            panelId,
+            noteId: panel.noteId,
+            compositeKey: ensurePanelKey(panel.noteId || noteId || '', panelId)
+          },
+          content_preview: `Branch data not found for panel: ${panelId}`
+        })
         return
       }
 
-      if (branch.parentId) {
-        addConnection(branch.parentId, panelId)
-      } else if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.debug("[WidgetStudioConnections] branch missing parentId", {
+      debugLog({
+        component: 'WidgetStudioConnections',
+        action: 'panel_branch_found',
+        metadata: {
           panelId,
-          branchSnapshot: { ...branch },
+          parentId: branch.parentId,
+          branchType: branch.type,
+          hasBranches: Array.isArray(branch.branches),
+          branchesCount: Array.isArray(branch.branches) ? branch.branches.length : 0
+        },
+        content_preview: `Branch found for ${panelId}: parent=${branch.parentId || 'NONE'}, type=${branch.type}`
+      })
+
+      if (branch.parentId) {
+        addConnection(branch.parentId, panelId, panel.noteId || noteId || '')
+      } else {
+        debugLog({
+          component: 'WidgetStudioConnections',
+          action: 'panel_no_parent',
+          metadata: {
+            panelId,
+            branchSnapshot: { ...branch }
+          },
+          content_preview: `Panel ${panelId} has no parentId`
         })
       }
 
@@ -174,13 +328,13 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
         const candidateId = maybeParent.panelId
         if (!candidateId || candidateId === panelId) return
 
-        const candidateBranch = branches.get(candidateId)
+        const candidateBranch = getBranchData(candidateId, maybeParent.noteId)
         const childIds = Array.isArray(candidateBranch?.branches)
           ? (candidateBranch.branches as string[])
           : []
 
         if (childIds.includes(panelId)) {
-          addConnection(candidateId, panelId)
+          addConnection(candidateId, panelId, panel.noteId || noteId || '')
         } else if (
           process.env.NODE_ENV !== "production" &&
           childIds.length > 0
@@ -196,22 +350,26 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
       })
     })
 
-    if (process.env.NODE_ENV !== "production") {
-      // Aid debugging in dev builds: surface connection recomputations.
-      // eslint-disable-next-line no-console
-      console.debug(
-        "[WidgetStudioConnections] recomputed connections",
-        {
-          count: result.length,
-          panels: panels.length,
-          branchVersion,
-          dataStoreVersion,
-        },
-      )
-    }
+    debugLog({
+      component: 'WidgetStudioConnections',
+      action: 'recompute_connections_complete',
+      metadata: {
+        connectionsCount: result.length,
+        panelsCount: panels.length,
+        branchVersion,
+        dataStoreVersion,
+        connectionDetails: result.map(conn => ({
+          id: conn.id,
+          type: conn.type,
+          from: conn.from,
+          to: conn.to
+        }))
+      },
+      content_preview: `Created ${result.length} connections from ${panels.length} panels`
+    })
 
     return result
-  }, [branches, panels, branchVersion, dataStoreVersion])
+  }, [getBranchData, panels, branchVersion, dataStoreVersion])
 
   return (
     <svg

@@ -3,6 +3,7 @@
 import { useCanvas } from "./canvas-context"
 import { useEffect, useRef } from "react"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 export function ConnectionsSvg() {
   const { state, dataStore, noteId } = useCanvas()
@@ -10,6 +11,17 @@ export function ConnectionsSvg() {
 
   useEffect(() => {
     if (!state.canvasState.showConnections || !svgRef.current) return
+
+    debugLog({
+      component: 'ConnectionsSvg',
+      action: 'draw_connections_start',
+      metadata: {
+        noteId: noteId || '',
+        panelsCount: state.panels.size,
+        showConnections: state.canvasState.showConnections
+      },
+      content_preview: `Drawing connections for ${state.panels.size} panels`
+    })
 
     // Clear existing paths
     const svg = svgRef.current
@@ -20,9 +32,49 @@ export function ConnectionsSvg() {
     state.panels.forEach((panel) => {
       const branchStoreKey = ensurePanelKey(noteId || '', panel.branchId)
       const branch = dataStore.get(branchStoreKey)
+
+      debugLog({
+        component: 'ConnectionsSvg',
+        action: 'check_panel',
+        metadata: {
+          noteId: noteId || '',
+          panelBranchId: panel.branchId,
+          branchStoreKey,
+          hasBranchData: !!branch,
+          branchParentId: branch?.parentId || 'NO_PARENT',
+          branchType: branch?.type || 'NO_TYPE'
+        },
+        content_preview: `Panel ${panel.branchId}: parent=${branch?.parentId || 'NONE'}`
+      })
+
       if (branch && branch.parentId) {
         const parentPanel = state.panels.get(branch.parentId)
+
+        debugLog({
+          component: 'ConnectionsSvg',
+          action: 'check_parent_panel',
+          metadata: {
+            noteId: noteId || '',
+            branchId: panel.branchId,
+            parentId: branch.parentId,
+            hasParentPanel: !!parentPanel,
+            allPanelIds: Array.from(state.panels.keys())
+          },
+          content_preview: `Parent panel ${branch.parentId} ${parentPanel ? 'FOUND' : 'NOT_FOUND'}`
+        })
+
         if (parentPanel) {
+          debugLog({
+            component: 'ConnectionsSvg',
+            action: 'draw_connection',
+            metadata: {
+              noteId: noteId || '',
+              fromId: branch.parentId,
+              toId: panel.branchId,
+              type: branch.type
+            },
+            content_preview: `Drawing: ${branch.parentId} → ${panel.branchId}`
+          })
           drawConnection(panel.branchId, branch.parentId, branch.type)
         }
       }

@@ -74,7 +74,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     return icons[type as keyof typeof icons] || "📝"
   }
 
-  const handleClick = () => {
+  const handleClick = async () => {
     console.log(`BranchItem clicked: ${branchId}`)
 
     // Require dispatch and state for panel operations
@@ -100,38 +100,223 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
 
     console.log(`Creating new panel for branch ${branchId}`)
 
-    // Calculate position for new panel
-    const parentStoreKey = ensurePanelKey(noteId, parentId)
-    const parentBranch = branchesMap.get(parentStoreKey) || dataStore.get(parentStoreKey)
-    if (!parentBranch) {
-      console.error(`Parent branch ${parentId} not found`)
-      return
+    // Ensure branch data exists in dataStore (load from DB if needed)
+    const existingBranchData = dataStore.get(branchStoreKey)
+    if (!existingBranchData) {
+      debugLog({
+        component: 'BranchItem',
+        action: 'loading_missing_branch_data',
+        metadata: {
+          branchId,
+          noteId,
+          branchStoreKey
+        },
+        content_preview: `Branch data not in dataStore, loading from database`
+      })
+
+      try {
+        // Fetch branch data from database
+        const response = await fetch(`/api/postgres-offline/branches?noteId=${noteId}`)
+        if (response.ok) {
+          const branches = await response.json()
+          // Find our branch in the array
+          if (Array.isArray(branches)) {
+            const branchData = branches.find((b: any) => b.id === branchId)
+            if (branchData) {
+              // Add to dataStore with composite key
+              dataStore.set(branchStoreKey, branchData)
+              debugLog({
+                component: 'BranchItem',
+                action: 'branch_data_loaded',
+                metadata: {
+                  branchId,
+                  noteId,
+                  branchStoreKey,
+                  parentId: branchData.parentId,
+                  type: branchData.type
+                },
+                content_preview: `Loaded branch data from database`
+              })
+            } else {
+              debugLog({
+                component: 'BranchItem',
+                action: 'branch_not_found_in_api',
+                metadata: {
+                  branchId,
+                  noteId,
+                  branchesCount: branches.length,
+                  branchIds: branches.map((b: any) => b.id)
+                },
+                content_preview: `Branch ${branchId} not found in API response`
+              })
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[BranchItem] Failed to load branch data:', error)
+        debugLog({
+          component: 'BranchItem',
+          action: 'branch_data_load_failed',
+          metadata: {
+            branchId,
+            noteId,
+            error: String(error)
+          },
+          content_preview: `Failed to load branch data`
+        })
+      }
     }
 
-    // Get sibling count based on mode
-    let siblingCount
-    if (isPlainMode) {
-      const parent = dataStore.get(parentStoreKey)
-      const siblings = parent?.branches || []
-      siblingCount = siblings.length
-    } else {
-      // Use provider API to get the accurate sibling count
-      const provider = UnifiedProvider.getInstance()
-      const allSiblings = provider.getBranches(parentId)
-      siblingCount = allSiblings.length
+    // Calculate smart position based on parent panel's actual DOM position
+    const calculateSmartPosition = () => {
+      // Panels use data-store-key attribute with composite key format: "noteId::panelId"
+      const parentStoreKey = ensurePanelKey(noteId, parentId)
+      const currentPanel = document.querySelector(`[data-store-key="${parentStoreKey}"]`) as HTMLElement
+      let targetPosition = { x: 2000, y: 1500 } // Default fallback
+
+      debugLog({
+        component: 'BranchItem',
+        action: 'smart_position_start',
+        metadata: {
+          branchId,
+          parentId,
+          noteId,
+          parentStoreKey,
+          panelFound: !!currentPanel,
+          availablePanels: Array.from(document.querySelectorAll('[data-store-key]')).map(el => el.getAttribute('data-store-key'))
+        },
+        content_preview: `Looking for parent panel: ${parentStoreKey}`
+      })
+
+      if (!currentPanel) {
+        console.warn(`[BranchItem] Parent panel ${parentId} not found in DOM`)
+        debugLog({
+          component: 'BranchItem',
+          action: 'smart_position_fallback',
+          metadata: {
+            branchId,
+            parentId,
+            noteId,
+            fallbackPosition: targetPosition
+          },
+          content_preview: `Parent panel not found, using fallback`
+        })
+        return targetPosition
+      }
+
+      const style = window.getComputedStyle(currentPanel)
+      const rect = currentPanel.getBoundingClientRect()
+
+      // Panels use absolute positioning with left/top
+      const currentX = parseFloat(style.left) || 0
+      const currentY = parseFloat(style.top) || 0
+      const panelWidth = rect.width || 800
+      const gap = 50
+
+      debugLog({
+        component: 'BranchItem',
+        action: 'smart_position_parent_found',
+        metadata: {
+          branchId,
+          parentId,
+          noteId,
+          left: style.left,
+          top: style.top,
+          currentX,
+          currentY,
+          panelWidth,
+          rectWidth: rect.width,
+          rectHeight: rect.height
+        },
+        content_preview: `Parent panel at x=${currentX}, y=${currentY}`
+      })
+
+      if (currentX || currentY) {
+        // Check for occupied space on left and right
+        const allPanels = document.querySelectorAll('[data-store-key]')
+        let rightOccupied = false
+        let leftOccupied = false
+
+        allPanels.forEach((panel) => {
+          if (panel === currentPanel) return
+
+          const panelStyle = window.getComputedStyle(panel)
+          const panelX = parseFloat(panelStyle.left) || 0
+
+          // Check if space on right is occupied
+          if (panelX > currentX + panelWidth &&
+              panelX < currentX + panelWidth + gap + 100) {
+            rightOccupied = true
+          }
+
+          // Check if space on left is occupied
+          if (panelX < currentX - gap &&
+              panelX > currentX - panelWidth - gap - 100) {
+            leftOccupied = true
+          }
+        })
+
+        let placeOnLeft = false
+
+        if (!rightOccupied && !leftOccupied) {
+          // Prefer right side by default
+          // Only use left if panel is already far to the right
+          placeOnLeft = currentX > 2500
+        } else if (rightOccupied && !leftOccupied) {
+          placeOnLeft = true
+        } else if (!rightOccupied && leftOccupied) {
+          placeOnLeft = false
+        } else {
+          // Both sides occupied, place below
+          placeOnLeft = false
+          targetPosition.y = currentY + 100
+        }
+
+        targetPosition = {
+          x: placeOnLeft
+            ? currentX - panelWidth - gap
+            : currentX + panelWidth + gap,
+          y: targetPosition.y || currentY
+        }
+      }
+
+      debugLog({
+        component: 'BranchItem',
+        action: 'smart_position_result',
+        metadata: {
+          branchId,
+          parentId,
+          noteId,
+          calculatedPosition: targetPosition
+        },
+        content_preview: `Calculated position: x=${targetPosition.x}, y=${targetPosition.y}`
+      })
+
+      return targetPosition
     }
 
-    const targetX = parentBranch.position.x + 900 // PANEL_SPACING_X
-    const targetY = parentBranch.position.y + siblingCount * 650 // PANEL_SPACING_Y
+    const smartPosition = calculateSmartPosition()
+
+    debugLog({
+      component: 'BranchItem',
+      action: 'smart_position_final',
+      metadata: {
+        branchId,
+        parentId,
+        noteId,
+        finalPosition: smartPosition
+      },
+      content_preview: `Final position for ${branchId}: x=${smartPosition.x}, y=${smartPosition.y}`
+    })
 
     // Update position in both stores
     dataStore.update(branchStoreKey, {
-      position: { x: targetX, y: targetY },
+      position: smartPosition,
     })
 
     const branchData = branchesMap.get(branchStoreKey)
     if (branchData) {
-      branchData.position = { x: targetX, y: targetY }
+      branchData.position = smartPosition
       branchesMap.set(branchStoreKey, branchData)
     }
 
