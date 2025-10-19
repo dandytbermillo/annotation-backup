@@ -35,7 +35,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   const [previewPopover, setPreviewPopover] = useState<{
     position: { x: number; y: number }
     content: string
-    status: 'loading' | 'ready'
+    status: 'loading' | 'ready' | 'error'
   } | null>(null)
   const previewTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
@@ -190,7 +190,7 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       const target = e.currentTarget as HTMLElement
 
       // Show preview after short delay
-      previewTimeoutRef.current = setTimeout(() => {
+      previewTimeoutRef.current = setTimeout(async () => {
         let previewPosition = { x: 150, y: 150 } // Default fallback
 
         // Find the branches panel container (the purple gradient panel)
@@ -221,15 +221,115 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
           }
         }
 
-        // Get branch content for preview
-        const previewContent = buildMultilinePreview(branch.content, branch.originalText || '', 5000)
-
-        // Show preview popover
+        // Show loading state
         setPreviewPopover({
           position: previewPosition,
-          content: previewContent || 'No content yet',
-          status: 'ready'
+          content: 'Loading...',
+          status: 'loading'
         })
+
+        // Fetch actual branch content from document_saves
+        try {
+          const response = await fetch(`/api/postgres-offline/documents/${noteId}/${branchId}`)
+
+          debugLog({
+            component: 'BranchItem',
+            action: 'preview_fetch_response',
+            metadata: {
+              branchId,
+              noteId,
+              status: response.status,
+              ok: response.ok
+            },
+            content_preview: `API response: ${response.status} ${response.ok ? 'OK' : 'ERROR'}`
+          })
+
+          if (!response.ok) {
+            // If not found, extract text from branch.content (don't use originalText as fallback!)
+            if (response.status === 404) {
+              debugLog({
+                component: 'BranchItem',
+                action: 'preview_using_branch_content',
+                metadata: {
+                  branchId,
+                  noteId,
+                  hasBranchContent: !!branch.content,
+                  branchContentType: typeof branch.content,
+                  branchContentSample: JSON.stringify(branch.content)?.substring(0, 200) || 'undefined'
+                },
+                content_preview: `404 - Using branch.content`
+              })
+
+              const fallbackContent = buildMultilinePreview(branch.content, '', Number.MAX_SAFE_INTEGER)
+
+              debugLog({
+                component: 'BranchItem',
+                action: 'preview_extracted_fallback',
+                metadata: {
+                  branchId,
+                  noteId,
+                  extractedLength: fallbackContent?.length || 0,
+                  extractedSample: fallbackContent?.substring(0, 200)
+                },
+                content_preview: `Extracted: ${fallbackContent?.substring(0, 100) || 'EMPTY'}`
+              })
+
+              setPreviewPopover({
+                position: previewPosition,
+                content: fallbackContent || 'No content yet',
+                status: 'ready'
+              })
+              return
+            }
+            throw new Error('Failed to fetch content')
+          }
+
+          const data = await response.json()
+          let content = data?.content
+
+          debugLog({
+            component: 'BranchItem',
+            action: 'preview_api_content',
+            metadata: {
+              branchId,
+              noteId,
+              hasContent: !!content,
+              contentType: typeof content,
+              contentSample: JSON.stringify(content)?.substring(0, 200) || 'undefined'
+            },
+            content_preview: `API content type: ${typeof content}`
+          })
+
+          // Extract text from content - always use buildMultilinePreview to handle all formats
+          const previewText = buildMultilinePreview(content, '', Number.MAX_SAFE_INTEGER)
+
+          debugLog({
+            component: 'BranchItem',
+            action: 'preview_extracted_text',
+            metadata: {
+              branchId,
+              noteId,
+              extractedLength: previewText?.length || 0,
+              extractedSample: previewText?.substring(0, 200)
+            },
+            content_preview: `Extracted: ${previewText?.substring(0, 100) || 'EMPTY'}`
+          })
+
+          setPreviewPopover({
+            position: previewPosition,
+            content: previewText || 'No content yet',
+            status: 'ready'
+          })
+        } catch (error) {
+          console.error('[BranchItem] Failed to fetch preview:', error)
+          // Fallback to extracting from branch.content (don't use originalText!)
+          const fallbackContent = buildMultilinePreview(branch.content, '', Number.MAX_SAFE_INTEGER)
+          setPreviewPopover({
+            position: previewPosition,
+            content: fallbackContent || 'Failed to load preview',
+            status: 'error'
+          })
+        }
       }, 300) // 300ms delay
     }
   }
