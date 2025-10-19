@@ -1820,7 +1820,11 @@ const mainPanelSeededRef = useRef(false)
         }
 
         if (parentPosition) {
-          panelData.position = parentPosition
+          // Convert screen coordinates to world coordinates (especially important for preview panels)
+          const camera = { x: canvasState.translateX, y: canvasState.translateY }
+          const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+
+          panelData.position = worldPosition
           yjsBranches.set(newPanelStoreKey, panelData)
         }
       }
@@ -1845,9 +1849,18 @@ const mainPanelSeededRef = useRef(false)
         panelType === 'explore' ? 'context' :
         panelType === 'promote' ? 'annotation' : 'branch'
 
-      // For preview panels, always use the provided position (don't use stored position)
+      // For preview panels from dropdown, the parentPosition is already in screen coordinates
+      // We DON'T need to convert since the dropdown is fixed and preview should appear adjacent to it
+      // Panels are rendered with position:absolute inside the canvas, so we use screen coords directly
       const position = isPreview && parentPosition
-        ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
+        ? (() => {
+            console.log('[AnnotationCanvas] Using preview screen position directly:', {
+              isPreview,
+              position: parentPosition,
+              note: 'Screen coordinates from fixed dropdown'
+            })
+            return parentPosition  // Already screen coordinates, no conversion needed
+          })()
         : (branchData?.position || branchData?.worldPosition)
           ? (branchData.position || branchData.worldPosition)
           : parentPosition
@@ -1990,10 +2003,18 @@ const mainPanelSeededRef = useRef(false)
     }
     
     const handlePreviewPanelEvent = (event: CustomEvent) => {
+      console.log('[AnnotationCanvas] Received preview-panel event:', event.detail)
+
       if (event.detail?.panelId) {
         // Create a temporary preview panel
         // Use previewPosition if provided (viewport-relative), otherwise use parentPosition
         const position = event.detail.previewPosition || event.detail.parentPosition
+
+        console.log('[AnnotationCanvas] Creating preview panel:', {
+          panelId: event.detail.panelId,
+          position,
+          isPreview: true
+        })
 
         handleCreatePanel(
           event.detail.panelId,

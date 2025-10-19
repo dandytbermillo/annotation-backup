@@ -1,13 +1,16 @@
 "use client"
 
 import { useState, useRef } from "react"
+import { createPortal } from "react-dom"
 import { useCanvas } from "./canvas-context"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { getPlainProvider } from "@/lib/provider-switcher"
-import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import { buildBranchPreview, buildMultilinePreview } from "@/lib/utils/branch-preview"
 import type { CanvasState } from "@/types/canvas"
 import type { DataStore } from "@/lib/data-store"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { debugLog } from "@/lib/utils/debug-logger"
+import { PreviewPopover } from "@/components/shared/preview-popover"
 
 interface BranchItemProps {
   branchId: string
@@ -28,8 +31,12 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
   const state = propState || canvasContext?.state
   const noteId = propNoteId || canvasContext?.noteId || ''
 
-  // State for preview functionality
-  const [isPreview, setIsPreview] = useState(false)
+  // State for preview popover
+  const [previewPopover, setPreviewPopover] = useState<{
+    position: { x: number; y: number }
+    content: string
+    status: 'loading' | 'ready'
+  } | null>(null)
   const previewTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
   // State for rename functionality
@@ -164,8 +171,8 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     if (previewTimeoutRef.current) {
       clearTimeout(previewTimeoutRef.current)
     }
-    // Clear preview state since we're opening permanently
-    setIsPreview(false)
+    // Clear preview popover since we're opening permanently
+    setPreviewPopover(null)
     // Click opens the panel permanently
     handleClick()
   }
@@ -181,56 +188,48 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     if (!panelExists) {
       // Capture the target element before setTimeout (React reuses events)
       const target = e.currentTarget as HTMLElement
-      const branchItem = target.closest('[style*="background"]') as HTMLElement
 
       // Show preview after short delay
       previewTimeoutRef.current = setTimeout(() => {
-        setIsPreview(true)
-
         let previewPosition = { x: 150, y: 150 } // Default fallback
 
-        if (branchItem) {
-          // Get the branch item's bounding rect
-          const itemRect = branchItem.getBoundingClientRect()
+        // Find the branches panel container (the purple gradient panel)
+        const branchItemContainer = target.closest('[style*="background"]') as HTMLElement
+        const branchesPanel = branchItemContainer?.closest('[data-branches-panel="true"]') as HTMLElement
 
-          // Try to find a parent popup/panel container
-          const popupContainer = branchItem.closest('[style*="position: fixed"]') as HTMLElement
+        if (branchesPanel) {
+          const panelRect = branchesPanel.getBoundingClientRect()
+          const itemRect = branchItemContainer?.getBoundingClientRect()
+          const viewportWidth = window.innerWidth
+          const popoverWidth = 360 // PreviewPopover width
+          const gap = 15
 
-          if (popupContainer) {
-            const popupRect = popupContainer.getBoundingClientRect()
-            const viewportWidth = window.innerWidth
-            const panelWidth = 520 // Panel width including padding
-            const gap = 20
+          // Use the branch item's vertical position for better alignment
+          const yPosition = itemRect ? itemRect.top : panelRect.top
 
-            // Check if there's space on the right side of the popup
-            const spaceOnRight = viewportWidth - (popupRect.right + gap + panelWidth)
+          // Check available space on both sides
+          const spaceOnRight = viewportWidth - (panelRect.right + gap + popoverWidth)
+          const spaceOnLeft = panelRect.left - popoverWidth - gap
 
-            if (spaceOnRight > 50) {
-              // Position on the right side of popup, aligned with the branch item
-              previewPosition = {
-                x: popupRect.right + gap,
-                y: itemRect.top - 20 // Slight offset above the item
-              }
-            } else {
-              // Position on the left side of popup, aligned with the branch item
-              previewPosition = {
-                x: popupRect.left - panelWidth - gap,
-                y: itemRect.top - 20
-              }
-            }
+          // Choose position: prefer right, but ensure it's on-screen
+          if (spaceOnRight > 0) {
+            previewPosition = { x: panelRect.right + gap, y: yPosition }
+          } else if (spaceOnLeft > 0) {
+            previewPosition = { x: panelRect.left - popoverWidth - gap, y: yPosition }
+          } else {
+            previewPosition = { x: (viewportWidth - popoverWidth) / 2, y: yPosition }
           }
         }
 
-        // Dispatch event to create temporary preview panel
-        window.dispatchEvent(new CustomEvent('preview-panel', {
-          detail: {
-            panelId: branchId,
-            parentPanelId: parentId,
-            isPreview: true,
-            previewPosition: previewPosition  // Pass viewport-relative position
-          },
-          bubbles: true
-        }))
+        // Get branch content for preview
+        const previewContent = buildMultilinePreview(branch.content, branch.originalText || '', 5000)
+
+        // Show preview popover
+        setPreviewPopover({
+          position: previewPosition,
+          content: previewContent || 'No content yet',
+          status: 'ready'
+        })
       }, 300) // 300ms delay
     }
   }
@@ -241,15 +240,22 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     if (previewTimeoutRef.current) {
       clearTimeout(previewTimeoutRef.current)
     }
-    // Only remove preview if it's actually a preview (not permanent)
-    if (isPreview) {
-      setIsPreview(false)
-      // Dispatch event to remove preview panel
-      window.dispatchEvent(new CustomEvent('remove-preview-panel', {
-        detail: { panelId: branchId },
-        bubbles: true
-      }))
+    // Hide preview popover after short delay
+    previewTimeoutRef.current = setTimeout(() => {
+      setPreviewPopover(null)
+    }, 300)
+  }
+
+  const handlePreviewMouseEnter = () => {
+    // Cancel hide timeout when hovering preview
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current)
     }
+  }
+
+  const handlePreviewMouseLeave = () => {
+    // Hide preview when leaving
+    setPreviewPopover(null)
   }
 
   const borderColor = branch.type === 'note' ? '#3498db' :
@@ -395,6 +401,20 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       >
         <span style={{ fontSize: '16px' }}>👁</span>
       </button>
+
+      {/* Preview Popover - rendered as portal */}
+      {previewPopover && typeof window !== 'undefined' && createPortal(
+        <PreviewPopover
+          content={previewPopover.content}
+          status={previewPopover.status}
+          position={previewPopover.position}
+          noteId={branchId}
+          onOpenNote={() => handleClick()}
+          onMouseEnter={handlePreviewMouseEnter}
+          onMouseLeave={handlePreviewMouseLeave}
+        />,
+        document.body
+      )}
     </div>
   )
 }

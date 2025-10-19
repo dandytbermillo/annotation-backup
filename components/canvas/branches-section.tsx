@@ -105,6 +105,7 @@ Features:
 
   return (
     <div
+      data-branches-panel="true"
       style={{
         flex: "1 1 0%",
         background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",

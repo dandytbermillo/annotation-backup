@@ -3424,6 +3424,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           >
             <div
               ref={toolsDropdownRef}
+              data-panel-tools-dropdown="true"
               style={{
                 display: 'flex',
                 flexDirection: 'column',
