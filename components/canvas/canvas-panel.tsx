@@ -3335,6 +3335,11 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
               if (e.target === e.currentTarget) {
                 setShowToolsDropdown(false)
                 setActiveToolPanel(null)
+
+                // Clear any pending override when modal closes without creating annotation
+                window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                  detail: { panelId: null, noteId: null }
+                }))
               }
             }}
           >
@@ -3461,6 +3466,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                           }))
                           // Wait for the event to be processed before clicking
                           setTimeout(() => noteButton.click(), 10)
+                        } else {
+                          // Button not found, clear any pending override
+                          console.warn('[CanvasPanel] Note button not found, clearing override')
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId: null, noteId: null }
+                          }))
                         }
                         setShowToolsDropdown(false)
                         setActiveToolPanel(null)
@@ -3507,6 +3518,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                           }))
                           // Wait for the event to be processed before clicking
                           setTimeout(() => exploreButton.click(), 10)
+                        } else {
+                          // Button not found, clear any pending override
+                          console.warn('[CanvasPanel] Explore button not found, clearing override')
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId: null, noteId: null }
+                          }))
                         }
                         setShowToolsDropdown(false)
                         setActiveToolPanel(null)
@@ -3553,6 +3570,12 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                           }))
                           // Wait for the event to be processed before clicking
                           setTimeout(() => promoteButton.click(), 10)
+                        } else {
+                          // Button not found, clear any pending override
+                          console.warn('[CanvasPanel] Promote button not found, clearing override')
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId: null, noteId: null }
+                          }))
                         }
                         setShowToolsDropdown(false)
                         setActiveToolPanel(null)

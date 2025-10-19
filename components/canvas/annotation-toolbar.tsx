@@ -13,20 +13,60 @@ export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()
   const [overridePanelInfo, setOverridePanelInfo] = React.useState<{ panelId: string; noteId: string } | null>(null)
 
+  // ✅ FIX 1: Store timeout handle in ref (persists across renders)
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+
   // Listen for panel-specific annotation creation requests from Tools button
   React.useEffect(() => {
     const handleSetAnnotationPanel = (event: Event) => {
-      const customEvent = event as CustomEvent
-      const { panelId, noteId } = customEvent.detail
+      // ✅ FIX 4: Guard detail BEFORE destructuring to prevent crashes
+      const detail = (event as CustomEvent)?.detail ?? {}
+      const { panelId, noteId } = detail as Partial<{
+        panelId: string
+        noteId: string
+      }>
+
+      // ✅ FIX 3: Guard against empty/null values
+      if (!panelId || !noteId) {
+        console.log('[AnnotationToolbar] Clearing override (empty/null event)')
+        setOverridePanelInfo(null)
+        // Clear timeout if exists
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current)
+          timeoutRef.current = null
+        }
+        return
+      }
+
       console.log('[AnnotationToolbar] Received set-annotation-panel event:', { panelId, noteId })
       setOverridePanelInfo({ panelId, noteId })
 
-      // Clear the override after 5 seconds (in case button isn't clicked)
-      setTimeout(() => setOverridePanelInfo(null), 5000)
+      // ✅ FIX 1: Cancel previous timeout
+      if (timeoutRef.current) {
+        console.log('[AnnotationToolbar] Cancelling previous timeout')
+        clearTimeout(timeoutRef.current)
+      }
+
+      // ✅ FIX 1: Store new timeout handle
+      timeoutRef.current = setTimeout(() => {
+        console.log('[AnnotationToolbar] Timeout expired, clearing override')
+        setOverridePanelInfo(null)
+        timeoutRef.current = null
+      }, 5000)
     }
 
     window.addEventListener('set-annotation-panel', handleSetAnnotationPanel)
-    return () => window.removeEventListener('set-annotation-panel', handleSetAnnotationPanel)
+
+    return () => {
+      console.log('[AnnotationToolbar] Cleanup - removing listener and clearing timeout')
+      window.removeEventListener('set-annotation-panel', handleSetAnnotationPanel)
+
+      // ✅ FIX 2: Clear timeout on unmount
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
+      }
+    }
   }, [])
 
   const createAnnotation = (type: 'note' | 'explore' | 'promote') => {
