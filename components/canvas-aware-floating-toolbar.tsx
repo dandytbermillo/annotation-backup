@@ -38,7 +38,7 @@ export function CanvasAwareFloatingToolbar(
 ) {
   // Access canvas context - this hook call is safe because CanvasAwareFloatingToolbar
   // is rendered as a child of ModernAnnotationCanvas, inside <CanvasProvider>
-  const { state, dispatch, dataStore } = useCanvas()
+  const { state, dispatch, dataStore, noteId } = useCanvas()
 
   // Only render portal client-side (avoid SSR hydration mismatch)
   const [mounted, setMounted] = useState(false)
@@ -57,6 +57,7 @@ export function CanvasAwareFloatingToolbar(
       canvasState={state}
       canvasDispatch={dispatch}
       canvasDataStore={dataStore}
+      canvasNoteId={noteId}
     />,
     document.body
   )

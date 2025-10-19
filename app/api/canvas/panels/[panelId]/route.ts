@@ -20,7 +20,8 @@ const pool = new Pool({
 /**
  * DELETE /api/canvas/panels/:panelId
  *
- * Delete a specific panel by ID
+ * Delete a specific panel by panel_id (TEXT field) or UUID id
+ * Accepts optional noteId query parameter for composite key lookup
  */
 export async function DELETE(
   request: NextRequest,
@@ -30,6 +31,8 @@ export async function DELETE(
 
   try {
     const { panelId } = await params
+    const { searchParams } = new URL(request.url)
+    const noteId = searchParams.get('noteId')
 
     if (!panelId) {
       return NextResponse.json(
@@ -38,12 +41,34 @@ export async function DELETE(
       )
     }
 
-    console.log(`[Canvas Panels API] Deleting panel ${panelId}`)
+    console.log(`[Canvas Panels API] Deleting panel ${panelId}${noteId ? ` (note: ${noteId})` : ''}`)
 
-    const result = await client.query(
-      'DELETE FROM panels WHERE id = $1 RETURNING id, note_id',
-      [panelId]
-    )
+    // Try to delete by panel_id (TEXT field) first if noteId is provided
+    // Otherwise try UUID id
+    let result
+    if (noteId) {
+      // Delete by composite key (note_id, panel_id)
+      result = await client.query(
+        'DELETE FROM panels WHERE note_id = $1 AND panel_id = $2 RETURNING id, note_id, panel_id',
+        [noteId, panelId]
+      )
+    } else {
+      // Try both panel_id (TEXT) and id (UUID) for backwards compatibility
+      // First try as UUID id
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      if (uuidPattern.test(panelId)) {
+        result = await client.query(
+          'DELETE FROM panels WHERE id = $1 RETURNING id, note_id, panel_id',
+          [panelId]
+        )
+      } else {
+        // Try as panel_id (TEXT) - delete all panels with this panel_id
+        result = await client.query(
+          'DELETE FROM panels WHERE panel_id = $1 RETURNING id, note_id, panel_id',
+          [panelId]
+        )
+      }
+    }
 
     if (result.rows.length === 0) {
       return NextResponse.json(
@@ -58,7 +83,8 @@ export async function DELETE(
       success: true,
       deleted: {
         id: result.rows[0].id,
-        noteId: result.rows[0].note_id
+        noteId: result.rows[0].note_id,
+        panelId: result.rows[0].panel_id
       }
     })
   } catch (error) {

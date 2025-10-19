@@ -166,7 +166,41 @@ export async function POST(request: NextRequest) {
             )
 
             if (currentResult.rows.length === 0) {
-              // Note doesn't exist in workspace, skip
+              // Note doesn't exist in workspace, create it with UPSERT
+              // Get the next available toolbar_sequence for new notes
+              const sequenceResult = await client.query<{ max_sequence: number | null }>(
+                'SELECT MAX(toolbar_sequence) as max_sequence FROM canvas_workspace_notes WHERE is_open = TRUE'
+              )
+              const nextSequence = (sequenceResult.rows[0]?.max_sequence ?? 0) + 1
+
+              const result = await client.query(
+                `INSERT INTO canvas_workspace_notes (
+                   note_id,
+                   is_open,
+                   toolbar_sequence,
+                   is_focused,
+                   main_position_x,
+                   main_position_y,
+                   updated_at
+                 )
+                 VALUES ($1, TRUE, $2, $3, $4, $5, NOW())
+                 ON CONFLICT (note_id) DO UPDATE SET
+                   is_open = TRUE,
+                   toolbar_sequence = COALESCE(EXCLUDED.toolbar_sequence, canvas_workspace_notes.toolbar_sequence, $2),
+                   is_focused = COALESCE(EXCLUDED.is_focused, FALSE),
+                   main_position_x = COALESCE(EXCLUDED.main_position_x, canvas_workspace_notes.main_position_x),
+                   main_position_y = COALESCE(EXCLUDED.main_position_y, canvas_workspace_notes.main_position_y),
+                   updated_at = NOW()
+                 RETURNING note_id`,
+                [
+                  update.noteId,
+                  update.toolbarSequence ?? nextSequence,  // Use provided sequence or generate next
+                  update.isFocused ?? false,               // Default to FALSE if not specified
+                  update.mainPositionX,
+                  update.mainPositionY
+                ]
+              )
+              updated++
               continue
             }
 
@@ -176,6 +210,7 @@ export async function POST(request: NextRequest) {
             const result = await client.query(
               `UPDATE canvas_workspace_notes
                SET
+                 is_open = TRUE,
                  toolbar_sequence = COALESCE($2, toolbar_sequence),
                  is_focused = COALESCE($3, is_focused),
                  main_position_x = COALESCE($4, main_position_x),
@@ -199,20 +234,35 @@ export async function POST(request: NextRequest) {
               throw new Error('CONFLICT')
             }
           } else {
-            // No optimistic lock - just update
+            // No optimistic lock - use UPSERT to create or update
+            // Get the next available toolbar_sequence for new notes
+            const sequenceResult = await client.query<{ max_sequence: number | null }>(
+              'SELECT MAX(toolbar_sequence) as max_sequence FROM canvas_workspace_notes WHERE is_open = TRUE'
+            )
+            const nextSequence = (sequenceResult.rows[0]?.max_sequence ?? 0) + 1
+
             await client.query(
-              `UPDATE canvas_workspace_notes
-               SET
-                 toolbar_sequence = COALESCE($2, toolbar_sequence),
-                 is_focused = COALESCE($3, is_focused),
-                 main_position_x = COALESCE($4, main_position_x),
-                 main_position_y = COALESCE($5, main_position_y),
-                 updated_at = NOW()
-               WHERE note_id = $1`,
+              `INSERT INTO canvas_workspace_notes (
+                 note_id,
+                 is_open,
+                 toolbar_sequence,
+                 is_focused,
+                 main_position_x,
+                 main_position_y,
+                 updated_at
+               )
+               VALUES ($1, TRUE, $2, $3, $4, $5, NOW())
+               ON CONFLICT (note_id) DO UPDATE SET
+                 is_open = TRUE,
+                 toolbar_sequence = COALESCE(EXCLUDED.toolbar_sequence, canvas_workspace_notes.toolbar_sequence, $2),
+                 is_focused = COALESCE(EXCLUDED.is_focused, FALSE),
+                 main_position_x = COALESCE(EXCLUDED.main_position_x, canvas_workspace_notes.main_position_x),
+                 main_position_y = COALESCE(EXCLUDED.main_position_y, canvas_workspace_notes.main_position_y),
+                 updated_at = NOW()`,
               [
                 update.noteId,
-                update.toolbarSequence,
-                update.isFocused,
+                update.toolbarSequence ?? nextSequence,  // Use provided sequence or generate next
+                update.isFocused ?? false,               // Default to FALSE if not specified
                 update.mainPositionX,
                 update.mainPositionY
               ]

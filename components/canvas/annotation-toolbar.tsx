@@ -1,5 +1,6 @@
 "use client"
 
+import React from "react"
 import { useCanvas } from "./canvas-context"
 import { v4 as uuidv4 } from "uuid"
 import { UnifiedProvider } from "@/lib/provider-switcher"
@@ -10,14 +11,61 @@ import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()
+  const [overridePanelInfo, setOverridePanelInfo] = React.useState<{ panelId: string; noteId: string } | null>(null)
+
+  // Listen for panel-specific annotation creation requests from Tools button
+  React.useEffect(() => {
+    const handleSetAnnotationPanel = (event: Event) => {
+      const customEvent = event as CustomEvent
+      const { panelId, noteId } = customEvent.detail
+      console.log('[AnnotationToolbar] Received set-annotation-panel event:', { panelId, noteId })
+      setOverridePanelInfo({ panelId, noteId })
+
+      // Clear the override after 5 seconds (in case button isn't clicked)
+      setTimeout(() => setOverridePanelInfo(null), 5000)
+    }
+
+    window.addEventListener('set-annotation-panel', handleSetAnnotationPanel)
+    return () => window.removeEventListener('set-annotation-panel', handleSetAnnotationPanel)
+  }, [])
 
   const createAnnotation = (type: 'note' | 'explore' | 'promote') => {
     const text = state.selectedText
-    const panel = state.currentPanel
-    
+    const panel = overridePanelInfo?.panelId || state.currentPanel
+
     if (!text || !panel) {
       console.warn('No text selected or no panel available')
       return
+    }
+
+    // Use override noteId if available (from Tools button), otherwise extract from dataStore
+    let panelNoteId = overridePanelInfo?.noteId || noteId
+
+    // If no override, try to get noteId from dataStore
+    if (!overridePanelInfo) {
+      dataStore.forEach((value: any, key: string) => {
+        if (value && typeof value === 'object' && 'id' in value) {
+          // Check if this is the current panel by comparing panel IDs
+          if (value.id === panel) {
+            // Extract noteId from composite key (format: "noteId::panelId")
+            if (key.includes('::')) {
+              panelNoteId = key.split('::')[0]
+              console.log('[AnnotationToolbar] Found panel noteId from composite key:', panelNoteId, 'for panel:', panel)
+            } else if ('noteId' in value && typeof value.noteId === 'string') {
+              // Or get it from panel data if stored directly
+              panelNoteId = value.noteId
+              console.log('[AnnotationToolbar] Found panel noteId from panel data:', panelNoteId, 'for panel:', panel)
+            }
+          }
+        }
+      })
+    }
+
+    console.log('[AnnotationToolbar] Creating annotation with noteId:', panelNoteId, 'for panel:', panel, 'global noteId:', noteId, 'override:', overridePanelInfo)
+
+    // Clear the override after using it
+    if (overridePanelInfo) {
+      setOverridePanelInfo(null)
     }
 
     // Generate unique IDs
@@ -27,7 +75,7 @@ export function AnnotationToolbar() {
     // Check if we're in plain mode
     const plainProvider = getPlainProvider()
     const isPlainMode = !!plainProvider
-    
+
     // Calculate smart position FIRST before creating branch data
     const calculateSmartPosition = () => {
       const currentPanel = document.querySelector(`[data-panel-id="${panel}"]`) as HTMLElement
@@ -47,7 +95,7 @@ export function AnnotationToolbar() {
               availablePanels: Array.from(document.querySelectorAll('[data-panel-id]')).map(el => el.getAttribute('data-panel-id'))
             },
             content_preview: `Parent panel ${panel} not found in DOM`,
-            note_id: noteId
+            note_id: panelNoteId
           })
         }).catch(console.error)
       }
@@ -81,7 +129,7 @@ export function AnnotationToolbar() {
               rect: { width: rect.width, height: rect.height }
             },
             content_preview: `Panel ${panel} at x=${currentX}, y=${currentY}`,
-            note_id: noteId
+            note_id: panelNoteId
           })
         }).catch(console.error)
         
@@ -153,12 +201,12 @@ export function AnnotationToolbar() {
           annotationType: type
         },
         content_preview: `Position for ${type} annotation: x=${smartPosition.x}, y=${smartPosition.y}`,
-        note_id: noteId
+        note_id: panelNoteId
       })
     }).catch(console.error)
 
     // Create the branch data with proper quoted content AND position
-    const draftBranch = createAnnotationBranch(type, panel, noteId || '', text, smartPosition)
+    const draftBranch = createAnnotationBranch(type, panel, panelNoteId || '', text, smartPosition)
     const initialPreview = buildBranchPreview(draftBranch.content, text)
 
     const branchData = {
@@ -175,16 +223,16 @@ export function AnnotationToolbar() {
     }
 
     // Add the branch to data store with position already set
-    const branchStoreKey = ensurePanelKey(noteId || '', branchId)
-    const panelStoreKey = ensurePanelKey(noteId || '', panel)
+    const branchStoreKey = ensurePanelKey(panelNoteId || '', branchId)
+    const panelStoreKey = ensurePanelKey(panelNoteId || '', panel)
     dataStore.set(branchStoreKey, branchData)
 
-    if (isPlainMode && plainProvider && noteId) {
+    if (isPlainMode && plainProvider && panelNoteId) {
       // Plain mode: Create annotation in database
       // Use raw UUID for database ID, but keep branch-xxx format for UI
       plainProvider.createBranch({
         id: annotationId, // Use raw UUID for database
-        noteId: noteId,
+        noteId: panelNoteId,
         parentId: panel,  // Keep as-is: 'main', 'branch-xxx', or UUID
         type: type,
         title: draftBranch.title, // Persist title to database immediately
@@ -201,7 +249,7 @@ export function AnnotationToolbar() {
           context: text
         } : undefined
       }).then(() => {
-        return plainProvider.saveDocument(noteId, branchId, branchData.content, false, { skipBatching: true })
+        return plainProvider.saveDocument(panelNoteId!, branchId, branchData.content, false, { skipBatching: true })
       }).catch(error => {
         console.error('[AnnotationToolbar] Failed to create branch or persist initial content:', error)
       })
@@ -216,8 +264,8 @@ export function AnnotationToolbar() {
     } else {
       // Yjs mode: Use UnifiedProvider (collab)
       const provider = UnifiedProvider.getInstance()
-      if (noteId) {
-        provider.setCurrentNote(noteId)
+      if (panelNoteId) {
+        provider.setCurrentNote(panelNoteId)
       }
 
       // Use the new addBranch method that handles YJS native types properly
@@ -268,13 +316,13 @@ export function AnnotationToolbar() {
     }))
 
     // Create the panel for the new branch with smart position
-    window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { 
+    window.dispatchEvent(new CustomEvent('create-panel', {
+      detail: {
         panelId: branchId,
         parentPanelId: panel,
         parentPosition: smartPosition,
-        noteId
-      } 
+        noteId: panelNoteId
+      }
     }))
 
     // Force a re-render by triggering branch updated action

@@ -17,7 +17,7 @@ import {
   TOOLBAR_HOVER_DELAY_MS,
 } from "@/lib/constants/ui-timings"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -2002,10 +2002,15 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const canvasDispatchValue = canvasDispatch || (typeof window !== 'undefined' ? (window as any).canvasDispatch : null)
     const lastUpdate = canvasStateValue?.lastUpdate ?? 0
 
-    // Use activePanelId if available, otherwise default to 'main'
-    const currentPanelId = activePanelId || 'main'
+    console.log('[FloatingToolbar] Branches Panel Debug:', {
+      activePanelId,
+      canvasNoteId,
+      hasDataStore: !!dataStore,
+      hasCanvasState: !!canvasStateValue
+    })
 
     if (!dataStore) {
+      console.log('[FloatingToolbar] No dataStore available')
       return (
         <div style={{
           width: '300px',
@@ -2020,11 +2025,35 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       )
     }
 
+    // activePanelId now contains the full composite key (e.g., "abc123::main")
+    // If it's already a composite key (contains "::"), use it directly
+    // Otherwise, construct it from canvasNoteId + activePanelId
+    const panelStoreKey = activePanelId && activePanelId.includes('::')
+      ? activePanelId  // Already composite, use as-is
+      : ensurePanelKey(canvasNoteId || '', activePanelId || 'main')  // Plain ID, build composite
+
+    // Extract plain panel ID from composite key for use in component props
+    const { panelId: currentPanelId } = parsePanelKey(panelStoreKey)
+
     // Get the current branch data
-    const panelStoreKey = ensurePanelKey(canvasNoteId || '', currentPanelId)
     const currentBranch = dataStore.get(panelStoreKey)
 
+    console.log('[FloatingToolbar] Branches Data:', {
+      panelStoreKey,
+      currentBranch,
+      hasBranches: !!currentBranch?.branches,
+      branchesLength: currentBranch?.branches?.length,
+      branches: currentBranch?.branches,
+      allKeys: Array.from(dataStore.keys ? dataStore.keys() : []),
+      allData: Array.from(dataStore.keys ? dataStore.keys() : []).map(k => ({
+        key: k,
+        hasBranches: !!dataStore.get(k)?.branches,
+        branchCount: dataStore.get(k)?.branches?.length || 0
+      }))
+    })
+
     if (!currentBranch) {
+      console.log('[FloatingToolbar] No branch data found for key:', panelStoreKey)
       return (
         <div style={{
           width: '300px',

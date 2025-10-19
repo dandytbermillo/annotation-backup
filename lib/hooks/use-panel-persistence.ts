@@ -331,7 +331,9 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       const parsedKey = storeKey ? parsePanelKey(storeKey) : null
       const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
       try {
-        const response = await fetch(`/api/canvas/panels/${panelId}`, {
+        // Pass noteId as query parameter for composite key lookup
+        const url = `/api/canvas/panels/${panelId}?noteId=${effectiveNoteId}`
+        const response = await fetch(url, {
           method: 'DELETE'
         })
 
@@ -359,7 +361,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         await canvasOfflineQueue.enqueue({
           type: 'panel_delete',
           noteId: effectiveNoteId,
-          data: { panelId }
+          data: { panelId, noteId: effectiveNoteId }
         })
 
         debugLog({

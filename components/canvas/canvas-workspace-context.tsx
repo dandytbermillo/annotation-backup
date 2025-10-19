@@ -422,6 +422,63 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         // Pre-populate dataStore for all panels (TDD §4.1 line 177)
         const workspace = getWorkspace(SHARED_WORKSPACE_ID)
 
+        // Load branches for all open notes
+        const uniqueNoteIds = [...new Set(panels.map((p: any) => p.noteId))]
+        const branchesByNote = new Map<string, any[]>()
+
+        console.log('[Workspace] Loading branches for notes:', uniqueNoteIds)
+        console.log('[Workspace] All panels:', panels.map((p: any) => ({
+          noteId: p.noteId,
+          panelId: p.panelId,
+          type: p.type
+        })))
+
+        for (const noteId of uniqueNoteIds) {
+          try {
+            const url = `/api/postgres-offline/branches?noteId=${noteId}`
+            console.log(`[Workspace] Fetching branches from: ${url}`)
+            const response = await fetch(url)
+            console.log(`[Workspace] Response status:`, response.status, response.statusText)
+
+            if (response.ok) {
+              const data = await response.json()
+              console.log(`[Workspace] Response data for ${noteId}:`, data)
+              console.log(`[Workspace] Data is array?`, Array.isArray(data))
+              console.log(`[Workspace] Data type:`, typeof data)
+              console.log(`[Workspace] Data.branches:`, data.branches)
+
+              // API returns array directly, not wrapped in object
+              const branches = Array.isArray(data) ? data : (data.branches || [])
+              console.log(`[Workspace] Extracted branches:`, branches)
+              branchesByNote.set(noteId, branches)
+              console.log(`[Workspace] Loaded ${branches.length} branches for note ${noteId}:`, branches)
+            } else {
+              console.warn(`[Workspace] Failed to load branches for ${noteId}: ${response.status} ${response.statusText}`)
+            }
+          } catch (error) {
+            console.warn(`[Workspace] Failed to load branches for note ${noteId}:`, error)
+          }
+        }
+
+        console.log('[Workspace] All branches loaded:', branchesByNote)
+
+        // First, store all branch objects in dataStore with their composite keys
+        branchesByNote.forEach((branches, noteId) => {
+          branches.forEach((branchObj: any) => {
+            const branchKey = `${noteId}::${branchObj.id}`
+            workspace.dataStore.set(branchKey, {
+              id: branchObj.id,
+              type: branchObj.type || 'note',
+              title: branchObj.title || '',
+              originalText: branchObj.originalText || '',
+              metadata: branchObj.metadata || {},
+              anchors: branchObj.anchors,
+              parentId: branchObj.parentId,
+              branches: [],  // Branch panels don't have children
+            })
+          })
+        })
+
         // Seed panels from snapshot (prevents (2000,1500) default jump)
         panels.forEach((panel: any) => {
           const panelKey = `${panel.noteId}::${panel.panelId}`
@@ -431,6 +488,37 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           if (existing) {
             return
           }
+
+          // Get branches for this note
+          const noteBranches = branchesByNote.get(panel.noteId) || []
+
+          console.log(`[Workspace] Looking up branches for panel ${panelKey}:`, {
+            panelNoteId: panel.noteId,
+            hasBranchesInMap: branchesByNote.has(panel.noteId),
+            branchesMapKeys: Array.from(branchesByNote.keys()),
+            noteBranches: noteBranches,
+            noteBranchesCount: noteBranches.length
+          })
+
+          // Extract branch IDs for this specific panel based on parent_id
+          // Main panel gets branches where parentId = "main"
+          // Branch panels get branches where parentId = "branch-{branchId}"
+          const expectedParentId = panel.panelId === 'main'
+            ? 'main'
+            : (panel.panelId.startsWith('branch-') ? panel.panelId : `branch-${panel.panelId}`)
+
+          const branchIds = noteBranches
+            .filter((b: any) => b.parentId === expectedParentId)
+            .map((b: any) => b.id)
+
+          console.log(`[Workspace] Setting dataStore for ${panelKey}:`, {
+            panelId: panel.panelId,
+            type: panel.type,
+            expectedParentId,
+            branchCount: branchIds.length,
+            branchIds,
+            allBranchesForNote: noteBranches.map((b: any) => ({ id: b.id, parentId: b.parentId }))
+          })
 
           workspace.dataStore.set(panelKey, {
             id: panel.panelId,
@@ -442,6 +530,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             metadata: panel.metadata || {},
             worldPosition: { x: panel.positionXWorld, y: panel.positionYWorld },
             worldSize: { width: panel.widthWorld, height: panel.heightWorld },
+            branches: branchIds,  // Array of branch ID strings
           })
 
           // Mark as loaded

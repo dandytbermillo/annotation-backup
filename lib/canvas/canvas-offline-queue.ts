@@ -356,7 +356,14 @@ export class CanvasOfflineQueue {
    */
   private async processPanelDelete(operation: CanvasOperation): Promise<void> {
     const panelId = operation.data.panelId || operation.data.id
-    const response = await fetch(`/api/canvas/panels/${panelId}`, {
+    const noteId = operation.data.noteId || operation.noteId
+
+    // Pass noteId as query parameter for composite key lookup
+    const url = noteId
+      ? `/api/canvas/panels/${panelId}?noteId=${noteId}`
+      : `/api/canvas/panels/${panelId}`
+
+    const response = await fetch(url, {
       method: 'DELETE'
     })
 

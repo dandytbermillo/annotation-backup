@@ -25,8 +25,9 @@ import { Z_INDEX_BANDS } from "@/lib/canvas/canvas-node"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { createNote } from "@/lib/utils/note-creator"
-import { Save, Pencil } from "lucide-react"
+import { Save, Pencil, Wrench } from "lucide-react"
 import { TypeSelector, type AnnotationType } from "./type-selector"
+import { BranchesSection } from "./branches-section"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas-workspace-context"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
@@ -57,6 +58,9 @@ interface CanvasPanelProps {
 
 export function CanvasPanel({ panelId, branch, position, width, onClose, noteId }: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
+  const { getWorkspace: getCanvasWorkspace } = useCanvasWorkspace()
+  const workspaceShared = getCanvasWorkspace(SHARED_WORKSPACE_ID)
+  const sharedDataStore = workspaceShared.dataStore
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
   const editorRef = useRef<UnifiedEditorHandle | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -103,6 +107,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const [isRenaming, setIsRenaming] = useState(false)
   const [titleValue, setTitleValue] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [showToolsDropdown, setShowToolsDropdown] = useState(false)
+  const [activeToolPanel, setActiveToolPanel] = useState<'layer' | 'format' | 'resize' | 'branches' | 'actions' | null>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
 
   // Type change state - prevents race conditions from rapid clicks
@@ -1124,21 +1130,6 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     if (!dataCopy.branches) {
       dataCopy.branches = []
     }
-
-    // Debug: Log the type before and after JSON roundtrip
-    debugLog({
-      component: 'CanvasPanel',
-      action: 'getBranchData_type_check',
-      metadata: {
-        panelId,
-        originalType: data?.type,
-        copiedType: dataCopy?.type,
-        originalMetadata: data?.metadata,
-        copiedMetadata: dataCopy?.metadata,
-        hasStoreData: !!storeData,
-        hasBranchProp: !!branch
-      }
-    })
 
     return dataCopy
   }
@@ -2500,8 +2491,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         data-store-key={storeKey}
       onClick={() => {
         // Register this panel's editor as active when panel is clicked
+        // Pass composite key (storeKey) so FloatingToolbar can identify correct panel in shared workspace
         if (editorRef.current && onRegisterActiveEditor) {
-          onRegisterActiveEditor(editorRef.current, panelId)
+          onRegisterActiveEditor(editorRef.current, storeKey)
         }
       }}
       onMouseEnter={() => {
@@ -2877,6 +2869,36 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
               </button>
             </>
           )}
+
+          {/* Tools button */}
+          <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowToolsDropdown(!showToolsDropdown)
+              }}
+              style={{
+                background: showToolsDropdown ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: '4px',
+                padding: '4px 8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                color: 'white',
+                fontSize: '12px',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = showToolsDropdown ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)'
+              }}
+              title="Panel Tools"
+            >
+              <Wrench size={14} />
+            </button>
 
           {/* Save As button */}
           <button
@@ -3282,6 +3304,294 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
           </div>
         </div>,
         document.body
+        )
+      })()}
+
+      {/* Tools Dropdown */}
+      {showToolsDropdown && (() => {
+        const TOOL_CATEGORIES = [
+          { id: "layer" as const, label: "Layer" },
+          { id: "format" as const, label: "Format" },
+          { id: "resize" as const, label: "Resize" },
+          { id: "branches" as const, label: "Branches" },
+          { id: "actions" as const, label: "Actions" },
+        ]
+
+        return createPortal(
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 9999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(0, 0, 0, 0.5)',
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowToolsDropdown(false)
+                setActiveToolPanel(null)
+              }
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Tool Categories */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '8px',
+                  background: 'rgba(17, 24, 39, 0.98)',
+                  padding: '12px',
+                  borderRadius: '16px',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                }}
+              >
+                {TOOL_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.id}
+                      onClick={() => setActiveToolPanel(cat.id)}
+                      style={{
+                        background: activeToolPanel === cat.id ? 'rgba(59, 130, 246, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+                        border: 'none',
+                        borderRadius: '12px',
+                        padding: '8px 16px',
+                        color: 'white',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        transition: 'all 0.2s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeToolPanel !== cat.id) {
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeToolPanel !== cat.id) {
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'
+                        }
+                      }}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+              </div>
+
+              {/* Tool Panel Content */}
+              {activeToolPanel === 'branches' && (() => {
+                // Get the current branch from the shared workspace dataStore
+                const sharedStoreKey = ensurePanelKey(noteId, panelId)
+                const sharedCurrentBranch = sharedDataStore.get(sharedStoreKey) || currentBranch
+
+                console.log('[CanvasPanel] Rendering BranchesSection:', {
+                  panelId,
+                  storeKey,
+                  sharedStoreKey,
+                  noteId,
+                  currentBranch: {
+                    id: currentBranch.id,
+                    type: currentBranch.type,
+                    hasBranches: !!currentBranch.branches,
+                    branchesLength: currentBranch.branches?.length || 0,
+                    branches: currentBranch.branches
+                  },
+                  sharedCurrentBranch: {
+                    id: sharedCurrentBranch.id,
+                    type: sharedCurrentBranch.type,
+                    hasBranches: !!sharedCurrentBranch.branches,
+                    branchesLength: sharedCurrentBranch.branches?.length || 0,
+                    branches: sharedCurrentBranch.branches
+                  },
+                  dataStoreKeys: Array.from(dataStore.keys ? dataStore.keys() : []),
+                  sharedDataStoreKeys: Array.from(sharedDataStore.keys ? sharedDataStore.keys() : []),
+                  allBranchData: Array.from(sharedDataStore.keys ? sharedDataStore.keys() : [])
+                    .filter((k: string) => k.includes('::'))
+                    .map((k: string) => ({
+                      key: k,
+                      hasBranches: !!sharedDataStore.get(k)?.branches,
+                      branchCount: sharedDataStore.get(k)?.branches?.length || 0,
+                      branches: sharedDataStore.get(k)?.branches
+                    }))
+                })
+
+                return (
+                  <BranchesSection
+                    panelId={panelId}
+                    branch={sharedCurrentBranch}
+                    dataStore={sharedDataStore}
+                    state={state}
+                    dispatch={dispatch}
+                    noteId={noteId}
+                  />
+                )
+              })()}
+
+              {/* Actions Panel - Create Branch */}
+              {activeToolPanel === 'actions' && (
+                <div
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.98)',
+                    padding: '20px',
+                    borderRadius: '16px',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    minWidth: '500px',
+                  }}
+                >
+                  <div style={{ marginBottom: '16px' }}>
+                    <span style={{ color: '#1f2937', fontWeight: 600, fontSize: '18px' }}>
+                      Create Branch
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    {/* Note Button */}
+                    <button
+                      onClick={() => {
+                        // Trigger annotation creation directly from this panel
+                        const annotationToolbar = document.getElementById('annotation-toolbar')
+                        const noteButton = annotationToolbar?.querySelector('.annotation-btn.note') as HTMLButtonElement
+                        if (noteButton) {
+                          // Store the current panel ID so annotation-toolbar knows which panel to use
+                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId, noteId: effectiveNoteId }
+                          }))
+                          // Wait for the event to be processed before clicking
+                          setTimeout(() => noteButton.click(), 10)
+                        }
+                        setShowToolsDropdown(false)
+                        setActiveToolPanel(null)
+                      }}
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '12px',
+                        padding: '20px 16px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                        boxShadow: '0 4px 12px rgba(52, 152, 219, 0.3)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)'
+                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(52, 152, 219, 0.4)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(52, 152, 219, 0.3)'
+                      }}
+                    >
+                      <span style={{ fontSize: '32px' }}>📝</span>
+                      <span>Note</span>
+                    </button>
+
+                    {/* Explore Button */}
+                    <button
+                      onClick={() => {
+                        const annotationToolbar = document.getElementById('annotation-toolbar')
+                        const exploreButton = annotationToolbar?.querySelector('.annotation-btn.explore') as HTMLButtonElement
+                        if (exploreButton) {
+                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId, noteId: effectiveNoteId }
+                          }))
+                          // Wait for the event to be processed before clicking
+                          setTimeout(() => exploreButton.click(), 10)
+                        }
+                        setShowToolsDropdown(false)
+                        setActiveToolPanel(null)
+                      }}
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '12px',
+                        padding: '20px 16px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                        boxShadow: '0 4px 12px rgba(243, 156, 18, 0.3)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)'
+                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(243, 156, 18, 0.4)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(243, 156, 18, 0.3)'
+                      }}
+                    >
+                      <span style={{ fontSize: '32px' }}>🔍</span>
+                      <span>Explore</span>
+                    </button>
+
+                    {/* Promote Button */}
+                    <button
+                      onClick={() => {
+                        const annotationToolbar = document.getElementById('annotation-toolbar')
+                        const promoteButton = annotationToolbar?.querySelector('.annotation-btn.promote') as HTMLButtonElement
+                        if (promoteButton) {
+                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
+                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+                            detail: { panelId, noteId: effectiveNoteId }
+                          }))
+                          // Wait for the event to be processed before clicking
+                          setTimeout(() => promoteButton.click(), 10)
+                        }
+                        setShowToolsDropdown(false)
+                        setActiveToolPanel(null)
+                      }}
+                      style={{
+                        flex: 1,
+                        background: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '12px',
+                        padding: '20px 16px',
+                        cursor: 'pointer',
+                        fontSize: '16px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '8px',
+                        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+                        boxShadow: '0 4px 12px rgba(39, 174, 96, 0.3)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-2px)'
+                        e.currentTarget.style.boxShadow = '0 6px 16px rgba(39, 174, 96, 0.4)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = '0 4px 12px rgba(39, 174, 96, 0.3)'
+                      }}
+                    >
+                      <span style={{ fontSize: '32px' }}>⭐</span>
+                      <span>Promote</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
         )
       })()}
     </>

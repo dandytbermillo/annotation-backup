@@ -1357,19 +1357,21 @@ const handleCenterNote = useCallback(
     let panelElement: HTMLElement | null = null
 
     // Traverse up the DOM tree to find the panel element
+    // Panels have data-store-key attribute with composite key (noteId::panelId)
     while (target && target !== e.currentTarget) {
-      if (target.dataset?.panelId) {
+      if (target.dataset?.storeKey) {
         panelElement = target
         break
       }
       target = target.parentElement as HTMLElement
     }
 
-    // If a panel was right-clicked, register it as active
-    if (panelElement?.dataset?.panelId) {
-      const panelId = panelElement.dataset.panelId
-      console.log('[AnnotationApp] Right-click detected on panel:', panelId)
-      setActivePanelId(panelId)
+    // If a panel was right-clicked, register its composite key as active
+    // This allows FloatingToolbar to correctly identify which note's panel was clicked
+    if (panelElement?.dataset?.storeKey) {
+      const storeKey = panelElement.dataset.storeKey
+      console.log('[AnnotationApp] Right-click detected on panel with store key:', storeKey)
+      setActivePanelId(storeKey)  // Set full composite key (e.g., "abc123::main")
     }
 
     setNotesWidgetPosition({ x: e.clientX, y: e.clientY })
