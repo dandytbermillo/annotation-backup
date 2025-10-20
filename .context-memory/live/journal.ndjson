@@ -374,3 +374,4 @@
 {"ts":"2025-10-20T01:35:59.623Z","type":"commit","sha":"af5efccc948ca906efc7e6d55d37e01d63f03255","files_changed":4,"message":"connection lines connecting to the correct branches from main panel"}
 {"ts":"2025-10-20T02:11:42.541Z","type":"commit","sha":"ef862af675a979cf8547c7a54b8ecf2c225ab512","files_changed":7,"message":"closed branch panels do not reappear when reopened via eye icon in branches dropdown"}
 {"ts":"2025-10-20T04:47:56.812Z","type":"commit","sha":"408c79ff19de91ae1f2fc95eae8e9ac036a68729","files_changed":14,"message":"start fixing"}
+{"ts":"2025-10-20T05:11:30.793Z","type":"commit","sha":"95b35714ec1fcb67215107f51b89bf63a87e1cfd","files_changed":4,"message":"both panels reappeared when reloaded"}

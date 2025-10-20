@@ -461,7 +461,14 @@ export function useCanvasHydration(options: HydrationOptions) {
 
         // CRITICAL: Stores must hold WORLD-SPACE coordinates per implementation plan
         // Components will convert world→screen during rendering
-        const panelData = {
+        const parentId =
+          panel.parentId ??
+          panel.metadata?.parentId ??
+          panel.metadata?.parent_id ??
+          panel.metadata?.parentPanelId ??
+          null
+
+        const panelData: Record<string, any> = {
           id: panel.id,
           noteId: panel.noteId,
           storeKey, // Add composite key for store operations
@@ -476,6 +483,15 @@ export function useCanvasHydration(options: HydrationOptions) {
           revisionToken: panel.revisionToken,
           title: panel.title,
           metadata: panel.metadata
+        }
+
+        if (parentId) {
+          panelData.parentId = parentId
+          panelData.metadata = {
+            ...(panelData.metadata || {}),
+            parentId,
+            parentPanelId: parentId
+          }
         }
 
         debugLog({
