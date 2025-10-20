@@ -206,12 +206,35 @@ export async function POST(request: NextRequest) {
 
             const currentUpdatedAt = currentResult.rows[0].updated_at
 
+            // CRITICAL: Ensure toolbar_sequence is set when opening a note
+            // Check if we need to generate a sequence
+            let effectiveToolbarSequence = update.toolbarSequence
+            if (effectiveToolbarSequence === undefined || effectiveToolbarSequence === null) {
+              // Check current value
+              const currentSeqResult = await client.query<{ toolbar_sequence: number | null }>(
+                'SELECT toolbar_sequence FROM canvas_workspace_notes WHERE note_id = $1',
+                [update.noteId]
+              )
+              const currentSequence = currentSeqResult.rows[0]?.toolbar_sequence
+
+              if (currentSequence === null || currentSequence === undefined) {
+                // Generate new sequence
+                const maxSeqResult = await client.query<{ max_sequence: number | null }>(
+                  'SELECT MAX(toolbar_sequence) as max_sequence FROM canvas_workspace_notes WHERE is_open = TRUE'
+                )
+                effectiveToolbarSequence = (maxSeqResult.rows[0]?.max_sequence ?? 0) + 1
+              } else {
+                // Use existing sequence
+                effectiveToolbarSequence = currentSequence
+              }
+            }
+
             // Attempt update with WHERE clause checking updated_at
             const result = await client.query(
               `UPDATE canvas_workspace_notes
                SET
                  is_open = TRUE,
-                 toolbar_sequence = COALESCE($2, toolbar_sequence),
+                 toolbar_sequence = $2,
                  is_focused = COALESCE($3, is_focused),
                  main_position_x = COALESCE($4, main_position_x),
                  main_position_y = COALESCE($5, main_position_y),
@@ -221,7 +244,7 @@ export async function POST(request: NextRequest) {
                RETURNING note_id`,
               [
                 update.noteId,
-                update.toolbarSequence,
+                effectiveToolbarSequence,
                 update.isFocused,
                 update.mainPositionX,
                 update.mainPositionY,

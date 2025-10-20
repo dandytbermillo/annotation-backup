@@ -541,10 +541,11 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           }
           
           // Also add panel entry
+          // CRITICAL FIX: Use composite key (branchStoreKey) not just uiId
           dispatch({
             type: "ADD_PANEL",
             payload: {
-              id: uiId,
+              id: branchStoreKey,  // Use composite key "noteId::panelId" not just "uiId"
               panel: { element: null, branchId: uiId },
             },
           })
@@ -600,10 +601,12 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
 
     // Initialize main panel
     setTimeout(() => {
+      // CRITICAL FIX: Use composite key for main panel too
+      const mainKey = noteId ? ensurePanelKey(noteId, 'main') : 'main'
       dispatch({
         type: "ADD_PANEL",
         payload: {
-          id: "main",
+          id: mainKey,  // Use composite key "noteId::main" if noteId available
           panel: { element: null, branchId: "main" },
         },
       })

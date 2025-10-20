@@ -1,55 +1,84 @@
-# Branch Panel Reopen Fix
+# Branch Panel Fixes Collection
 
-**Issue:** Closed branch panels did not reappear when reopened via eye icon
-**Status:** ✅ FIXED
+**Issues Fixed:**
+1. Closed branch panels did not reappear when reopened via eye icon ✅
+2. Branch panels appeared off-screen after page reload ✅
+
+**Status:** ✅ BOTH FIXED
 **Date:** 2025-10-20
 
 ---
 
 ## Quick Summary
 
+### Issue 1: Panel Reopening
 When users closed a branch panel and tried to reopen it, the panel wouldn't appear because it was removed from `canvasItems` but not from `state.panels`, causing an early return check to prevent recreation.
 
 **Fix:** Added `REMOVE_PANEL` dispatch in `handlePanelClose` to synchronize both state sources.
+
+### Issue 2: Off-Screen Positioning
+Branch panels persisted to database and hydrated on reload, but appeared off-screen because world-space coordinates from database were passed directly to rendering system expecting screen-space coordinates.
+
+**Fix:** Added `worldToScreen()` coordinate conversion during panel hydration.
 
 ---
 
 ## Files in This Directory
 
 ### 1. FIX_DOCUMENTATION.md
-**Comprehensive documentation of the fix**
+**Comprehensive documentation of panel reopening fix**
 - Root cause analysis
 - Complete code changes with context
 - Testing procedures
 - Debug log analysis
 - Related issues and future improvements
 
-📖 **Read this for:** Complete understanding of the issue and fix
+📖 **Read this for:** Complete understanding of the panel reopening issue and fix
 
-### 2. CODE_CHANGES.md
-**Quick reference for code changes**
+### 2. COORDINATE_CONVERSION_FIX.md
+**Comprehensive documentation of coordinate conversion fix**
+- World-space vs screen-space coordinate systems
+- Root cause of off-screen positioning
+- Coordinate conversion implementation
+- Technical deep dive
+- Testing and verification procedures
+
+📖 **Read this for:** Complete understanding of the coordinate conversion issue and fix
+
+### 3. CODE_CHANGES.md
+**Quick reference for panel reopening code changes**
 - Exact code added (lines 1787-1801)
 - Before/after comparison
 - Why the fix works
 - Related code sections
 
-📖 **Read this for:** Quick code review or understanding the implementation
+📖 **Read this for:** Quick code review or understanding the panel reopening implementation
 
-### 3. debug_queries.sql
+### 4. debug_queries.sql
 **SQL queries for debugging and verification**
 - Panel close lifecycle queries
 - Panel create lifecycle queries
 - Verification queries to confirm fix is working
 - Diagnostic queries to find stuck panels
 
-📖 **Read this for:** Debugging similar issues or verifying the fix
+📖 **Read this for:** Debugging similar issues or verifying the fixes
 
-### 4. README.md (this file)
-**Navigation guide for the fix documentation**
+### 5. BRANCH_PANEL_PERSISTENCE_STATUS.md
+**Verification report for Phase 2 statement**
+- Evidence that branch panels ARE persisted
+- Clarification of Phase 1 vs Phase 2 scope
+- Explanation of intentional hydration filtering
+
+📖 **Read this for:** Understanding persistence implementation status
+
+### 6. README.md (this file)
+**Navigation guide for all fix documentation**
 
 ---
 
-## The Problem
+## The Problems
+
+### Problem 1: Panel Reopening
 
 ```
 User Action          | canvasItems | state.panels | Result
@@ -59,14 +88,31 @@ Close panel (X btn)  | ✅ Removed   | ❌ NOT removed | Panel disappears
 Reopen panel (eye)   | ?           | ❌ Still there | Early return → No panel
 ```
 
-## The Fix
-
+**Fix:**
 ```
 User Action          | canvasItems | state.panels | Result
 ---------------------|-------------|--------------|------------------
 Open panel           | ✅ Added     | ✅ Added     | Panel appears
 Close panel (X btn)  | ✅ Removed   | ✅ Removed   | Panel disappears
 Reopen panel (eye)   | ✅ Added     | ✅ Added     | Panel appears ✅
+```
+
+### Problem 2: Off-Screen Positioning
+
+```
+Database Storage    →    Hydration    →    Rendering
+─────────────────────────────────────────────────────
+World (3000, 2700)  →  Loaded as-is  →  ❌ Used directly as screen coordinates
+                                          Result: Panel off-screen
+```
+
+**Fix:**
+```
+Database Storage    →    Hydration    →    Conversion    →    Rendering
+─────────────────────────────────────────────────────────────────────────
+World (3000, 2700)  →  Loaded world  →  worldToScreen()  →  ✅ Screen (150, 100)
+                                          + camera           Result: Visible!
+                                          + zoom
 ```
 
 ---

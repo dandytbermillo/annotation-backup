@@ -84,10 +84,11 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     }
 
     // Check if panel already exists
-    if (state.panels.has(branchId)) {
-      console.log(`Panel ${branchId} already exists, focusing it`)
+    // CRITICAL FIX: Check using composite key (branchStoreKey) not just branchId
+    if (state.panels.has(branchStoreKey)) {
+      console.log(`Panel ${branchStoreKey} already exists, focusing it`)
       // Panel exists, just focus it
-      const panel = state.panels.get(branchId)
+      const panel = state.panels.get(branchStoreKey)
       if (panel?.element) {
         panel.element.style.zIndex = String(state.panelZIndex + 1)
         dispatch({
@@ -295,7 +296,17 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       return targetPosition
     }
 
-    const smartPosition = calculateSmartPosition()
+    const smartScreenPosition = calculateSmartPosition()
+
+    // CRITICAL FIX: Convert screen-space position to world-space before storing!
+    // calculateSmartPosition() returns screen coordinates (from DOM), but dataStore
+    // must hold world-space coordinates for proper persistence and hydration.
+    const camera = { x: state.canvasState.translateX, y: state.canvasState.translateY }
+    const zoom = state.canvasState.zoom
+    const smartWorldPosition = {
+      x: (smartScreenPosition.x / zoom) - camera.x,
+      y: (smartScreenPosition.y / zoom) - camera.y
+    }
 
     debugLog({
       component: 'BranchItem',
@@ -304,33 +315,39 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
         branchId,
         parentId,
         noteId,
-        finalPosition: smartPosition
+        screenPosition: smartScreenPosition,
+        worldPosition: smartWorldPosition,
+        camera,
+        zoom
       },
-      content_preview: `Final position for ${branchId}: x=${smartPosition.x}, y=${smartPosition.y}`
+      content_preview: `Screen(${smartScreenPosition.x}, ${smartScreenPosition.y}) → World(${smartWorldPosition.x}, ${smartWorldPosition.y})`
     })
 
-    // Update position in both stores
+    // Update position in both stores (using WORLD-SPACE coordinates)
     dataStore.update(branchStoreKey, {
-      position: smartPosition,
+      position: smartWorldPosition,
+      worldPosition: smartWorldPosition  // Explicit world-space marker
     })
 
     const branchData = branchesMap.get(branchStoreKey)
     if (branchData) {
-      branchData.position = smartPosition
+      branchData.position = smartWorldPosition
+      branchData.worldPosition = smartWorldPosition
       branchesMap.set(branchStoreKey, branchData)
     }
 
     // Add panel
+    // CRITICAL FIX: Use composite key (branchStoreKey) not just branchId
     dispatch({
       type: "ADD_PANEL",
       payload: {
-        id: branchId,
+        id: branchStoreKey,  // Use composite key "noteId::panelId" not just "branchId"
         panel: { element: null, branchId },
       },
     })
-    
+
     // Also dispatch create-panel event for modern canvas
-    window.dispatchEvent(new CustomEvent('create-panel', { 
+    window.dispatchEvent(new CustomEvent('create-panel', {
       detail: { panelId: branchId, noteId },
       bubbles: true
     }))

@@ -544,7 +544,9 @@ const mainPanelSeededRef = useRef(false)
     enabled: true
   })
 
-  const initialHydrationRef = useRef(true)
+  // CRITICAL FIX: Track initial hydration PER NOTE (not per component)
+  // In multi-note workspaces, each note needs its own initial hydration
+  const hydratedNotesRef = useRef<Set<string>>(new Set())
   const lastHydratedNoteRef = useRef<string | null>(null)
   const initialCanvasSetupRef = useRef(false)
 
@@ -619,23 +621,45 @@ const mainPanelSeededRef = useRef(false)
 
   // Create CanvasItems from hydrated panels
   useEffect(() => {
+    // CRITICAL: Skip if this note has already been hydrated
+    // This prevents re-running when other notes' hydration changes hydrationStatus
+    if (hydratedNotesRef.current.has(noteId)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'skip_already_hydrated_note',
+        metadata: {
+          noteId,
+          reason: 'Note already hydrated in this session'
+        }
+      })
+      return
+    }
+
     if (hydrationStatus.success && hydrationStatus.panels.length > 0) {
-    const isInitialHydration = initialHydrationRef.current
+    // CRITICAL: Check if THIS NOTE has been hydrated before (not just any note)
+    const isInitialHydration = !hydratedNotesRef.current.has(noteId)
     const isSameNote = lastHydratedNoteRef.current === noteId
     const mainPanelExists = canvasItems.some(item => item.itemType === 'panel' && item.panelId === 'main' && getItemNoteId(item) === noteId)
     const skipHydration = !isInitialHydration && mainPanelExists
 
+    // CRITICAL FIX: Filter panels to only include those for CURRENT noteId!
+    // hydrationStatus.panels may contain panels from a different note if multiple notes
+    // are being hydrated. We must filter by noteId to ensure we only render THIS note's panels.
+    const currentNotePanels = hydrationStatus.panels.filter(panel => panel.noteId === noteId)
+
     const panelsToHydrate = skipHydration
       ? []
       : (isInitialHydration || !isSameNote
-          ? (isInitialHydration ? hydrationStatus.panels : hydrationStatus.panels.filter(panel => panel.id === 'main'))
-          : hydrationStatus.panels.filter(panel => panel.id === 'main'))
+          ? (isInitialHydration ? currentNotePanels : currentNotePanels.filter(panel => panel.id === 'main'))
+          : currentNotePanels.filter(panel => panel.id === 'main'))
 
     debugLog({
       component: 'AnnotationCanvas',
       action: 'creating_canvas_items_from_hydration',
       metadata: {
-        panelCount: hydrationStatus.panels.length,
+        totalPanels: hydrationStatus.panels.length,
+        currentNotePanels: currentNotePanels.length,
+        noteId,
         panelsHydrated: panelsToHydrate.map(panel => panel.id),
         mode: skipHydration
           ? 'skip_existing_panel'
@@ -646,8 +670,25 @@ const mainPanelSeededRef = useRef(false)
     })
 
       if (panelsToHydrate.length === 0) {
-        initialHydrationRef.current = false
-        lastHydratedNoteRef.current = noteId
+        // CRITICAL FIX: Don't mark note as hydrated when skipping hydration!
+        // Only mark it as hydrated after SUCCESSFULLY hydrating panels (line ~779).
+        // Otherwise, if we skip hydration (because main panel already exists from another source),
+        // we'll never be able to hydrate branch panels later.
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'skipping_hydration_no_panels',
+          metadata: {
+            reason: skipHydration ? 'skip_existing_panel' : 'no_panels_to_hydrate',
+            isInitialHydration,
+            mainPanelExists,
+            noteId
+          }
+        })
+        // Don't add noteId to hydratedNotesRef here!
+        // Only update lastHydratedNoteRef if we're NOT skipping due to existing panel
+        if (!skipHydration) {
+          lastHydratedNoteRef.current = noteId
+        }
         return
       }
 
@@ -671,9 +712,27 @@ const mainPanelSeededRef = useRef(false)
         const hydratedPanelId = parsedId?.panelId || panel.id
         const storeKey = ensurePanelKey(hydratedNoteId, hydratedPanelId)
 
+        // CRITICAL FIX: Convert world-space coordinates (from database) to screen-space (for rendering)
+        // panel.position is world-space from hydration, but CanvasItems need screen-space
+        const camera = { x: canvasState.translateX, y: canvasState.translateY }
+        const screenPosition = worldToScreen(panel.position, camera, canvasState.zoom)
+
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'world_to_screen_conversion',
+          metadata: {
+            panelId: panel.id,
+            worldPosition: panel.position,
+            camera,
+            zoom: canvasState.zoom,
+            screenPosition
+          },
+          content_preview: `Panel ${panel.id}: world(${panel.position.x}, ${panel.position.y}) → screen(${screenPosition.x}, ${screenPosition.y})`
+        })
+
         return createPanelItem(
           hydratedPanelId,
-          panel.position,
+          screenPosition, // Use screen-space coordinates, not world-space
           panelType,
           hydratedNoteId,
           storeKey,
@@ -738,8 +797,45 @@ const mainPanelSeededRef = useRef(false)
         return prev
       })
 
-      initialHydrationRef.current = false
+      // CRITICAL: Also add hydrated panels to state.panels Map for connection lines!
+      // ConnectionsSvg component reads from state.panels, not canvasItems
+      // CRITICAL FIX: Use composite key (storeKey) not just panelId to avoid collisions in multi-note workspace
+      newItems.forEach(item => {
+        if (isPanel(item)) {
+          const panelKey = item.storeKey ?? ensurePanelKey(item.noteId ?? noteId, item.panelId ?? 'main')
+          dispatch({
+            type: 'ADD_PANEL',
+            payload: {
+              id: panelKey,  // Use composite key "noteId::panelId" not just "panelId"
+              panel: { element: null, branchId: item.panelId }
+            }
+          })
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'added_hydrated_panel_to_state',
+            metadata: {
+              panelId: item.panelId,
+              noteId: item.noteId,
+              compositeKey: panelKey
+            },
+            content_preview: `Added hydrated panel ${panelKey} to state.panels for connection lines`
+          })
+        }
+      })
+
+      // CRITICAL: Mark THIS NOTE as hydrated (not all notes)
+      hydratedNotesRef.current.add(noteId)
       lastHydratedNoteRef.current = noteId
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'marked_note_as_hydrated',
+        metadata: {
+          noteId,
+          totalHydratedNotes: hydratedNotesRef.current.size,
+          hydratedNotes: Array.from(hydratedNotesRef.current)
+        }
+      })
     }
   }, [hydrationStatus.success, hydrationStatus.panels, noteId, workspaceMainPosition])
 
@@ -1785,9 +1881,10 @@ const mainPanelSeededRef = useRef(false)
     const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
 
     // CRITICAL: Also remove panel from state.panels Map so it can be reopened later
+    // CRITICAL FIX: Use composite key (storeKey) not just panelId
     dispatch({
       type: 'REMOVE_PANEL',
-      payload: { id: panelId }
+      payload: { id: storeKey }  // Use composite key "noteId::panelId" not just "panelId"
     })
 
     debugLog({
@@ -1795,9 +1892,10 @@ const mainPanelSeededRef = useRef(false)
       action: 'panel_removed_from_state',
       metadata: {
         panelId,
-        noteId: targetNoteId
+        noteId: targetNoteId,
+        compositeKey: storeKey
       },
-      content_preview: `Removed panel ${panelId} from state.panels Map`
+      content_preview: `Removed panel ${storeKey} from state.panels Map`
     })
 
     // Persist panel deletion to database

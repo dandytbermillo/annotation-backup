@@ -144,12 +144,15 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
         branches: []
       }
       
-      dispatch({ 
-        type: 'ADD_PANEL', 
-        payload: { 
-          id: panelId, 
-          panel: newPanel 
-        } 
+      // Note: Enhanced control panel is for test components only (calculator, timer, etc.)
+      // These don't belong to any specific note, so we use the panelId directly
+      // without composite key. In production annotation canvas, all panels use composite keys.
+      dispatch({
+        type: 'ADD_PANEL',
+        payload: {
+          id: panelId,  // Test components don't use composite keys
+          panel: newPanel
+        }
       })
     }
   }
@@ -174,10 +177,16 @@ export function EnhancedControlPanel({ visible = true, onClose, canvasItems = []
     const selectedIds = Array.from(state.panels.entries())
       .filter(([_, panel]) => panel.selected)
       .map(([id, _]) => id)
-    
-    selectedIds.forEach(id => {
-      if (id !== 'main') { // Don't delete main panel
-        dispatch({ type: 'REMOVE_PANEL', payload: { id } })
+
+    selectedIds.forEach(compositeKey => {
+      // CRITICAL FIX: Extract panelId from composite key to check if it's main
+      // compositeKey format: "noteId::panelId" or just "panelId" (legacy)
+      const panelId = compositeKey.includes('::')
+        ? compositeKey.split('::')[1]
+        : compositeKey
+
+      if (panelId !== 'main') { // Don't delete main panel
+        dispatch({ type: 'REMOVE_PANEL', payload: { id: compositeKey } })
       }
     })
   }

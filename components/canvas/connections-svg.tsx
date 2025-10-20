@@ -48,7 +48,9 @@ export function ConnectionsSvg() {
       })
 
       if (branch && branch.parentId) {
-        const parentPanel = state.panels.get(branch.parentId)
+        // CRITICAL FIX: Use composite key to lookup parent panel
+        const parentStoreKey = ensurePanelKey(noteId || '', branch.parentId)
+        const parentPanel = state.panels.get(parentStoreKey)
 
         debugLog({
           component: 'ConnectionsSvg',
@@ -57,10 +59,11 @@ export function ConnectionsSvg() {
             noteId: noteId || '',
             branchId: panel.branchId,
             parentId: branch.parentId,
+            parentStoreKey,
             hasParentPanel: !!parentPanel,
             allPanelIds: Array.from(state.panels.keys())
           },
-          content_preview: `Parent panel ${branch.parentId} ${parentPanel ? 'FOUND' : 'NOT_FOUND'}`
+          content_preview: `Parent panel ${parentStoreKey} ${parentPanel ? 'FOUND' : 'NOT_FOUND'}`
         })
 
         if (parentPanel) {
@@ -82,14 +85,15 @@ export function ConnectionsSvg() {
   }, [state.panels, state.canvasState.showConnections, dataStore, noteId])
 
   const drawConnection = (fromId: string, toId: string, type: string) => {
-    const fromPanel = state.panels.get(toId)
-    const toPanel = state.panels.get(fromId)
+    // CRITICAL FIX: Use composite keys to lookup panels
+    const fromStoreKey = ensurePanelKey(noteId || '', toId)
+    const toStoreKey = ensurePanelKey(noteId || '', fromId)
+    const fromPanel = state.panels.get(fromStoreKey)
+    const toPanel = state.panels.get(toStoreKey)
     const svg = svgRef.current
 
     if (!fromPanel || !toPanel || !svg) return
 
-    const fromStoreKey = ensurePanelKey(noteId || '', toId)
-    const toStoreKey = ensurePanelKey(noteId || '', fromId)
     const fromBranch = dataStore.get(fromStoreKey)
     const toBranch = dataStore.get(toStoreKey)
 
