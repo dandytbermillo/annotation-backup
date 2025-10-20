@@ -92,6 +92,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)
 
+  // Track dragging state for connection line updates
+  const [isDraggingPanel, setIsDraggingPanel] = useState(false)
+
   // Annotation actions toggle state
   const [isActionsVisible, setIsActionsVisible] = useState(false)
   const [isActionsHovering, setIsActionsHovering] = useState(false)
@@ -1757,6 +1760,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       }
 
       dragState.current.isDragging = true
+      setIsDraggingPanel(true)
 
       // Notify editor to defer heavy operations
       const perfSetter = (editorRef.current as any)?.setPerformanceMode
@@ -1984,6 +1988,7 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       stopAutoScroll()
 
       dragState.current.isDragging = false
+      setIsDraggingPanel(false)
       dragState.current.rafScheduled = false
       dragState.current.pendingMouseEvent = null
       globalDraggingPanelId = null
@@ -2523,7 +2528,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
         ref={panelRef}
         className={`panel ${currentBranch.type}`}
         id={`panel-${panelId}`}
+        data-panel-id={panelId}
         data-store-key={storeKey}
+        data-dragging={isDraggingPanel ? "true" : "false"}
       onClick={() => {
         // Register this panel's editor as active when panel is clicked
         // Pass composite key (storeKey) so FloatingToolbar can identify correct panel in shared workspace

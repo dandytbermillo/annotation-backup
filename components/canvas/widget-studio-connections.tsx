@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { useCanvas } from "./canvas-context"
 import { CanvasItem, isPanel } from "@/types/canvas-items"
@@ -80,46 +80,94 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
 
   const panels = useMemo(() => canvasItems.filter(isPanel), [canvasItems])
 
-  // Helper to get branch data using the correct noteId
-  const getBranchData = useMemo(() => {
-    return (panelId: string, panelNoteId?: string) => {
-      if (isPlainMode) {
-        // Use the panel's noteId if available, otherwise fallback to canvas noteId
-        const effectiveNoteId = panelNoteId || noteId || ''
-        const compositeKey = ensurePanelKey(effectiveNoteId, panelId)
-        return dataStore.get(compositeKey)
+  // Track dragging state to force updates
+  const [dragUpdateTick, setDragUpdateTick] = useState(0)
+  const rafRef = useRef<number | null>(null)
+
+  // Monitor for panel dragging and trigger updates
+  useEffect(() => {
+    let isDragging = false
+
+    const checkDragging = () => {
+      // Check if any panel is being dragged (has dragging class or data attribute)
+      const draggingPanel = document.querySelector('[data-panel-id][data-dragging="true"]')
+      const wasDragging = isDragging
+      isDragging = !!draggingPanel
+
+      if (isDragging) {
+        // Force re-computation by updating tick
+        setDragUpdateTick(prev => prev + 1)
+        rafRef.current = requestAnimationFrame(checkDragging)
+      } else if (wasDragging) {
+        // Just stopped dragging - do one final update
+        setDragUpdateTick(prev => prev + 1)
       } else {
-        const branchesMap = UnifiedProvider.getInstance().getBranchesMap()
-        const effectiveNoteId = panelNoteId || noteId || ''
-        const compositeKey = ensurePanelKey(effectiveNoteId, panelId)
-        return branchesMap.get(compositeKey) || dataStore.get(compositeKey)
+        // Not dragging - check again in a bit
+        rafRef.current = requestAnimationFrame(checkDragging)
       }
     }
-  }, [dataStore, isPlainMode, noteId])
 
-  const connections: Connection[] = useMemo(() => {
+    rafRef.current = requestAnimationFrame(checkDragging)
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+      }
+    }
+  }, [])
+
+  // Helper to get current panel position (from DOM if being dragged, otherwise from props)
+  const getPanelPosition = useCallback((panel: CanvasItem) => {
+    if (!panel.panelId) return panel.position
+
+    // CRITICAL: Use storeKey (composite key) to uniquely identify panels in multi-note workspaces
+    // Using panelId alone fails when multiple notes have panels with same ID (e.g., "main")
+    const storeKey = panel.storeKey || ensurePanelKey(panel.noteId || noteId || '', panel.panelId)
+
+    // Try to read current position from DOM (updated during drag)
+    const panelElement = document.querySelector(`[data-store-key="${storeKey}"]`) as HTMLElement
+    if (panelElement) {
+      const left = parseFloat(panelElement.style.left || '0')
+      const top = parseFloat(panelElement.style.top || '0')
+      if (!isNaN(left) && !isNaN(top)) {
+        return { x: left, y: top }
+      }
+    }
+
+    // Fallback to position from props
+    return panel.position
+  }, [noteId])
+
+  // Generate connection lines in canvas space (copied from overlay popup pattern)
+  const connectionPaths = useMemo(() => {
+    const paths: Connection[] = []
+
     debugLog({
       component: 'WidgetStudioConnections',
-      action: 'recompute_connections_start',
+      action: 'recompute_start',
       metadata: {
         panelsCount: panels.length,
-        noteId: noteId || 'NO_NOTE_ID',
-        branchVersion,
-        dataStoreVersion
+        noteId: noteId || 'NO_NOTE_ID'
       },
       content_preview: `Recomputing connections for ${panels.length} panels`
     })
 
-    if (panels.length === 0) {
-      return []
-    }
-
-    // Use composite keys to avoid collisions when multiple notes have panels with same panelId
+    // Build a simple panel map for easy lookup (like overlay popups Map)
     const panelMap = new Map<string, CanvasItem>()
+    const panelDetails: any[] = []
+
     panels.forEach((panel) => {
       if (panel.panelId) {
+        // Always compute storeKey if not present
         const key = panel.storeKey || ensurePanelKey(panel.noteId || noteId || '', panel.panelId)
         panelMap.set(key, panel)
+
+        panelDetails.push({
+          panelId: panel.panelId,
+          noteId: panel.noteId,
+          storeKey: key,
+          position: panel.position
+        })
       }
     })
 
@@ -129,247 +177,122 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
       metadata: {
         panelMapSize: panelMap.size,
         panelMapKeys: Array.from(panelMap.keys()),
-        panelDetails: Array.from(panelMap.entries()).map(([key, panel]) => ({
-          key,
-          panelId: panel.panelId,
-          noteId: panel.noteId,
-          hasPosition: !!panel.position
-        }))
+        panelDetails
       },
       content_preview: `Built panelMap with ${panelMap.size} entries`
     })
 
-    const seen = new Set<string>()
-    const result: Connection[] = []
-
-    const addConnection = (parentId: string, childId: string, childNoteId: string) => {
-      const key = `${parentId}::${childId}`
-
-      debugLog({
-        component: 'WidgetStudioConnections',
-        action: 'addConnection_start',
-        metadata: {
-          parentId,
-          childId,
-          childNoteId,
-          connectionKey: key,
-          alreadySeen: seen.has(key)
-        },
-        content_preview: `Attempting connection: ${parentId} → ${childId}`
-      })
-
-      if (seen.has(key)) {
-        debugLog({
-          component: 'WidgetStudioConnections',
-          action: 'addConnection_skipped_duplicate',
-          metadata: { key },
-          content_preview: `Connection ${key} already exists`
-        })
-        return
-      }
-
-      // Use composite keys for panel lookup to avoid confusion across different notes
-      const parentKey = ensurePanelKey(childNoteId, parentId)
-      const childKey = ensurePanelKey(childNoteId, childId)
-
-      debugLog({
-        component: 'WidgetStudioConnections',
-        action: 'panel_lookup',
-        metadata: {
-          parentKey,
-          childKey,
-          panelMapSize: panelMap.size,
-          panelMapKeys: Array.from(panelMap.keys())
-        },
-        content_preview: `Looking up panels: parent=${parentKey}, child=${childKey}`
-      })
-
-      const parentPanel = panelMap.get(parentKey)
-      const childPanel = panelMap.get(childKey)
-
-      if (!parentPanel || !childPanel) {
-        debugLog({
-          component: 'WidgetStudioConnections',
-          action: 'addConnection_failed_panel_not_found',
-          metadata: {
-            parentKey,
-            childKey,
-            hasParentPanel: !!parentPanel,
-            hasChildPanel: !!childPanel
-          },
-          content_preview: `Panel not found: parent=${!!parentPanel}, child=${!!childPanel}`
-        })
-        return
-      }
-
-      const parentBranch = getBranchData(parentId, childNoteId)
-      const childBranch = getBranchData(childId, childNoteId)
-
-      if (!parentBranch || !childBranch) {
-        debugLog({
-          component: 'WidgetStudioConnections',
-          action: 'addConnection_failed_branch_not_found',
-          metadata: {
-            parentId,
-            childId,
-            hasParentBranch: !!parentBranch,
-            hasChildBranch: !!childBranch
-          },
-          content_preview: `Branch not found: parent=${!!parentBranch}, child=${!!childBranch}`
-        })
-        return
-      }
-
-      const parentPos =
-        parentPanel.position ??
-        parentBranch?.worldPosition ??
-        parentBranch?.position
-      const childPos =
-        childPanel.position ??
-        childBranch?.worldPosition ??
-        childBranch?.position
-      if (!parentPos || !childPos) return
-
-      const parentWidth = parentPanel.dimensions?.width ?? PANEL_DEFAULT_WIDTH
-      const parentHeight = parentPanel.dimensions?.height ?? PANEL_DEFAULT_HEIGHT
-      const childHeight = childPanel.dimensions?.height ?? PANEL_DEFAULT_HEIGHT
-
-      const from: ConnectionPoint = {
-        x: parentPos.x + parentWidth,
-        y: parentPos.y + parentHeight / 2,
-      }
-
-      const to: ConnectionPoint = {
-        x: childPos.x,
-        y: childPos.y + childHeight / 2,
-      }
-
-      result.push({
-        id: key,
-        from,
-        to,
-        type: normalizeType(childBranch.type),
-        label: undefined,
-      })
-      seen.add(key)
-
-      debugLog({
-        component: 'WidgetStudioConnections',
-        action: 'addConnection_success',
-        metadata: {
-          connectionKey: key,
-          from,
-          to,
-          type: normalizeType(childBranch.type)
-        },
-        content_preview: `Connection created: ${parentId} → ${childId}`
-      })
-    }
-
     panels.forEach((panel) => {
-      const panelId = panel.panelId
-      if (!panelId) return
+      if (!panel.panelId || !panel.position) return
+
+      // Get branch data to find parentId
+      const effectiveNoteId = panel.noteId || noteId || ''
+      const compositeKey = ensurePanelKey(effectiveNoteId, panel.panelId)
+
+      const branch = isPlainMode
+        ? dataStore.get(compositeKey)
+        : UnifiedProvider.getInstance().getBranchesMap().get(compositeKey) || dataStore.get(compositeKey)
 
       debugLog({
         component: 'WidgetStudioConnections',
-        action: 'processing_panel',
+        action: branch ? 'branch_found' : 'branch_not_found',
         metadata: {
-          panelId,
-          noteId: panel.noteId,
-          storeKey: panel.storeKey,
-          hasPosition: !!panel.position
+          panelId: panel.panelId,
+          noteId: effectiveNoteId,
+          compositeKey,
+          hasBranch: !!branch,
+          parentId: branch?.parentId || 'NO_PARENT'
         },
-        content_preview: `Processing panel: ${panelId}`
+        content_preview: `Panel ${panel.panelId}: ${branch ? `parent=${branch.parentId}` : 'NO_BRANCH'}`
       })
 
-      const branch = getBranchData(panelId, panel.noteId)
-      if (!branch) {
+      if (branch && branch.parentId) {
+        // Find parent panel (like overlay popup pattern)
+        const parentKey = ensurePanelKey(effectiveNoteId, branch.parentId)
+        const parent = panelMap.get(parentKey)
+
         debugLog({
           component: 'WidgetStudioConnections',
-          action: 'panel_branch_not_found',
+          action: parent ? 'parent_found' : 'parent_not_found',
           metadata: {
-            panelId,
-            noteId: panel.noteId,
-            compositeKey: ensurePanelKey(panel.noteId || noteId || '', panelId)
+            childPanelId: panel.panelId,
+            childNoteId: panel.noteId,
+            effectiveNoteId,
+            parentId: branch.parentId,
+            parentKey,
+            hasParent: !!parent,
+            hasParentPosition: !!parent?.position,
+            parentActualNoteId: parent?.noteId,
+            parentActualPanelId: parent?.panelId,
+            allKeysInMap: Array.from(panelMap.keys())
           },
-          content_preview: `Branch data not found for panel: ${panelId}`
+          content_preview: `Child ${panel.panelId} (note: ${effectiveNoteId}) looking for parent ${branch.parentId} with key ${parentKey}: ${parent ? `FOUND (parent noteId: ${parent.noteId})` : 'NOT_FOUND'}`
         })
-        return
-      }
 
-      debugLog({
-        component: 'WidgetStudioConnections',
-        action: 'panel_branch_found',
-        metadata: {
-          panelId,
-          parentId: branch.parentId,
-          branchType: branch.type,
-          hasBranches: Array.isArray(branch.branches),
-          branchesCount: Array.isArray(branch.branches) ? branch.branches.length : 0
-        },
-        content_preview: `Branch found for ${panelId}: parent=${branch.parentId || 'NONE'}, type=${branch.type}`
-      })
+        if (parent && parent.position) {
+          // Get current positions (from DOM if dragging, otherwise from props)
+          const parentPosition = getPanelPosition(parent)
+          const childPosition = getPanelPosition(panel)
 
-      if (branch.parentId) {
-        addConnection(branch.parentId, panelId, panel.noteId || noteId || '')
-      } else {
-        debugLog({
-          component: 'WidgetStudioConnections',
-          action: 'panel_no_parent',
-          metadata: {
-            panelId,
-            branchSnapshot: { ...branch }
-          },
-          content_preview: `Panel ${panelId} has no parentId`
-        })
-      }
+          // Get actual panel width from dimensions (NOT the 800px default!)
+          // Read from DOM if possible for most accurate width during drag
+          // CRITICAL: Use storeKey to query the correct panel in multi-note workspaces
+          let parentWidth = parent.dimensions?.width ?? 600
+          const parentStoreKey = parent.storeKey || ensurePanelKey(parent.noteId || effectiveNoteId, parent.panelId)
+          const parentElement = document.querySelector(`[data-store-key="${parentStoreKey}"]`) as HTMLElement
+          if (parentElement) {
+            const computedWidth = parseFloat(parentElement.style.width || '0')
+            if (!isNaN(computedWidth) && computedWidth > 0) {
+              parentWidth = computedWidth
+            }
+          }
 
-      panels.forEach((maybeParent) => {
-        const candidateId = maybeParent.panelId
-        if (!candidateId || candidateId === panelId) return
+          // EXACT overlay popup connection points: 50px from top (header height)
+          const startX = parentPosition.x + parentWidth  // Right edge of parent
+          const startY = parentPosition.y + 50           // Fixed offset like overlay popups
+          const endX = childPosition.x                    // Left edge of child
+          const endY = childPosition.y + 50               // Fixed offset like overlay popups
 
-        const candidateBranch = getBranchData(candidateId, maybeParent.noteId)
-        const childIds = Array.isArray(candidateBranch?.branches)
-          ? (candidateBranch.branches as string[])
-          : []
+          paths.push({
+            id: `${branch.parentId}::${panel.panelId}`,
+            from: { x: startX, y: startY },
+            to: { x: endX, y: endY },
+            type: normalizeType(branch.type),
+            label: undefined
+          })
 
-        if (childIds.includes(panelId)) {
-          addConnection(candidateId, panelId, panel.noteId || noteId || '')
-        } else if (
-          process.env.NODE_ENV !== "production" &&
-          childIds.length > 0
-        ) {
-          // eslint-disable-next-line no-console
-          console.debug("[WidgetStudioConnections] child not listed under parent", {
-            parentId: candidateId,
-            panelId,
-            childIds,
-            parentSnapshot: { ...candidateBranch },
+          debugLog({
+            component: 'WidgetStudioConnections',
+            action: 'connection_created',
+            metadata: {
+              connectionId: `${branch.parentId}::${panel.panelId}`,
+              from: { x: startX, y: startY },
+              to: { x: endX, y: endY },
+              parentNoteId: parent.noteId,
+              parentPanelId: parent.panelId,
+              childNoteId: panel.noteId,
+              childPanelId: panel.panelId,
+              parentKey,
+              childKey: compositeKey
+            },
+            content_preview: `Connection: ${parent.noteId}::${branch.parentId} → ${panel.noteId}::${panel.panelId}`
           })
         }
-      })
+      }
     })
 
     debugLog({
       component: 'WidgetStudioConnections',
-      action: 'recompute_connections_complete',
+      action: 'recompute_complete',
       metadata: {
-        connectionsCount: result.length,
-        panelsCount: panels.length,
-        branchVersion,
-        dataStoreVersion,
-        connectionDetails: result.map(conn => ({
-          id: conn.id,
-          type: conn.type,
-          from: conn.from,
-          to: conn.to
-        }))
+        connectionsCount: paths.length,
+        panelsCount: panels.length
       },
-      content_preview: `Created ${result.length} connections from ${panels.length} panels`
+      content_preview: `Created ${paths.length} connections from ${panels.length} panels`
     })
 
-    return result
-  }, [getBranchData, panels, branchVersion, dataStoreVersion])
+    return paths
+  }, [panels, isPlainMode, dataStore, noteId, branchVersion, dataStoreVersion, dragUpdateTick, getPanelPosition])
 
   return (
     <svg
@@ -378,103 +301,23 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
         width: "10000px",
         height: "10000px",
         overflow: "visible",
-        zIndex: 0,
+        zIndex: 0
       }}
     >
-      <defs>
-        {/* Subtle drop shadow for depth */}
-        <filter id="connection-shadow" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
-          <feOffset dx="0" dy="1" result="offsetblur" />
-          <feComponentTransfer>
-            <feFuncA type="linear" slope="0.1" />
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-
-        {/* Arrow marker for connection end points */}
-        <marker
-          id="widget-arrow"
-          markerWidth="8"
-          markerHeight="8"
-          refX="7"
-          refY="4"
-          orient="auto"
-          markerUnits="strokeWidth"
-        >
-          <path
-            d="M 0 0 L 8 4 L 0 8 z"
-            fill="rgba(148, 163, 184, 0.8)"
-            stroke="none"
-          />
-        </marker>
-      </defs>
-
-      {connections.map((connection) => {
+      {connectionPaths.map((connection) => {
         const pathData = createWidgetStudioPath(connection.from, connection.to)
-        const color = getConnectionColor(connection.type)
-        const labelPosition = calculateLabelPosition(connection.from, connection.to)
 
         return (
-          <g key={connection.id} className="connection-group">
-            {/* Main path */}
-            <path
-              d={pathData}
-              fill="none"
-              stroke={color}
-              strokeWidth="2"
-              strokeLinecap="round"
-              className="transition-all duration-200 hover:stroke-[3px] hover:opacity-100"
-              style={{ opacity: 0.6 }}
-              filter="url(#connection-shadow)"
-              markerEnd="url(#widget-arrow)"
-            />
-
-            {/* Connection point dots */}
-            <circle
-              cx={connection.from.x}
-              cy={connection.from.y}
-              r="4"
-              fill={color}
-              className="opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-            />
-            <circle
-              cx={connection.to.x}
-              cy={connection.to.y}
-              r="4"
-              fill={color}
-              className="opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-            />
-
-            {/* Optional label */}
-            {connection.label && (
-              <g transform={`translate(${labelPosition.x}, ${labelPosition.y})`}>
-                <rect
-                  x="-20"
-                  y="-10"
-                  width="40"
-                  height="20"
-                  rx="4"
-                  fill="white"
-                  stroke={color}
-                  strokeWidth="1"
-                  opacity="0.9"
-                />
-                <text
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize="11"
-                  fill="#666"
-                  fontFamily="system-ui, -apple-system, sans-serif"
-                >
-                  {connection.label}
-                </text>
-              </g>
-            )}
-          </g>
+          <path
+            key={connection.id}
+            d={pathData}
+            stroke="#4B5563"  // Same gray color as overlay popups
+            strokeWidth={2}
+            opacity={0.6}
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         )
       })}
     </svg>
@@ -482,39 +325,13 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
 }
 
 /**
- * Create Widget Studio style Bézier path
- * Always creates horizontal S-curve from right to left
+ * Create connection path using Quadratic Bezier curve
+ * EXACT copy from overlay popup pattern
  */
 function createWidgetStudioPath(from: ConnectionPoint, to: ConnectionPoint): string {
-  const dx = to.x - from.x
-  const dy = to.y - from.y
+  const controlX = (from.x + to.x) / 2
 
-  // Control point offset - determines curve smoothness
-  // Widget Studio uses about 40% of horizontal distance
-  const controlOffset = Math.abs(dx) * 0.4
-
-  // Control points for horizontal S-curve
-  const control1 = {
-    x: from.x + controlOffset,
-    y: from.y,
-  }
-
-  const control2 = {
-    x: to.x - controlOffset,
-    y: to.y,
-  }
-
-  return `M ${from.x},${from.y} C ${control1.x},${control1.y} ${control2.x},${control2.y} ${to.x},${to.y}`
-}
-
-/**
- * Calculate position for optional label on path
- */
-function calculateLabelPosition(from: ConnectionPoint, to: ConnectionPoint): ConnectionPoint {
-  return {
-    x: (from.x + to.x) / 2,
-    y: (from.y + to.y) / 2,
-  }
+  return `M ${from.x} ${from.y} Q ${controlX} ${from.y} ${to.x} ${to.y}`
 }
 
 /**
