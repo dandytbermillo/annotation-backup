@@ -2,7 +2,7 @@
 
 import { useCanvas } from "./canvas-context"
 import { useEffect, useRef } from "react"
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { debugLog } from "@/lib/utils/debug-logger"
 
 export function ConnectionsSvg() {
@@ -29,16 +29,21 @@ export function ConnectionsSvg() {
     existingPaths.forEach((path) => path.remove())
 
     // Draw connections
-    state.panels.forEach((panel) => {
-      const branchStoreKey = ensurePanelKey(noteId || '', panel.branchId)
+    state.panels.forEach((panel, compositeKey) => {
+      const parsed = parsePanelKey(typeof compositeKey === 'string' ? compositeKey : '')
+      const panelNoteId = parsed?.noteId || noteId || ''
+      const panelId = parsed?.panelId || panel.branchId
+
+      const branchStoreKey = ensurePanelKey(panelNoteId, panel.branchId)
       const branch = dataStore.get(branchStoreKey)
 
       debugLog({
         component: 'ConnectionsSvg',
         action: 'check_panel',
         metadata: {
-          noteId: noteId || '',
+          noteId: panelNoteId,
           panelBranchId: panel.branchId,
+          compositeKey,
           branchStoreKey,
           hasBranchData: !!branch,
           branchParentId: branch?.parentId || 'NO_PARENT',
@@ -49,16 +54,17 @@ export function ConnectionsSvg() {
 
       if (branch && branch.parentId) {
         // CRITICAL FIX: Use composite key to lookup parent panel
-        const parentStoreKey = ensurePanelKey(noteId || '', branch.parentId)
+        const parentStoreKey = ensurePanelKey(panelNoteId, branch.parentId)
         const parentPanel = state.panels.get(parentStoreKey)
 
         debugLog({
           component: 'ConnectionsSvg',
           action: 'check_parent_panel',
           metadata: {
-            noteId: noteId || '',
+            noteId: panelNoteId,
             branchId: panel.branchId,
             parentId: branch.parentId,
+            panelCompositeKey: compositeKey,
             parentStoreKey,
             hasParentPanel: !!parentPanel,
             allPanelIds: Array.from(state.panels.keys())
@@ -78,29 +84,49 @@ export function ConnectionsSvg() {
             },
             content_preview: `Drawing: ${branch.parentId} → ${panel.branchId}`
           })
-          drawConnection(panel.branchId, branch.parentId, branch.type)
+          drawConnection(compositeKey, parentStoreKey, branch.type)
         }
       }
     })
   }, [state.panels, state.canvasState.showConnections, dataStore, noteId])
 
-  const drawConnection = (fromId: string, toId: string, type: string) => {
+  const drawConnection = (childKey: string, parentKey: string, type: string) => {
     // CRITICAL FIX: Use composite keys to lookup panels
-    const fromStoreKey = ensurePanelKey(noteId || '', toId)
-    const toStoreKey = ensurePanelKey(noteId || '', fromId)
-    const fromPanel = state.panels.get(fromStoreKey)
-    const toPanel = state.panels.get(toStoreKey)
+    const childPanel = state.panels.get(childKey)
+    const parentPanel = state.panels.get(parentKey)
     const svg = svgRef.current
 
-    if (!fromPanel || !toPanel || !svg) return
+    if (!childPanel || !parentPanel || !svg) return
 
-    const fromBranch = dataStore.get(fromStoreKey)
-    const toBranch = dataStore.get(toStoreKey)
+    const childParsed = parsePanelKey(childKey) || { noteId: noteId || '', panelId: childPanel.branchId }
+    const parentParsed = parsePanelKey(parentKey) || { noteId: noteId || '', panelId: parentPanel.branchId }
 
-    const fromX = fromBranch.position.x + 800 // PANEL_WIDTH
-    const fromY = fromBranch.position.y + 300 // PANEL_HEIGHT / 2
-    const toX = toBranch.position.x
-    const toY = toBranch.position.y + 300
+    const childStoreKey = ensurePanelKey(childParsed.noteId, childParsed.panelId)
+    const parentStoreKey = ensurePanelKey(parentParsed.noteId, parentParsed.panelId)
+
+    const childBranch = dataStore.get(childStoreKey)
+    const parentBranch = dataStore.get(parentStoreKey)
+
+    if (!childBranch || !parentBranch) {
+      debugLog({
+        component: 'ConnectionsSvg',
+        action: 'missing_branch_for_connection',
+        metadata: {
+          childKey,
+          parentKey,
+          childStoreKey,
+          parentStoreKey,
+          childHasBranch: !!childBranch,
+          parentHasBranch: !!parentBranch
+        }
+      })
+      return
+    }
+
+    const fromX = parentBranch.position.x + 800 // PANEL_WIDTH
+    const fromY = parentBranch.position.y + 300 // PANEL_HEIGHT / 2
+    const toX = childBranch.position.x
+    const toY = childBranch.position.y + 300
 
     const pathData = createSmoothCurve(fromX, fromY, toX, toY)
 
