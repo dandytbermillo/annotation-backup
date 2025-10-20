@@ -1727,19 +1727,78 @@ const mainPanelSeededRef = useRef(false)
 
   const handlePanelClose = (panelId: string, panelNoteId?: string) => {
     let storeKeyToDelete: string | undefined
-    setCanvasItems(prev => prev.filter(item => {
-      if (isPanel(item) && item.panelId === panelId) {
-        const itemNoteId = getItemNoteId(item) || panelNoteId
-        if (!panelNoteId || itemNoteId === panelNoteId) {
-          storeKeyToDelete = item.storeKey ?? (itemNoteId ? ensurePanelKey(itemNoteId, panelId) : undefined)
-          return false
+
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'panel_close_start',
+      metadata: {
+        panelId,
+        panelNoteId,
+        currentNoteId: noteId,
+        canvasItemsCount: canvasItems.length
+      },
+      content_preview: `Closing panel ${panelId} (note: ${panelNoteId || noteId})`
+    })
+
+    setCanvasItems(prev => {
+      const filtered = prev.filter(item => {
+        if (isPanel(item) && item.panelId === panelId) {
+          const itemNoteId = getItemNoteId(item) || panelNoteId
+          if (!panelNoteId || itemNoteId === panelNoteId) {
+            storeKeyToDelete = item.storeKey ?? (itemNoteId ? ensurePanelKey(itemNoteId, panelId) : undefined)
+
+            debugLog({
+              component: 'AnnotationCanvas',
+              action: 'panel_removed_from_items',
+              metadata: {
+                panelId,
+                itemNoteId,
+                storeKey: item.storeKey,
+                storeKeyToDelete,
+                position: item.position
+              },
+              content_preview: `Removed panel ${panelId} from canvasItems`
+            })
+
+            return false
+          }
         }
-      }
-      return true
-    }))
+        return true
+      })
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'panel_close_items_updated',
+        metadata: {
+          panelId,
+          beforeCount: prev.length,
+          afterCount: filtered.length,
+          removedCount: prev.length - filtered.length
+        },
+        content_preview: `canvasItems: ${prev.length} → ${filtered.length}`
+      })
+
+      return filtered
+    })
 
     const targetNoteId = panelNoteId || noteId
     const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
+
+    // CRITICAL: Also remove panel from state.panels Map so it can be reopened later
+    dispatch({
+      type: 'REMOVE_PANEL',
+      payload: { id: panelId }
+    })
+
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'panel_removed_from_state',
+      metadata: {
+        panelId,
+        noteId: targetNoteId
+      },
+      content_preview: `Removed panel ${panelId} from state.panels Map`
+    })
 
     // Persist panel deletion to database
     persistPanelDelete(panelId, storeKey).catch(err => {
@@ -1787,9 +1846,45 @@ const mainPanelSeededRef = useRef(false)
     setCanvasItems(prev => {
       const newPanelStoreKey = ensurePanelKey(targetNoteId, panelId)
 
-      if (prev.some(item => isPanel(item) && item.panelId === panelId && getItemNoteId(item) === targetNoteId)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'create_panel_check_existing',
+        metadata: {
+          panelId,
+          targetNoteId,
+          newPanelStoreKey,
+          currentCanvasItemsCount: prev.length,
+          panelIdsInItems: prev.filter(isPanel).map(p => ({ panelId: p.panelId, noteId: getItemNoteId(p) }))
+        },
+        content_preview: `Checking if panel ${panelId} already exists in ${prev.length} items`
+      })
+
+      const existingPanelCheck = prev.some(item => isPanel(item) && item.panelId === panelId && getItemNoteId(item) === targetNoteId)
+
+      if (existingPanelCheck) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'create_panel_early_return',
+          metadata: {
+            panelId,
+            targetNoteId,
+            reason: 'Panel already exists in canvasItems'
+          },
+          content_preview: `EARLY RETURN: Panel ${panelId} already exists, not creating`
+        })
         return prev
       }
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'create_panel_proceeding',
+        metadata: {
+          panelId,
+          targetNoteId,
+          isPlainMode: isPlainModeActive()
+        },
+        content_preview: `Proceeding to create panel ${panelId}`
+      })
 
       if (isPlainMode) {
         if (parentPosition && (window as any).canvasDataStore) {
