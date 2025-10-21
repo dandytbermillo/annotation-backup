@@ -216,7 +216,7 @@ export class EnhancedCollaborativeStructure {
     doc.destroy()
   }
 
-  private updatePanelState(panelId: string, state: 'active' | 'lazy' | 'unloaded'): void {
+  private updatePanelState(panelId: string, state: 'active' | 'lazy' | 'unloaded' | 'closed'): void {
     const panels = this.mainDoc.getMap('metadata').get('panels') as Y.Map<any>
     const panel = panels.get(panelId) as Y.Map<any>
     if (panel) {

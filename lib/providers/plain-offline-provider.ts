@@ -72,7 +72,7 @@ export interface Panel {
   noteId: string
   position: { x: number; y: number }
   dimensions: { width: number; height: number }
-  state: 'active' | 'minimized' | 'hidden'
+  state: 'active' | 'minimized' | 'hidden' | 'closed'
   lastAccessed: Date
 }
 

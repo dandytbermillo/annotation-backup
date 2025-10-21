@@ -230,7 +230,17 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
             cachedSnapshot = JSON.parse(rawSnapshot)
             if (cachedSnapshot) {
               Object.entries(cachedSnapshot).forEach(([branchId, value]) => {
-                snapshotMap.set(branchId, value as Record<string, any>)
+                const entry = value as Record<string, any>
+                if ((entry?.state ?? 'active') !== 'active') {
+                  if (process.env.NODE_ENV !== 'production') {
+                    console.debug('[CanvasProvider] Skipping cached branch with inactive state', {
+                      branchId,
+                      state: entry?.state
+                    })
+                  }
+                  return
+                }
+                snapshotMap.set(branchId, entry)
               })
             }
           }
@@ -275,6 +285,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
             position: value.position,
             dimensions: value.dimensions,
             isEditable: value.isEditable,
+            state: value.state ?? 'active',
+            closedAt: value.closedAt ?? null,
           }
         })
         try {
@@ -332,12 +344,23 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         content: cachedMain?.content,
         preview: cachedMain?.preview || '',
         hasHydratedContent: cachedMain?.hasHydratedContent ?? false,
+        state: 'active',
+        closedAt: null,
       })
 
       // Pre-populate additional branches from cache before remote load
       snapshotMap.forEach((value, rawKey) => {
         if (rawKey === 'main') return
         const cachedBranch = value as Record<string, any>
+        if ((cachedBranch.state ?? 'active') !== 'active') {
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[CanvasProvider] Skipping cached branch during preload', {
+              branchId: rawKey,
+              state: cachedBranch.state
+            })
+          }
+          return
+        }
         const parsedKey = rawKey.includes('::') ? parsePanelKey(rawKey) : { noteId: noteId || '', panelId: rawKey }
         const sourceNoteId = parsedKey.noteId || noteId || ''
         const normalizedPanelId = normalizePanelId(parsedKey.panelId, cachedBranch.type)
@@ -388,7 +411,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           isEditable: cachedBranch.isEditable ?? true,
           metadata: mergedMetadata,
           worldPosition: existing?.worldPosition ?? cachedBranch.worldPosition,
-          worldSize: existing?.worldSize ?? cachedBranch.worldSize
+          worldSize: existing?.worldSize ?? cachedBranch.worldSize,
+          state: 'active',
+          closedAt: null
         }
         dataStore.set(branchStoreKey, merged)
       })
@@ -452,6 +477,15 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         const branchesByParent = new Map<string, string[]>()
         
         branches.forEach(branch => {
+          if ((branch.state ?? 'active') !== 'active') {
+            if (process.env.NODE_ENV !== 'production') {
+              console.debug('[CanvasProvider] Skipping non-active branch from DB', {
+                branchId: branch.id,
+                state: branch.state
+              })
+            }
+            return
+          }
           // Transform database format to UI format
           const uiId = `branch-${branch.id}`
 
@@ -547,7 +581,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
               isEditable: true,
               branches: existing.branches || [],
               parentId,
-              metadata: branchMetadata
+              metadata: branchMetadata,
+              state: 'active',
+              closedAt: null
               // DO NOT touch: position, worldPosition, dimensions, worldSize, zIndex
             })
 
@@ -574,7 +610,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
               isEditable: true,
               branches: [],
               parentId,
-              metadata: branchMetadata
+              metadata: branchMetadata,
+              state: 'active',
+              closedAt: null
               // Position will be set by handleCreatePanel in annotation-canvas-modern.tsx
             })
 

@@ -206,7 +206,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     return null
   }
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
-  const { openNotes, updateMainPosition, getPendingPosition, getCachedPosition } = useCanvasWorkspace()
+  const {
+    openNotes,
+    updateMainPosition,
+    getPendingPosition,
+    getCachedPosition,
+    closeNote
+  } = useCanvasWorkspace()
   const workspaceNoteMap = useMemo(() => {
     const map = new Map<string, OpenWorkspaceNote>()
     openNotes.forEach(note => map.set(note.noteId, note))
@@ -1856,6 +1862,7 @@ const mainPanelSeededRef = useRef(false)
 
   const handlePanelClose = (panelId: string, panelNoteId?: string) => {
     let storeKeyToDelete: string | undefined
+    const closedAt = new Date().toISOString()
 
     debugLog({
       component: 'AnnotationCanvas',
@@ -1911,16 +1918,67 @@ const mainPanelSeededRef = useRef(false)
     })
 
     const targetNoteId = panelNoteId || noteId
-    const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
-
-    // Mark panel state as closed locally for immediacy
-    const existingPanelData = dataStore.get(storeKey)
-    if (existingPanelData) {
-      dataStore.update(storeKey, { ...existingPanelData, state: 'lazy' })
+    if (!targetNoteId) {
+      console.warn('[AnnotationCanvas] Cannot close panel without note id', panelId)
+      return
     }
+
+    const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
+    const existingPanelData = dataStore.get(storeKey)
+    const existingRevision = existingPanelData?.revisionToken
+    const parentId = existingPanelData?.parentId
+
+    if (existingPanelData) {
+      dataStore.update(storeKey, { state: 'closed', closedAt })
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'panel_state_marked_closed',
+        metadata: {
+          panelId,
+          noteId: targetNoteId,
+          storeKey,
+          parentId,
+          revisionToken: existingRevision
+        }
+      })
+    }
+
     if (branchesMap?.has(storeKey)) {
       const branchData = branchesMap.get(storeKey)
-      branchesMap.set(storeKey, { ...branchData, state: 'lazy' })
+      branchesMap.set(storeKey, { ...branchData, state: 'closed', closedAt })
+    }
+
+    const removeBranchReference = (ownerNoteId: string, ownerPanelId: string) => {
+      const ownerKey = ensurePanelKey(ownerNoteId, ownerPanelId)
+      const ownerData = dataStore.get(ownerKey)
+      if (ownerData?.branches?.length) {
+        const filtered = ownerData.branches.filter((childId: string) => childId !== panelId)
+        if (filtered.length !== ownerData.branches.length) {
+          dataStore.update(ownerKey, { branches: filtered })
+        }
+      }
+
+      if (branchesMap?.has(ownerKey)) {
+        const ownerBranch = branchesMap.get(ownerKey)
+        const ownerBranches = ownerBranch?.branches
+        if (Array.isArray(ownerBranches)) {
+          const filtered = ownerBranches.filter((childId: string) => childId !== panelId)
+          if (filtered.length !== ownerBranches.length) {
+            branchesMap.set(ownerKey, { ...ownerBranch, branches: filtered })
+          }
+        }
+      }
+    }
+
+    if (panelId !== 'main') {
+      removeBranchReference(targetNoteId, 'main')
+      if (parentId && parentId !== 'main') {
+        removeBranchReference(targetNoteId, parentId)
+      }
+    }
+
+    if (layerManagerApi.manager.getNode(storeKey)) {
+      layerManagerApi.manager.removeNode(storeKey)
     }
 
     // CRITICAL: Also remove panel from state.panels Map so it can be reopened later
@@ -1930,21 +1988,25 @@ const mainPanelSeededRef = useRef(false)
       payload: { id: storeKey }  // Use composite key "noteId::panelId" not just "panelId"
     })
 
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'panel_removed_from_state',
-      metadata: {
-        panelId,
-        noteId: targetNoteId,
-        compositeKey: storeKey
-      },
-      content_preview: `Removed panel ${storeKey} from state.panels Map`
-    })
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(`note-data-${targetNoteId}:invalidated`, Date.now().toString())
+      } catch (error) {
+        console.warn('[AnnotationCanvas] Failed to mark snapshot tombstone', error)
+      }
+    }
+
+    if (panelId === 'main') {
+      closeNote(targetNoteId, { persist: true }).catch(error => {
+        console.warn('[AnnotationCanvas] Failed to persist workspace close', error)
+      })
+    }
 
     persistPanelUpdate({
       panelId,
       storeKey,
-      state: 'lazy'
+      state: 'closed',
+      expectedRevision: existingRevision
     }).catch(err => {
       debugLog({
         component: 'AnnotationCanvas',

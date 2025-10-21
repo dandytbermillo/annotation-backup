@@ -99,7 +99,7 @@ CREATE TABLE panels (
     parent_id UUID REFERENCES panels(id) ON DELETE SET NULL,
     position JSONB NOT NULL DEFAULT '{"x": 0, "y": 0}',
     dimensions JSONB NOT NULL DEFAULT '{"width": 400, "height": 300}',
-    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'lazy', 'unloaded')),
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'lazy', 'unloaded', 'closed')),
     last_accessed TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
