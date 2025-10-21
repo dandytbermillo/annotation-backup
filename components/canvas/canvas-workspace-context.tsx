@@ -423,7 +423,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         const workspace = getWorkspace(SHARED_WORKSPACE_ID)
 
         // Load branches for all open notes
-        const uniqueNoteIds = [...new Set(panels.map((p: any) => p.noteId))]
+        const uniqueNoteIds = [...new Set(panels.map((p: any) => String(p.noteId)))] as string[]
         const branchesByNote = new Map<string, any[]>()
 
         console.log('[Workspace] Loading branches for notes:', uniqueNoteIds)
@@ -462,12 +462,31 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
         console.log('[Workspace] All branches loaded:', branchesByNote)
 
+        // Helper to normalize branch ID from database format to UI format
+        const normalizeBranchId = (rawId: string | null | undefined): string => {
+          if (!rawId) return ''
+          if (rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          return `branch-${rawId}`
+        }
+
+        // Helper to normalize parent ID from database format to UI format
+        const normalizeParentId = (rawId: string | null | undefined): string => {
+          if (!rawId || rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          return `branch-${rawId}`
+        }
+
         // First, store all branch objects in dataStore with their composite keys
         branchesByNote.forEach((branches, noteId) => {
           branches.forEach((branchObj: any) => {
             // Transform DB UUID to UI format: database stores raw UUID, UI expects "branch-{uuid}"
-            const branchPanelId = `branch-${branchObj.id}`
+            const branchPanelId = normalizeBranchId(branchObj.id)
             const branchKey = `${noteId}::${branchPanelId}`
+
+            // CRITICAL: Normalize parentId to match UI format
+            // Database stores raw UUID or "main", but UI expects "branch-{uuid}" or "main"
+            const normalizedParent = normalizeParentId(branchObj.parentId)
 
             workspace.dataStore.set(branchKey, {
               id: branchPanelId,  // Use UI format to match panel expectations
@@ -476,7 +495,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
               originalText: branchObj.originalText || '',
               metadata: branchObj.metadata || {},
               anchors: branchObj.anchors,
-              parentId: branchObj.parentId,
+              parentId: normalizedParent,  // Use normalized parentId with "branch-" prefix
               branches: [],  // Branch panels don't have children
             })
           })
@@ -511,8 +530,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             : (panel.panelId.startsWith('branch-') ? panel.panelId : `branch-${panel.panelId}`)
 
           const branchIds = noteBranches
-            .filter((b: any) => b.parentId === expectedParentId)
-            .map((b: any) => `branch-${b.id}`)  // Transform to UI format to match dataStore keys
+            .filter((b: any) => normalizeParentId(b.parentId) === expectedParentId)
+            .map((b: any) => normalizeBranchId(b.id))  // Future-proof: handles both raw UUIDs and pre-prefixed IDs
 
           console.log(`[Workspace] Setting dataStore for ${panelKey}:`, {
             panelId: panel.panelId,

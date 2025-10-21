@@ -314,6 +314,15 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         const cachedBranch = value as Record<string, any>
         const branchStoreKey = ensurePanelKey(noteId || '', key)
         const existing = dataStore.get(branchStoreKey)
+
+        // CRITICAL: Normalize parentId from cache (may contain raw UUIDs from before normalization fix)
+        const rawParentId = cachedBranch.parentId
+        const normalizedParentId = !rawParentId || rawParentId === 'main'
+          ? 'main'
+          : rawParentId.startsWith('branch-')
+            ? rawParentId
+            : `branch-${rawParentId}`
+
         const merged = {
           ...existing,
           id: key,
@@ -324,7 +333,7 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
           preview: cachedBranch.preview || '',
           hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
           branches: cachedBranch.branches || [],
-          parentId: cachedBranch.parentId ?? 'main',
+          parentId: normalizedParentId,
           position: cachedBranch.position || existing?.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
           dimensions: cachedBranch.dimensions || existing?.dimensions || { width: 400, height: 300 },
           isEditable: cachedBranch.isEditable ?? true,

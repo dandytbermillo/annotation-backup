@@ -193,6 +193,10 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
         ? dataStore.get(compositeKey)
         : UnifiedProvider.getInstance().getBranchesMap().get(compositeKey) || dataStore.get(compositeKey)
 
+      // DIAGNOSTIC: Check if parentId is normalized
+      const isParentNormalized = !branch?.parentId || branch.parentId === 'main' || branch.parentId.startsWith('branch-')
+      const isRawUUID = branch?.parentId && !isParentNormalized
+
       debugLog({
         component: 'WidgetStudioConnections',
         action: branch ? 'branch_found' : 'branch_not_found',
@@ -201,9 +205,11 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
           noteId: effectiveNoteId,
           compositeKey,
           hasBranch: !!branch,
-          parentId: branch?.parentId || 'NO_PARENT'
+          parentId: branch?.parentId || 'NO_PARENT',
+          isParentNormalized,
+          isRawUUID,  // 🚨 If true, this is the problem!
         },
-        content_preview: `Panel ${panel.panelId}: ${branch ? `parent=${branch.parentId}` : 'NO_BRANCH'}`
+        content_preview: `Panel ${panel.panelId}: ${branch ? `parent=${branch.parentId} (normalized=${isParentNormalized})` : 'NO_BRANCH'}`
       })
 
       if (branch && branch.parentId) {
@@ -229,7 +235,7 @@ export function WidgetStudioConnections({ canvasItems, branchVersion = 0 }: Widg
           content_preview: `Child ${panel.panelId} (note: ${effectiveNoteId}) looking for parent ${branch.parentId} with key ${parentKey}: ${parent ? `FOUND (parent noteId: ${parent.noteId})` : 'NOT_FOUND'}`
         })
 
-        if (parent && parent.position) {
+        if (parent && parent.position && parent.panelId) {
           // Get current positions (from DOM if dragging, otherwise from props)
           const parentPosition = getPanelPosition(parent)
           const childPosition = getPanelPosition(panel)

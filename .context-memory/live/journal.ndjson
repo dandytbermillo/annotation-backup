@@ -378,3 +378,4 @@
 {"ts":"2025-10-21T00:40:27.421Z","type":"commit","sha":"4e3c5732f6f4a83707a40a34a67be0b18ffabf26","files_changed":54,"message":"ghost panel gone"}
 {"ts":"2025-10-21T00:41:38.137Z","type":"commit","sha":"b331bcb5a71bc088e18565ef1dd26893cc77ae13","files_changed":2,"message":"ghost panel gone"}
 {"ts":"2025-10-21T01:28:37.994Z","type":"commit","sha":"51df0bf8a4626cea5fe00b269f130c926973b83e","files_changed":6,"message":"panel ar appearing always on the right side of the main panel(parent)"}
+{"ts":"2025-10-21T03:12:28.120Z","type":"commit","sha":"eb6adb109d8c4461a8eb573837575838f5eb8fdf","files_changed":4,"message":"connection lines appeared on app reload partially"}
