@@ -465,9 +465,12 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         // First, store all branch objects in dataStore with their composite keys
         branchesByNote.forEach((branches, noteId) => {
           branches.forEach((branchObj: any) => {
-            const branchKey = `${noteId}::${branchObj.id}`
+            // Transform DB UUID to UI format: database stores raw UUID, UI expects "branch-{uuid}"
+            const branchPanelId = `branch-${branchObj.id}`
+            const branchKey = `${noteId}::${branchPanelId}`
+
             workspace.dataStore.set(branchKey, {
-              id: branchObj.id,
+              id: branchPanelId,  // Use UI format to match panel expectations
               type: branchObj.type || 'note',
               title: branchObj.title || '',
               originalText: branchObj.originalText || '',
@@ -509,7 +512,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
           const branchIds = noteBranches
             .filter((b: any) => b.parentId === expectedParentId)
-            .map((b: any) => b.id)
+            .map((b: any) => `branch-${b.id}`)  // Transform to UI format to match dataStore keys
 
           console.log(`[Workspace] Setting dataStore for ${panelKey}:`, {
             panelId: panel.panelId,

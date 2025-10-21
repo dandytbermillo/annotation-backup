@@ -44,7 +44,11 @@ export function ConnectionLines({ canvasItems }: ConnectionLinesProps) {
   const panelMap = new Map<string, CanvasItem>()
   panels.forEach((panel) => {
     if (panel.panelId) {
+      // Map by both panelId and storeKey to support lookups by either
       panelMap.set(panel.panelId, panel)
+      if (panel.storeKey) {
+        panelMap.set(panel.storeKey, panel)
+      }
     }
   })
 
@@ -57,13 +61,27 @@ export function ConnectionLines({ canvasItems }: ConnectionLinesProps) {
   panels.forEach((panel) => {
     const panelId = panel.panelId
     if (!panelId) return
-    const branch = branches.get(panelId)
+
+    // Use storeKey (composite key "noteId::panelId") to look up branch data
+    // This ensures we find the correct branch even with multiple notes open
+    const branchKey = panel.storeKey || panelId
+    const branch = branches.get(branchKey)
     if (!branch || !branch.parentId) return
 
-    const parentPanel = panelMap.get(branch.parentId)
+    // Try to find parent panel - branch.parentId might be plain "main" or composite "noteId::main"
+    let parentPanel = panelMap.get(branch.parentId)
+
+    // If not found and we have a noteId, try constructing composite key
+    if (!parentPanel && panel.noteId && !branch.parentId.includes('::')) {
+      const compositeParentKey = `${panel.noteId}::${branch.parentId}`
+      parentPanel = panelMap.get(compositeParentKey)
+    }
+
     if (!parentPanel) return
 
-    const parentBranch = branches.get(branch.parentId)
+    // Use composite key for parent branch lookup too
+    const parentKey = parentPanel.storeKey || branch.parentId
+    const parentBranch = branches.get(parentKey)
     if (!parentBranch) return
 
     const parentBounds = resolvePanelBounds(parentPanel, parentBranch)
