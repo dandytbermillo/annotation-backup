@@ -60,7 +60,7 @@ export async function GET(
         title,
         metadata
       FROM panels
-      WHERE note_id = $1 AND (state IS NULL OR state = 'active')
+      WHERE note_id = $1
       ORDER BY z_index ASC, updated_at DESC`,
       [noteId]
     )
@@ -159,7 +159,7 @@ export async function PATCH(
 
     for (const update of updates) {
       try {
-        const { id, position, size, zIndex, revisionToken, updatedBy, state: panelState } = update
+        const { id, position, size, zIndex, revisionToken, updatedBy } = update
 
         if (!id) {
           results.push({
@@ -196,11 +196,6 @@ export async function PATCH(
         if (updatedBy !== undefined) {
           updateFields.push(`updated_by = $${valueIndex++}`)
           values.push(updatedBy)
-        }
-
-        if (panelState !== undefined) {
-          updateFields.push(`state = $${valueIndex++}`)
-          values.push(panelState)
         }
 
         // Generate new revision token (simple incrementing version)

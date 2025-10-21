@@ -1,0 +1,18 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { Pool } from 'pg';
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev'
+});
+
+export async function POST(request: NextRequest) {
+  try {
+    // Clear all debug logs
+    await pool.query('TRUNCATE TABLE debug_logs');
+    
+    return NextResponse.json({ success: true, message: 'Debug logs cleared' });
+  } catch (error) {
+    console.error('Failed to clear debug logs:', error);
+    return NextResponse.json({ error: 'Failed to clear debug logs' }, { status: 500 });
+  }
+}

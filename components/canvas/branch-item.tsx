@@ -326,13 +326,15 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
     // Update position in both stores (using WORLD-SPACE coordinates)
     dataStore.update(branchStoreKey, {
       position: smartWorldPosition,
-      worldPosition: smartWorldPosition  // Explicit world-space marker
+      worldPosition: smartWorldPosition,  // Explicit world-space marker
+      state: 'active'
     })
 
     const branchData = branchesMap.get(branchStoreKey)
     if (branchData) {
       branchData.position = smartWorldPosition
       branchData.worldPosition = smartWorldPosition
+      branchData.state = 'active'
       branchesMap.set(branchStoreKey, branchData)
     }
 

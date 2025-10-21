@@ -181,6 +181,9 @@ export interface HydrationStatus {
     position: { x: number; y: number }
     size: { width: number; height: number }
     zIndex: number
+    state?: string // Panel lifecycle state (e.g., 'active', 'closed')
+    revisionToken?: string // Revision token for conflict detection
+    updatedAt?: string // Last update timestamp
     title?: string
     metadata?: Record<string, any>
   }>

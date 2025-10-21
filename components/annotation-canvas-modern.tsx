@@ -42,6 +42,9 @@ import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
+// Type alias for hydration hook result
+type HydrationResult = ReturnType<typeof useCanvasHydration>
+
 interface ModernAnnotationCanvasProps {
   noteIds: string[]
   primaryNoteId: string | null
@@ -570,8 +573,6 @@ const mainPanelSeededRef = useRef(false)
   const cameraUserId = useCameraUserId()
 
   // Hydrate canvas state on mount (panels + camera)
-  type HydrationResult = ReturnType<typeof useCanvasHydration>
-
   const primaryHydrationStatus = useCanvasHydration({
     noteId,
     userId: cameraUserId ?? undefined,
@@ -613,7 +614,9 @@ const mainPanelSeededRef = useRef(false)
     const currentNotePanels = hydrationStatus.panels.filter(panel => {
       const parsed = panel.id.includes('::') ? parsePanelKey(panel.id) : null
       const panelNoteId = panel.noteId || parsed?.noteId || targetNoteId
-      return panelNoteId === targetNoteId
+      const isCurrentNote = panelNoteId === targetNoteId
+      const isActive = (panel.state ?? 'active') === 'active'
+      return isCurrentNote && isActive
     })
 
     const panelsToHydrate = skipHydration
@@ -878,7 +881,7 @@ const mainPanelSeededRef = useRef(false)
   })
 
   // Enable panel persistence
-  const { persistPanelCreate, persistPanelUpdate, persistPanelDelete, getPanelDimensions } = usePanelPersistence({
+  const { persistPanelCreate, persistPanelUpdate, getPanelDimensions } = usePanelPersistence({
     dataStore,
     branchesMap,
     layerManager: layerManagerApi.manager,
@@ -1910,6 +1913,16 @@ const mainPanelSeededRef = useRef(false)
     const targetNoteId = panelNoteId || noteId
     const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
 
+    // Mark panel state as closed locally for immediacy
+    const existingPanelData = dataStore.get(storeKey)
+    if (existingPanelData) {
+      dataStore.update(storeKey, { ...existingPanelData, state: 'lazy' })
+    }
+    if (branchesMap?.has(storeKey)) {
+      const branchData = branchesMap.get(storeKey)
+      branchesMap.set(storeKey, { ...branchData, state: 'lazy' })
+    }
+
     // CRITICAL: Also remove panel from state.panels Map so it can be reopened later
     // CRITICAL FIX: Use composite key (storeKey) not just panelId
     dispatch({
@@ -1928,11 +1941,14 @@ const mainPanelSeededRef = useRef(false)
       content_preview: `Removed panel ${storeKey} from state.panels Map`
     })
 
-    // Persist panel deletion to database
-    persistPanelDelete(panelId, storeKey).catch(err => {
+    persistPanelUpdate({
+      panelId,
+      storeKey,
+      state: 'lazy'
+    }).catch(err => {
       debugLog({
         component: 'AnnotationCanvas',
-        action: 'panel_delete_persist_failed',
+        action: 'panel_close_state_persist_failed',
         metadata: {
           panelId,
           noteId: targetNoteId,
@@ -2106,19 +2122,46 @@ const mainPanelSeededRef = useRef(false)
             : undefined) ?? 'Main'
       }
 
+      // Determine coordinate space based on position source
+      const coordinateSpace: 'screen' | 'world' =
+        (isPreview && parentPosition) ? 'screen' : 'world'
+
+      const persistencePosition = coordinateSpace === 'screen' && parentPosition
+        ? parentPosition
+        : position
+
       persistPanelCreate({
         panelId,
         storeKey: hydratedStoreKey,
         type: dbPanelType,
-        position,
+        position: persistencePosition,
         size: { width: 500, height: 400 },
         zIndex: 1,
         title: panelTitle,
-        metadata: { annotationType: panelType }
+        metadata: { annotationType: panelType },
+        coordinateSpace
       }).catch(err => {
         debugLog({
           component: 'AnnotationCanvas',
           action: 'panel_create_persist_failed',
+          metadata: {
+            panelId,
+            noteId: targetNoteId,
+            error: err instanceof Error ? err.message : 'Unknown error'
+          }
+        })
+      })
+
+      persistPanelUpdate({
+        panelId,
+        storeKey: hydratedStoreKey,
+        position: persistencePosition,
+        coordinateSpace,
+        state: 'active'
+      }).catch(err => {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'panel_state_active_persist_failed',
           metadata: {
             panelId,
             noteId: targetNoteId,

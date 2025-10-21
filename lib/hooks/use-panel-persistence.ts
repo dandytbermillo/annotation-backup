@@ -43,11 +43,13 @@ export interface PanelUpdateData {
   /** Store key (composite noteId::panelId, used for store operations). If not provided, falls back to panelId. */
   storeKey?: string
   /** Position coordinates */
-  position: { x: number; y: number }
+  position?: { x: number; y: number }
   /** Size dimensions (optional) */
   size?: { width: number; height: number }
   /** Z-index (optional) */
   zIndex?: number
+  /** Panel lifecycle state (e.g., 'active', 'closed') */
+  state?: string
   /** Coordinate space of position/size. Default 'screen'. Use 'world' if coordinates are already world-space (e.g. from panel.style.left/top) */
   coordinateSpace?: 'screen' | 'world'
   /** Expected revision token for conflict detection (optional) */
@@ -80,7 +82,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
    */
   const persistPanelUpdate = useCallback(
     async (update: PanelUpdateData) => {
-      const { panelId, storeKey, position, size, zIndex, coordinateSpace = 'screen', expectedRevision } = update
+      const { panelId, storeKey, position, size, zIndex, state: panelState, coordinateSpace = 'screen', expectedRevision } = update
 
       // Use composite key for store operations, fallback to plain panelId
       const key = storeKey || panelId
@@ -99,9 +101,11 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       const zoom = state.canvasState?.zoom || 1.0
 
       // Convert to world-space coordinates if needed
-      const worldPosition = coordinateSpace === 'world'
-        ? position
-        : screenToWorld(position, camera, zoom)
+      const worldPosition = position
+        ? (coordinateSpace === 'world'
+            ? position
+            : screenToWorld(position, camera, zoom))
+        : undefined
       const worldSize = size
         ? (coordinateSpace === 'world'
             ? size
@@ -118,9 +122,13 @@ export function usePanelPersistence(options: PanelPersistOptions) {
 
       // Queue updates to all stores
       // CRITICAL: Keep position as screen-space and worldPosition as world-space
-      const updateData: any = {
-        position: position,          // Screen-space position for rendering
-        worldPosition: worldPosition // World-space position for persistence
+      const updateData: any = {}
+
+      if (position) {
+        updateData.position = position
+      }
+      if (worldPosition) {
+        updateData.worldPosition = worldPosition
       }
 
       if (worldSize) {
@@ -131,19 +139,45 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         updateData.zIndex = zIndex
       }
 
+      if (panelState !== undefined) {
+        updateData.state = panelState
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        debugLog({
+          component: 'PanelPersistence',
+          action: 'noop_update_skipped',
+          metadata: { panelId, noteId: effectiveNoteId }
+        })
+        return
+      }
+
       // Add updates to transaction using composite key
       transaction.add('dataStore', key, updateData)
       transaction.add('branchesMap', key, updateData)
       transaction.add('layerManager', key, updateData)
 
       // Prepare API payload
-      const apiPayload = {
+      const apiPayload: any = {
         id: panelId,
-        position: worldPosition,
-        size: worldSize,
-        zIndex,
         updatedBy: userId,
         revisionToken: revisionToken  // For conflict detection
+      }
+
+      if (worldPosition) {
+        apiPayload.position = worldPosition
+      }
+
+      if (worldSize) {
+        apiPayload.size = worldSize
+      }
+
+      if (zIndex !== undefined) {
+        apiPayload.zIndex = zIndex
+      }
+
+      if (panelState !== undefined) {
+        apiPayload.state = panelState
       }
 
       // Commit transaction with API persistence
@@ -218,8 +252,9 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       state?: string
       title?: string
       metadata?: Record<string, any>
+      coordinateSpace?: 'screen' | 'world'
     }) => {
-      const { panelId, storeKey, type, position, size, zIndex = 0, state: panelState = 'active', title, metadata } = panelData
+      const { panelId, storeKey, type, position, size, zIndex = 0, state: panelState = 'active', title, metadata, coordinateSpace = 'screen' } = panelData
       const parsedKey = storeKey ? parsePanelKey(storeKey) : null
       const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
 
@@ -230,10 +265,16 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       }
       const zoom = state.canvasState?.zoom || 1.0
 
-      // Convert to world-space
-      const worldPosition = screenToWorld(position, camera, zoom)
-      const sizeXY = sizeScreenToWorld({ x: size.width, y: size.height }, zoom)
-      const worldSize = { width: sizeXY.x, height: sizeXY.y }
+      // Convert to world-space if needed
+      const worldPosition = coordinateSpace === 'world'
+        ? position
+        : screenToWorld(position, camera, zoom)
+      const worldSize = coordinateSpace === 'world'
+        ? size
+        : (() => {
+            const sizeXY = sizeScreenToWorld({ x: size.width, y: size.height }, zoom)
+            return { width: sizeXY.x, height: sizeXY.y }
+          })()
 
       const payload = {
         id: panelId,
@@ -387,20 +428,38 @@ export function usePanelPersistence(options: PanelPersistOptions) {
 
       // Convert all updates to world-space
       const worldUpdates = updates.map(update => {
-        const worldPosition = screenToWorld(update.position, camera, zoom)
-        const worldSize = update.size ? (() => {
-          const sizeXY = sizeScreenToWorld({ x: update.size.width, y: update.size.height }, zoom)
-          return { width: sizeXY.x, height: sizeXY.y }
-        })() : undefined
-
-        return {
+        const payload: any = {
           id: update.panelId,
-          position: worldPosition,
-          size: worldSize,
-          zIndex: update.zIndex,
           updatedBy: userId
         }
-      })
+
+        if (update.zIndex !== undefined) {
+          payload.zIndex = update.zIndex
+        }
+
+        if (update.state !== undefined) {
+          payload.state = update.state
+        }
+
+        if (update.position) {
+          const worldPosition = update.coordinateSpace === 'world'
+            ? update.position
+            : screenToWorld(update.position, camera, zoom)
+          payload.position = worldPosition
+        }
+
+        if (update.size) {
+          const worldSize = update.coordinateSpace === 'world'
+            ? update.size
+            : (() => {
+                const sizeXY = sizeScreenToWorld({ x: update.size!.width, y: update.size!.height }, zoom)
+                return { width: sizeXY.x, height: sizeXY.y }
+              })()
+          payload.size = worldSize
+        }
+
+        return payload
+      }).filter(update => Object.keys(update).length > 1)
 
       try {
         const response = await fetch(`/api/canvas/layout/${noteId}`, {
