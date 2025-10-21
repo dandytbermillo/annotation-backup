@@ -438,13 +438,70 @@ export function useCanvasHydration(options: HydrationOptions) {
   /**
    * Apply panel layout to stores
    */
+  const normalizePanelId = (panelId: string, panelType?: string) => {
+    if (!panelId) return panelId
+    if (panelId === 'main') return 'main'
+    if (panelId.startsWith('branch-')) return panelId
+    if (panelType && ['branch', 'context', 'annotation'].includes(panelType)) {
+      return `branch-${panelId}`
+    }
+    return panelId
+  }
+
+  const normalizeParentId = (parentId: string | null | undefined) => {
+    if (!parentId) return null
+    if (parentId === 'main' || parentId === 'NO_PARENT') return parentId
+    if (parentId.startsWith('branch-')) return parentId
+    return `branch-${parentId}`
+  }
+
   const applyPanelLayout = useCallback((panels: Array<any>, camera: { x: number; y: number }, zoom: number) => {
     let appliedCount = 0
 
     for (const panel of panels) {
       try {
+        const originalPanelId = panel.id
+        const normalizedPanelId = normalizePanelId(panel.id, panel.type)
+        const normalizedParentId = normalizeParentId(
+          panel.parentId ??
+            panel.metadata?.parentId ??
+            panel.metadata?.parent_id ??
+            panel.metadata?.parentPanelId ??
+            null
+        )
+
+        if (normalizedPanelId !== originalPanelId) {
+          debugLog({
+            component: 'CanvasHydration',
+            action: 'panel_id_normalized',
+            metadata: {
+              noteId: panel.noteId,
+              originalPanelId,
+              normalizedPanelId,
+              panelType: panel.type
+            }
+          })
+          panel.id = normalizedPanelId
+        }
+
+        if (panel.parentId !== normalizedParentId) {
+          debugLog({
+            component: 'CanvasHydration',
+            action: 'panel_parent_normalized',
+            metadata: {
+              originalParentId: panel.parentId,
+              normalizedParentId,
+              panelId: panel.id,
+              noteId: panel.noteId
+            }
+          })
+          panel.parentId = normalizedParentId ?? undefined
+        }
+
         // Generate composite key for multi-note canvas support
         const storeKey = makePanelKey(panel.noteId, panel.id)
+        const rawStoreKey =
+          normalizedPanelId !== originalPanelId ? makePanelKey(panel.noteId, originalPanelId) : storeKey
 
         // Use annotation type from metadata for UI rendering (header colors, etc.)
         // Falls back to 'note' if no annotation type is stored
@@ -464,13 +521,6 @@ export function useCanvasHydration(options: HydrationOptions) {
 
         // CRITICAL: Stores must hold WORLD-SPACE coordinates per implementation plan
         // Components will convert world→screen during rendering
-        const parentId =
-          panel.parentId ??
-          panel.metadata?.parentId ??
-          panel.metadata?.parent_id ??
-          panel.metadata?.parentPanelId ??
-          null
-
         const panelData: Record<string, any> = {
           id: panel.id,
           noteId: panel.noteId,
@@ -488,12 +538,12 @@ export function useCanvasHydration(options: HydrationOptions) {
           metadata: panel.metadata
         }
 
-        if (parentId) {
-          panelData.parentId = parentId
+        if (normalizedParentId) {
+          panelData.parentId = normalizedParentId
           panelData.metadata = {
             ...(panelData.metadata || {}),
-            parentId,
-            parentPanelId: parentId
+            parentId: normalizedParentId,
+            parentPanelId: normalizedParentId
           }
         }
 
@@ -511,20 +561,68 @@ export function useCanvasHydration(options: HydrationOptions) {
 
         // Update DataStore using composite key (preserve existing fields like parentId injected by branch loader)
         if (dataStore) {
+          let baseData = panelData
+          if (rawStoreKey !== storeKey && dataStore.has(rawStoreKey)) {
+            const legacy = dataStore.get(rawStoreKey)
+            dataStore.delete(rawStoreKey)
+            if (legacy) {
+              baseData = { ...legacy, ...panelData }
+            }
+          }
           const existing = dataStore.get(storeKey)
-          dataStore.set(storeKey, existing ? { ...existing, ...panelData } : panelData)
+          dataStore.set(storeKey, existing ? { ...existing, ...baseData } : baseData)
         }
 
         // Update branchesMap using composite key (same merge semantics as dataStore for consistency)
         if (branchesMap) {
+          let baseData = panelData
+          if (rawStoreKey !== storeKey && branchesMap.has(rawStoreKey)) {
+            const legacy = branchesMap.get(rawStoreKey)
+            branchesMap.delete(rawStoreKey)
+            if (legacy) {
+              baseData = { ...legacy, ...panelData }
+            }
+          }
           const existing = branchesMap.get(storeKey)
-          branchesMap.set(storeKey, existing ? { ...existing, ...panelData } : panelData)
+          branchesMap.set(storeKey, existing ? { ...existing, ...baseData } : baseData)
         }
 
         // Update LayerManager using composite key
         if (layerManager) {
-          const existing = layerManager.getNode(storeKey)
-          layerManager.updateNode(storeKey, existing ? { ...existing, ...panelData } : panelData)
+          if (rawStoreKey !== storeKey) {
+            const legacyNode = layerManager.getNode(rawStoreKey)
+            if (legacyNode) {
+              layerManager.removeNode(rawStoreKey)
+              layerManager.registerNode({
+                id: storeKey,
+                type: legacyNode.type,
+                position: legacyNode.position,
+                zIndex: legacyNode.zIndex,
+                pinned: legacyNode.pinned,
+                pinnedPriority: legacyNode.pinnedPriority,
+                metadata: legacyNode.metadata,
+                createdAt: legacyNode.createdAt,
+                lastFocusedAt: legacyNode.lastFocusedAt
+              })
+            }
+          }
+
+          const existingNode = layerManager.getNode(storeKey)
+          if (existingNode) {
+            layerManager.updateNode(storeKey, {
+              position: panel.position,
+              zIndex: panel.zIndex,
+              metadata: { ...(existingNode.metadata || {}), ...panelData.metadata }
+            })
+          } else {
+            layerManager.registerNode({
+              id: storeKey,
+              type: 'panel',
+              position: panel.position,
+              zIndex: panel.zIndex,
+              metadata: panelData.metadata
+            })
+          }
         }
 
         appliedCount++

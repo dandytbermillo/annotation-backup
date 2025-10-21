@@ -10,7 +10,7 @@ import { initialData } from "@/lib/initial-data"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import type { AnnotationType } from "@/lib/models/annotation"
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 
 interface CanvasContextType {
   state: CanvasState
@@ -42,6 +42,29 @@ const initialState: CanvasState = {
   panelZIndex: 10,
   childPositions: new Map(),
   branchFilters: new Map(),
+}
+
+const normalizeBranchId = (branchId: string | null | undefined): string => {
+  if (!branchId) return ''
+  if (branchId === 'main') return 'main'
+  if (branchId.startsWith('branch-')) return branchId
+  return `branch-${branchId}`
+}
+
+const normalizeParentId = (parentId: string | null | undefined): string | null => {
+  if (!parentId || parentId === 'main') return parentId ? 'main' : null
+  if (parentId.startsWith('branch-')) return parentId
+  return `branch-${parentId}`
+}
+
+const normalizePanelId = (panelId: string, panelType?: string): string => {
+  if (!panelId) return panelId
+  if (panelId === 'main') return 'main'
+  if (panelId.startsWith('branch-')) return panelId
+  if (panelType && ['branch', 'context', 'annotation'].includes(panelType)) {
+    return `branch-${panelId}`
+  }
+  return panelId
 }
 
 function canvasReducer(state: CanvasState, action: any): CanvasState {
@@ -282,6 +305,9 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
 
       const titleValue = cachedMain?.title || 'Main Document'
       const positionValue = cachedMain?.position || { x: 2000, y: 1500 }
+      const mainBranches = Array.isArray(cachedMain?.branches)
+        ? cachedMain!.branches.map(normalizeBranchId).filter(Boolean)
+        : []
 
       console.log('[CanvasProvider] Setting initial dataStore for main panel', {
         noteId,
@@ -301,43 +327,66 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         dimensions: cachedMain?.dimensions || { width: 420, height: 350 },
         originalText: cachedMain?.originalText || '',
         isEditable: cachedMain?.isEditable ?? true,
-        branches: cachedMain?.branches || [],
-        parentId: cachedMain?.parentId ?? null,
+        branches: mainBranches,
+        parentId: null,
         content: cachedMain?.content,
         preview: cachedMain?.preview || '',
         hasHydratedContent: cachedMain?.hasHydratedContent ?? false,
       })
 
       // Pre-populate additional branches from cache before remote load
-      snapshotMap.forEach((value, key) => {
-        if (key === 'main') return
+      snapshotMap.forEach((value, rawKey) => {
+        if (rawKey === 'main') return
         const cachedBranch = value as Record<string, any>
-        const branchStoreKey = ensurePanelKey(noteId || '', key)
-        const existing = dataStore.get(branchStoreKey)
+        const parsedKey = rawKey.includes('::') ? parsePanelKey(rawKey) : { noteId: noteId || '', panelId: rawKey }
+        const sourceNoteId = parsedKey.noteId || noteId || ''
+        const normalizedPanelId = normalizePanelId(parsedKey.panelId, cachedBranch.type)
+        const branchStoreKey = ensurePanelKey(sourceNoteId, normalizedPanelId)
+        const legacyStoreKey = ensurePanelKey(sourceNoteId, parsedKey.panelId)
 
-        // CRITICAL: Normalize parentId from cache (may contain raw UUIDs from before normalization fix)
-        const rawParentId = cachedBranch.parentId
-        const normalizedParentId = !rawParentId || rawParentId === 'main'
-          ? 'main'
-          : rawParentId.startsWith('branch-')
-            ? rawParentId
-            : `branch-${rawParentId}`
+        let existing = dataStore.get(branchStoreKey)
+        if (!existing && legacyStoreKey !== branchStoreKey) {
+          const legacy = dataStore.get(legacyStoreKey)
+          if (legacy) {
+            dataStore.delete(legacyStoreKey)
+            existing = legacy
+          }
+        }
+
+        const normalizedParentId = normalizeParentId(cachedBranch.parentId)
+        const normalizedBranches = Array.isArray(cachedBranch.branches)
+          ? cachedBranch.branches.map(normalizeBranchId).filter(Boolean)
+          : []
+
+        const mergedMetadata = {
+          ...(existing?.metadata || {}),
+          ...(cachedBranch.metadata || {}),
+          displayId: normalizedPanelId,
+        } as Record<string, any>
+
+        if (normalizedParentId) {
+          mergedMetadata.parentId = normalizedParentId
+          mergedMetadata.parentPanelId = normalizedParentId
+        } else {
+          delete mergedMetadata.parentId
+          delete mergedMetadata.parentPanelId
+        }
 
         const merged = {
           ...existing,
-          id: key,
+          id: normalizedPanelId,
           type: cachedBranch.type,
           title: cachedBranch.title || '',
           originalText: cachedBranch.originalText || '',
           content: cachedBranch.content,
           preview: cachedBranch.preview || '',
           hasHydratedContent: cachedBranch.hasHydratedContent ?? false,
-          branches: cachedBranch.branches || [],
+          branches: normalizedBranches,
           parentId: normalizedParentId,
           position: cachedBranch.position || existing?.position || { x: 2500 + Math.random() * 500, y: 1500 + Math.random() * 500 },
           dimensions: cachedBranch.dimensions || existing?.dimensions || { width: 400, height: 300 },
           isEditable: cachedBranch.isEditable ?? true,
-          metadata: { ...(existing?.metadata || {}), displayId: key },
+          metadata: mergedMetadata,
           worldPosition: existing?.worldPosition ?? cachedBranch.worldPosition,
           worldSize: existing?.worldSize ?? cachedBranch.worldSize
         }

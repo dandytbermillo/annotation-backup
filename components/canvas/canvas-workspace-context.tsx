@@ -477,6 +477,17 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           return `branch-${rawId}`
         }
 
+        // Helper to normalize panel IDs returned from the workspace API
+        const normalizePanelId = (rawId: string, panelType?: string): string => {
+          if (!rawId) return rawId
+          if (rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          if (panelType && ['branch', 'context', 'annotation'].includes(panelType)) {
+            return `branch-${rawId}`
+          }
+          return rawId
+        }
+
         // First, store all branch objects in dataStore with their composite keys
         branchesByNote.forEach((branches, noteId) => {
           branches.forEach((branchObj: any) => {
@@ -503,8 +514,20 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
         // Seed panels from snapshot (prevents (2000,1500) default jump)
         panels.forEach((panel: any) => {
-          const panelKey = `${panel.noteId}::${panel.panelId}`
-          const existing = workspace.dataStore.get(panelKey)
+          const normalizedPanelId = normalizePanelId(panel.panelId, panel.type)
+          const normalizedParentId = normalizeParentId(panel.parentId)
+
+          const legacyPanelKey = `${panel.noteId}::${panel.panelId}`
+          const panelKey = `${panel.noteId}::${normalizedPanelId}`
+
+          let existing = workspace.dataStore.get(panelKey)
+          if (!existing && legacyPanelKey !== panelKey) {
+            const legacyEntry = workspace.dataStore.get(legacyPanelKey)
+            if (legacyEntry) {
+              workspace.dataStore.delete(legacyPanelKey)
+              existing = legacyEntry
+            }
+          }
 
           // Skip if already exists (idempotent - TDD §4.1 line 197)
           if (existing) {
@@ -525,16 +548,16 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           // Extract branch IDs for this specific panel based on parent_id
           // Main panel gets branches where parentId = "main"
           // Branch panels get branches where parentId = "branch-{branchId}"
-          const expectedParentId = panel.panelId === 'main'
+          const expectedParentId = normalizedPanelId === 'main'
             ? 'main'
-            : (panel.panelId.startsWith('branch-') ? panel.panelId : `branch-${panel.panelId}`)
+            : normalizedPanelId
 
           const branchIds = noteBranches
             .filter((b: any) => normalizeParentId(b.parentId) === expectedParentId)
             .map((b: any) => normalizeBranchId(b.id))  // Future-proof: handles both raw UUIDs and pre-prefixed IDs
 
           console.log(`[Workspace] Setting dataStore for ${panelKey}:`, {
-            panelId: panel.panelId,
+            panelId: normalizedPanelId,
             type: panel.type,
             expectedParentId,
             branchCount: branchIds.length,
@@ -543,13 +566,19 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           })
 
           workspace.dataStore.set(panelKey, {
-            id: panel.panelId,
+            id: normalizedPanelId,
             type: panel.type,
             title: panel.title || '',
             position: { x: panel.positionXWorld, y: panel.positionYWorld },
             dimensions: { width: panel.widthWorld, height: panel.heightWorld },
             zIndex: panel.zIndex,
-            metadata: panel.metadata || {},
+            metadata: {
+              ...(panel.metadata || {}),
+              ...(normalizedPanelId !== 'main' && normalizedParentId
+                ? { parentId: normalizedParentId, parentPanelId: normalizedParentId }
+                : {})
+            },
+            parentId: normalizedPanelId === 'main' ? null : normalizedParentId,
             worldPosition: { x: panel.positionXWorld, y: panel.positionYWorld },
             worldSize: { width: panel.widthWorld, height: panel.heightWorld },
             branches: branchIds,  // Array of branch ID strings
