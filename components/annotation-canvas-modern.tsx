@@ -1958,7 +1958,7 @@ const mainPanelSeededRef = useRef(false)
     })
   }
 
-  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string, isPreview?: boolean) => {
+  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string, isPreview?: boolean, coordinateSpace?: 'screen' | 'world') => {
     const targetNoteId = sourceNoteId || noteId
     if (!targetNoteId) {
       console.warn('[AnnotationCanvas] Cannot create panel without target note id', panelId)
@@ -2036,8 +2036,11 @@ const mainPanelSeededRef = useRef(false)
           const existingPanelData = dataStore.get(newPanelStoreKey)
 
           if (!existingPanelData?.worldPosition) {
-            const camera = { x: canvasState.translateX, y: canvasState.translateY }
-            const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+            // Only convert screen->world if position is in screen space
+            // If coordinateSpace is 'world', parentPosition is already in world coordinates
+            const worldPosition = coordinateSpace === 'world'
+              ? parentPosition
+              : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
 
             dataStore.update(newPanelStoreKey, {
               id: panelId,
@@ -2059,9 +2062,11 @@ const mainPanelSeededRef = useRef(false)
         }
 
         if (parentPosition) {
-          // Convert screen coordinates to world coordinates (especially important for preview panels)
-          const camera = { x: canvasState.translateX, y: canvasState.translateY }
-          const worldPosition = screenToWorld(parentPosition, camera, canvasState.zoom)
+          // Only convert screen->world if position is in screen space
+          // If coordinateSpace is 'world', parentPosition is already in world coordinates
+          const worldPosition = coordinateSpace === 'world'
+            ? parentPosition
+            : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
 
           panelData.position = worldPosition
           yjsBranches.set(newPanelStoreKey, panelData)
@@ -2103,7 +2108,9 @@ const mainPanelSeededRef = useRef(false)
         : (branchData?.position || branchData?.worldPosition)
           ? (branchData.position || branchData.worldPosition)
           : parentPosition
-            ? screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
+            ? (coordinateSpace === 'world'
+                ? parentPosition  // Already in world coordinates, no conversion needed
+                : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom))
             : { x: 2000, y: 1500 }
 
       let panelTitle: string | undefined
@@ -2122,11 +2129,10 @@ const mainPanelSeededRef = useRef(false)
             : undefined) ?? 'Main'
       }
 
-      // Determine coordinate space based on position source
-      const coordinateSpace: 'screen' | 'world' =
-        (isPreview && parentPosition) ? 'screen' : 'world'
+      // Use the provided coordinateSpace, or determine it based on position source
+      const effectiveCoordinateSpace = coordinateSpace ?? ((isPreview && parentPosition) ? 'screen' : 'world')
 
-      const persistencePosition = coordinateSpace === 'screen' && parentPosition
+      const persistencePosition = effectiveCoordinateSpace === 'screen' && parentPosition
         ? parentPosition
         : position
 
@@ -2139,7 +2145,7 @@ const mainPanelSeededRef = useRef(false)
         zIndex: 1,
         title: panelTitle,
         metadata: { annotationType: panelType },
-        coordinateSpace
+        coordinateSpace: effectiveCoordinateSpace
       }).catch(err => {
         debugLog({
           component: 'AnnotationCanvas',
@@ -2156,7 +2162,7 @@ const mainPanelSeededRef = useRef(false)
         panelId,
         storeKey: hydratedStoreKey,
         position: persistencePosition,
-        coordinateSpace,
+        coordinateSpace: effectiveCoordinateSpace,
         state: 'active'
       }).catch(err => {
         debugLog({
@@ -2273,7 +2279,9 @@ const mainPanelSeededRef = useRef(false)
           event.detail.panelId,
           event.detail.parentPanelId,
           event.detail.parentPosition,
-          event.detail.noteId
+          event.detail.noteId,
+          false, // isPreview
+          event.detail.coordinateSpace // Pass coordinate space flag
         )
       }
     }

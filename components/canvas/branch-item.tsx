@@ -168,23 +168,22 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       }
     }
 
-    // Calculate smart position based on parent panel's actual DOM position
+    // Calculate position: always place branch panel on the right side of parent
     const calculateSmartPosition = () => {
       // Panels use data-store-key attribute with composite key format: "noteId::panelId"
       const parentStoreKey = ensurePanelKey(noteId, parentId)
       const currentPanel = document.querySelector(`[data-store-key="${parentStoreKey}"]`) as HTMLElement
-      let targetPosition = { x: 2000, y: 1500 } // Default fallback
+      const defaultPosition = { x: 2000, y: 1500 } // Default fallback
 
       debugLog({
         component: 'BranchItem',
-        action: 'smart_position_start',
+        action: 'calculate_right_position_start',
         metadata: {
           branchId,
           parentId,
           noteId,
           parentStoreKey,
-          panelFound: !!currentPanel,
-          availablePanels: Array.from(document.querySelectorAll('[data-store-key]')).map(el => el.getAttribute('data-store-key'))
+          panelFound: !!currentPanel
         },
         content_preview: `Looking for parent panel: ${parentStoreKey}`
       })
@@ -193,120 +192,55 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
         console.warn(`[BranchItem] Parent panel ${parentId} not found in DOM`)
         debugLog({
           component: 'BranchItem',
-          action: 'smart_position_fallback',
+          action: 'position_fallback',
           metadata: {
             branchId,
             parentId,
             noteId,
-            fallbackPosition: targetPosition
+            fallbackPosition: defaultPosition
           },
           content_preview: `Parent panel not found, using fallback`
         })
-        return targetPosition
+        return defaultPosition
       }
 
       const style = window.getComputedStyle(currentPanel)
       const rect = currentPanel.getBoundingClientRect()
 
-      // Panels use absolute positioning with left/top
-      const currentX = parseFloat(style.left) || 0
-      const currentY = parseFloat(style.top) || 0
+      // Panels use absolute positioning with left/top (world-space coordinates)
+      const parentX = parseFloat(style.left) || 0
+      const parentY = parseFloat(style.top) || 0
       const panelWidth = rect.width || 800
       const gap = 50
 
-      debugLog({
-        component: 'BranchItem',
-        action: 'smart_position_parent_found',
-        metadata: {
-          branchId,
-          parentId,
-          noteId,
-          left: style.left,
-          top: style.top,
-          currentX,
-          currentY,
-          panelWidth,
-          rectWidth: rect.width,
-          rectHeight: rect.height
-        },
-        content_preview: `Parent panel at x=${currentX}, y=${currentY}`
-      })
-
-      if (currentX || currentY) {
-        // Check for occupied space on left and right
-        const allPanels = document.querySelectorAll('[data-store-key]')
-        let rightOccupied = false
-        let leftOccupied = false
-
-        allPanels.forEach((panel) => {
-          if (panel === currentPanel) return
-
-          const panelStyle = window.getComputedStyle(panel)
-          const panelX = parseFloat(panelStyle.left) || 0
-
-          // Check if space on right is occupied
-          if (panelX > currentX + panelWidth &&
-              panelX < currentX + panelWidth + gap + 100) {
-            rightOccupied = true
-          }
-
-          // Check if space on left is occupied
-          if (panelX < currentX - gap &&
-              panelX > currentX - panelWidth - gap - 100) {
-            leftOccupied = true
-          }
-        })
-
-        let placeOnLeft = false
-
-        if (!rightOccupied && !leftOccupied) {
-          // Prefer right side by default
-          // Only use left if panel is already far to the right
-          placeOnLeft = currentX > 2500
-        } else if (rightOccupied && !leftOccupied) {
-          placeOnLeft = true
-        } else if (!rightOccupied && leftOccupied) {
-          placeOnLeft = false
-        } else {
-          // Both sides occupied, place below
-          placeOnLeft = false
-          targetPosition.y = currentY + 100
-        }
-
-        targetPosition = {
-          x: placeOnLeft
-            ? currentX - panelWidth - gap
-            : currentX + panelWidth + gap,
-          y: targetPosition.y || currentY
-        }
+      // Always place on the right side of parent
+      const rightSidePosition = {
+        x: parentX + panelWidth + gap,
+        y: parentY
       }
 
       debugLog({
         component: 'BranchItem',
-        action: 'smart_position_result',
+        action: 'position_calculated',
         metadata: {
           branchId,
           parentId,
           noteId,
-          calculatedPosition: targetPosition
+          parentX,
+          parentY,
+          panelWidth,
+          gap,
+          calculatedPosition: rightSidePosition
         },
-        content_preview: `Calculated position: x=${targetPosition.x}, y=${targetPosition.y}`
+        content_preview: `Placed on right: x=${rightSidePosition.x}, y=${rightSidePosition.y}`
       })
 
-      return targetPosition
+      return rightSidePosition
     }
 
-    const smartScreenPosition = calculateSmartPosition()
-
-    // CRITICAL FIX: Convert screen-space position to world-space before storing!
-    // calculateSmartPosition() returns screen coordinates (from DOM), but dataStore
-    // must hold world-space coordinates for proper persistence and hydration.
-    const camera = { x: state.canvasState.translateX, y: state.canvasState.translateY }
-    const zoom = state.canvasState.zoom
-    const smartWorldPosition = {
-      x: (smartScreenPosition.x / zoom) - camera.x,
-      y: (smartScreenPosition.y / zoom) - camera.y
-    }
+    // IMPORTANT: calculateSmartPosition() reads from style.left/top which are WORLD-SPACE coordinates
+    // for absolutely positioned panels. No conversion needed!
+    const smartWorldPosition = calculateSmartPosition()
 
     debugLog({
       component: 'BranchItem',
@@ -315,12 +249,10 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
         branchId,
         parentId,
         noteId,
-        screenPosition: smartScreenPosition,
         worldPosition: smartWorldPosition,
-        camera,
-        zoom
+        note: 'Position already in world-space (read from style.left/top)'
       },
-      content_preview: `Screen(${smartScreenPosition.x}, ${smartScreenPosition.y}) → World(${smartWorldPosition.x}, ${smartWorldPosition.y})`
+      content_preview: `World position: (${smartWorldPosition.x}, ${smartWorldPosition.y})`
     })
 
     // Update position in both stores (using WORLD-SPACE coordinates)
@@ -348,9 +280,16 @@ export function BranchItem({ branchId, parentId, dataStore: propDataStore, state
       },
     })
 
-    // Also dispatch create-panel event for modern canvas
+    // Also dispatch create-panel event for modern canvas with smart position
+    // NOTE: smartWorldPosition is already in world-space (read from style.left/top)
     window.dispatchEvent(new CustomEvent('create-panel', {
-      detail: { panelId: branchId, noteId },
+      detail: {
+        panelId: branchId,
+        parentPanelId: parentId,
+        parentPosition: smartWorldPosition,
+        noteId,
+        coordinateSpace: 'world' // Position is already in world-space, no conversion needed
+      },
       bubbles: true
     }))
   }

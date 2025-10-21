@@ -724,12 +724,50 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       const { mainPosition = null, persist = true } = options ?? {}
       const pendingPosition = pendingPersistsRef.current.get(noteId) ?? null
       const cachedPosition = positionCacheRef.current.get(noteId) ?? null
-      const normalizedPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? { x: 2000, y: 1500 }
+
+      // Calculate smart default position: place new notes on the right side of existing panels
+      const calculateSmartDefaultPosition = (): WorkspacePosition => {
+        if (typeof window === 'undefined') return { x: 2000, y: 1500 }
+
+        // Find all panels currently in the DOM
+        const allPanels = document.querySelectorAll('[data-store-key]')
+        if (allPanels.length === 0) return { x: 2000, y: 1500 }
+
+        let rightmostX = 0
+        let rightmostY = 1500
+        let rightmostWidth = 800
+
+        allPanels.forEach(panel => {
+          const style = window.getComputedStyle(panel as HTMLElement)
+          const rect = (panel as HTMLElement).getBoundingClientRect()
+          const panelX = parseFloat(style.left) || 0
+          const panelY = parseFloat(style.top) || 1500
+          const panelWidth = rect.width || 800
+
+          // Find the rightmost panel (x + width is the furthest right)
+          if (panelX + panelWidth > rightmostX + rightmostWidth) {
+            rightmostX = panelX
+            rightmostY = panelY
+            rightmostWidth = panelWidth
+          }
+        })
+
+        // Place new note on the right side with a 50px gap
+        const gap = 50
+        return {
+          x: rightmostX + rightmostWidth + gap,
+          y: rightmostY
+        }
+      }
+
+      const smartDefaultPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? calculateSmartDefaultPosition()
+      const normalizedPosition = smartDefaultPosition
 
       console.log(`[DEBUG openNote] Position resolution for ${noteId}:`, {
         mainPosition,
         pendingPosition,
         cachedPosition,
+        smartDefaultPosition,
         normalizedPosition,
       })
       if (!noteId) {

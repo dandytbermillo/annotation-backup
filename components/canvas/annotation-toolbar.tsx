@@ -118,9 +118,12 @@ export function AnnotationToolbar() {
 
     // Calculate smart position FIRST before creating branch data
     const calculateSmartPosition = () => {
-      const currentPanel = document.querySelector(`[data-panel-id="${panel}"]`) as HTMLElement
+      // Use composite key to find the EXACT panel (noteId::panelId) instead of just panelId
+      // This prevents selecting the wrong panel when multiple notes have panels with the same ID
+      const parentStoreKey = ensurePanelKey(panelNoteId || '', panel)
+      const currentPanel = document.querySelector(`[data-store-key="${parentStoreKey}"]`) as HTMLElement
       let parentPosition = { x: 2000, y: 1500 }
-      
+
       // Debug: Check if panel was found
       if (!currentPanel) {
         fetch('/api/debug/log', {
@@ -131,10 +134,12 @@ export function AnnotationToolbar() {
             action: 'panel_not_found',
             metadata: {
               parentPanel: panel,
-              selector: `[data-panel-id="${panel}"]`,
-              availablePanels: Array.from(document.querySelectorAll('[data-panel-id]')).map(el => el.getAttribute('data-panel-id'))
+              parentNoteId: panelNoteId,
+              parentStoreKey,
+              selector: `[data-store-key="${parentStoreKey}"]`,
+              availableStoreKeys: Array.from(document.querySelectorAll('[data-store-key]')).map(el => el.getAttribute('data-store-key'))
             },
-            content_preview: `Parent panel ${panel} not found in DOM`,
+            content_preview: `Parent panel ${parentStoreKey} not found in DOM`,
             note_id: panelNoteId
           })
         }).catch(console.error)
@@ -162,62 +167,24 @@ export function AnnotationToolbar() {
             action: 'panel_position',
             metadata: {
               parentPanel: panel,
+              parentNoteId: panelNoteId,
+              parentStoreKey,
               left: leftStr,
               top: topStr,
               currentX: currentX,
               currentY: currentY,
               rect: { width: rect.width, height: rect.height }
             },
-            content_preview: `Panel ${panel} at x=${currentX}, y=${currentY}`,
+            content_preview: `Panel ${parentStoreKey} at x=${currentX}, y=${currentY}`,
             note_id: panelNoteId
           })
         }).catch(console.error)
         
         if (currentX || currentY) {
-          // Position calculation remains the same
-          
-          const allPanels = document.querySelectorAll('[data-panel-id]')
-          let rightOccupied = false
-          let leftOccupied = false
-          
-          allPanels.forEach((panel) => {
-            if (panel === currentPanel) return
-            
-            const panelStyle = window.getComputedStyle(panel)
-            const panelLeft = parseFloat(panelStyle.left) || 0
-            const panelX = panelLeft
-            
-            if (panelX > currentX + panelWidth && 
-                panelX < currentX + panelWidth + gap + 100) {
-              rightOccupied = true
-            }
-            
-            if (panelX < currentX - gap && 
-                panelX > currentX - panelWidth - gap - 100) {
-              leftOccupied = true
-            }
-          })
-          
-          let placeOnLeft = false
-          
-          if (!rightOccupied && !leftOccupied) {
-            // Prefer right side by default (same as branch list behavior)
-            // Only use left if panel is already far to the right
-            placeOnLeft = currentX > 2500
-          } else if (rightOccupied && !leftOccupied) {
-            placeOnLeft = true
-          } else if (!rightOccupied && leftOccupied) {
-            placeOnLeft = false
-          } else {
-            placeOnLeft = false
-            parentPosition.y = currentY + 100
-          }
-          
+          // Always place on the right side of parent panel
           parentPosition = {
-            x: placeOnLeft 
-              ? currentX - panelWidth - gap
-              : currentX + panelWidth + gap,
-            y: parentPosition.y || currentY
+            x: currentX + panelWidth + gap,
+            y: currentY
           }
         }
       }
@@ -356,12 +323,14 @@ export function AnnotationToolbar() {
     }))
 
     // Create the panel for the new branch with smart position
+    // NOTE: smartPosition is already in world-space (read from style.left/top which are world coords)
     window.dispatchEvent(new CustomEvent('create-panel', {
       detail: {
         panelId: branchId,
         parentPanelId: panel,
         parentPosition: smartPosition,
-        noteId: panelNoteId
+        noteId: panelNoteId,
+        coordinateSpace: 'world' // Flag to prevent double conversion in handleCreatePanel
       }
     }))
 
