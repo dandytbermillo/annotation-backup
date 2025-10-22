@@ -3488,14 +3488,25 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
               {/* Tool Panel Content */}
               {activeToolPanel === 'branches' && (() => {
                 // Get the current branch from the shared workspace dataStore
-                const sharedStoreKey = ensurePanelKey(noteId, panelId)
+                const branchNoteId = noteId ?? effectiveNoteId
+                const sharedStoreKey = ensurePanelKey(branchNoteId, panelId)
                 const sharedCurrentBranch = sharedDataStore.get(sharedStoreKey) || currentBranch
+                const dataStoreKeys = Array.from(dataStore.keys ? dataStore.keys() : [])
+                const sharedDataStoreKeys = Array.from(sharedDataStore.keys ? sharedDataStore.keys() : [])
+                const branchMetadata = sharedDataStoreKeys
+                  .filter((k: string) => k.includes('::'))
+                  .map((k: string) => ({
+                    key: k,
+                    hasBranches: !!sharedDataStore.get(k)?.branches,
+                    branchCount: sharedDataStore.get(k)?.branches?.length || 0,
+                    branches: sharedDataStore.get(k)?.branches,
+                  }))
 
                 console.log('[CanvasPanel] Rendering BranchesSection:', {
                   panelId,
                   storeKey,
                   sharedStoreKey,
-                  noteId,
+                  noteId: branchNoteId,
                   currentBranch: {
                     id: currentBranch.id,
                     type: currentBranch.type,
@@ -3510,16 +3521,9 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                     branchesLength: sharedCurrentBranch.branches?.length || 0,
                     branches: sharedCurrentBranch.branches
                   },
-                  dataStoreKeys: Array.from(dataStore.keys ? dataStore.keys() : []),
-                  sharedDataStoreKeys: Array.from(sharedDataStore.keys ? sharedDataStore.keys() : []),
-                  allBranchData: Array.from(sharedDataStore.keys ? sharedDataStore.keys() : [])
-                    .filter((k: string) => k.includes('::'))
-                    .map((k: string) => ({
-                      key: k,
-                      hasBranches: !!sharedDataStore.get(k)?.branches,
-                      branchCount: sharedDataStore.get(k)?.branches?.length || 0,
-                      branches: sharedDataStore.get(k)?.branches
-                    }))
+                  dataStoreKeys,
+                  sharedDataStoreKeys,
+                  allBranchData: branchMetadata,
                 })
 
                 return (

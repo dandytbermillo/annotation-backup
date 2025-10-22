@@ -25,6 +25,7 @@ export interface OpenWorkspaceNote {
   noteId: string
   mainPosition: WorkspacePosition | null
   updatedAt: string | null
+  version: number
 }
 
 export interface OpenNoteOptions {
@@ -68,6 +69,10 @@ interface CanvasWorkspaceContextValue {
   getPendingPosition(noteId: string): WorkspacePosition | null
   /** Retrieve a cached workspace position if one exists */
   getCachedPosition(noteId: string): WorkspacePosition | null
+  /** Retrieve the current workspace version for a note, if known */
+  getWorkspaceVersion(noteId: string): number | null
+  /** Update cached workspace version (used by external persistence flows) */
+  updateWorkspaceVersion(noteId: string, version: number): void
 }
 
 const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>(null)
@@ -75,6 +80,8 @@ const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>
 // Feature flag for new ordered toolbar behavior (TDD §5.4 line 227)
 const FEATURE_ENABLED = typeof window !== 'undefined' &&
   process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY === 'enabled'
+
+type WorkspaceVersionUpdate = { noteId: string; version: number }
 
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
@@ -87,9 +94,11 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const scheduledPersistRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPersistsRef = useRef<Map<string, WorkspacePosition>>(new Map())
   const positionCacheRef = useRef<Map<string, WorkspacePosition>>(new Map())
+  const workspaceVersionsRef = useRef<Map<string, number>>(new Map())
   const pendingBatchRef = useRef<ReturnType<typeof setTimeout> | null>(null) // Shared 300ms batch timer (TDD §5.1)
   const PENDING_STORAGE_KEY = 'canvas_workspace_pending'
   const POSITION_CACHE_KEY = 'canvas_workspace_position_cache'
+  const WORKSPACE_VERSION_CACHE_KEY = 'canvas_workspace_versions'
   const BATCH_DEBOUNCE_MS = 300 // TDD §5.1 line 216
 
   const syncPendingToStorage = useCallback(() => {
@@ -122,6 +131,82 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.warn('[CanvasWorkspace] Failed to persist position cache to storage', error)
     }
+  }, [])
+
+  const persistWorkspaceVersions = useCallback(() => {
+    if (typeof window === 'undefined') return
+
+    const entries = Array.from(workspaceVersionsRef.current.entries())
+    try {
+      if (entries.length === 0) {
+        window.localStorage.removeItem(WORKSPACE_VERSION_CACHE_KEY)
+      } else {
+        window.localStorage.setItem(WORKSPACE_VERSION_CACHE_KEY, JSON.stringify(entries))
+      }
+    } catch (error) {
+      console.warn('[CanvasWorkspace] Failed to persist workspace versions to storage', error)
+    }
+  }, [])
+
+  const applyVersionUpdates = useCallback((updates: WorkspaceVersionUpdate[]) => {
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return
+    }
+
+    let mutated = false
+
+    updates.forEach(update => {
+      if (!update || typeof update.noteId !== 'string') {
+        return
+      }
+      const parsedVersion = Number(update.version)
+      if (!Number.isFinite(parsedVersion)) {
+        return
+      }
+
+      const prevVersion = workspaceVersionsRef.current.get(update.noteId)
+      if (prevVersion === parsedVersion) {
+        return
+      }
+
+      workspaceVersionsRef.current.set(update.noteId, parsedVersion)
+      mutated = true
+    })
+
+    if (!mutated) {
+      return
+    }
+
+    setOpenNotes(prev =>
+      prev.map(note => {
+        const updatedVersion = workspaceVersionsRef.current.get(note.noteId)
+        if (updatedVersion === undefined || updatedVersion === note.version) {
+          return note
+        }
+        return { ...note, version: updatedVersion }
+      }),
+    )
+    persistWorkspaceVersions()
+  }, [persistWorkspaceVersions])
+
+  const extractVersionUpdates = useCallback((payload: any): WorkspaceVersionUpdate[] => {
+    if (!payload) {
+      return []
+    }
+
+    const raw = Array.isArray(payload?.versions) ? payload.versions : []
+    const cleaned: WorkspaceVersionUpdate[] = []
+
+    raw.forEach((entry: any) => {
+      if (!entry || typeof entry !== 'object') return
+      const noteId = typeof entry.noteId === 'string' ? entry.noteId : null
+      const versionValue = 'version' in entry ? (entry as any).version : undefined
+      const parsedVersion = Number(versionValue)
+      if (!noteId || !Number.isFinite(parsedVersion)) return
+      cleaned.push({ noteId, version: parsedVersion })
+    })
+
+    return cleaned
   }, [])
 
   const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
@@ -169,10 +254,39 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     [getWorkspace],
   )
 
+  const invalidateLocalSnapshot = useCallback((noteId: string) => {
+    if (!noteId) return
+
+    positionCacheRef.current.delete(noteId)
+    pendingPersistsRef.current.delete(noteId)
+    const pendingTimer = scheduledPersistRef.current.get(noteId)
+    if (pendingTimer !== undefined) {
+      clearTimeout(pendingTimer)
+      scheduledPersistRef.current.delete(noteId)
+    }
+    syncPendingToStorage()
+    syncPositionCacheToStorage()
+
+    if (typeof window === 'undefined') return
+
+    try {
+      window.localStorage.removeItem(`annotation-canvas-state:${noteId}`)
+    } catch (error) {
+      console.warn('[CanvasWorkspace] Failed to remove canvas snapshot cache', error)
+    }
+
+    try {
+      window.localStorage.removeItem(`note-data-${noteId}`)
+      window.localStorage.removeItem(`note-data-${noteId}:invalidated`)
+    } catch (error) {
+      console.warn('[CanvasWorkspace] Failed to clear plain-mode note cache', error)
+    }
+  }, [syncPendingToStorage, syncPositionCacheToStorage])
+
   const persistWorkspace = useCallback(
     async (updates: Array<{ noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null }>) => {
       if (updates.length === 0) {
-        return
+        return []
       }
 
       updates.forEach(update => {
@@ -231,6 +345,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
               body: JSON.stringify(updatePayload),
             })
 
+            const rawBody = await response.text()
+
             if (response.ok) {
               // Success - clear pending
               updates.forEach(update => {
@@ -249,8 +365,20 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
                 },
               })
 
+              let parsedPayload: any = null
+              try {
+                parsedPayload = rawBody ? JSON.parse(rawBody) : null
+              } catch (parseError) {
+                console.warn('[CanvasWorkspace] Failed to parse workspace/update payload', parseError)
+              }
+
+              if (parsedPayload) {
+                const versionUpdates = extractVersionUpdates(parsedPayload)
+                applyVersionUpdates(versionUpdates)
+              }
+
               setWorkspaceError(null)
-              return
+              return parsedPayload ? extractVersionUpdates(parsedPayload) : []
             }
 
             // Handle 409 Conflict (optimistic lock failure) - TDD §5.2
@@ -270,8 +398,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             }
 
             // All other errors or max retries exceeded
-            const messageRaw = await response.text()
-            const trimmedMessage = messageRaw.trim()
+            const trimmedMessage = rawBody.trim()
             const statusMessage = `${response.status} ${response.statusText}`.trim()
             const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
 
@@ -308,9 +435,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             body: JSON.stringify(patchPayload),
           })
 
+          const rawBody = await response.text()
+
           if (!response.ok) {
-            const messageRaw = await response.text()
-            const trimmedMessage = messageRaw.trim()
+            const trimmedMessage = rawBody.trim()
             const statusMessage = `${response.status} ${response.statusText}`.trim()
             const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
 
@@ -345,7 +473,22 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             },
           })
 
+          let parsedPayload: any = null
+          try {
+            parsedPayload = rawBody ? JSON.parse(rawBody) : null
+          } catch (parseError) {
+            console.warn('[CanvasWorkspace] Failed to parse workspace PATCH payload', parseError)
+          }
+
+          if (parsedPayload) {
+            const versionUpdates = extractVersionUpdates(parsedPayload)
+            applyVersionUpdates(versionUpdates)
+            setWorkspaceError(null)
+            return versionUpdates
+          }
+
           setWorkspaceError(null)
+          return []
         }
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error))
@@ -378,8 +521,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
         throw err
       }
+
+      return []
     },
-    [syncPendingToStorage],
+    [syncPendingToStorage, extractVersionUpdates, applyVersionUpdates],
   )
 
   const refreshWorkspace = useCallback(async () => {
@@ -411,13 +556,22 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           const rawX = Number(rawPosition?.x)
           const rawY = Number(rawPosition?.y)
           const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+          const versionValue = Number(note?.version ?? 0)
+          const version = Number.isFinite(versionValue) ? versionValue : 0
 
           return {
             noteId: String(note.noteId),
             mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
             updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
+            version,
           }
         })
+
+        workspaceVersionsRef.current.clear()
+        normalized.forEach(entry => {
+          workspaceVersionsRef.current.set(entry.noteId, entry.version)
+        })
+        persistWorkspaceVersions()
 
         // Pre-populate dataStore for all panels (TDD §4.1 line 177)
         const workspace = getWorkspace(SHARED_WORKSPACE_ID)
@@ -624,13 +778,22 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
           const rawX = Number(rawPosition?.x)
           const rawY = Number(rawPosition?.y)
           const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+          const versionValue = Number(note?.version ?? 0)
+          const version = Number.isFinite(versionValue) ? versionValue : 0
 
           return {
             noteId: String(note.noteId),
             mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
             updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
+            version,
           }
         })
+
+        workspaceVersionsRef.current.clear()
+        normalized.forEach(entry => {
+          workspaceVersionsRef.current.set(entry.noteId, entry.version)
+        })
+        persistWorkspaceVersions()
 
         const merged: OpenWorkspaceNote[] = [...normalized]
 
@@ -661,6 +824,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
               noteId,
               mainPosition: position,
               updatedAt: null,
+              version: workspaceVersionsRef.current.get(noteId) ?? 0,
             })
           }
         })
@@ -679,7 +843,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       setIsWorkspaceReady(true)
       setIsHydrating(false)
     }
-  }, [ensureWorkspaceForOpenNotes, getWorkspace])
+  }, [ensureWorkspaceForOpenNotes, getWorkspace, persistWorkspaceVersions])
 
   const clearScheduledPersist = useCallback((noteId: string) => {
     const existing = scheduledPersistRef.current.get(noteId)
@@ -714,7 +878,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
 
         try {
-          await persistWorkspace(batch)
+          const versionUpdates = await persistWorkspace(batch)
+          applyVersionUpdates(versionUpdates)
           // Don't call refreshWorkspace here - it causes infinite loops
           // The position is already in local state, no need to reload from DB
         } catch (error) {
@@ -727,7 +892,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }, BATCH_DEBOUNCE_MS)
     },
-    [persistWorkspace, syncPendingToStorage],
+    [persistWorkspace, syncPendingToStorage, applyVersionUpdates],
   )
 
   useEffect(() => {
@@ -840,23 +1005,31 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
               : note,
           )
         }
+        const version = workspaceVersionsRef.current.get(noteId) ?? 0
         const next: OpenWorkspaceNote = {
           noteId,
           mainPosition: normalizedPosition,
           updatedAt: null,
+          version,
         }
 
         return [...prev, next]
       })
 
-      ensureWorkspaceForOpenNotes([{ noteId, mainPosition: normalizedPosition, updatedAt: null }])
+      ensureWorkspaceForOpenNotes([{
+        noteId,
+        mainPosition: normalizedPosition,
+        updatedAt: null,
+        version: workspaceVersionsRef.current.get(noteId) ?? 0,
+      }])
 
       const shouldPersist = persist && (!alreadyOpen || mainPosition)
 
       if (shouldPersist) {
         const positionToPersist = mainPosition ?? normalizedPosition
         try {
-          await persistWorkspace([{ noteId, isOpen: true, mainPosition: positionToPersist }])
+          const versionUpdates = await persistWorkspace([{ noteId, isOpen: true, mainPosition: positionToPersist }])
+          applyVersionUpdates(versionUpdates)
           clearScheduledPersist(noteId)
           // Don't call refreshWorkspace - position is already in local state
           // This prevents unnecessary "Syncing..." UI flashing and potential loops
@@ -870,7 +1043,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [ensureWorkspaceForOpenNotes, persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist],
+    [ensureWorkspaceForOpenNotes, persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, applyVersionUpdates],
   )
 
   const closeNote = useCallback(
@@ -888,7 +1061,9 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       }
 
       if (persist) {
-        await persistWorkspace([{ noteId, isOpen: false }])
+        const versionUpdates = await persistWorkspace([{ noteId, isOpen: false }])
+        applyVersionUpdates(versionUpdates)
+        invalidateLocalSnapshot(noteId)
         // Persist main panel state as closed so hydration does not revive it
         try {
           await fetch(`/api/canvas/layout/${noteId}`, {
@@ -912,7 +1087,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         // Don't call refreshWorkspace - note is already removed from local state
       }
     },
-    [persistWorkspace],
+    [persistWorkspace, applyVersionUpdates, invalidateLocalSnapshot],
   )
 
   const updateMainPosition = useCallback(
@@ -940,7 +1115,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
       if (persist) {
         try {
-          await persistWorkspace([{ noteId, isOpen: true, mainPosition: position }])
+          const versionUpdates = await persistWorkspace([{ noteId, isOpen: true, mainPosition: position }])
+          applyVersionUpdates(versionUpdates)
           clearScheduledPersist(noteId)
           await debugLog({
             component: 'CanvasWorkspace',
@@ -962,7 +1138,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, syncPositionCacheToStorage],
+    [persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, syncPositionCacheToStorage, applyVersionUpdates],
   )
 
   const getPendingPosition = useCallback((noteId: string): WorkspacePosition | null => {
@@ -976,6 +1152,15 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     if (!position) return null
     return { ...position }
   }, [])
+
+  const getWorkspaceVersion = useCallback((noteId: string): number | null => {
+    const value = workspaceVersionsRef.current.get(noteId)
+    return typeof value === 'number' ? value : null
+  }, [])
+
+  const updateWorkspaceVersion = useCallback((noteId: string, version: number) => {
+    applyVersionUpdates([{ noteId, version }])
+  }, [applyVersionUpdates])
 
   useEffect(() => {
     const persistActiveNotes = () => {
@@ -1091,6 +1276,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       updateMainPosition,
       getPendingPosition,
       getCachedPosition,
+      getWorkspaceVersion,
+      updateWorkspaceVersion,
     }),
     [
       getWorkspace,
@@ -1108,6 +1295,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       updateMainPosition,
       getPendingPosition,
       getCachedPosition,
+      getWorkspaceVersion,
+      updateWorkspaceVersion,
     ],
   )
 

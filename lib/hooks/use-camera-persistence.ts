@@ -14,6 +14,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useCanvas } from '@/components/canvas/canvas-context'
 import { debugLog } from '@/lib/utils/debug-logger'
 import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
+import { useCanvasWorkspace } from '@/components/canvas/canvas-workspace-context'
 
 export interface CameraPersistenceOptions {
   /** Note ID for camera state persistence */
@@ -50,6 +51,7 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
   } = options
 
   const { state } = useCanvas()
+  const { getWorkspaceVersion } = useCanvasWorkspace()
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastPersistedRef = useRef<CameraState | null>(null)
   const pendingUpdateRef = useRef<CameraState | null>(null)
@@ -85,7 +87,8 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
           data: {
             camera,
             userId: userId ?? null
-          }
+          },
+          workspaceVersion: getWorkspaceVersion(noteId)
         })
         debugLog({
           component: 'CameraPersistence',
@@ -155,7 +158,7 @@ export function useCameraPersistence(options: CameraPersistenceOptions) {
       })
       await enqueueCameraUpdate()
     }
-  }, [noteId, userId, enabled])
+  }, [noteId, userId, enabled, getWorkspaceVersion])
 
   /**
    * Flush pending camera updates immediately

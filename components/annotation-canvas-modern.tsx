@@ -77,6 +77,7 @@ interface NoteHydratorProps {
   layerManager: ReturnType<typeof useLayerManager>['manager']
   onHydration: (noteId: string, status: HydrationResult) => void
   enabled?: boolean
+  workspaceVersion?: number | null
 }
 
 function NoteHydrator({
@@ -87,6 +88,7 @@ function NoteHydrator({
   layerManager,
   onHydration,
   enabled = true,
+  workspaceVersion,
 }: NoteHydratorProps) {
   const status = useCanvasHydration({
     noteId,
@@ -94,7 +96,8 @@ function NoteHydrator({
     dataStore,
     branchesMap,
     layerManager,
-    enabled
+    enabled,
+    workspaceVersion: workspaceVersion ?? undefined,
   })
 
   useEffect(() => {
@@ -218,6 +221,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     openNotes.forEach(note => map.set(note.noteId, note))
     return map
   }, [openNotes])
+  const activeWorkspaceVersion = workspaceNoteMap.get(noteId)?.version ?? null
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
     if (!position) return false
     return position.x === DEFAULT_MAIN_POSITION.x && position.y === DEFAULT_MAIN_POSITION.y
@@ -254,7 +258,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   // Initialize canvas state - check for snapshot to avoid visible jump
   const [canvasState, _setCanvasState] = useState(() => {
-    const snapshot = loadStateFromStorage(noteId)
+    const snapshot = activeWorkspaceVersion !== null
+      ? loadStateFromStorage(noteId, activeWorkspaceVersion)
+      : loadStateFromStorage(noteId)
     console.log('[AnnotationCanvas] useState initializer:', {
       noteId,
       hasSnapshot: !!snapshot,
@@ -1297,7 +1303,9 @@ const mainPanelSeededRef = useRef(false)
     }
 
     // Check for snapshot FIRST before initializing to default
-    const snapshot = loadStateFromStorage(noteId)
+    const snapshot = activeWorkspaceVersion !== null
+      ? loadStateFromStorage(noteId, activeWorkspaceVersion)
+      : loadStateFromStorage(noteId)
 
     if (snapshot && skipSnapshotForNote === noteId) {
       debugLog({
@@ -1748,7 +1756,7 @@ const mainPanelSeededRef = useRef(false)
     onSnapshotSettled?.(noteId)
 
     return
-  }, [noteId, onSnapshotLoadComplete, skipSnapshotForNote, onSnapshotSettled])
+  }, [noteId, onSnapshotLoadComplete, skipSnapshotForNote, onSnapshotSettled, activeWorkspaceVersion])
 
   // Cleanup auto-save timer on unmount
   useEffect(() => {
@@ -2413,6 +2421,7 @@ const mainPanelSeededRef = useRef(false)
       const success = saveStateToStorage(noteId, {
         viewport: viewportSnapshot,
         items: canvasItems,
+        workspaceVersion: activeWorkspaceVersion ?? undefined,
       })
 
       if (!success) {
@@ -2428,7 +2437,7 @@ const mainPanelSeededRef = useRef(false)
         autoSaveTimerRef.current = null
       }
     }
-  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded])
+  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded, activeWorkspaceVersion])
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -2746,6 +2755,7 @@ const mainPanelSeededRef = useRef(false)
           branchesMap={branchesMap}
           layerManager={layerManagerApi.manager}
           enabled={true}
+          workspaceVersion={workspaceNoteMap.get(id)?.version ?? null}
           onHydration={handleNoteHydration}
         />
       ))}

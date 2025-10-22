@@ -12,6 +12,10 @@ export class DataStore extends EventEmitter {
     this.emit('set', key)
   }
 
+  keys(): IterableIterator<string> {
+    return this.data.keys()
+  }
+
   has(key: string) {
     return this.data.has(key)
   }

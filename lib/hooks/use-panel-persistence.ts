@@ -21,6 +21,7 @@ import { canvasOfflineQueue } from '@/lib/canvas/canvas-offline-queue'
 import { debugLog } from '@/lib/utils/debug-logger'
 import type { CanvasItem } from '@/types/canvas-items'
 import { resolvePanelDimensions, type PanelDimensions } from '@/lib/canvas/panel-metrics'
+import { useCanvasWorkspace } from '@/components/canvas/canvas-workspace-context'
 
 export interface PanelPersistOptions {
   /** Data store instance */
@@ -62,6 +63,7 @@ export interface PanelUpdateData {
 export function usePanelPersistence(options: PanelPersistOptions) {
   const { dataStore, branchesMap, layerManager, noteId, userId, canvasItems } = options
   const { state } = useCanvas()
+  const { getWorkspaceVersion } = useCanvasWorkspace()
   const cachedCanvasItems = canvasItems
 
   const getPanelDimensions = useCallback(
@@ -225,7 +227,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         await canvasOfflineQueue.enqueue({
           type: 'panel_update',
           noteId: effectiveNoteId,
-          data: apiPayload
+          data: apiPayload,
+          workspaceVersion: getWorkspaceVersion(effectiveNoteId)
         })
 
         debugLog({
@@ -235,7 +238,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         })
       }
     },
-    [dataStore, branchesMap, layerManager, noteId, userId, state.canvasState]
+    [dataStore, branchesMap, layerManager, noteId, userId, state.canvasState, getWorkspaceVersion]
   )
 
   /**
@@ -349,7 +352,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
             zIndex,
             state: panelState,
             updatedBy: userId
-          }
+          },
+          workspaceVersion: getWorkspaceVersion(effectiveNoteId)
         })
 
         debugLog({
@@ -359,7 +363,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         })
       }
     },
-    [noteId, userId, state.canvasState]
+    [noteId, userId, state.canvasState, getWorkspaceVersion]
   )
 
   /**
@@ -402,7 +406,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         await canvasOfflineQueue.enqueue({
           type: 'panel_delete',
           noteId: effectiveNoteId,
-          data: { panelId, noteId: effectiveNoteId }
+          data: { panelId, noteId: effectiveNoteId },
+          workspaceVersion: getWorkspaceVersion(effectiveNoteId)
         })
 
         debugLog({
@@ -412,7 +417,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         })
       }
     },
-    [noteId]
+    [noteId, getWorkspaceVersion]
   )
 
   /**
@@ -491,11 +496,13 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         })
 
         // Queue each update individually for offline replay
+        const workspaceVersion = getWorkspaceVersion(noteId)
         for (const update of worldUpdates) {
           await canvasOfflineQueue.enqueue({
             type: 'panel_update',
             noteId,
-            data: update
+            data: update,
+            workspaceVersion
           })
         }
 
@@ -506,7 +513,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         })
       }
     },
-    [noteId, userId, state.canvasState]
+    [noteId, userId, state.canvasState, getWorkspaceVersion]
   )
 
   return {

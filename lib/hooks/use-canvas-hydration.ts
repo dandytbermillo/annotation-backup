@@ -11,7 +11,7 @@
  * - AbortController for race condition prevention
  * - 10s timeout on all fetch operations
  * - Data validation (NaN, Infinity, negative values)
- * - localStorage cache fallback with 7-day retention
+ * - localStorage cache fallback with 24-hour retention
  *
  * @see docs/proposal/canvas_state_persistence/implementation.md lines 50-87
  * @see docs/proposal/canvas_state_persistence/CRITICAL_REVIEW.md Issues 2-6
@@ -28,7 +28,7 @@ import { loadStateFromStorage } from '@/lib/canvas/canvas-storage'
 
 // Constants
 const HYDRATION_TIMEOUT_MS = 10000 // 10 seconds
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const CACHE_KEY_PREFIX = 'canvas_hydration_cache_'
 
 // Validation utilities
@@ -159,6 +159,8 @@ export interface HydrationOptions {
   layerManager?: LayerManager
   /** Enable/disable hydration (default: true) */
   enabled?: boolean
+  /** Workspace version used to validate local snapshot caches */
+  workspaceVersion?: number
 }
 
 export interface HydrationStatus {
@@ -199,7 +201,8 @@ export function useCanvasHydration(options: HydrationOptions) {
     dataStore,
     branchesMap,
     layerManager,
-    enabled = true
+    enabled = true,
+    workspaceVersion
   } = options
 
   const { state, dispatch } = useCanvas()
@@ -672,7 +675,7 @@ export function useCanvasHydration(options: HydrationOptions) {
       const cameraLoaded = cameraResult !== null && cameraResult.exists
 
       // Check if local snapshot exists and is newer than server camera
-      const localSnapshot = loadStateFromStorage(noteId)
+      const localSnapshot = loadStateFromStorage(noteId, workspaceVersion)
       let shouldApplyServerCamera = false
 
       if (cameraResult && cameraResult.exists && cameraResult.updatedAt) {

@@ -10,12 +10,14 @@
 import type { CanvasItem } from "@/types/canvas-items"
 import { CanvasNode } from "@/lib/canvas/canvas-node"
 import { getLayerManager } from "@/lib/canvas/layer-manager"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 const STORAGE_PREFIX = "annotation-canvas-state"
-const STATE_VERSION = "1.1.0"
+const STATE_VERSION = "1.2.0"
 const LEGACY_KEY = STORAGE_PREFIX
 const AUTO_SAVE_DEBOUNCE = 800 // Increased from 450ms for better performance
 const STORAGE_BUDGET_BYTES = 2.5 * 1024 * 1024 // ~2.5MB budget for canvas snapshots
+const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000
 let lastQuotaWarningAt = 0
 
 interface PersistedViewport {
@@ -43,11 +45,134 @@ export interface PersistedCanvasState {
   items: PersistedCanvasItem[]
   savedAt: number
   version: string
+  workspaceVersion?: number
   /** Layer management data (optional for backwards compatibility) */
   layerNodes?: {
     schemaVersion: number
     nodes: CanvasNode[]
     maxZ: number
+  }
+}
+
+interface StoredCanvasSnapshotV2 {
+  version?: string
+  savedAt?: number
+  panels?: {
+    workspaceVersion?: number
+    viewport?: PersistedViewport
+    items?: PersistedCanvasItem[]
+    layerNodes?: {
+      schemaVersion: number
+      nodes: CanvasNode[]
+      maxZ: number
+    }
+  }
+}
+
+type StoredCanvasSnapshotLegacy = Partial<PersistedCanvasState> & Record<string, any>
+
+function normalizeStoredSnapshot(
+  raw: StoredCanvasSnapshotV2 | StoredCanvasSnapshotLegacy | null,
+  noteId: string,
+  storageKey: string,
+): {
+  viewport: PersistedViewport
+  items: PersistedCanvasItem[]
+  savedAt: number
+  version: string
+  workspaceVersion?: number
+  layerNodes?: {
+    schemaVersion: number
+    nodes: CanvasNode[]
+    maxZ: number
+  }
+} | null {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const panelsBlock = (raw as StoredCanvasSnapshotV2).panels
+  let savedAt = typeof raw.savedAt === 'number' ? raw.savedAt : Date.now()
+  let version = typeof raw.version === 'string' ? raw.version : STATE_VERSION
+  let workspaceVersion: number | undefined
+  let viewport: PersistedViewport | undefined
+  let items: PersistedCanvasItem[] | undefined
+  let layerNodes:
+    | {
+        schemaVersion: number
+        nodes: CanvasNode[]
+        maxZ: number
+      }
+    | undefined
+
+  if (panelsBlock && typeof panelsBlock === 'object') {
+    if (typeof panelsBlock.workspaceVersion === 'number') {
+      workspaceVersion = panelsBlock.workspaceVersion
+    } else if (typeof (raw as any).workspaceVersion === 'number') {
+      workspaceVersion = (raw as any).workspaceVersion
+    }
+
+    if (panelsBlock.viewport && typeof panelsBlock.viewport === 'object') {
+      viewport = panelsBlock.viewport as PersistedViewport
+    }
+
+    if (Array.isArray(panelsBlock.items)) {
+      items = panelsBlock.items as PersistedCanvasItem[]
+    } else if (Array.isArray((raw as any).items)) {
+      // Back-compat if items were still top-level
+      items = (raw as any).items as PersistedCanvasItem[]
+    }
+
+    if (panelsBlock.layerNodes) {
+      layerNodes = panelsBlock.layerNodes
+    }
+  } else {
+    const legacy = raw as StoredCanvasSnapshotLegacy
+    if (legacy.noteId && legacy.noteId !== noteId && storageKey !== LEGACY_KEY) {
+      return null
+    }
+    if (legacy.workspaceVersion && typeof legacy.workspaceVersion === 'number') {
+      workspaceVersion = legacy.workspaceVersion
+    }
+    viewport = legacy.viewport as PersistedViewport | undefined
+    items = Array.isArray(legacy.items) ? (legacy.items as PersistedCanvasItem[]) : undefined
+    layerNodes = legacy.layerNodes
+  }
+
+  if (!viewport || typeof viewport.zoom !== 'number' || typeof viewport.translateX !== 'number' || typeof viewport.translateY !== 'number') {
+    return null
+  }
+
+  const normalizedViewport: PersistedViewport = {
+    zoom: viewport.zoom,
+    translateX: viewport.translateX,
+    translateY: viewport.translateY,
+    showConnections: viewport.showConnections ?? true,
+  }
+
+  if (!Array.isArray(items)) {
+    return null
+  }
+
+  const normalizedItems = items.map(item => ({
+    id: item.id,
+    itemType: item.itemType,
+    position: item.position,
+    panelId: item.panelId,
+    panelType: item.panelType,
+    componentType: item.componentType,
+    dimensions: item.dimensions,
+    minimized: item.minimized,
+    title: item.title,
+  }))
+
+  return {
+    viewport: normalizedViewport,
+    items: normalizedItems,
+    savedAt,
+    version,
+    workspaceVersion,
+    layerNodes,
   }
 }
 
@@ -104,7 +229,7 @@ function getAvailableStorageSpace(): number {
  * @param noteId - The ID of the note to load state for
  * @returns The persisted state or null if not found/invalid
  */
-export function loadStateFromStorage(noteId: string): PersistedCanvasState | null {
+export function loadStateFromStorage(noteId: string, expectedWorkspaceVersion?: number): PersistedCanvasState | null {
   if (!isBrowser()) return null
 
   const candidates = [storageKey(noteId), LEGACY_KEY]
@@ -113,52 +238,146 @@ export function loadStateFromStorage(noteId: string): PersistedCanvasState | nul
     const serialized = window.localStorage.getItem(key)
     if (!serialized) continue
 
+    const deleteSnapshot = () => {
+      try {
+        if (key === LEGACY_KEY) {
+          window.localStorage.removeItem(LEGACY_KEY)
+        } else {
+          clearStateFromStorage(noteId)
+        }
+      } catch (err) {
+        console.warn('[canvas-storage] Failed to delete snapshot key', { key, err })
+      }
+    }
+
     try {
-      const parsed = JSON.parse(serialized) as PersistedCanvasState
-      
-      // Validate structure
-      if (!parsed || typeof parsed !== "object") continue
-      if (!parsed.viewport || typeof parsed.viewport.zoom !== "number") continue
-      if (!Array.isArray(parsed.items)) continue
-      
-      // Check note ID match (skip for legacy key)
-      if (parsed.noteId && parsed.noteId !== noteId && key !== LEGACY_KEY) continue
-      
-      // Check version compatibility
-      if (parsed.version && parsed.version !== STATE_VERSION) {
-        console.warn("[canvas-storage] Version mismatch", { 
-          stored: parsed.version, 
-          current: STATE_VERSION 
+      const parsed = JSON.parse(serialized) as StoredCanvasSnapshotV2 | StoredCanvasSnapshotLegacy
+      const normalized = normalizeStoredSnapshot(parsed, noteId, key)
+      if (!normalized) {
+        debugLog({
+          component: 'CanvasCache',
+          action: 'canvas.cache_discarded',
+          metadata: {
+            noteId,
+            reason: 'invalid_structure',
+            storageKey: key
+          },
+        })
+        deleteSnapshot()
+        continue
+      }
+
+      const {
+        viewport,
+        items,
+        savedAt,
+        version,
+        workspaceVersion: storedWorkspaceVersion,
+        layerNodes,
+      } = normalized
+
+      const ageMs = Date.now() - savedAt
+      if (ageMs > SNAPSHOT_TTL_MS) {
+        debugLog({
+          component: 'CanvasCache',
+          action: 'canvas.cache_discarded',
+          metadata: {
+            noteId,
+            reason: 'expired',
+            ageMs
+          }
+        })
+        deleteSnapshot()
+        continue
+      }
+
+      if (expectedWorkspaceVersion !== undefined) {
+        if (!Number.isFinite(expectedWorkspaceVersion)) {
+          console.warn('[canvas-storage] Ignoring non-finite expected workspace version', {
+            noteId,
+            expectedWorkspaceVersion,
+          })
+        } else if (storedWorkspaceVersion !== expectedWorkspaceVersion) {
+          console.warn('[canvas-storage] Discarding snapshot due to workspace version mismatch', {
+            noteId,
+            stored: storedWorkspaceVersion,
+            expected: expectedWorkspaceVersion,
+          })
+          debugLog({
+            component: 'CanvasCache',
+            action: 'canvas.cache_mismatch',
+            metadata: {
+              noteId,
+              storedVersion: storedWorkspaceVersion ?? null,
+              expectedVersion: expectedWorkspaceVersion,
+            }
+          })
+          debugLog({
+            component: 'CanvasCache',
+            action: 'canvas.cache_discarded',
+            metadata: {
+              noteId,
+              reason: 'workspace_version_mismatch',
+              storedVersion: storedWorkspaceVersion ?? null,
+              expectedVersion: expectedWorkspaceVersion,
+            }
+          })
+          deleteSnapshot()
+          continue
+        }
+      }
+
+      if (version && version !== STATE_VERSION) {
+        console.warn("[canvas-storage] Version mismatch", {
+          stored: version,
+          current: STATE_VERSION,
         })
         // In future, add migration logic here
       }
 
-      // Load layer nodes if available (LayerManager is always enabled)
-      if (parsed.layerNodes) {
+      if (layerNodes) {
         try {
           const layerManager = getLayerManager()
-          layerManager.deserializeNodes(parsed.layerNodes)
-          console.log('[canvas-storage] Loaded layer nodes:', parsed.layerNodes.nodes.length)
+          layerManager.deserializeNodes(layerNodes)
+          console.log('[canvas-storage] Loaded layer nodes:', layerNodes.nodes.length)
         } catch (error) {
           console.warn('[canvas-storage] Failed to load layer nodes:', error)
         }
       }
 
+      debugLog({
+        component: 'CanvasCache',
+        action: 'canvas.cache_used',
+        metadata: {
+          noteId,
+          savedAt,
+          ageMs,
+          workspaceVersion: storedWorkspaceVersion ?? null,
+          key
+        }
+      })
+
       return {
         noteId,
-        viewport: {
-          zoom: parsed.viewport.zoom,
-          translateX: parsed.viewport.translateX,
-          translateY: parsed.viewport.translateY,
-          showConnections: parsed.viewport.showConnections ?? true,
-        },
-        items: parsed.items,
-        savedAt: parsed.savedAt || Date.now(),
-        version: parsed.version || STATE_VERSION,
-        layerNodes: parsed.layerNodes
+        viewport,
+        items,
+        savedAt,
+        version: version || STATE_VERSION,
+        workspaceVersion: storedWorkspaceVersion,
+        layerNodes,
       }
     } catch (error) {
       console.warn("[canvas-storage] Failed to parse snapshot", { key, error })
+      debugLog({
+        component: 'CanvasCache',
+        action: 'canvas.cache_discarded',
+        metadata: {
+          noteId,
+          reason: 'parse_error',
+          storageKey: key
+        }
+      })
+      deleteSnapshot()
     }
   }
 
@@ -174,7 +393,7 @@ export function loadStateFromStorage(noteId: string): PersistedCanvasState | nul
  */
 export function saveStateToStorage(
   noteId: string,
-  snapshot: { viewport: PersistedViewport; items: CanvasItem[] }
+  snapshot: { viewport: PersistedViewport; items: CanvasItem[]; workspaceVersion?: number }
 ): boolean {
   if (!isBrowser()) return false
 
@@ -189,10 +408,8 @@ export function saveStateToStorage(
       console.warn('[canvas-storage] Failed to serialize layer nodes:', error)
     }
 
-    const payload: PersistedCanvasState = {
-      noteId,
-      savedAt: Date.now(),
-      version: STATE_VERSION,
+    const panelsPayload = {
+      workspaceVersion: snapshot.workspaceVersion,
       viewport: snapshot.viewport,
       items: snapshot.items.map((item) => ({
         id: item.id,
@@ -205,14 +422,26 @@ export function saveStateToStorage(
         minimized: item.minimized,
         title: item.title,
       })),
-      layerNodes
+      layerNodes,
+    }
+
+    type StoredSnapshotPayload = {
+      version: string
+      savedAt: number
+      panels: typeof panelsPayload
+    }
+
+    const payload: StoredSnapshotPayload = {
+      version: STATE_VERSION,
+      savedAt: Date.now(),
+      panels: panelsPayload,
     }
 
     const key = storageKey(noteId)
 
     let lastSavedSize = 0
 
-    const attemptSave = (data: PersistedCanvasState, logLabel: string): boolean => {
+    const attemptSave = (data: StoredSnapshotPayload, logLabel: string): boolean => {
       const serialized = JSON.stringify(data)
       try {
         window.localStorage.setItem(key, serialized)
@@ -263,10 +492,13 @@ export function saveStateToStorage(
         return true
       }
 
-      if (payload.layerNodes) {
-        const slimPayload: PersistedCanvasState = {
+      if (panelsPayload.layerNodes) {
+        const slimPayload: StoredSnapshotPayload = {
           ...payload,
-          layerNodes: undefined
+          panels: {
+            ...panelsPayload,
+            layerNodes: undefined,
+          },
         }
         if (attemptSave(slimPayload, 'saved without layer nodes')) {
           return true
@@ -275,7 +507,14 @@ export function saveStateToStorage(
 
       cleanupOldSnapshots(noteId, 0)
       enforceStorageBudget(noteId, STORAGE_BUDGET_BYTES * 0.9)
-      if (attemptSave({ ...payload, layerNodes: undefined }, 'saved after aggressive cleanup')) {
+      const aggressivePayload: StoredSnapshotPayload = {
+        ...payload,
+        panels: {
+          ...panelsPayload,
+          layerNodes: undefined,
+        },
+      }
+      if (attemptSave(aggressivePayload, 'saved after aggressive cleanup')) {
         return true
       }
 
@@ -296,7 +535,7 @@ export function saveStateToStorage(
     
     // Migrate from legacy key after successful save (with grace period)
     if (noteId && window.localStorage.getItem(LEGACY_KEY)) {
-      // Mark legacy for deletion after 7 days
+      // Mark legacy for deletion after 24 hours
       const legacyMeta = window.localStorage.getItem(`${LEGACY_KEY}:meta`)
       if (!legacyMeta) {
         window.localStorage.setItem(`${LEGACY_KEY}:meta`, JSON.stringify({
@@ -306,8 +545,8 @@ export function saveStateToStorage(
       } else {
         try {
           const meta = JSON.parse(legacyMeta)
-          // Delete if older than 7 days
-          if (Date.now() - meta.markedForDeletion > 7 * 24 * 60 * 60 * 1000) {
+          // Delete if older than 24 hours
+          if (Date.now() - meta.markedForDeletion > 24 * 60 * 60 * 1000) {
             window.localStorage.removeItem(LEGACY_KEY)
             window.localStorage.removeItem(`${LEGACY_KEY}:meta`)
           }
@@ -321,7 +560,7 @@ export function saveStateToStorage(
       {
         Action: "State Saved",
         NoteId: noteId,
-        Items: payload.items.length,
+        Items: payload.panels.items.length,
         Size: `${(lastSavedSize / 1024).toFixed(1)}KB`,
         SavedAt: new Date(payload.savedAt).toLocaleTimeString(),
       },

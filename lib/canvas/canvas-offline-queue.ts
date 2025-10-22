@@ -17,6 +17,7 @@ export interface CanvasOperation {
   id: string
   type: 'panel_update' | 'panel_create' | 'panel_delete' | 'camera_update'
   noteId: string
+  workspaceVersion?: number | null
   timestamp: number
   retryCount: number
   status: 'pending' | 'processing' | 'failed'
@@ -34,6 +35,7 @@ const DB_VERSION = 1
 const STORE_NAME = 'operations'
 const MAX_RETRIES = 3
 const RETRY_DELAYS = [1000, 5000, 15000] // Exponential backoff
+const WORKSPACE_VERSION_CACHE_KEY = 'canvas_workspace_versions'
 
 /**
  * Canvas Offline Queue Manager
@@ -42,6 +44,7 @@ export class CanvasOfflineQueue {
   private db: IDBDatabase | null = null
   private isProcessing = false
   private processInterval: number | null = null
+  private workspaceVersionCache: Map<string, number> | null = null
 
   /**
    * Initialize IndexedDB
@@ -109,6 +112,7 @@ export class CanvasOfflineQueue {
 
     const fullOperation: CanvasOperation = {
       ...operation,
+      workspaceVersion: operation.workspaceVersion ?? null,
       id: uuidv4(),
       timestamp: Date.now(),
       retryCount: 0,
@@ -212,6 +216,87 @@ export class CanvasOfflineQueue {
     return resolved
   }
 
+  private loadWorkspaceVersionCache(): Map<string, number> | null {
+    if (typeof window === 'undefined') {
+      return null
+    }
+
+    if (!this.workspaceVersionCache) {
+      this.workspaceVersionCache = new Map()
+      try {
+        const raw = window.localStorage.getItem(WORKSPACE_VERSION_CACHE_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+
+          if (Array.isArray(parsed)) {
+            parsed.forEach(entry => {
+              if (Array.isArray(entry) && entry.length >= 2) {
+                const [noteId, value] = entry
+                if (typeof noteId === 'string') {
+                  const numericVersion = Number(value)
+                  if (Number.isFinite(numericVersion)) {
+                    this.workspaceVersionCache!.set(noteId, numericVersion)
+                  }
+                }
+              } else if (entry && typeof entry === 'object' && typeof entry.noteId === 'string') {
+                const numericVersion = Number((entry as any).version)
+                if (Number.isFinite(numericVersion)) {
+                  this.workspaceVersionCache!.set(entry.noteId, numericVersion)
+                }
+              }
+            })
+          } else if (parsed && typeof parsed === 'object') {
+            Object.entries(parsed as Record<string, unknown>).forEach(([noteId, value]) => {
+              const numericVersion = Number(value)
+              if (typeof noteId === 'string' && Number.isFinite(numericVersion)) {
+                this.workspaceVersionCache!.set(noteId, numericVersion)
+              }
+            })
+          }
+        }
+      } catch (error) {
+        console.warn('[Canvas Offline Queue] Failed to parse workspace version cache', error)
+        this.workspaceVersionCache = new Map()
+      }
+    }
+
+    return this.workspaceVersionCache
+  }
+
+  private getCurrentWorkspaceVersion(noteId: string): number | null {
+    const cache = this.loadWorkspaceVersionCache()
+    if (!cache) return null
+    const value = cache.get(noteId)
+    return typeof value === 'number' ? value : null
+  }
+
+  private isWorkspaceVersionValid(operation: CanvasOperation): boolean {
+    if (operation.workspaceVersion === undefined || operation.workspaceVersion === null) {
+      return true
+    }
+
+    const currentVersion = this.getCurrentWorkspaceVersion(operation.noteId)
+    if (currentVersion === null) {
+      return true
+    }
+
+    const matches = currentVersion === operation.workspaceVersion
+
+    if (!matches) {
+      void debugLog({
+        component: 'CanvasOfflineQueue',
+        action: 'workspace_version_mismatch',
+        metadata: {
+          noteId: operation.noteId,
+          storedVersion: operation.workspaceVersion,
+          currentVersion
+        }
+      })
+    }
+
+    return matches
+  }
+
   /**
    * Get entity key for conflict resolution
    */
@@ -242,6 +327,7 @@ export class CanvasOfflineQueue {
       return
     }
 
+    this.workspaceVersionCache = null
     this.isProcessing = true
 
     try {
@@ -276,6 +362,15 @@ export class CanvasOfflineQueue {
   private async processOperation(operation: CanvasOperation): Promise<void> {
     try {
       await this.updateOperationStatus(operation.id, 'processing')
+
+      if (!this.isWorkspaceVersionValid(operation)) {
+        console.warn('[Canvas Offline Queue] Skipping operation due to workspace version mismatch', {
+          noteId: operation.noteId,
+          queuedVersion: operation.workspaceVersion
+        })
+        await this.removeOperation(operation.id)
+        return
+      }
 
       switch (operation.type) {
         case 'panel_update':

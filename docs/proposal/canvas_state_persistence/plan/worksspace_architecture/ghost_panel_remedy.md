@@ -54,6 +54,7 @@ This supersedes the previous “Ghost Panel Confirmation” plan. Goal: eliminat
 - Audit `canvasOfflineQueue` usage for panel persistence.
 - Ensure replays respect the new `version` (include it in payload) to avoid stale writes.
 - Consider eliminating offline queue if product requirements allow; otherwise align it with versioned writes (queue should read latest version before patching).
+- Evaluation summary (metrics + decision): `phase2-evaluation.md`.
 
 ### Deliverables
 - Performance metrics (with and without snapshot).
@@ -74,7 +75,7 @@ Assuming versions are in place:
 
 ### Deliverables
 - Updated `CanvasProvider` flow (no banner).
-- Telemetry events: `canvas.cache_mismatch`, `canvas.cache_used`, `canvas.cache_discarded`.
+- Telemetry events: `canvas.cache_mismatch`, `canvas.cache_used`, `canvas.cache_discarded` (implemented in `lib/canvas/canvas-storage.ts`).
 - Automated test: stale snapshot silently replaced by server; ghost panel cannot reappear after reload.
 
 ---
@@ -101,4 +102,3 @@ If the product roadmap still targets collaborative editing: migrate canvas state
 5. **Phase 5** – Instrument & monitor.
 
 This path removes the triple-cache anti-pattern, makes the server the enforced source of truth, and ensures ghost panels can’t resurrect—even before a CRDT migration.
-

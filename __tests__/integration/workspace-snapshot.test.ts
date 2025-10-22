@@ -16,7 +16,7 @@ process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY = 'enabled'
 import { Pool } from 'pg'
 import { POST as updatePost } from '@/app/api/canvas/workspace/update/route'
 import { POST as flushPost } from '@/app/api/canvas/workspace/flush/route'
-import { GET as workspaceGet } from '@/app/api/canvas/workspace/route'
+import { GET as workspaceGet, PATCH as workspacePatch } from '@/app/api/canvas/workspace/route'
 import { NextRequest } from 'next/server'
 
 // Use test database
@@ -379,6 +379,92 @@ describe('Workspace Snapshot Persistence', () => {
       // Clean up
       await client.query('DELETE FROM canvas_workspace_notes WHERE note_id IN ($1, $2)', [testNoteA, testNoteB])
       await client.query('DELETE FROM notes WHERE id IN ($1, $2)', [testNoteA, testNoteB])
+      client.release()
+    }
+  })
+
+  it('bumps workspace version on close and reopen and marks main panel closed', async () => {
+    const client = await pool.connect()
+    const testWorkspaceId = '99999999-9999-9999-9999-999999999999'
+    const testNote = '99999999-0000-0000-0000-000000000021'
+
+    try {
+      await client.query('DELETE FROM panels WHERE note_id = $1', [testNote])
+      await client.query('DELETE FROM canvas_workspace_notes WHERE note_id = $1', [testNote])
+      await client.query('DELETE FROM notes WHERE id = $1', [testNote])
+
+      await client.query(
+        'INSERT INTO notes (id, title, content_text, workspace_id) VALUES ($1, $2, $3, $4)',
+        [testNote, 'Version Test Note', '{}', testWorkspaceId]
+      )
+
+      await client.query(
+        `INSERT INTO panels (note_id, panel_id, type, position_x_world, position_y_world, width_world, height_world, z_index, state, metadata)
+         VALUES ($1, 'main', 'main', 0, 0, 400, 300, 0, 'active', '{}'::jsonb)`,
+        [testNote]
+      )
+
+      await client.query(
+        `INSERT INTO canvas_workspace_notes (note_id, is_open, toolbar_sequence, main_position_x, main_position_y)
+         VALUES ($1, TRUE, 0, 0, 0)`,
+        [testNote]
+      )
+
+      // Close the note
+      const closeRequest = new NextRequest('http://localhost:3000/api/canvas/workspace', {
+        method: 'PATCH',
+        body: JSON.stringify({ notes: [{ noteId: testNote, isOpen: false }] }),
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      const closeResponse = await workspacePatch(closeRequest)
+      const closeResult = await closeResponse.json()
+
+      expect(closeResponse.status).toBe(200)
+      expect(closeResult.success).toBe(true)
+      const closeVersion = closeResult.versions?.find((entry: any) => entry?.noteId === testNote)?.version
+      expect(closeVersion).toBeGreaterThanOrEqual(1)
+
+      const workspaceRow = await client.query(
+        'SELECT is_open, version FROM canvas_workspace_notes WHERE note_id = $1',
+        [testNote]
+      )
+      expect(workspaceRow.rows[0].is_open).toBe(false)
+      expect(Number(workspaceRow.rows[0].version)).toBeGreaterThanOrEqual(1)
+
+      const panelRow = await client.query(
+        `SELECT state FROM panels WHERE note_id = $1 AND panel_id = 'main'`,
+        [testNote]
+      )
+      expect(panelRow.rows[0].state).toBe('closed')
+
+      // Reopen the note and ensure version increments again
+      const reopenRequest = new NextRequest('http://localhost:3000/api/canvas/workspace', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          notes: [{ noteId: testNote, isOpen: true, mainPosition: { x: 10, y: 20 } }]
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      const reopenResponse = await workspacePatch(reopenRequest)
+      const reopenResult = await reopenResponse.json()
+
+      expect(reopenResponse.status).toBe(200)
+      const reopenVersion = reopenResult.versions?.find((entry: any) => entry?.noteId === testNote)?.version
+      expect(reopenVersion).toBeGreaterThan(Number(closeVersion ?? 0))
+
+      const reopenedRow = await client.query(
+        'SELECT is_open, version, main_position_x, main_position_y FROM canvas_workspace_notes WHERE note_id = $1',
+        [testNote]
+      )
+      expect(reopenedRow.rows[0].is_open).toBe(true)
+      expect(parseFloat(reopenedRow.rows[0].main_position_x)).toBeCloseTo(10)
+      expect(parseFloat(reopenedRow.rows[0].main_position_y)).toBeCloseTo(20)
+    } finally {
+      await client.query('DELETE FROM panels WHERE note_id = $1', [testNote])
+      await client.query('DELETE FROM canvas_workspace_notes WHERE note_id = $1', [testNote])
+      await client.query('DELETE FROM notes WHERE id = $1', [testNote])
       client.release()
     }
   })
