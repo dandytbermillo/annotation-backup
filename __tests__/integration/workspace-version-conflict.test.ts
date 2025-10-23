@@ -101,7 +101,7 @@ describe('Workspace Version Conflict Detection', () => {
       testNoteId = newNote.rows[0].id
       console.log(`\n📝 Created new test note: ${testNoteId}\n`)
     }
-  })
+  }, 30000) // 30 second timeout for setup
 
   afterAll(async () => {
     await pool.end()

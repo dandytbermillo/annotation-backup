@@ -303,6 +303,11 @@ export function loadStateFromStorage(noteId: string, expectedWorkspaceVersion?: 
             stored: storedWorkspaceVersion,
             expected: expectedWorkspaceVersion,
           })
+          console.info('[canvas-storage] Reload skipped cached snapshot because versions differed', {
+            noteId,
+            storedWorkspaceVersion,
+            expectedWorkspaceVersion,
+          })
           debugLog({
             component: 'CanvasCache',
             action: 'canvas.cache_mismatch',
@@ -355,6 +360,11 @@ export function loadStateFromStorage(noteId: string, expectedWorkspaceVersion?: 
           workspaceVersion: storedWorkspaceVersion ?? null,
           key
         }
+      })
+      console.info('[canvas-storage] Reload used cached snapshot for workspace', {
+        noteId,
+        workspaceVersion: storedWorkspaceVersion ?? null,
+        ageMs,
       })
 
       return {
