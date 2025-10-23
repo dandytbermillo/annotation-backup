@@ -116,6 +116,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
   const titleInputRef = useRef<HTMLInputElement>(null)
   const toolsButtonRef = useRef<HTMLButtonElement>(null)
   const toolsDropdownRef = useRef<HTMLDivElement>(null)
+  const showToolsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hideToolsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Close Tools dropdown when clicking outside
   useEffect(() => {
@@ -148,6 +150,18 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [showToolsDropdown])
+
+  // Cleanup tools dropdown hover timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (showToolsTimeoutRef.current) {
+        clearTimeout(showToolsTimeoutRef.current)
+      }
+      if (hideToolsTimeoutRef.current) {
+        clearTimeout(hideToolsTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Type change state - prevents race conditions from rapid clicks
   const [isChangingType, setIsChangingType] = useState(false)
@@ -433,7 +447,58 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
     setPanelHeight(expandedHeight)
     setIsPanelHeightExpanded(true)
   }, [getCurrentPanelTop, getViewportFillHeight, isPanelHeightExpanded, panelHeight])
-  
+
+  // Tools dropdown hover handlers
+  const handleToolsMouseEnter = useCallback(() => {
+    if (hideToolsTimeoutRef.current) {
+      clearTimeout(hideToolsTimeoutRef.current)
+      hideToolsTimeoutRef.current = null
+    }
+    if (showToolsTimeoutRef.current) {
+      clearTimeout(showToolsTimeoutRef.current)
+      showToolsTimeoutRef.current = null
+    }
+
+    if (showToolsDropdown) {
+      // Already visible, just update position
+      if (toolsButtonRef.current) {
+        const rect = toolsButtonRef.current.getBoundingClientRect()
+        setToolsButtonPosition({
+          top: rect.bottom + 8,
+          left: rect.left + (rect.width / 2),
+        })
+      }
+      return
+    }
+
+    showToolsTimeoutRef.current = setTimeout(() => {
+      if (toolsButtonRef.current) {
+        const rect = toolsButtonRef.current.getBoundingClientRect()
+        setToolsButtonPosition({
+          top: rect.bottom + 8,
+          left: rect.left + (rect.width / 2),
+        })
+      }
+      setShowToolsDropdown(true)
+      showToolsTimeoutRef.current = null
+    }, 300) // 300ms hover delay
+  }, [showToolsDropdown])
+
+  const handleToolsMouseLeave = useCallback(() => {
+    if (showToolsTimeoutRef.current) {
+      clearTimeout(showToolsTimeoutRef.current)
+      showToolsTimeoutRef.current = null
+    }
+
+    hideToolsTimeoutRef.current = setTimeout(() => {
+      // Check if mouse is over the dropdown
+      if (toolsDropdownRef.current && !toolsDropdownRef.current.matches(':hover')) {
+        setShowToolsDropdown(false)
+        setActiveToolPanel(null)
+      }
+    }, 300) // 300ms hide delay
+  }, [])
+
   // Update render position when position prop changes (but not during drag)
   const dragStateRef = useRef<any>(null) // Will be set to dragState later
   useEffect(() => {
@@ -2991,9 +3056,11 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                handleToolsMouseEnter()
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = showToolsDropdown ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)'
+                handleToolsMouseLeave()
               }}
               title="Panel Tools"
             >
@@ -3432,6 +3499,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
             <div
               ref={toolsDropdownRef}
               data-panel-tools-dropdown="true"
+              onMouseEnter={handleToolsMouseEnter}
+              onMouseLeave={handleToolsMouseLeave}
               style={{
                 display: 'flex',
                 flexDirection: 'column',
@@ -3473,6 +3542,8 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                         if (activeToolPanel !== cat.id) {
                           e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'
                         }
+                        // Show panel on hover
+                        setActiveToolPanel(cat.id)
                       }}
                       onMouseLeave={(e) => {
                         if (activeToolPanel !== cat.id) {
