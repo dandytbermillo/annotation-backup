@@ -82,6 +82,9 @@ export function dedupeCanvasItems(
     let dedupeKey = item.storeKey ?? null
     if (dedupeKey) {
       const parsed = parsePanelKey(dedupeKey)
+      if (parsed.noteId && !item.noteId) {
+        item.noteId = parsed.noteId
+      }
       if (!parsed.noteId || !parsed.panelId) {
         registerWarning({
           code: 'invalid_store_key',
