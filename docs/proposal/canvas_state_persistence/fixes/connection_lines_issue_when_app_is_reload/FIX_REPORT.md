@@ -21,7 +21,13 @@ Together these changes ensure every branch panel exists under a `branch-…` com
 - `components/canvas/canvas-workspace-context.tsx`
 - `components/canvas/canvas-context.tsx`
 - `lib/hooks/use-canvas-hydration.ts`
+- `lib/canvas/dedupe-canvas-items.ts` *(2025-10-23 hardening update to backfill `noteId`)*
 
 ## Verification
 - Ran `SELECT … FROM debug_logs WHERE action='branch_not_found'` and confirmed no new records with raw UUID panel IDs after reloads.
 - Manual reloads now consistently keep the branch connection lines visible without requiring reopen/drag actions.
+
+## Follow-up Hardening (2025-10-23)
+- **Gap observed:** Some branch panels restored from snapshots still lacked `noteId` even after ID normalization. `WidgetStudioConnections` falls back to the active note when `panel.noteId` is missing, so newly loaded branch panels briefly pointed to the wrong main panel until another interaction (drag) rehydrated them.
+- **Fix:** Update `lib/canvas/dedupe-canvas-items.ts` to parse the existing composite `storeKey` and repopulate `item.noteId` whenever the key already encodes it.
+- **Result:** Panels now arrive with both `storeKey` and `noteId` populated before the connection overlay runs, eliminating transient misrouting and ensuring connection lines render immediately after reload.
