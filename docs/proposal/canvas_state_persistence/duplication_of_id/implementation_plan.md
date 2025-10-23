@@ -82,11 +82,10 @@
 - Provide a utility entry point (`runCanvasSnapshotDedupeMigration`) to support manual invocation in QA builds.
 
 ### 6. Contingency / Rollback
-- Feature flag: `const ENABLE_CANVAS_DEDUPE = process.env.NEXT_PUBLIC_CANVAS_DEDUPE !== 'false'`.
-  - When disabled, the wrapper still executes dedupe but emits `canvasItems_deduped_emergency` logs and notifies Sentry; the flag only suppresses ancillary work (e.g., migration) so we never knowingly persist duplicates.
-  - Snapshot save/restore continue deduping regardless of flag state, ensuring consistent data when rolling forward again.
-- Keep telemetry on `canvasItems_deduped_at_source` removals; unexpected spikes can trigger investigation before rolling back.
-- Document operator steps (set env flag, redeploy, monitor logs, re-enable after fix) in `RUNBOOK.md`.
+- If a blocking regression surfaces, keep dedupe logic active but log `canvasItems_deduped_emergency` and notify Sentry so operators can track fallout.
+- Migration can be toggled off via a runtime guard (check for a `window.DISABLE_CANVAS_MIGRATION` escape hatch) without disabling the core dedupe.
+- Keep telemetry on `canvasItems_deduped_at_source` removals; unexpected spikes can trigger investigation before reverting code changes.
+- Document rollback steps (redeploy reverting commit, verify telemetry, re-run migration if needed) in `RUNBOOK.md`.
 
 ### 7. Edge Case Handling
 - Missing `noteId`: attempt to fall back to provider noteId or top-level `noteId` prop. If unresolved, retain the panel, tag it with a synthetic key (`unknown::<uuid>`), and surface a UI warning banner (`CanvasPanelWarnings`) so users know remediation is needed. Log `dedupe_missing_note_id`.

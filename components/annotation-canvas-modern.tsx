@@ -39,6 +39,8 @@ import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
+import { dedupeCanvasItems, type CanvasDedupeWarning } from "@/lib/canvas/dedupe-canvas-items"
+import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -345,11 +347,44 @@ useEffect(() => {
   canvasItemsRef.current = canvasItems
 }, [canvasItems])
 
+const [dedupeWarnings, setDedupeWarnings] = useState<CanvasDedupeWarning[]>([])
+
+const updateDedupeWarnings = useCallback((incoming: CanvasDedupeWarning[], options: { append?: boolean } = {}) => {
+  setDedupeWarnings(prev => {
+    const combined = options.append ? [...prev, ...incoming] : [...incoming]
+    if (combined.length === 0) {
+      return prev.length === 0 ? prev : []
+    }
+
+    const serialize = (warning: CanvasDedupeWarning) =>
+      `${warning.code}:${warning.panelId ?? ''}:${warning.noteId ?? ''}:${warning.storeKey ?? ''}:${warning.message}`
+
+    const uniqueMap = new Map<string, CanvasDedupeWarning>()
+    combined.forEach(warning => {
+      uniqueMap.set(serialize(warning), warning)
+    })
+
+    const normalized = Array.from(uniqueMap.values())
+    normalized.sort((a, b) => serialize(a).localeCompare(serialize(b)))
+
+    const prevSerialized = prev.map(serialize)
+    const normalizedSerialized = normalized.map(serialize)
+    const isSame =
+      prevSerialized.length === normalizedSerialized.length &&
+      prevSerialized.every((value, index) => value === normalizedSerialized[index])
+
+    if (isSame) {
+      return prev
+    }
+
+    return normalized
+  })
+}, [])
+
 const setCanvasItems: typeof _setCanvasItems = useCallback((update) => {
   const stack = new Error().stack
   const caller = stack?.split('\n').slice(2, 4).join(' | ') || 'unknown'
 
-  // Capture the result to log panel positions
   _setCanvasItems(prev => {
     const next = typeof update === 'function' ? update(prev) : update
 
@@ -386,9 +421,45 @@ const setCanvasItems: typeof _setCanvasItems = useCallback((update) => {
       }
     })
 
-    return next
+    const result = dedupeCanvasItems(next, { fallbackNoteId: noteId })
+
+    if (result.removedCount > 0) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'canvasItems_deduped_at_source',
+        metadata: {
+          noteId,
+          removedCount: result.removedCount,
+          resultingCount: result.items.length
+        }
+      })
+    }
+
+    if (result.warnings.length > 0) {
+      result.warnings.forEach(warning => {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'canvasItems_dedupe_warning',
+          metadata: {
+            code: warning.code,
+            panelId: warning.panelId ?? null,
+            noteId: warning.noteId ?? null,
+            storeKey: warning.storeKey ?? null
+          },
+          content_preview: warning.message
+        })
+      })
+    }
+
+    if (result.warnings.length > 0) {
+      queueMicrotask(() => updateDedupeWarnings(result.warnings, { append: false }))
+    } else {
+      queueMicrotask(() => updateDedupeWarnings([], { append: false }))
+    }
+
+    return result.items
   })
-}, [noteId])
+}, [noteId, updateDedupeWarnings])
 const [isStateLoaded, setIsStateLoaded] = useState(false)
 const autoSaveTimerRef = useRef<number | null>(null)
 const [showControlPanel, setShowControlPanel] = useState(false)
@@ -1627,6 +1698,35 @@ const mainPanelSeededRef = useRef(false)
       noteId,
       workspaceMainPosition ?? undefined
     )
+    const dedupeFromSnapshot = dedupeCanvasItems(restoredItems, { fallbackNoteId: noteId })
+    if (dedupeFromSnapshot.removedCount > 0) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'snapshot_items_deduped',
+        metadata: {
+          noteId,
+          removedCount: dedupeFromSnapshot.removedCount,
+          resultingCount: dedupeFromSnapshot.items.length
+        }
+      })
+    }
+    if (dedupeFromSnapshot.warnings.length > 0) {
+      dedupeFromSnapshot.warnings.forEach(warning => {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'snapshot_dedupe_warning',
+          metadata: {
+            noteId,
+            code: warning.code,
+            panelId: warning.panelId ?? null,
+            storeKey: warning.storeKey ?? null
+          },
+          content_preview: warning.message
+        })
+      })
+      updateDedupeWarnings(dedupeFromSnapshot.warnings, { append: true })
+    }
+    restoredItems = dedupeFromSnapshot.items
 
     // CRITICAL: Detect and fix corrupted snapshots with screen-space coordinates
     // Corrupted snapshots have panel positions that are screen-space instead of world-space
@@ -2418,9 +2518,40 @@ const mainPanelSeededRef = useRef(false)
     }
 
     autoSaveTimerRef.current = window.setTimeout(() => {
+      const dedupeResult = dedupeCanvasItems(canvasItems, { fallbackNoteId: noteId })
+
+      if (dedupeResult.removedCount > 0) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'canvasItems_deduped_on_save',
+          metadata: {
+            noteId,
+            removedCount: dedupeResult.removedCount,
+            resultingCount: dedupeResult.items.length
+          }
+        })
+      }
+
+      if (dedupeResult.warnings.length > 0) {
+        dedupeResult.warnings.forEach(warning => {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'canvasItems_dedupe_warning_on_save',
+            metadata: {
+              noteId,
+              code: warning.code,
+              panelId: warning.panelId ?? null,
+              storeKey: warning.storeKey ?? null
+            },
+            content_preview: warning.message
+          })
+        })
+        updateDedupeWarnings(dedupeResult.warnings, { append: true })
+      }
+
       const success = saveStateToStorage(noteId, {
         viewport: viewportSnapshot,
-        items: canvasItems,
+        items: dedupeResult.items,
         workspaceVersion: activeWorkspaceVersion ?? undefined,
       })
 
@@ -2437,7 +2568,7 @@ const mainPanelSeededRef = useRef(false)
         autoSaveTimerRef.current = null
       }
     }
-  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded, activeWorkspaceVersion])
+  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded, activeWorkspaceVersion, updateDedupeWarnings])
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
@@ -2766,6 +2897,37 @@ const mainPanelSeededRef = useRef(false)
           transition: 'opacity 0.3s ease',
         }}
       >
+        {dedupeWarnings.length > 0 && (
+          <div className="fixed top-4 right-4 z-[1100] max-w-sm rounded-md border border-amber-500/80 bg-white/95 p-4 shadow-lg text-sm text-amber-900">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">Canvas state warnings</p>
+                <p className="text-xs text-amber-700">
+                  Some panels are missing metadata and were normalised. Please review before continuing.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => updateDedupeWarnings([], { append: false })}
+                className="text-xs font-medium text-amber-700 hover:text-amber-800"
+              >
+                Dismiss
+              </button>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {dedupeWarnings.slice(0, 5).map((warning, index) => (
+                <li key={`${warning.code}-${warning.storeKey ?? warning.panelId ?? index}`} className="leading-snug">
+                  {warning.message}
+                </li>
+              ))}
+            </ul>
+            {dedupeWarnings.length > 5 && (
+              <p className="mt-2 text-xs text-amber-700">
+                +{dedupeWarnings.length - 5} more warning{dedupeWarnings.length - 5 === 1 ? '' : 's'} logged to console.
+              </p>
+            )}
+          </div>
+        )}
         {/* Demo Header - Disabled per user request */}
         {/* <div className="fixed top-0 left-0 right-0 bg-black/90 text-white p-3 text-xs font-medium z-[1000] border-b border-white/10 flex items-center justify-between">
           <span>🚀 Yjs-Ready Unified Knowledge Canvas • Collaborative-Ready Architecture with Tiptap Editor</span>
@@ -2967,6 +3129,10 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
   const { getWorkspace } = useCanvasWorkspace()
   const workspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
   const activeNoteId = props.primaryNoteId ?? props.noteIds[0] ?? ""
+
+  useEffect(() => {
+    scheduleCanvasSnapshotDedupeMigration()
+  }, [])
 
   return (
     <IsolationProvider config={{ enabled: false }}>
