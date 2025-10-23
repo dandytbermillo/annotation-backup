@@ -185,12 +185,21 @@ export async function GET(_request: NextRequest) {
         }))
       }
 
-      console.log(`[Canvas Workspace API] Fetched ${openNotes.length} notes, ${panels.length} panels`)
+      const versionsResult = await client.query<{ note_id: string; version: number }>(
+        `SELECT note_id, version FROM canvas_workspace_notes`
+      )
+      const versions = versionsResult.rows.map(row => ({
+        noteId: row.note_id,
+        version: typeof row.version === 'number' ? row.version : Number(row.version ?? 0)
+      }))
+
+      console.log(`[Canvas Workspace API] Fetched ${openNotes.length} notes, ${panels.length} panels, ${versions.length} versions`)
 
       return NextResponse.json({
         success: true,
         openNotes,
-        panels
+        panels,
+        versions
       })
     } else {
       // Legacy path: Unordered loading (TDD §5.4 line 228)
@@ -244,9 +253,20 @@ export async function GET(_request: NextRequest) {
         }
       }
 
+      const versionsResult = await client.query<{ note_id: string; version: number }>(
+        `SELECT note_id, version FROM canvas_workspace_notes`
+      )
+      const versions = versionsResult.rows.map(row => ({
+        noteId: row.note_id,
+        version: typeof row.version === 'number'
+          ? row.version
+          : Number(row.version ?? 0)
+      }))
+
       return NextResponse.json({
         success: true,
-        openNotes
+        openNotes,
+        versions
       })
     }
   } catch (error) {

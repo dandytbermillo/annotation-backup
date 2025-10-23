@@ -72,6 +72,7 @@ Assuming versions are in place:
   3. Apply server state to dataStore and re-save snapshot with new version.
 - Remove the previously proposed banner; users are not forced to decide between caches.
 - Log telemetry when cache is invalidated (helps monitor frequency).
+- **Follow-up (shipped 2025-10-22):** When a client regains connectivity, refresh the workspace-version cache before flushing the offline queue. Reuse `CanvasWorkspaceProvider`’s version persistence to update `canvas_workspace_versions`, fetch a lightweight `{ noteId, version }` payload, and then run `flush()` so conflict detection works without a manual reload.
 
 ### Deliverables
 - Updated `CanvasProvider` flow (no banner).

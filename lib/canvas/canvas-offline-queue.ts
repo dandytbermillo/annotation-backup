@@ -270,6 +270,76 @@ export class CanvasOfflineQueue {
     return typeof value === 'number' ? value : null
   }
 
+  private persistWorkspaceVersionCache(): void {
+    if (typeof window === 'undefined') return
+    if (!this.workspaceVersionCache || this.workspaceVersionCache.size === 0) {
+      window.localStorage.removeItem(WORKSPACE_VERSION_CACHE_KEY)
+      return
+    }
+
+    try {
+      const entries = Array.from(this.workspaceVersionCache.entries())
+      window.localStorage.setItem(WORKSPACE_VERSION_CACHE_KEY, JSON.stringify(entries))
+    } catch (error) {
+      console.warn('[Canvas Offline Queue] Failed to persist workspace versions', error)
+    }
+  }
+
+  private async refreshWorkspaceVersions(): Promise<void> {
+    if (typeof window === 'undefined' || typeof fetch === 'undefined') return
+
+    try {
+      const response = await fetch('/api/canvas/workspace', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      if (!response.ok) {
+        console.warn('[Canvas Offline Queue] Failed to refresh versions – response not OK', {
+          status: response.status,
+          statusText: response.statusText
+        })
+        return
+      }
+
+      const payload = await response.json()
+      const next = new Map<string, number>()
+
+      const applyEntry = (entry: any) => {
+        if (!entry || typeof entry !== 'object') return
+        const noteId = typeof entry.noteId === 'string' ? entry.noteId : null
+        const versionValue = (entry as any).version
+        const numericVersion = Number(versionValue)
+        if (noteId && Number.isFinite(numericVersion)) {
+          next.set(noteId, numericVersion)
+        }
+      }
+
+      if (Array.isArray(payload?.versions)) {
+        payload.versions.forEach(applyEntry)
+      }
+
+      if (Array.isArray(payload?.openNotes)) {
+        payload.openNotes.forEach(applyEntry)
+      }
+
+      if (next.size === 0) {
+        // No usable data; do not clobber existing cache
+        return
+      }
+
+      this.workspaceVersionCache = next
+      this.persistWorkspaceVersionCache()
+      debugLog({
+        component: 'CanvasOfflineQueue',
+        action: 'workspace_versions_refreshed',
+        metadata: { count: next.size }
+      })
+    } catch (error) {
+      console.warn('[Canvas Offline Queue] Failed to refresh versions', error)
+    }
+  }
+
   private isWorkspaceVersionValid(operation: CanvasOperation): boolean {
     if (operation.workspaceVersion === undefined || operation.workspaceVersion === null) {
       return true
@@ -327,7 +397,6 @@ export class CanvasOfflineQueue {
       return
     }
 
-    this.workspaceVersionCache = null
     this.isProcessing = true
 
     try {
@@ -569,8 +638,9 @@ export class CanvasOfflineQueue {
     }, 30000)
 
     // Also flush on online event
-    window.addEventListener('online', () => {
-      console.log('[Canvas Offline Queue] Network reconnected, flushing queue')
+    window.addEventListener('online', async () => {
+      console.log('[Canvas Offline Queue] Network reconnected')
+      await this.refreshWorkspaceVersions()
       this.flush().catch(err => {
         console.error('[Canvas Offline Queue] Online flush failed:', err)
       })
