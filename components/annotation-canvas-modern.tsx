@@ -1422,6 +1422,30 @@ const mainPanelSeededRef = useRef(false)
         action: 'no_saved_state_new_note',
         metadata: { noteId }
       })
+
+      const hasSeedPosition =
+        !!workspaceMainPosition && !isDefaultOffscreenPosition(workspaceMainPosition)
+      const isFreshToolbarNote = freshNoteSet.has(noteId)
+      const shouldSkipAutoCenter = isFreshToolbarNote || hasSeedPosition
+
+      if (shouldSkipAutoCenter) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'new_note_auto_center_skipped',
+          metadata: {
+            noteId,
+            reason: isFreshToolbarNote ? 'fresh_note' : 'seeded_position',
+            seededPosition: hasSeedPosition ? workspaceMainPosition : null
+          }
+        })
+        setIsStateLoaded(true)
+        if (onSnapshotLoadComplete) {
+          onSnapshotLoadComplete()
+        }
+        onSnapshotSettled?.(noteId)
+        return
+      }
+
       console.table([
         {
           Action: 'No Saved State',
