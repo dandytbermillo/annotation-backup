@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { Eye } from "lucide-react"
 import { useLayer } from "@/components/canvas/layer-provider"
@@ -18,6 +18,7 @@ import {
 } from "@/lib/constants/ui-timings"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { screenToWorld } from "@/lib/canvas/coordinate-utils"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -30,6 +31,10 @@ const FOLDER_COLORS = [
   { name: 'cyan', bg: '#06b6d4', border: '#22d3ee', text: '#ffffff', light: 'rgba(6, 182, 212, 0.1)' },
   { name: 'gray', bg: '#6b7280', border: '#9ca3af', text: '#ffffff', light: 'rgba(107, 114, 128, 0.1)' },
 ]
+
+const CANVAS_SAFE_BOUNDS = { minX: -10000, maxX: 10000, minY: -10000, maxY: 10000 }
+const RAPID_CREATION_RESET_MS = 2000
+const RAPID_CREATION_OFFSET = 50
 
 // Helper to get color theme by name (from database color field)
 function getFolderColorTheme(colorName: string | undefined | null) {
@@ -65,7 +70,7 @@ type FloatingToolbarProps = {
   x: number
   y: number
   onClose: () => void
-  onSelectNote?: (noteId: string) => void
+  onSelectNote?: (noteId: string, options?: { initialPosition?: { x: number; y: number }; source?: 'toolbar-create' | 'toolbar-open' | 'popup' | 'recent' }) => void
   onCreateNote?: () => void
   onCreateOverlayPopup?: (popup: OverlayPopup, shouldHighlight?: boolean) => void
   onAddComponent?: (type: string, position?: { x: number; y: number }) => void
@@ -243,6 +248,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const previewCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isHoveringPreviewRef = useRef(false)
+  const creationSequenceRef = useRef<{ count: number; lastTimestamp: number }>({ count: 0, lastTimestamp: 0 })
 
   // Folder creation state for Organization panel
   const [creatingFolderInOrg, setCreatingFolderInOrg] = useState(false)
@@ -277,6 +283,38 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
     return 'none'
   })
+
+  const computeInitialWorldPosition = useCallback((): { x: number; y: number } | null => {
+    if (!canvasState?.canvasState) return null
+    if (typeof window === 'undefined') return null
+
+    const { translateX = 0, translateY = 0, zoom = 1 } = canvasState.canvasState
+    const effectiveZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+    const camera = { x: translateX, y: translateY }
+    const viewportCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+
+    const baseWorld = screenToWorld(viewportCenter, camera, effectiveZoom)
+
+    const now = Date.now()
+    const sequence = creationSequenceRef.current
+    if (now - sequence.lastTimestamp > RAPID_CREATION_RESET_MS) {
+      sequence.count = 0
+    }
+    const offsetIndex = sequence.count
+    sequence.count += 1
+    sequence.lastTimestamp = now
+
+    const offsetAmount = offsetIndex * RAPID_CREATION_OFFSET
+    const offsetWorld = {
+      x: baseWorld.x + offsetAmount,
+      y: baseWorld.y + offsetAmount
+    }
+
+    return {
+      x: Math.max(CANVAS_SAFE_BOUNDS.minX, Math.min(CANVAS_SAFE_BOUNDS.maxX, offsetWorld.x)),
+      y: Math.max(CANVAS_SAFE_BOUNDS.minY, Math.min(CANVAS_SAFE_BOUNDS.maxY, offsetWorld.y)),
+    }
+  }, [canvasState])
 
   // Save backdrop style to localStorage whenever it changes
   useEffect(() => {
@@ -1337,12 +1375,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     setIsCreatingNote(true)
     try {
+      const initialPosition = computeInitialWorldPosition()
       // Use shared note creator utility
-      const result = await createNote()
+      const result = await createNote({ initialPosition: initialPosition ?? undefined })
 
       if (result.success && result.noteId) {
         // Open the newly created note
-        onSelectNote?.(result.noteId)
+        onSelectNote?.(result.noteId, {
+          initialPosition: initialPosition ?? undefined,
+          source: 'toolbar-create'
+        })
         // Close the toolbar
         onClose()
       } else {

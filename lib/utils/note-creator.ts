@@ -7,6 +7,7 @@ interface CreateNoteOptions {
   name?: string
   parentId?: string | null
   metadata?: Record<string, any>
+  initialPosition?: { x: number; y: number } | null
 }
 
 interface CreateNoteResult {
@@ -60,7 +61,7 @@ export async function fetchRecentNotes(limit: number = 5): Promise<any[]> {
  */
 export async function createNote(options: CreateNoteOptions = {}): Promise<CreateNoteResult> {
   try {
-    const { name, parentId = null, metadata = {} } = options
+    const { name, parentId = null, metadata = {}, initialPosition = null } = options
 
     // Generate default name if not provided
     const timestamp = new Date().toLocaleString('en-US', {
@@ -103,7 +104,8 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
         type: 'note',
         name: noteName,
         parentId: finalParentId,
-        metadata
+        metadata,
+        initialPosition
       })
     })
 

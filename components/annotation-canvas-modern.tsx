@@ -59,6 +59,8 @@ interface ModernAnnotationCanvasProps {
   skipSnapshotForNote?: string | null
   onSnapshotSettled?: (noteId: string) => void
   children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
+  freshNoteIds?: string[]
+  onFreshNoteHydrated?: (noteId: string) => void
 }
 
 interface CanvasImperativeHandle {
@@ -202,7 +204,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onToggleAddComponentMenu,
   onSnapshotLoadComplete,
   skipSnapshotForNote,
-  onSnapshotSettled
+  onSnapshotSettled,
+  freshNoteIds = [],
+  onFreshNoteHydrated
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -224,6 +228,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     return map
   }, [openNotes])
   const activeWorkspaceVersion = workspaceNoteMap.get(noteId)?.version ?? null
+  const freshNoteSet = useMemo(() => new Set(freshNoteIds), [freshNoteIds])
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
     if (!position) return false
     return position.x === DEFAULT_MAIN_POSITION.x && position.y === DEFAULT_MAIN_POSITION.y
@@ -880,7 +885,18 @@ const mainPanelSeededRef = useRef(false)
         hydratedNotes: Array.from(hydratedNotesRef.current)
       }
     })
-  }, [canvasItems, canvasState.translateX, canvasState.translateY, canvasState.zoom, dispatch, getItemNoteId, resolveWorkspacePosition])
+
+    if (freshNoteSet.has(targetNoteId)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'fresh_note_hydrated',
+        metadata: { noteId: targetNoteId }
+      })
+      queueMicrotask(() => {
+        onFreshNoteHydrated?.(targetNoteId)
+      })
+    }
+  }, [canvasItems, canvasState.translateX, canvasState.translateY, canvasState.zoom, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated])
 
   useEffect(() => {
     if (!noteId) return

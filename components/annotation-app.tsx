@@ -393,10 +393,13 @@ function AnnotationAppContent() {
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
 
   // Floating notes widget state
-  const [showNotesWidget, setShowNotesWidget] = useState(false)
-  const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
-  const activeEditorRef = useRef<any>(null) // Track the currently active editor
-  const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
+const [showNotesWidget, setShowNotesWidget] = useState(false)
+const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
+const activeEditorRef = useRef<any>(null) // Track the currently active editor
+const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
+
+  const freshNotesRef = useRef<Set<string>>(new Set())
+  const [freshNoteIds, setFreshNoteIds] = useState<string[]>([])
 
   // Toolbar active panel state - persists across toolbar close/reopen
   // When user closes toolbar and reopens it, the last opened panel will be restored
@@ -518,6 +521,13 @@ function AnnotationAppContent() {
   // Ref to track when canvas last loaded a note (to avoid duplicate centering)
   const lastCanvasLoadTimeRef = useRef<number>(0)
   const pendingCenterAfterLoadRef = useRef<string | null>(null)
+
+  const registerFreshNote = useCallback((noteId: string) => {
+    if (!freshNotesRef.current.has(noteId)) {
+      freshNotesRef.current.add(noteId)
+      setFreshNoteIds(Array.from(freshNotesRef.current))
+    }
+  }, [])
 const initialWorkspaceSyncRef = useRef(false)
 
   // Determine collaboration mode from environment
@@ -1200,7 +1210,38 @@ const initialWorkspaceSyncRef = useRef(false)
     }
   }, [centerNoteOnCanvas])
 
-  const handleNoteSelect = (noteId: string) => {
+  const handleFreshNoteHydrated = useCallback((noteId: string) => {
+    if (!freshNotesRef.current.has(noteId)) {
+      return
+    }
+
+    freshNotesRef.current.delete(noteId)
+    setFreshNoteIds(Array.from(freshNotesRef.current))
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'fresh_note_hydrated',
+      metadata: { noteId }
+    })
+
+    const events = sharedWorkspace?.events
+    if (!events) {
+      return
+    }
+
+    try {
+      events.emit('workspace:highlight-note', { noteId })
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'fresh_note_highlight_emitted',
+        metadata: { noteId }
+      })
+    } catch (error) {
+      console.warn('[AnnotationApp] Failed to emit highlight for fresh note:', error)
+    }
+  }, [sharedWorkspace])
+
+  const handleNoteSelect = useCallback((noteId: string, options?: { initialPosition?: { x: number; y: number } | null; source?: 'toolbar-create' | 'toolbar-open' | 'popup' | 'recent' }) => {
     debugLog({
       component: 'AnnotationApp',
       action: 'note_select',
@@ -1214,6 +1255,11 @@ const initialWorkspaceSyncRef = useRef(false)
     // Track note access in recent notes and refresh toolbar's recent notes list
     // Only refresh if tracking succeeds (promise resolves)
     const isReselect = noteId === activeNoteId
+    const isToolbarCreation = options?.source === 'toolbar-create'
+
+    if (isToolbarCreation) {
+      registerFreshNote(noteId)
+    }
 
     trackNoteAccess(noteId)
       .then(() => {
@@ -1253,24 +1299,23 @@ const initialWorkspaceSyncRef = useRef(false)
     }
 
     if (isReselect) {
-      pendingCenterAfterLoadRef.current = noteId
       logWorkspaceNotePositions('tab_click_reselect')
       debugLog({
         component: 'AnnotationApp',
         action: 'highlight_note',
         metadata: { noteId }
       })
-      emitHighlight()
-      centerNoteOnCanvas(noteId)
+      if (!isToolbarCreation) {
+        emitHighlight()
+      }
       return
     }
 
     // Different note - ensure it's marked open and marked as focused
     setSkipSnapshotForNote(noteId)
-    pendingCenterAfterLoadRef.current = noteId
     const alreadyOpen = openNotes.some(open => open.noteId === noteId)
     if (!alreadyOpen) {
-      const resolvedPosition = resolveMainPanelPosition(noteId)
+      const resolvedPosition = options?.initialPosition ?? resolveMainPanelPosition(noteId)
       void openWorkspaceNote(noteId, {
         persist: true,
         mainPosition: resolvedPosition ?? undefined,
@@ -1279,15 +1324,10 @@ const initialWorkspaceSyncRef = useRef(false)
       })
     }
     setActiveNoteId(noteId)
-    emitHighlight()
-    centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
-    setTimeout(() => {
-      if (activeNoteIdRef.current === noteId) {
-        emitHighlight()
-        centerNoteOnCanvas(noteId, { attempts: 1 })
-      }
-    }, 150)
-  }
+    if (!isToolbarCreation) {
+      emitHighlight()
+    }
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger])
 
   const handleCloseNote = useCallback(
     (noteId: string) => {
@@ -2320,16 +2360,18 @@ const handleCenterNote = useCallback(
             }}
           >
             {openNotes.length > 0 ? (
-              <ModernAnnotationCanvas
-                key="workspace"
-                noteIds={openNotes.map(note => note.noteId)}
-                primaryNoteId={activeNoteId ?? openNotes[0].noteId}
-                ref={canvasRef}
-                isNotesExplorerOpen={false}
-                onCanvasStateChange={stateUpdate =>
-                  setCanvasState(prev => ({ ...prev, ...stateUpdate }))
-                }
-                showAddComponentMenu={showAddComponentMenu}
+                <ModernAnnotationCanvas
+                  key="workspace"
+                  noteIds={openNotes.map(note => note.noteId)}
+                  primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+                  ref={canvasRef}
+                  isNotesExplorerOpen={false}
+                  freshNoteIds={freshNoteIds}
+                  onFreshNoteHydrated={handleFreshNoteHydrated}
+                  onCanvasStateChange={stateUpdate =>
+                    setCanvasState(prev => ({ ...prev, ...stateUpdate }))
+                  }
+                  showAddComponentMenu={showAddComponentMenu}
                 onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
                 onRegisterActiveEditor={handleRegisterActiveEditor}
                 onSnapshotLoadComplete={handleSnapshotLoadComplete}
