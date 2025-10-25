@@ -23,6 +23,11 @@ import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
+import {
+  computeViewportCenterWithOffset,
+  RAPID_CENTERING_OFFSET,
+  RAPID_CENTERING_RESET_MS,
+} from "@/lib/canvas/viewport-centering"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -58,6 +63,7 @@ const POST_LOAD_CENTER_ATTEMPTS = 6
 const POST_LOAD_CENTER_DELAY_MS = 180
 const POST_LOAD_SECOND_PASS_DELAY_MS = 420
 const POST_LOAD_PENDING_CLEAR_DELAY_MS = 2200
+const CENTER_EXISTING_NOTES_ENABLED = process.env.NEXT_PUBLIC_CANVAS_CENTER_EXISTING_NOTES !== "disabled"
 
 function AnnotationAppContent() {
   const {
@@ -390,6 +396,7 @@ function AnnotationAppContent() {
     translateX: 0,
     translateY: 0
   })
+  const reopenSequenceRef = useRef<{ count: number; lastTimestamp: number }>({ count: 0, lastTimestamp: 0 })
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
 
   // Floating notes widget state
@@ -1315,10 +1322,58 @@ const initialWorkspaceSyncRef = useRef(false)
     setSkipSnapshotForNote(noteId)
     const alreadyOpen = openNotes.some(open => open.noteId === noteId)
     if (!alreadyOpen) {
-      const resolvedPosition = options?.initialPosition ?? resolveMainPanelPosition(noteId)
+      const hasExplicitPosition = Boolean(options?.initialPosition)
+      const persistedPosition = hasExplicitPosition ? null : resolveMainPanelPosition(noteId)
+      let resolvedPosition = options?.initialPosition ?? persistedPosition ?? null
+
+      const shouldCenterExisting =
+        CENTER_EXISTING_NOTES_ENABLED && !isToolbarCreation && !hasExplicitPosition
+
+      let usedCenteredOverride = false
+      if (!resolvedPosition && shouldCenterExisting) {
+        const centeredPosition = computeViewportCenterWithOffset(
+          {
+            translateX: canvasState.translateX,
+            translateY: canvasState.translateY,
+            zoom: canvasState.zoom,
+          },
+          reopenSequenceRef.current,
+          {
+            offsetStep: RAPID_CENTERING_OFFSET,
+            resetMs: RAPID_CENTERING_RESET_MS,
+          },
+        )
+
+        if (centeredPosition) {
+          resolvedPosition = centeredPosition
+          usedCenteredOverride = true
+          debugLog({
+            component: "AnnotationApp",
+            action: "open_note_centered_override",
+            metadata: {
+              noteId,
+              persistedPosition,
+              centeredPosition,
+            },
+          })
+        } else {
+          debugLog({
+            component: "AnnotationApp",
+            action: "open_note_center_override_skipped",
+            metadata: {
+              noteId,
+              reason: "missing_camera_state",
+              canvasStateSnapshot: canvasState,
+            },
+          })
+        }
+      }
+
+      const skipPersistPosition = usedCenteredOverride && Boolean(persistedPosition)
       void openWorkspaceNote(noteId, {
         persist: true,
         mainPosition: resolvedPosition ?? undefined,
+        persistPosition: !skipPersistPosition,
       }).catch(error => {
         console.error('[AnnotationApp] Failed to open note in workspace:', error)
       })
@@ -1327,7 +1382,7 @@ const initialWorkspaceSyncRef = useRef(false)
     if (!isToolbarCreation) {
       emitHighlight()
     }
-  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger])
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger, canvasState])
 
   const handleCloseNote = useCallback(
     (noteId: string) => {

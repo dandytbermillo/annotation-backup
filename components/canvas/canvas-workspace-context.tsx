@@ -32,6 +32,7 @@ export interface OpenWorkspaceNote {
 export interface OpenNoteOptions {
   mainPosition?: WorkspacePosition | null
   persist?: boolean
+  persistPosition?: boolean
 }
 
 export interface CloseNoteOptions {
@@ -949,7 +950,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const openNote = useCallback(
     async (noteId: string, options?: OpenNoteOptions) => {
-      const { mainPosition = null, persist = true } = options ?? {}
+      const { mainPosition = null, persist = true, persistPosition = true } = options ?? {}
       const pendingPosition = pendingPersistsRef.current.get(noteId) ?? null
       const cachedPosition = positionCacheRef.current.get(noteId) ?? null
 
@@ -1001,6 +1002,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
       const smartDefaultPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? calculateSmartDefaultPosition()
       const normalizedPosition = smartDefaultPosition
+      const positionToPersist = persistPosition ? normalizedPosition : null
 
       console.log(`[DEBUG openNote] Position resolution for ${noteId}:`, {
         mainPosition,
@@ -1046,12 +1048,18 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         version: workspaceVersionsRef.current.get(noteId) ?? 0,
       }])
 
-      const shouldPersist = persist && (!alreadyOpen || mainPosition)
+      const shouldPersist = persist && (!alreadyOpen || !!positionToPersist)
 
       if (shouldPersist) {
-        const positionToPersist = mainPosition ?? normalizedPosition
+        const payload: { noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null } = {
+          noteId,
+          isOpen: true,
+        }
+        if (positionToPersist) {
+          payload.mainPosition = positionToPersist
+        }
         try {
-          const versionUpdates = await persistWorkspace([{ noteId, isOpen: true, mainPosition: positionToPersist }])
+          const versionUpdates = await persistWorkspace([payload])
           applyVersionUpdates(versionUpdates)
           clearScheduledPersist(noteId)
           // Don't call refreshWorkspace - position is already in local state
@@ -1061,8 +1069,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
             noteId,
             error: error instanceof Error ? error.message : String(error),
           })
-          pendingPersistsRef.current.set(noteId, positionToPersist)
-          scheduleWorkspacePersist(noteId, positionToPersist)
+          if (positionToPersist) {
+            pendingPersistsRef.current.set(noteId, positionToPersist)
+            scheduleWorkspacePersist(noteId, positionToPersist)
+          }
         }
       }
     },

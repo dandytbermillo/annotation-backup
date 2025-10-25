@@ -19,6 +19,12 @@ import {
 import { debugLog } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { screenToWorld } from "@/lib/canvas/coordinate-utils"
+import {
+  CANVAS_SAFE_BOUNDS,
+  computeViewportCenterWithOffset,
+  RAPID_CENTERING_OFFSET,
+  RAPID_CENTERING_RESET_MS,
+} from "@/lib/canvas/viewport-centering"
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -31,10 +37,6 @@ const FOLDER_COLORS = [
   { name: 'cyan', bg: '#06b6d4', border: '#22d3ee', text: '#ffffff', light: 'rgba(6, 182, 212, 0.1)' },
   { name: 'gray', bg: '#6b7280', border: '#9ca3af', text: '#ffffff', light: 'rgba(107, 114, 128, 0.1)' },
 ]
-
-const CANVAS_SAFE_BOUNDS = { minX: -10000, maxX: 10000, minY: -10000, maxY: 10000 }
-const RAPID_CREATION_RESET_MS = 2000
-const RAPID_CREATION_OFFSET = 50
 
 // Helper to get color theme by name (from database color field)
 function getFolderColorTheme(colorName: string | undefined | null) {
@@ -286,33 +288,35 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   const computeInitialWorldPosition = useCallback((): { x: number; y: number } | null => {
     if (!canvasState?.canvasState) return null
+
+    const position = computeViewportCenterWithOffset(
+      {
+        translateX: canvasState.canvasState.translateX,
+        translateY: canvasState.canvasState.translateY,
+        zoom: canvasState.canvasState.zoom,
+      },
+      creationSequenceRef.current,
+      {
+        offsetStep: RAPID_CENTERING_OFFSET,
+        resetMs: RAPID_CENTERING_RESET_MS,
+      },
+    )
+
+    if (position) {
+      return position
+    }
+
     if (typeof window === 'undefined') return null
 
+    // Fallback to direct computation if helper could not determine a position
     const { translateX = 0, translateY = 0, zoom = 1 } = canvasState.canvasState
     const effectiveZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
     const camera = { x: translateX, y: translateY }
     const viewportCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-
     const baseWorld = screenToWorld(viewportCenter, camera, effectiveZoom)
-
-    const now = Date.now()
-    const sequence = creationSequenceRef.current
-    if (now - sequence.lastTimestamp > RAPID_CREATION_RESET_MS) {
-      sequence.count = 0
-    }
-    const offsetIndex = sequence.count
-    sequence.count += 1
-    sequence.lastTimestamp = now
-
-    const offsetAmount = offsetIndex * RAPID_CREATION_OFFSET
-    const offsetWorld = {
-      x: baseWorld.x + offsetAmount,
-      y: baseWorld.y + offsetAmount
-    }
-
     return {
-      x: Math.max(CANVAS_SAFE_BOUNDS.minX, Math.min(CANVAS_SAFE_BOUNDS.maxX, offsetWorld.x)),
-      y: Math.max(CANVAS_SAFE_BOUNDS.minY, Math.min(CANVAS_SAFE_BOUNDS.maxY, offsetWorld.y)),
+      x: Math.max(CANVAS_SAFE_BOUNDS.minX, Math.min(CANVAS_SAFE_BOUNDS.maxX, baseWorld.x)),
+      y: Math.max(CANVAS_SAFE_BOUNDS.minY, Math.min(CANVAS_SAFE_BOUNDS.maxY, baseWorld.y)),
     }
   }, [canvasState])
 

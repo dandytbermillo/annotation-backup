@@ -54,9 +54,20 @@ interface CanvasPanelProps {
   width?: number  // Optional width prop (defaults based on type)
   onClose?: () => void
   noteId?: string
+  onRestorePosition?: () => void
+  canRestorePosition?: boolean
 }
 
-export function CanvasPanel({ panelId, branch, position, width, onClose, noteId }: CanvasPanelProps) {
+export function CanvasPanel({
+  panelId,
+  branch,
+  position,
+  width,
+  onClose,
+  noteId,
+  onRestorePosition,
+  canRestorePosition,
+}: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
   const { getWorkspace: getCanvasWorkspace } = useCanvasWorkspace()
   const workspaceShared = getCanvasWorkspace(SHARED_WORKSPACE_ID)
@@ -2769,6 +2780,40 @@ export function CanvasPanel({ panelId, branch, position, width, onClose, noteId 
                 title="Close panel"
               >
                 ×
+              </button>
+            )
+            {canRestorePosition && onRestorePosition && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRestorePosition()
+                }}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  borderRadius: '50%',
+                  width: '24px',
+                  height: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  fontSize: '14px',
+                  color: 'white',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.3)'
+                  e.currentTarget.style.transform = 'scale(1.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.2)'
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+                title="Restore position"
+                aria-label="Restore position"
+              >
+                📍
               </button>
             )}
           </div>

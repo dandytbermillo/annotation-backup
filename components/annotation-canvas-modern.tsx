@@ -52,7 +52,7 @@ interface ModernAnnotationCanvasProps {
   noteIds: string[]
   primaryNoteId: string | null
   isNotesExplorerOpen?: boolean
-  onCanvasStateChange?: (state: { zoom: number; showConnections: boolean }) => void
+  onCanvasStateChange?: (state: { zoom: number; showConnections: boolean; translateX: number; translateY: number }) => void
   showAddComponentMenu?: boolean
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
@@ -314,6 +314,21 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   useEffect(() => {
     canvasStateRef.current = canvasState
   }, [canvasState])
+
+  useEffect(() => {
+    onCanvasStateChange?.({
+      zoom: canvasState.zoom,
+      showConnections: canvasState.showConnections,
+      translateX: canvasState.translateX,
+      translateY: canvasState.translateY,
+    })
+  }, [
+    canvasState.zoom,
+    canvasState.showConnections,
+    canvasState.translateX,
+    canvasState.translateY,
+    onCanvasStateChange,
+  ])
 
   // Wrap setCanvasState to log all calls
   const setCanvasState: typeof _setCanvasState = useCallback((update) => {
@@ -2631,41 +2646,8 @@ const mainPanelSeededRef = useRef(false)
     }
   }, [noteId, viewportSnapshot, canvasItems, isStateLoaded, activeWorkspaceVersion, updateDedupeWarnings])
 
-  // Expose methods via ref
-  useImperativeHandle(ref, () => ({
-    zoomIn: () => {
-      updateCanvasTransform(prev => {
-        const newZoom = Math.min(prev.zoom * 1.1, 2)
-        const next = { ...prev, zoom: newZoom }
-        onCanvasStateChange?.({ zoom: newZoom, showConnections: prev.showConnections })
-        return next
-      })
-    },
-    zoomOut: () => {
-      updateCanvasTransform(prev => {
-        const newZoom = Math.max(prev.zoom * 0.9, 0.3)
-        const next = { ...prev, zoom: newZoom }
-        onCanvasStateChange?.({ zoom: newZoom, showConnections: prev.showConnections })
-        return next
-      })
-    },
-    resetView: () => {
-      updateCanvasTransform(prev => {
-        const next = { ...prev, zoom: 1, translateX: -1000, translateY: -1200 }
-        onCanvasStateChange?.({ zoom: 1, showConnections: prev.showConnections })
-        return next
-      })
-    },
-    panBy,
-    toggleConnections: () => {
-      setCanvasState(prev => {
-        const newShowConnections = !prev.showConnections
-        const newState = { ...prev, showConnections: newShowConnections }
-        onCanvasStateChange?.({ zoom: prev.zoom, showConnections: newShowConnections })
-        return newState
-      })
-    },
-    centerOnPanel: (storeKeyOrPanelId: string) => {
+  const centerOnPanel = useCallback(
+    (storeKeyOrPanelId: string) => {
       const normalizePosition = (value: any): { x: number; y: number } | null => {
         if (!value || typeof value !== 'object') return null
         const { x, y } = value as { x?: number; y?: number }
@@ -2680,7 +2662,6 @@ const mainPanelSeededRef = useRef(false)
         const targetPanelId = parsedKey?.panelId ?? key
         const storeKey = ensurePanelKey(targetNoteId, targetPanelId)
 
-        // 0) Matrix data - check current canvas items first
         const panel = items.find(item => {
           if (item.itemType !== 'panel') return false
           if (key.includes('::')) {
@@ -2693,16 +2674,9 @@ const mainPanelSeededRef = useRef(false)
         })
 
         if (panel?.position) {
-          console.log('[Canvas] Found panel in canvasItems:', {
-            key,
-            matchedStoreKey: storeKey,
-            position: panel.position,
-            storeKey: panel.storeKey
-          })
           return { ...panel.position }
         }
 
-        // 1) Shared dataStore fallback
         if (dataStore) {
           const record = dataStore.get(storeKey)
           if (record && typeof record === 'object') {
@@ -2714,42 +2688,28 @@ const mainPanelSeededRef = useRef(false)
 
             for (const candidate of candidates) {
               if (candidate) {
-                console.log('[Canvas] Found panel in dataStore:', {
-                  key,
-                  matchedStoreKey: storeKey,
-                  position: candidate
-                })
                 return { ...candidate }
               }
             }
           }
         }
 
-        // 2) Collaboration provider (Yjs) map
-        const provider = UnifiedProvider.getInstance()
         if (!isPlainModeActive()) {
+          const provider = UnifiedProvider.getInstance()
           const branchesMap = provider.getBranchesMap()
           const branch = branchesMap?.get(storeKey) ?? branchesMap?.get(key)
           if (branch?.position) {
-            console.log('[Canvas] Found panel in branchesMap:', { key, storeKey, position: branch.position })
             return { ...branch.position }
           }
         }
 
-        // 3) Workspace persistence (main panel only)
         if (targetPanelId === 'main') {
           const workspacePosition = resolveWorkspacePosition(targetNoteId)
           if (workspacePosition) {
-            console.log('[Canvas] Using workspace position for panel:', {
-              key,
-              storeKey,
-              position: workspacePosition
-            })
             return { ...workspacePosition }
           }
         }
 
-        // 4) DOM measurement fallback
         const state = canvasStateRef.current
         const el = document.querySelector(`[data-store-key="${storeKey}"]`) as HTMLElement | null
         if (el) {
@@ -2763,45 +2723,21 @@ const mainPanelSeededRef = useRef(false)
           const worldX = (screenX - state.translateX) / state.zoom
           const worldY = (screenY - state.translateY) / state.zoom
 
-          console.log('[Canvas] Calculated panel position from DOM:', {
-            key,
-            storeKey,
-            screenPos: { x: screenX, y: screenY },
-            worldPos: { x: worldX, y: worldY },
-            viewport: { x: state.translateX, y: state.translateY, zoom: state.zoom }
-          })
-
           return { x: worldX, y: worldY }
         }
 
-        console.warn('[Canvas] Panel not found via canvasItems/dataStore/provider/workspace/DOM:', {
-          key,
-          storeKey,
-        })
         return null
       }
 
-      console.log(`[Canvas] Attempting to center on panel '${storeKeyOrPanelId}'`)
-
       let retryCount = 0
       const maxRetries = 10
-      const retryDelay = 100 // ms
+      const retryDelay = 100
 
       const attemptCenter = () => {
         const position = getPanelPosition(storeKeyOrPanelId)
 
         if (position) {
           const state = canvasStateRef.current
-          console.log(`[Canvas] Panel '${storeKeyOrPanelId}' found, centering with slow animation...`)
-
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'center_on_panel',
-            metadata: {
-              storeKeyOrPanelId,
-              position
-            }
-          })
 
           const selector = storeKeyOrPanelId.includes('::')
             ? `[data-store-key="${storeKeyOrPanelId}"]`
@@ -2812,19 +2748,6 @@ const mainPanelSeededRef = useRef(false)
             : { width: 500, height: 400 }
 
           const viewportDimensions = { width: window.innerWidth, height: window.innerHeight }
-
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'panel_dimensions',
-            metadata: {
-              storeKeyOrPanelId,
-              panelFound: !!panelElement,
-              panelDimensions,
-              viewportDimensions,
-              zoom: state.zoom
-            }
-          })
-
           const centerOffset = {
             x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / state.zoom,
             y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / state.zoom
@@ -2833,31 +2756,11 @@ const mainPanelSeededRef = useRef(false)
           const targetX = -position.x + centerOffset.x
           const targetY = -position.y + centerOffset.y
 
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'calculated_target',
-            metadata: {
-              storeKeyOrPanelId,
-              position,
-              targetX,
-              targetY,
-              currentX: state.translateX,
-              currentY: state.translateY
-            }
-          })
-
           const canvasEl = document.getElementById('infinite-canvas')
 
           if (canvasEl) {
-            const originalTransition = canvasEl.style.transition
             canvasEl.style.transition = 'transform 2s ease-in-out'
             void canvasEl.offsetHeight
-
-            debugLog({
-              component: 'AnnotationCanvas',
-              action: 'transition_enabled_slow_debug',
-              metadata: { storeKeyOrPanelId, originalTransition, debugTransition: '2s ease-in-out' }
-            })
           }
 
           flushSync(() => {
@@ -2876,50 +2779,99 @@ const mainPanelSeededRef = useRef(false)
             }
           })
 
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'viewport_updated_instant',
-            metadata: { storeKeyOrPanelId, targetX, targetY }
-          })
-
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'centerOnPanel_context_synced',
-            metadata: { storeKeyOrPanelId, targetX, targetY }
-          })
-
           if (canvasEl) {
             setTimeout(() => {
               canvasEl.style.transition = ''
-              debugLog({
-                component: 'AnnotationCanvas',
-                action: 'transition_restored_dom',
-                metadata: { storeKeyOrPanelId }
-              })
             }, 2100)
           }
         } else if (retryCount < maxRetries) {
           retryCount++
-          console.log(`[Canvas] Panel '${storeKeyOrPanelId}' not found, retry ${retryCount}/${maxRetries}`)
           setTimeout(attemptCenter, retryDelay)
         } else {
-          const state = canvasStateRef.current
-          console.warn(`[Canvas] Panel '${storeKeyOrPanelId}' not found after ${maxRetries} retries, using viewport center`)
-
-          const viewportWidth = window.innerWidth
-          const viewportHeight = window.innerHeight
-          const panelWidth = 800
-          const panelHeight = 600
-
-          const centerWorldX = (viewportWidth / 2 - panelWidth / 2) / state.zoom - state.translateX
-          const centerWorldY = (viewportHeight / 2 - panelHeight / 2) / state.zoom - state.translateY
-
-          console.log(`[Canvas] Panel should be created at world position (${centerWorldX}, ${centerWorldY}) to appear centered`)
+          console.warn(`[Canvas] Panel '${storeKeyOrPanelId}' not found after ${maxRetries} retries`)
         }
       }
 
       attemptCenter()
     },
+    [dataStore, noteId, resolveWorkspacePosition, setCanvasState, dispatch],
+  )
+
+  const handleRestoreMainPosition = useCallback(
+    (targetNoteId: string, persistedPosition: { x: number; y: number }) => {
+      const storeKey = ensurePanelKey(targetNoteId, 'main')
+      const normalizedPosition = { x: persistedPosition.x, y: persistedPosition.y }
+
+      setCanvasItems(prev =>
+        prev.map(item => {
+          if (item.itemType === 'panel' && item.panelId === 'main') {
+            const itemNoteId = getItemNoteId(item)
+            if (itemNoteId === targetNoteId) {
+              return { ...item, position: normalizedPosition }
+            }
+          }
+          return item
+        }),
+      )
+
+      if (dataStore) {
+        try {
+          dataStore.update(storeKey, { position: normalizedPosition })
+        } catch (error) {
+          console.warn('[AnnotationCanvas] Failed to update dataStore for restore', error)
+        }
+      }
+
+      persistPanelUpdate({
+        panelId: 'main',
+        storeKey,
+        position: normalizedPosition,
+        coordinateSpace: 'world',
+      }).catch(error => {
+        console.warn('[AnnotationCanvas] Failed to persist panel during restore', error)
+      })
+
+      void updateMainPosition(targetNoteId, normalizedPosition).catch(error => {
+        console.error('[AnnotationCanvas] Failed to update workspace main position during restore', error)
+      })
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'restore_main_position',
+        metadata: { noteId: targetNoteId, position: normalizedPosition },
+      })
+
+      centerOnPanel(storeKey)
+    },
+    [centerOnPanel, dataStore, getItemNoteId, persistPanelUpdate, setCanvasItems, updateMainPosition],
+  )
+
+  // Expose methods via ref
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => {
+      updateCanvasTransform(prev => {
+        const newZoom = Math.min(prev.zoom * 1.1, 2)
+        return { ...prev, zoom: newZoom }
+      })
+    },
+    zoomOut: () => {
+      updateCanvasTransform(prev => {
+        const newZoom = Math.max(prev.zoom * 0.9, 0.3)
+        return { ...prev, zoom: newZoom }
+      })
+    },
+    resetView: () => {
+      updateCanvasTransform(prev => {
+        return { ...prev, zoom: 1, translateX: -1000, translateY: -1200 }
+      })
+    },
+    panBy,
+    toggleConnections: () => {
+      setCanvasState(prev => {
+        return { ...prev, showConnections: !prev.showConnections }
+      })
+    },
+    centerOnPanel,
     addComponent: (type: string, position?: { x: number; y: number }) => {
       handleAddComponent(type, position)
     }
@@ -3148,6 +3100,8 @@ const mainPanelSeededRef = useRef(false)
           defaultNoteId={noteId}
           canvasItems={canvasItems}
           dataStore={dataStore}
+          resolveWorkspacePosition={resolveWorkspacePosition}
+          onRestorePanelPosition={handleRestoreMainPosition}
           onClose={handlePanelClose}
         />
             
@@ -3220,11 +3174,15 @@ function PanelsRenderer({
   canvasItems,
   dataStore,
   onClose,
+  resolveWorkspacePosition,
+  onRestorePanelPosition,
 }: {
   defaultNoteId: string
   canvasItems: CanvasItem[]
   dataStore: DataStore
   onClose: (id: string, noteId?: string) => void
+  resolveWorkspacePosition?: (noteId: string) => { x: number; y: number } | null
+  onRestorePanelPosition?: (noteId: string, position: { x: number; y: number }) => void
 }) {
   const isPlainMode = isPlainModeActive()
   const seenStoreKeys = new Set<string>()
@@ -3282,6 +3240,13 @@ function PanelsRenderer({
         })
         
         const position = branch.position || { x: 2000, y: 1500 }
+        const workspacePosition = resolveWorkspacePosition?.(panelNoteId) ?? null
+        const shouldOfferRestore =
+          panelId === 'main' &&
+          workspacePosition &&
+          (Math.round(workspacePosition.x) !== Math.round(position.x) ||
+            Math.round(workspacePosition.y) !== Math.round(position.y))
+
         return (
           <CanvasPanel
             key={storeKey}
@@ -3290,6 +3255,12 @@ function PanelsRenderer({
             position={position}
             noteId={panelNoteId}
             onClose={() => onClose(panelId, panelNoteId)}
+            canRestorePosition={Boolean(shouldOfferRestore)}
+            onRestorePosition={
+              shouldOfferRestore && workspacePosition && onRestorePanelPosition
+                ? () => onRestorePanelPosition(panelNoteId, workspacePosition)
+                : undefined
+            }
           />
         )
       })}
