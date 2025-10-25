@@ -36,6 +36,7 @@ import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
+import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
@@ -128,12 +129,31 @@ const createDefaultCanvasState = () => ({
 })
 
 // Create default canvas items with main panel
-const DEFAULT_MAIN_POSITION = { x: 2000, y: 1500 }
+const LEGACY_DEFAULT_MAIN_POSITION = { x: 2000, y: 1500 }
+
+const getDefaultMainPosition = (): { x: number; y: number } => {
+  if (typeof window === 'undefined') {
+    return { x: 0, y: 0 }
+  }
+
+  const { width, height } = DEFAULT_PANEL_DIMENSIONS
+  const centeredX = Math.round(window.innerWidth / 2 - width / 2)
+  const centeredY = Math.round(window.innerHeight / 2 - height / 2)
+  return { x: centeredX, y: centeredY }
+}
+
+const isDefaultMainPosition = (position: { x: number; y: number } | null | undefined) => {
+  if (!position) return false
+  const defaultPosition = getDefaultMainPosition()
+  const matchesCurrent = Math.round(position.x) === defaultPosition.x && Math.round(position.y) === defaultPosition.y
+  const matchesLegacy = position.x === LEGACY_DEFAULT_MAIN_POSITION.x && position.y === LEGACY_DEFAULT_MAIN_POSITION.y
+  return matchesCurrent || matchesLegacy
+}
 
 const createDefaultCanvasItems = (noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => [
   createPanelItem(
     "main",
-    mainPosition ?? DEFAULT_MAIN_POSITION,
+    mainPosition ?? getDefaultMainPosition(),
     "main",
     noteId,
     ensurePanelKey(noteId, "main"),
@@ -187,7 +207,7 @@ const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x
     ...normalizedItems,
     createPanelItem(
       "main",
-      mainPosition ?? DEFAULT_MAIN_POSITION,
+      mainPosition ?? getDefaultMainPosition(),
       "main",
       noteId,
       ensurePanelKey(noteId, "main"),
@@ -230,8 +250,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const activeWorkspaceVersion = workspaceNoteMap.get(noteId)?.version ?? null
   const freshNoteSet = useMemo(() => new Set(freshNoteIds), [freshNoteIds])
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
-    if (!position) return false
-    return position.x === DEFAULT_MAIN_POSITION.x && position.y === DEFAULT_MAIN_POSITION.y
+    return isDefaultMainPosition(position)
   }, [])
 
   const resolveWorkspacePosition = useCallback((targetNoteId: string): { x: number; y: number } | null => {
@@ -561,7 +580,7 @@ const mainPanelSeededRef = useRef(false)
           }
         } else {
           // New panel - use workspace position if available, otherwise default
-          const targetPosition = resolveWorkspacePosition(id) ?? DEFAULT_MAIN_POSITION
+          const targetPosition = resolveWorkspacePosition(id) ?? getDefaultMainPosition()
 
           debugLog({
             component: 'AnnotationCanvas',
@@ -569,7 +588,7 @@ const mainPanelSeededRef = useRef(false)
             metadata: {
               noteId: id,
               targetPosition,
-              source: targetPosition === DEFAULT_MAIN_POSITION ? 'default' : 'workspace'
+              source: isDefaultMainPosition(targetPosition) ? 'default' : 'workspace'
             }
           })
 
@@ -1063,6 +1082,8 @@ const mainPanelSeededRef = useRef(false)
         // Priority: 1) existing main panel position (if not default), 2) workspace position (if not default), 3) calculated centered position
         const mainPosition = existingMainPanelPosition || workspacePosition || centeredPosition
 
+        const defaultMainPosition = getDefaultMainPosition()
+
         debugLog({
           component: 'AnnotationCanvas',
           action: 'NEW_NOTE_MAIN_POSITION_DETERMINED',
@@ -1070,7 +1091,7 @@ const mainPanelSeededRef = useRef(false)
             noteId,
             mainPanelItem_position: mainPanelItem?.position,
             workspaceMainPosition,
-            DEFAULT_MAIN_POSITION,
+            defaultMainPosition,
             centeredPosition,
             currentViewport: { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom },
             finalMainPosition: mainPosition
@@ -1080,7 +1101,7 @@ const mainPanelSeededRef = useRef(false)
         console.log('[NEW NOTE] Main panel position determined:', {
           'from canvasItems': mainPanelItem?.position,
           'from workspace': workspaceMainPosition,
-          'default (offscreen)': DEFAULT_MAIN_POSITION,
+          'default (offscreen)': defaultMainPosition,
           'calculated centered': centeredPosition,
           'current viewport': { x: canvasState.translateX, y: canvasState.translateY },
           'FINAL POSITION USED': mainPosition
@@ -1528,7 +1549,7 @@ const mainPanelSeededRef = useRef(false)
             return cachedPosition
           }
 
-          return { ...DEFAULT_MAIN_POSITION }
+          return getDefaultMainPosition()
         })()
 
         debugLog({

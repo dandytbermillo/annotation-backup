@@ -42,7 +42,7 @@ export function isComponent(item: CanvasItem): boolean {
 
 export function createPanelItem(
   panelId: string,
-  position: { x: number; y: number } = { x: 2000, y: 1500 },
+  position: { x: number; y: number },
   panelType: PanelType = 'note',
   noteId?: string,
   storeKey?: string

@@ -6,6 +6,7 @@ import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
 import { LayerManager } from "@/lib/canvas/layer-manager"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
 
 export interface NoteWorkspace {
   dataStore: DataStore
@@ -82,6 +83,17 @@ const FEATURE_ENABLED = typeof window !== 'undefined' &&
   process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY === 'enabled'
 
 type WorkspaceVersionUpdate = { noteId: string; version: number }
+
+const computeViewportCenteredPosition = (): WorkspacePosition => {
+  const { width, height } = DEFAULT_PANEL_DIMENSIONS
+  if (typeof window === 'undefined') {
+    return { x: 0, y: 0 }
+  }
+  return {
+    x: Math.round(window.innerWidth / 2 - width / 2),
+    y: Math.round(window.innerHeight / 2 - height / 2),
+  }
+}
 
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
@@ -943,22 +955,33 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
       // Calculate smart default position: place new notes on the right side of existing panels
       const calculateSmartDefaultPosition = (): WorkspacePosition => {
-        if (typeof window === 'undefined') return { x: 2000, y: 1500 }
+        const fallbackCenter = (() => {
+          const { width, height } = DEFAULT_PANEL_DIMENSIONS
+          if (typeof window === 'undefined') {
+            return { x: 0, y: 0 }
+          }
+          return {
+            x: Math.round(window.innerWidth / 2 - width / 2),
+            y: Math.round(window.innerHeight / 2 - height / 2),
+          }
+        })()
+
+        if (typeof window === 'undefined') return fallbackCenter
 
         // Find all panels currently in the DOM
         const allPanels = document.querySelectorAll('[data-store-key]')
-        if (allPanels.length === 0) return { x: 2000, y: 1500 }
+        if (allPanels.length === 0) return fallbackCenter
 
         let rightmostX = 0
-        let rightmostY = 1500
-        let rightmostWidth = 800
+        let rightmostY = fallbackCenter.y
+        let rightmostWidth = DEFAULT_PANEL_DIMENSIONS.width
 
         allPanels.forEach(panel => {
           const style = window.getComputedStyle(panel as HTMLElement)
           const rect = (panel as HTMLElement).getBoundingClientRect()
           const panelX = parseFloat(style.left) || 0
-          const panelY = parseFloat(style.top) || 1500
-          const panelWidth = rect.width || 800
+          const panelY = parseFloat(style.top) || fallbackCenter.y
+          const panelWidth = rect.width || DEFAULT_PANEL_DIMENSIONS.width
 
           // Find the rightmost panel (x + width is the furthest right)
           if (panelX + panelWidth > rightmostX + rightmostWidth) {
@@ -971,8 +994,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         // Place new note on the right side with a 50px gap
         const gap = 50
         return {
-          x: rightmostX + rightmostWidth + gap,
-          y: rightmostY
+          x: Math.round(rightmostX + rightmostWidth + gap),
+          y: Math.round(rightmostY),
         }
       }
 

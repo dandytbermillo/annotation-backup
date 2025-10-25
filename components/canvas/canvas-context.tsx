@@ -9,6 +9,7 @@ import { EventEmitter } from "@/lib/event-emitter"
 import { initialData } from "@/lib/initial-data"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
+import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
 import { debugLog } from "@/lib/utils/debug-logger"
 import type { AnnotationType } from "@/lib/models/annotation"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -30,8 +31,8 @@ const PLAIN_SNAPSHOT_VERSION = 2
 const initialState: CanvasState = {
   canvasState: {
     zoom: 1,
-    translateX: -1000,
-    translateY: -1200,
+    translateX: 0,
+    translateY: 0,
     isDragging: false,
     lastMouseX: 0,
     lastMouseY: 0,
@@ -342,7 +343,11 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
       const mainStoreKey = ensurePanelKey(noteId || '', 'main')
 
       const titleValue = cachedMain?.title || 'Main Document'
-      const positionValue = cachedMain?.position || { x: 2000, y: 1500 }
+      const defaultPosition = computeViewportCenteredPosition()
+      const hasLegacyPosition = cachedMain?.position && cachedMain.position.x === 2000 && cachedMain.position.y === 1500
+      const positionValue = hasLegacyPosition
+        ? defaultPosition
+        : cachedMain?.position ?? defaultPosition
       const mainBranches = Array.isArray(cachedMain?.branches)
         ? cachedMain!.branches.map(normalizeBranchId).filter(Boolean)
         : []
@@ -354,7 +359,8 @@ export function CanvasProvider({ children, noteId, onRegisterActiveEditor, exter
         titleValue,
         positionValue,
         usingDefaultTitle: titleValue === 'Main Document',
-        usingDefaultPosition: positionValue.x === 2000 && positionValue.y === 1500
+        usingDefaultPosition:
+          positionValue.x === defaultPosition.x && positionValue.y === defaultPosition.y
       })
 
       dataStore.set(mainStoreKey, {
@@ -848,4 +854,13 @@ export function useCanvas() {
     throw new Error("useCanvas must be used within a CanvasProvider")
   }
   return context
+}
+const computeViewportCenteredPosition = () => {
+  const { width, height } = DEFAULT_PANEL_DIMENSIONS
+  if (typeof window === 'undefined') {
+    return { x: 0, y: 0 }
+  }
+  const centeredX = Math.round(window.innerWidth / 2 - width / 2)
+  const centeredY = Math.round(window.innerHeight / 2 - height / 2)
+  return { x: centeredX, y: centeredY }
 }
