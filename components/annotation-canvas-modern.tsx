@@ -53,6 +53,8 @@ interface ModernAnnotationCanvasProps {
   primaryNoteId: string | null
   isNotesExplorerOpen?: boolean
   onCanvasStateChange?: (state: { zoom: number; showConnections: boolean; translateX: number; translateY: number }) => void
+  mainOnlyNoteIds?: string[]
+  onMainOnlyLayoutHandled?: (noteId: string) => void
   showAddComponentMenu?: boolean
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
@@ -220,6 +222,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   primaryNoteId,
   isNotesExplorerOpen = false,
   onCanvasStateChange,
+  mainOnlyNoteIds = [],
+  onMainOnlyLayoutHandled,
   showAddComponentMenu: externalShowAddComponentMenu,
   onToggleAddComponentMenu,
   onSnapshotLoadComplete,
@@ -249,6 +253,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [openNotes])
   const activeWorkspaceVersion = workspaceNoteMap.get(noteId)?.version ?? null
   const freshNoteSet = useMemo(() => new Set(freshNoteIds), [freshNoteIds])
+  const mainOnlyNoteSet = useMemo(() => new Set(mainOnlyNoteIds), [mainOnlyNoteIds])
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
     return isDefaultMainPosition(position)
   }, [])
@@ -551,6 +556,15 @@ const mainPanelSeededRef = useRef(false)
         }
 
         const itemNoteId = getItemNoteId(item)
+        if (
+          item.itemType === 'panel' &&
+          item.panelId !== 'main' &&
+          itemNoteId &&
+          mainOnlyNoteSet.has(itemNoteId)
+        ) {
+          changed = true
+          return
+        }
         if (itemNoteId && !allowedNoteIds.has(itemNoteId)) {
           changed = true
           return
@@ -654,7 +668,7 @@ const mainPanelSeededRef = useRef(false)
 
       return newItems
     })
-  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId])
+  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId, mainOnlyNoteSet])
 
   // Reset per-note refs when noteId changes
   const initialNoteRef = useRef<string | null>(null)
@@ -682,6 +696,28 @@ const mainPanelSeededRef = useRef(false)
     }
   }, [noteId])
   const isRestoringSnapshotRef = useRef(false)
+
+  useEffect(() => {
+    if (!mainOnlyNoteIds || mainOnlyNoteIds.length === 0) {
+      return
+    }
+
+    setCanvasItems(prev => {
+      let changed = false
+      const filtered = prev.filter(item => {
+        if (item.itemType !== 'panel' || item.panelId === 'main') {
+          return true
+        }
+        const itemNoteId = getItemNoteId(item)
+        if (itemNoteId && mainOnlyNoteSet.has(itemNoteId)) {
+          changed = true
+          return false
+        }
+        return true
+      })
+      return changed ? filtered : prev
+    })
+  }, [mainOnlyNoteIds, mainOnlyNoteSet, setCanvasItems, getItemNoteId])
   
   // Use external control if provided, otherwise use internal state
   const showAddComponentMenu = externalShowAddComponentMenu !== undefined ? externalShowAddComponentMenu : internalShowAddComponentMenu
@@ -789,6 +825,18 @@ const mainPanelSeededRef = useRef(false)
       const camera = { x: canvasState.translateX, y: canvasState.translateY }
       const screenPosition = worldToScreen(panel.position, camera, canvasState.zoom)
 
+      if (mainOnlyNoteSet.has(hydratedNoteId) && hydratedPanelId !== 'main') {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'HYDRATION_SKIPPED_BRANCH_MAIN_ONLY',
+          metadata: {
+            noteId: hydratedNoteId,
+            panelId: hydratedPanelId,
+          },
+        })
+        return null
+      }
+
       debugLog({
         component: 'AnnotationCanvas',
         action: 'world_to_screen_conversion',
@@ -810,7 +858,7 @@ const mainPanelSeededRef = useRef(false)
         hydratedNoteId,
         storeKey,
       )
-    })
+    }).filter((panel): panel is CanvasItem => Boolean(panel))
 
     setCanvasItems(prev => {
       const existingStoreKeys = new Set(
@@ -2841,9 +2889,10 @@ const mainPanelSeededRef = useRef(false)
         metadata: { noteId: targetNoteId, position: normalizedPosition },
       })
 
+      onMainOnlyLayoutHandled?.(targetNoteId)
       centerOnPanel(storeKey)
     },
-    [centerOnPanel, dataStore, getItemNoteId, persistPanelUpdate, setCanvasItems, updateMainPosition],
+    [centerOnPanel, dataStore, getItemNoteId, onMainOnlyLayoutHandled, persistPanelUpdate, setCanvasItems, updateMainPosition],
   )
 
   // Expose methods via ref

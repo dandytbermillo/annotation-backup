@@ -2781,7 +2781,7 @@ export function CanvasPanel({
               >
                 ×
               </button>
-            )
+            )}
             {canRestorePosition && onRestorePosition && (
               <button
                 onClick={(e) => {

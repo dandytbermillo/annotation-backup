@@ -396,8 +396,23 @@ function AnnotationAppContent() {
     translateX: 0,
     translateY: 0
   })
+  const handleCanvasStateChange = useCallback(
+    (stateUpdate: Partial<{ zoom: number; showConnections: boolean; translateX: number; translateY: number }>) => {
+      setCanvasState(prev => ({ ...prev, ...stateUpdate }))
+    },
+    [],
+  )
   const reopenSequenceRef = useRef<{ count: number; lastTimestamp: number }>({ count: 0, lastTimestamp: 0 })
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
+  const [mainOnlyNotes, setMainOnlyNotes] = useState<string[]>([])
+  const requestMainOnlyNote = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => (prev.includes(noteId) ? prev : [...prev, noteId]))
+  }, [])
+  const handleMainOnlyLayoutHandled = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => prev.filter(id => id !== noteId))
+  }, [])
 
   // Floating notes widget state
 const [showNotesWidget, setShowNotesWidget] = useState(false)
@@ -1369,6 +1384,10 @@ const initialWorkspaceSyncRef = useRef(false)
         }
       }
 
+      if (shouldCenterExisting) {
+        requestMainOnlyNote(noteId)
+      }
+
       const skipPersistPosition = usedCenteredOverride && Boolean(persistedPosition)
       void openWorkspaceNote(noteId, {
         persist: true,
@@ -1382,7 +1401,7 @@ const initialWorkspaceSyncRef = useRef(false)
     if (!isToolbarCreation) {
       emitHighlight()
     }
-  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger, canvasState])
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger, canvasState, requestMainOnlyNote])
 
   const handleCloseNote = useCallback(
     (noteId: string) => {
@@ -2423,9 +2442,9 @@ const handleCenterNote = useCallback(
                   isNotesExplorerOpen={false}
                   freshNoteIds={freshNoteIds}
                   onFreshNoteHydrated={handleFreshNoteHydrated}
-                  onCanvasStateChange={stateUpdate =>
-                    setCanvasState(prev => ({ ...prev, ...stateUpdate }))
-                  }
+                  onCanvasStateChange={handleCanvasStateChange}
+                  mainOnlyNoteIds={mainOnlyNotes}
+                  onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
                   showAddComponentMenu={showAddComponentMenu}
                 onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
                 onRegisterActiveEditor={handleRegisterActiveEditor}
