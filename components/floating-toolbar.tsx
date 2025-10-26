@@ -21,10 +21,15 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { screenToWorld } from "@/lib/canvas/coordinate-utils"
 import {
   CANVAS_SAFE_BOUNDS,
-  computeViewportCenterWithOffset,
+  clampToCanvasBounds,
+  computeVisuallyCenteredWorldPosition,
   RAPID_CENTERING_OFFSET,
   RAPID_CENTERING_RESET_MS,
-} from "@/lib/canvas/viewport-centering"
+  type RapidSequenceState,
+} from "@/lib/canvas/visual-centering"
+
+const toolbarCreationSequence: RapidSequenceState = { count: 0, lastTimestamp: 0 }
+
 
 // Folder color palette - similar to sticky notes pattern
 const FOLDER_COLORS = [
@@ -250,7 +255,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const previewCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isHoveringPreviewRef = useRef(false)
-  const creationSequenceRef = useRef<{ count: number; lastTimestamp: number }>({ count: 0, lastTimestamp: 0 })
 
   // Folder creation state for Organization panel
   const [creatingFolderInOrg, setCreatingFolderInOrg] = useState(false)
@@ -289,35 +293,61 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const computeInitialWorldPosition = useCallback((): { x: number; y: number } | null => {
     if (!canvasState?.canvasState) return null
 
-    const position = computeViewportCenterWithOffset(
+    const lastInteraction = typeof window !== 'undefined'
+      ? (window as any).__canvasLastInteraction ?? null
+      : null
+
+    debugLog({
+      component: 'FloatingToolbar',
+      action: 'new_note_center_anchor_resolved',
+      metadata: {
+        hasCanvasState: Boolean(canvasState?.canvasState),
+        lastInteraction,
+        translateX: canvasState.canvasState.translateX,
+        translateY: canvasState.canvasState.translateY,
+        zoom: canvasState.canvasState.zoom,
+      },
+    })
+
+    const position = computeVisuallyCenteredWorldPosition(
       {
         translateX: canvasState.canvasState.translateX,
         translateY: canvasState.canvasState.translateY,
         zoom: canvasState.canvasState.zoom,
       },
-      creationSequenceRef.current,
-      {
-        offsetStep: RAPID_CENTERING_OFFSET,
-        resetMs: RAPID_CENTERING_RESET_MS,
-      },
+      toolbarCreationSequence,
+      lastInteraction,
     )
 
     if (position) {
+      debugLog({
+        component: 'FloatingToolbar',
+        action: 'new_note_center_anchor_applied',
+        metadata: {
+          anchorType: lastInteraction ? 'interaction' : 'viewport_center_seed',
+          position,
+          sequenceCount: toolbarCreationSequence.count,
+        },
+      })
       return position
     }
 
     if (typeof window === 'undefined') return null
 
-    // Fallback to direct computation if helper could not determine a position
     const { translateX = 0, translateY = 0, zoom = 1 } = canvasState.canvasState
     const effectiveZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
     const camera = { x: translateX, y: translateY }
-    const viewportCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-    const baseWorld = screenToWorld(viewportCenter, camera, effectiveZoom)
-    return {
-      x: Math.max(CANVAS_SAFE_BOUNDS.minX, Math.min(CANVAS_SAFE_BOUNDS.maxX, baseWorld.x)),
-      y: Math.max(CANVAS_SAFE_BOUNDS.minY, Math.min(CANVAS_SAFE_BOUNDS.maxY, baseWorld.y)),
-    }
+    const fallbackCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+    const baseWorld = screenToWorld(fallbackCenter, camera, effectiveZoom)
+    debugLog({
+      component: 'FloatingToolbar',
+      action: 'new_note_center_fallback_used',
+      metadata: {
+        fallbackCenter,
+        baseWorld,
+      },
+    })
+    return clampToCanvasBounds(baseWorld)
   }, [canvasState])
 
   // Save backdrop style to localStorage whenever it changes

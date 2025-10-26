@@ -1,7 +1,7 @@
 # Canvas – Predictable Centered Spawn for New Notes
 
 ## Objective
-When a user creates a note via the floating toolbar’s “+ Note” button, the new panel should appear in the middle of the current viewport without panning the existing canvas. The new panel should be visually highlighted so it is immediately discoverable, while existing panels/connection lines remain undisturbed.
+When a user creates a note via the floating toolbar’s “+ Note” button, the new panel should appear *visually centered* within the portion of the canvas the user is looking at. The rest of the layout (existing panels, connection lines, camera position) must remain untouched. The only movement we allow is a small nudge to keep the new panel fully in view. The panel should receive a brief highlight so it is immediately discoverable.
 
 ## Current Behaviour (2025-10-24)
 - `handleNoteSelect` opens the note without panning, but when no position is provided the workspace still falls back to the legacy `{ x: 2000, y: 1500 }` seed.
@@ -10,28 +10,29 @@ When a user creates a note via the floating toolbar’s “+ Note” button, the
 
 ## Proposed Behaviour
 1. Do **not** pan the camera.
-2. Spawn the new note at the world coordinate that corresponds to the current viewport center.
+2. Place the new panel so it feels centered in the current viewport. Prefer the user’s last interaction point or the viewport midpoint, but add small nudges (and diagonal offsets for rapid creation) so the panel is fully visible without overlapping existing panels.
 3. Apply a brief “new note” highlight (existing glow utility or light animation) so the user’s attention stays on the new panel.
 
 ## Implementation Plan
 
 ### 1. Center defaults inside the workspace pipeline
 - **File**: `components/canvas/canvas-context.tsx`
-  - Replace the legacy canvas bootstrap of `translateX: -1000`, `translateY: -1200` with a neutral `{0, 0}` camera.
-  - When seeding the plain-mode data store, compute the first panel’s position from the viewport centre (using `DEFAULT_PANEL_DIMENSIONS`) and treat `{2000, 1500}` as legacy-only.
+  - Keep the neutral `{0, 0}` camera for initial bootstrap.
+  - When seeding the plain-mode data store, compute the first panel’s position from the viewport centre **and** clamp it to keep the panel fully visible. Store that position, but never overwrite user-adjusted coordinates afterward.
 - **File**: `components/canvas/canvas-workspace-context.tsx`
-  - Update `calculateSmartDefaultPosition` to call the same centred helper when no cached position exists so `openWorkspaceNote` never falls back to minimap coordinates.
-  - Keep the diagonal offset for rapid consecutive creations so new notes don’t overlap, but base the first position on the centred defaults.
+  - Update `calculateSmartDefaultPosition` to use the same “visually centered” helper whenever no cached position exists, taking the current zoom and last interaction point into account.
+  - Keep the diagonal offset for rapid consecutive creations so new notes don’t overlap, but base it on the “visually centered” anchor rather than a hard-coded coordinate.
 
 ### 2. Feed the centred position into the note-opening flow
 - **File**: `components/annotation-app.tsx`
-  - Continue using `computeViewportCenteredPosition(cameraState)` when `options.initialPosition` is missing; guard the creation path so we only create once a camera snapshot is available.
+  - Use a `computeVisuallyCenteredPosition(cameraState, lastInteractionPoint)` helper that prefers the user’s cursor/selection location but falls back to the viewport center if no interaction data exists.
+  - Guard the creation path so we only create once a camera snapshot is available, and never overwrite an existing `mainPosition` once it has been user-adjusted.
 - **File**: `types/canvas-items.ts`
   - Ensure callers always supply an explicit `position` when using `createPanelItem`, so no silent reversion to the legacy default occurs.
 
 ### 3. Remove immediate camera panning for new notes
 - **File**: `components/annotation-app.tsx`
-  - Keep `centerNoteOnCanvas` disabled for creation/reselection. Users can re-centre manually via the minimap.
+  - Keep `centerNoteOnCanvas` disabled for creation/reselection. Users can re‑center manually via the minimap or future affordances.
 
 ### 4. Highlight the fresh panel
 - **Files**: `components/annotation-canvas-modern.tsx` (or shared highlight utility)
@@ -52,7 +53,8 @@ When a user creates a note via the floating toolbar’s “+ Note” button, the
   })
   ```
 - When collaboration mode (Yjs) is active, ensure the initial position is broadcast via the provider so other clients see the new panel in the same spot.
-- Fallback: if no canvas state is available (rare), default to the centred helper described above.
+- Fallback: if no canvas state is available (rare), default to the visually centered helper described above.
+- Never overwrite a user-adjusted `mainPosition` after the note has been moved manually; store the “visual center” only for the very first insert.
 
 ## Testing
 - Unit: Update or add tests around the transform utilities if new helpers are introduced.

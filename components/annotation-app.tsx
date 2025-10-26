@@ -24,10 +24,9 @@ import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 import {
-  computeViewportCenterWithOffset,
-  RAPID_CENTERING_OFFSET,
-  RAPID_CENTERING_RESET_MS,
-} from "@/lib/canvas/viewport-centering"
+  computeVisuallyCenteredWorldPosition,
+  computeCenteredPositionWithDecay,
+} from "@/lib/canvas/visual-centering"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -396,9 +395,52 @@ function AnnotationAppContent() {
     translateX: 0,
     translateY: 0
   })
+  const lastCanvasInteractionRef = useRef<{ x: number; y: number } | null>(null)
   const handleCanvasStateChange = useCallback(
-    (stateUpdate: Partial<{ zoom: number; showConnections: boolean; translateX: number; translateY: number }>) => {
-      setCanvasState(prev => ({ ...prev, ...stateUpdate }))
+    (
+      stateUpdate: Partial<{
+        zoom: number
+        showConnections: boolean
+        translateX: number
+        translateY: number
+        lastInteraction?: { x: number; y: number } | null
+        interactionSource?: 'canvas' | 'keyboard' | 'toolbar'
+      }>,
+    ) => {
+      let updated = false
+      setCanvasState(prev => {
+        const next = {
+          zoom: stateUpdate.zoom ?? prev.zoom,
+          showConnections: stateUpdate.showConnections ?? prev.showConnections,
+          translateX: stateUpdate.translateX ?? prev.translateX,
+          translateY: stateUpdate.translateY ?? prev.translateY,
+        }
+        if (
+          next.zoom === prev.zoom &&
+          next.showConnections === prev.showConnections &&
+          next.translateX === prev.translateX &&
+          next.translateY === prev.translateY
+        ) {
+          return prev
+        }
+        updated = true
+        return next
+      })
+      if (stateUpdate.lastInteraction) {
+        lastCanvasInteractionRef.current = stateUpdate.lastInteraction
+        if (typeof window !== 'undefined') {
+          ;(window as any).__canvasLastInteraction = stateUpdate.lastInteraction
+          ;(window as any).__canvasLastInteractionSource = stateUpdate.interactionSource ?? 'canvas'
+        }
+      } else if (
+        updated &&
+        typeof window !== 'undefined' &&
+        (stateUpdate.translateX !== undefined || stateUpdate.translateY !== undefined)
+      ) {
+        const fallbackPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+        lastCanvasInteractionRef.current = fallbackPoint
+        ;(window as any).__canvasLastInteraction = fallbackPoint
+      }
     },
     [],
   )
@@ -1345,40 +1387,37 @@ const initialWorkspaceSyncRef = useRef(false)
         CENTER_EXISTING_NOTES_ENABLED && !isToolbarCreation && !hasExplicitPosition
 
       let usedCenteredOverride = false
-      if (!resolvedPosition && shouldCenterExisting) {
-        const centeredPosition = computeViewportCenterWithOffset(
+      if (shouldCenterExisting) {
+        const centeredCandidate = computeVisuallyCenteredWorldPosition(
           {
             translateX: canvasState.translateX,
             translateY: canvasState.translateY,
             zoom: canvasState.zoom,
           },
           reopenSequenceRef.current,
-          {
-            offsetStep: RAPID_CENTERING_OFFSET,
-            resetMs: RAPID_CENTERING_RESET_MS,
-          },
+          lastCanvasInteractionRef.current,
         )
 
-        if (centeredPosition) {
-          resolvedPosition = centeredPosition
+        if (centeredCandidate && resolvedPosition) {
+          resolvedPosition = computeCenteredPositionWithDecay(
+            resolvedPosition,
+            centeredCandidate,
+            lastCanvasInteractionRef.current,
+          )
           usedCenteredOverride = true
+        } else if (centeredCandidate && !resolvedPosition) {
+          resolvedPosition = centeredCandidate
+          usedCenteredOverride = true
+        }
+
+        if (usedCenteredOverride) {
           debugLog({
             component: "AnnotationApp",
             action: "open_note_centered_override",
             metadata: {
               noteId,
               persistedPosition,
-              centeredPosition,
-            },
-          })
-        } else {
-          debugLog({
-            component: "AnnotationApp",
-            action: "open_note_center_override_skipped",
-            metadata: {
-              noteId,
-              reason: "missing_camera_state",
-              canvasStateSnapshot: canvasState,
+              centeredPosition: resolvedPosition,
             },
           })
         }
@@ -1388,7 +1427,7 @@ const initialWorkspaceSyncRef = useRef(false)
         requestMainOnlyNote(noteId)
       }
 
-      const skipPersistPosition = usedCenteredOverride && Boolean(persistedPosition)
+      const skipPersistPosition = false
       void openWorkspaceNote(noteId, {
         persist: true,
         mainPosition: resolvedPosition ?? undefined,

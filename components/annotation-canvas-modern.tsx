@@ -52,7 +52,13 @@ interface ModernAnnotationCanvasProps {
   noteIds: string[]
   primaryNoteId: string | null
   isNotesExplorerOpen?: boolean
-  onCanvasStateChange?: (state: { zoom: number; showConnections: boolean; translateX: number; translateY: number }) => void
+  onCanvasStateChange?: (state: {
+    zoom: number
+    showConnections: boolean
+    translateX: number
+    translateY: number
+    lastInteraction?: { x: number; y: number } | null
+  }) => void
   mainOnlyNoteIds?: string[]
   onMainOnlyLayoutHandled?: (noteId: string) => void
   showAddComponentMenu?: boolean
@@ -285,6 +291,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   // Layer system for multi-layer canvas
   const layerContext = useLayer()
+  const lastCanvasEventRef = useRef<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const fallbackPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+      lastCanvasEventRef.current = fallbackPoint
+      ;(window as any).__canvasLastInteraction = fallbackPoint
+    }
+  }, [])
   const canvasOpacity = layerContext ? PopupStateAdapter.getLayerOpacity('notes', layerContext.activeLayer) : 1
 
   // Initialize canvas state - check for snapshot to avoid visible jump
@@ -326,6 +340,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       showConnections: canvasState.showConnections,
       translateX: canvasState.translateX,
       translateY: canvasState.translateY,
+      lastInteraction: lastCanvasEventRef.current,
     })
   }, [
     canvasState.zoom,
@@ -1310,13 +1325,21 @@ const mainPanelSeededRef = useRef(false)
       dispatchFrameRef.current = requestAnimationFrame(() => {
         dispatchFrameRef.current = null
         const payload = pendingDispatchRef.current
+        const current = canvasContextState.canvasState
+        if (
+          payload.translateX === current.translateX &&
+          payload.translateY === current.translateY &&
+          payload.zoom === current.zoom
+        ) {
+          return
+        }
         dispatch({
           type: 'SET_CANVAS_STATE',
           payload,
         })
       })
     },
-    [dispatch]
+    [dispatch, canvasContextState.canvasState]
   )
 
   useEffect(() => {
@@ -1992,7 +2015,25 @@ const mainPanelSeededRef = useRef(false)
     }
   }, [])
 
+  const captureInteractionPoint = useCallback((event: { clientX: number; clientY: number }, source: 'canvas' | 'keyboard' | 'toolbar' = 'canvas') => {
+    const point = { x: event.clientX, y: event.clientY }
+    lastCanvasEventRef.current = point
+    if (typeof window !== 'undefined') {
+      ;(window as any).__canvasLastInteraction = point
+      ;(window as any).__canvasLastInteractionSource = source
+    }
+  }, [])
+
+  const handleCanvasMouseMoveCapture = useCallback((event: React.MouseEvent) => {
+    captureInteractionPoint(event)
+  }, [captureInteractionPoint])
+
+  const handleCanvasWheelCapture = useCallback((event: React.WheelEvent) => {
+    captureInteractionPoint(event)
+  }, [captureInteractionPoint])
+
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    captureInteractionPoint(e)
     // Only respond to primary button (left-click)
     // Ignore right-click (button 2), middle-click (button 1), etc.
     if (e.button !== 0) return
@@ -2016,6 +2057,7 @@ const mainPanelSeededRef = useRef(false)
   }
 
   const handleCanvasMouseMove = (e: MouseEvent) => {
+    captureInteractionPoint(e)
     if (!canvasState.isDragging) return
     
     const deltaX = e.clientX - canvasState.lastMouseX
@@ -3070,6 +3112,8 @@ const mainPanelSeededRef = useRef(false)
           }}
           onMouseDown={handleCanvasMouseDown}
           onWheel={handleWheel}
+          onMouseMoveCapture={handleCanvasMouseMoveCapture}
+          onWheelCapture={handleCanvasWheelCapture}
           onContextMenu={(e) => e.preventDefault()}
         >
           {/* Infinite Canvas */}
