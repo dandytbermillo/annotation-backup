@@ -18,17 +18,6 @@ import {
 } from "@/lib/constants/ui-timings"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
-import { screenToWorld } from "@/lib/canvas/coordinate-utils"
-import {
-  CANVAS_SAFE_BOUNDS,
-  clampToCanvasBounds,
-  computeVisuallyCenteredWorldPosition,
-  RAPID_CENTERING_OFFSET,
-  RAPID_CENTERING_RESET_MS,
-  type RapidSequenceState,
-} from "@/lib/canvas/visual-centering"
-
-const toolbarCreationSequence: RapidSequenceState = { count: 0, lastTimestamp: 0 }
 
 
 // Folder color palette - similar to sticky notes pattern
@@ -289,66 +278,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
     return 'none'
   })
-
-  const computeInitialWorldPosition = useCallback((): { x: number; y: number } | null => {
-    if (!canvasState?.canvasState) return null
-
-    const lastInteraction = typeof window !== 'undefined'
-      ? (window as any).__canvasLastInteraction ?? null
-      : null
-
-    debugLog({
-      component: 'FloatingToolbar',
-      action: 'new_note_center_anchor_resolved',
-      metadata: {
-        hasCanvasState: Boolean(canvasState?.canvasState),
-        lastInteraction,
-        translateX: canvasState.canvasState.translateX,
-        translateY: canvasState.canvasState.translateY,
-        zoom: canvasState.canvasState.zoom,
-      },
-    })
-
-    const position = computeVisuallyCenteredWorldPosition(
-      {
-        translateX: canvasState.canvasState.translateX,
-        translateY: canvasState.canvasState.translateY,
-        zoom: canvasState.canvasState.zoom,
-      },
-      toolbarCreationSequence,
-      lastInteraction,
-    )
-
-    if (position) {
-      debugLog({
-        component: 'FloatingToolbar',
-        action: 'new_note_center_anchor_applied',
-        metadata: {
-          anchorType: lastInteraction ? 'interaction' : 'viewport_center_seed',
-          position,
-          sequenceCount: toolbarCreationSequence.count,
-        },
-      })
-      return position
-    }
-
-    if (typeof window === 'undefined') return null
-
-    const { translateX = 0, translateY = 0, zoom = 1 } = canvasState.canvasState
-    const effectiveZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
-    const camera = { x: translateX, y: translateY }
-    const fallbackCenter = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-    const baseWorld = screenToWorld(fallbackCenter, camera, effectiveZoom)
-    debugLog({
-      component: 'FloatingToolbar',
-      action: 'new_note_center_fallback_used',
-      metadata: {
-        fallbackCenter,
-        baseWorld,
-      },
-    })
-    return clampToCanvasBounds(baseWorld)
-  }, [canvasState])
 
   // Save backdrop style to localStorage whenever it changes
   useEffect(() => {
@@ -1409,14 +1338,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     setIsCreatingNote(true)
     try {
-      const initialPosition = computeInitialWorldPosition()
-      // Use shared note creator utility
-      const result = await createNote({ initialPosition: initialPosition ?? undefined })
+      const result = await createNote({})
 
       if (result.success && result.noteId) {
         // Open the newly created note
         onSelectNote?.(result.noteId, {
-          initialPosition: initialPosition ?? undefined,
           source: 'toolbar-create'
         })
         // Close the toolbar

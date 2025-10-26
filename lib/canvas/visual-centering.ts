@@ -1,4 +1,8 @@
 import { screenToWorld } from "@/lib/canvas/coordinate-utils"
+import { debugLog } from "@/lib/utils/debug-logger"
+
+// Panel size for centering calculation
+const MAIN_PANEL_SIZE = { width: 500, height: 400 }
 
 export type CameraStateSnapshot = {
   translateX?: number | null
@@ -39,14 +43,58 @@ export const computeVisuallyCenteredWorldPosition = (
   lastInteractionPoint?: { x: number; y: number } | null,
 ): { x: number; y: number } | null => {
   const referencePoint = lastInteractionPoint ?? getViewportCenter()
+
+  debugLog({
+    component: 'VisualCentering',
+    action: 'compute_start',
+    metadata: {
+      referencePoint,
+      lastInteractionPoint,
+      cameraState,
+      sequenceCount: sequence.count
+    }
+  })
+
   if (!referencePoint) {
+    debugLog({
+      component: 'VisualCentering',
+      action: 'compute_failed',
+      metadata: { reason: 'no_reference_point' }
+    })
     return null
   }
 
   const { translateX = 0, translateY = 0, zoom = 1 } = cameraState ?? {}
   const effectiveZoom = Number.isFinite(zoom) && zoom && zoom > 0 ? zoom : 1
-  const camera = { x: translateX, y: translateY }
+  const camera = { x: translateX ?? 0, y: translateY ?? 0 }
   const baseWorld = screenToWorld(referencePoint, camera, effectiveZoom)
+
+  debugLog({
+    component: 'VisualCentering',
+    action: 'screen_to_world_conversion',
+    metadata: {
+      referencePoint,
+      camera,
+      effectiveZoom,
+      baseWorld
+    }
+  })
+
+  // Subtract half panel size to center the panel (not just its top-left corner)
+  const centeredWorld = {
+    x: baseWorld.x - MAIN_PANEL_SIZE.width / 2,
+    y: baseWorld.y - MAIN_PANEL_SIZE.height / 2,
+  }
+
+  debugLog({
+    component: 'VisualCentering',
+    action: 'centered_calculation',
+    metadata: {
+      baseWorld,
+      panelSize: MAIN_PANEL_SIZE,
+      centeredWorld
+    }
+  })
 
   const now = Date.now()
   if (now - sequence.lastTimestamp > RAPID_CENTERING_RESET_MS) {
@@ -58,8 +106,22 @@ export const computeVisuallyCenteredWorldPosition = (
 
   const angledOffset = offsetIndex * RAPID_CENTERING_OFFSET
   const visualWorld = clampToCanvasBounds({
-    x: baseWorld.x + angledOffset,
-    y: baseWorld.y + angledOffset,
+    x: centeredWorld.x + angledOffset,
+    y: centeredWorld.y + angledOffset,
+  })
+
+  debugLog({
+    component: 'VisualCentering',
+    action: 'final_position',
+    metadata: {
+      offsetIndex,
+      angledOffset,
+      beforeClamp: {
+        x: centeredWorld.x + angledOffset,
+        y: centeredWorld.y + angledOffset
+      },
+      visualWorld
+    }
   })
 
   return visualWorld

@@ -1002,6 +1002,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
       const smartDefaultPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? calculateSmartDefaultPosition()
       const normalizedPosition = smartDefaultPosition
+      if (normalizedPosition) {
+        positionCacheRef.current.set(noteId, normalizedPosition)
+        syncPositionCacheToStorage()
+      }
       const positionToPersist = persistPosition ? normalizedPosition : null
 
       console.log(`[DEBUG openNote] Position resolution for ${noteId}:`, {
@@ -1076,7 +1080,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [ensureWorkspaceForOpenNotes, persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, applyVersionUpdates],
+    [ensureWorkspaceForOpenNotes, persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, applyVersionUpdates, syncPositionCacheToStorage],
   )
 
   const closeNote = useCallback(

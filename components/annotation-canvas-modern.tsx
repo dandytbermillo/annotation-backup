@@ -51,6 +51,8 @@ type HydrationResult = ReturnType<typeof useCanvasHydration>
 interface ModernAnnotationCanvasProps {
   noteIds: string[]
   primaryNoteId: string | null
+  freshNoteSeeds?: Record<string, { x: number; y: number }>
+  onConsumeFreshNoteSeed?: (noteId: string) => void
   isNotesExplorerOpen?: boolean
   onCanvasStateChange?: (state: {
     zoom: number
@@ -123,8 +125,8 @@ function NoteHydrator({
 // Default viewport settings
 const defaultViewport = {
   zoom: 1,
-  translateX: -1000,
-  translateY: -1200,
+  translateX: 0,
+  translateY: 0,
   showConnections: true,
 }
 
@@ -226,6 +228,8 @@ const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x
 const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
   noteIds,
   primaryNoteId,
+  freshNoteSeeds = {},
+  onConsumeFreshNoteSeed,
   isNotesExplorerOpen = false,
   onCanvasStateChange,
   mainOnlyNoteIds = [],
@@ -265,16 +269,58 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [])
 
   const resolveWorkspacePosition = useCallback((targetNoteId: string): { x: number; y: number } | null => {
-    const pending = getPendingPosition(targetNoteId)
-    if (pending && !isDefaultOffscreenPosition(pending)) return pending
-
-    const cached = getCachedPosition(targetNoteId)
-    if (cached && !isDefaultOffscreenPosition(cached)) return cached
-
+    // CRITICAL FIX: Check workspace mainPosition FIRST (set by openWorkspaceNote)
+    // This ensures that newly computed viewport-centered positions override any stale cached positions
     const workspaceEntry = workspaceNoteMap.get(targetNoteId)
     if (workspaceEntry?.mainPosition && !isDefaultOffscreenPosition(workspaceEntry.mainPosition)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'resolve_workspace_position_from_entry',
+        metadata: {
+          targetNoteId,
+          position: workspaceEntry.mainPosition,
+          source: 'workspaceEntry.mainPosition'
+        }
+      })
       return workspaceEntry.mainPosition
     }
+
+    const pending = getPendingPosition(targetNoteId)
+    if (pending && !isDefaultOffscreenPosition(pending)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'resolve_workspace_position_from_pending',
+        metadata: {
+          targetNoteId,
+          position: pending,
+          source: 'pendingPosition'
+        }
+      })
+      return pending
+    }
+
+    const cached = getCachedPosition(targetNoteId)
+    if (cached && !isDefaultOffscreenPosition(cached)) {
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'resolve_workspace_position_from_cache',
+        metadata: {
+          targetNoteId,
+          position: cached,
+          source: 'cachedPosition'
+        }
+      })
+      return cached
+    }
+
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'resolve_workspace_position_null',
+      metadata: {
+        targetNoteId,
+        source: 'none_found'
+      }
+    })
 
     return null
   }, [workspaceNoteMap, getPendingPosition, getCachedPosition, isDefaultOffscreenPosition])
@@ -398,7 +444,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, noteId])
 
   // Unified canvas items state
-const workspaceSeedAppliedRef = useRef(false)
+const workspaceSeededNotesRef = useRef<Set<string>>(new Set())
 const [canvasItems, _setCanvasItems] = useState<CanvasItem[]>([])
 const canvasItemsRef = useRef<CanvasItem[]>(canvasItems)
 
@@ -623,8 +669,11 @@ const mainPanelSeededRef = useRef(false)
             nextMainItems.push(existing)
           }
         } else {
-          // New panel - use workspace position if available, otherwise default
-          const targetPosition = resolveWorkspacePosition(id) ?? getDefaultMainPosition()
+          const seedPosition = freshNoteSeeds[id] ?? null
+          const targetPosition =
+            seedPosition ??
+            resolveWorkspacePosition(id) ??
+            getDefaultMainPosition()
 
           debugLog({
             component: 'AnnotationCanvas',
@@ -632,13 +681,20 @@ const mainPanelSeededRef = useRef(false)
             metadata: {
               noteId: id,
               targetPosition,
-              source: isDefaultMainPosition(targetPosition) ? 'default' : 'workspace'
+              source: seedPosition
+                ? 'fresh_seed'
+                : isDefaultMainPosition(targetPosition)
+                  ? 'default'
+                  : 'workspace'
             }
           })
 
           nextMainItems.push(
             createPanelItem('main', targetPosition, 'main', id, targetStoreKey)
           )
+          if (seedPosition) {
+            onConsumeFreshNoteSeed?.(id)
+          }
           changed = true
         }
       })
@@ -683,7 +739,7 @@ const mainPanelSeededRef = useRef(false)
 
       return newItems
     })
-  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId, mainOnlyNoteSet])
+  }, [hasNotes, noteIds, getItemNoteId, resolveWorkspacePosition, noteId, mainOnlyNoteSet, freshNoteSeeds, onConsumeFreshNoteSeed])
 
   // Reset per-note refs when noteId changes
   const initialNoteRef = useRef<string | null>(null)
@@ -694,21 +750,35 @@ const mainPanelSeededRef = useRef(false)
       initialNoteRef.current = noteId
     }
 
+    const wasSeeded = workspaceSeededNotesRef.current.has(noteId)
     debugLog({
       component: 'AnnotationCanvas',
       action: 'noteId_changed_resetting_refs',
       metadata: {
         noteId,
         prevMainPanelSeeded: mainPanelSeededRef.current,
-        prevWorkspaceSeedApplied: workspaceSeedAppliedRef.current,
+        prevWorkspaceSeedApplied: wasSeeded,
         isFirstNote,
       }
     })
 
     mainPanelSeededRef.current = false
     if (isFirstNote) {
-      workspaceSeedAppliedRef.current = false
+      workspaceSeededNotesRef.current.clear()
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'workspace_seed_reset_all',
+        metadata: { reason: 'first_note', noteId },
+      })
     }
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'workspace_seed_note_cleared',
+      metadata: {
+        noteId,
+        seededNotes: Array.from(workspaceSeededNotesRef.current),
+      },
+    })
   }, [noteId])
   const isRestoringSnapshotRef = useRef(false)
 
@@ -967,7 +1037,16 @@ const mainPanelSeededRef = useRef(false)
           return item
         })
       )
-      workspaceSeedAppliedRef.current = true
+      workspaceSeededNotesRef.current.add(targetNoteId)
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'workspace_seed_applied_during_hydration',
+        metadata: {
+          noteId: targetNoteId,
+          seedPosition: workspaceMainPosition,
+          seededNotes: Array.from(workspaceSeededNotesRef.current),
+        },
+      })
     }
 
     hydratedNotesRef.current.add(targetNoteId)
@@ -1011,38 +1090,25 @@ const mainPanelSeededRef = useRef(false)
       return false
     })
 
+    const alreadySeeded = workspaceSeededNotesRef.current.has(noteId)
     debugLog({
       component: 'AnnotationCanvas',
       action: 'workspaceSeedAppliedRef_effect_triggered',
       metadata: {
         noteId,
         mainPanelExists,
-        workspaceSeedApplied: workspaceSeedAppliedRef.current,
+        workspaceSeedApplied: alreadySeeded,
         hasWorkspacePosition: !!workspaceMainPosition,
         workspacePosition: workspaceMainPosition,
         hydrationSuccess: primaryHydrationStatus.success,
-        willUpdatePosition: !workspaceSeedAppliedRef.current && !!workspaceMainPosition && !primaryHydrationStatus.success && !mainPanelExists
+        willUpdatePosition: !alreadySeeded && !!workspaceMainPosition && !primaryHydrationStatus.success,
+        seededNotes: Array.from(workspaceSeededNotesRef.current),
       }
     })
 
-    // CRITICAL FIX: Do NOT run if panel already exists (switching between open notes)
-    if (mainPanelExists) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'WORKSPACE_SEED_SKIPPED_PANEL_EXISTS',
-        metadata: {
-          noteId,
-          reason: 'main_panel_already_exists_in_canvas'
-        }
-      })
-      return
-    }
-
-    if (workspaceSeedAppliedRef.current) return
+    if (alreadySeeded) return
     if (!workspaceMainPosition) return
     if (primaryHydrationStatus.success) return
-    if (initialNoteRef.current !== noteId) return
-
     debugLog({
       component: 'AnnotationCanvas',
       action: 'WORKSPACE_SEED_UPDATING_POSITIONS',
@@ -1053,19 +1119,45 @@ const mainPanelSeededRef = useRef(false)
       }
     })
 
-    setCanvasItems(prev =>
-      prev.map(item => {
-        // Only update main panel for the CURRENT note
+    let applied = false
+    setCanvasItems(prev => {
+      let changed = false
+      const next = prev.map(item => {
         if (item.itemType === "panel" && item.panelId === "main") {
           const itemNoteId = getItemNoteId(item)
           if (itemNoteId === noteId) {
+            const samePosition =
+              item.position?.x === workspaceMainPosition.x &&
+              item.position?.y === workspaceMainPosition.y
+            if (samePosition) {
+              applied = true
+              return item
+            }
+            changed = true
+            applied = true
             return { ...item, position: workspaceMainPosition }
           }
         }
         return item
-      }),
-    )
-    workspaceSeedAppliedRef.current = true
+      })
+      if (changed) {
+        applied = true
+        return next
+      }
+      return prev
+    })
+    if (applied) {
+      workspaceSeededNotesRef.current.add(noteId)
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'workspace_seed_applied_from_workspace_effect',
+        metadata: {
+          noteId,
+          seedPosition: workspaceMainPosition,
+          seededNotes: Array.from(workspaceSeededNotesRef.current),
+        },
+      })
+    }
   }, [noteId, workspaceMainPosition, primaryHydrationStatus.success, getItemNoteId, canvasItems])
 
   // Enable camera persistence (debounced)
@@ -1457,6 +1549,21 @@ const mainPanelSeededRef = useRef(false)
         isNewNote
       })
       
+      // CRITICAL FIX: Use workspaceMainPosition instead of legacy {2000, 1500}
+      // This ensures provider initialization uses the computed viewport-centered position
+      const initialPosition = workspaceMainPosition ?? getDefaultMainPosition()
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'provider_init_position',
+        metadata: {
+          noteId,
+          workspaceMainPosition,
+          initialPosition,
+          isNewNote
+        }
+      })
+
       // Define default data for new notes
       const defaultData = {
         'main': {
@@ -1464,15 +1571,15 @@ const mainPanelSeededRef = useRef(false)
           type: 'main',
           content: '', // Empty content for new documents
           branches: [],
-          position: { x: 2000, y: 1500 },
+          position: initialPosition,  // Use computed position, not hardcoded legacy
           isEditable: true,
           // Mark as new to force edit mode
           isNew: isNewNote
         }
       }
-      
+
       console.log('[AnnotationCanvas] Default data for main panel:', defaultData.main)
-      
+
       // Initialize with defaults - the provider will merge with existing data if any
       // For new notes, this sets empty content
       // For existing notes, this preserves their content
@@ -1533,7 +1640,10 @@ const mainPanelSeededRef = useRef(false)
       const hasSeedPosition =
         !!workspaceMainPosition && !isDefaultOffscreenPosition(workspaceMainPosition)
       const isFreshToolbarNote = freshNoteSet.has(noteId)
-      const shouldSkipAutoCenter = isFreshToolbarNote || hasSeedPosition
+
+      // CRITICAL: Never skip auto-centering
+      // All notes should be visually centered when opened
+      const shouldSkipAutoCenter = false
 
       if (shouldSkipAutoCenter) {
         debugLog({
@@ -1809,28 +1919,34 @@ const mainPanelSeededRef = useRef(false)
     // Mark that we're restoring snapshot to prevent syncing effect from running
     isRestoringSnapshotRef.current = true
 
+    // CRITICAL FIX: Don't restore viewport from snapshot
+    // Instead, we'll auto-center the note after items are restored
+    // This ensures notes always appear visually centered when opened
     setCanvasState((prev) => ({
       ...prev,
       zoom: restoredZoom,
-      translateX: restoredTranslateX,
-      translateY: restoredTranslateY,
+      // Keep current viewport instead of restoring saved viewport
+      // translateX: restoredTranslateX,
+      // translateY: restoredTranslateY,
       showConnections:
         typeof viewport.showConnections === 'boolean' ? viewport.showConnections : prev.showConnections,
     }))
 
-    dispatch({
-      type: 'SET_CANVAS_STATE',
-      payload: {
-        translateX: restoredTranslateX,
-        translateY: restoredTranslateY,
-      },
-    })
+    // Don't dispatch viewport changes - we'll let auto-centering handle it
+    // dispatch({
+    //   type: 'SET_CANVAS_STATE',
+    //   payload: {
+    //     translateX: restoredTranslateX,
+    //     translateY: restoredTranslateY,
+    //   },
+    // })
 
-    persistCameraSnapshot({
-      x: restoredTranslateX,
-      y: restoredTranslateY,
-      zoom: restoredZoom,
-    })
+    // Don't persist camera from snapshot - viewport will be set by auto-centering
+    // persistCameraSnapshot({
+    //   x: restoredTranslateX,
+    //   y: restoredTranslateY,
+    //   zoom: restoredZoom,
+    // })
 
     // Allow syncing effect to run again after snapshot restore completes
     // Use requestAnimationFrame to ensure state updates have been processed
@@ -2001,6 +2117,40 @@ const mainPanelSeededRef = useRef(false)
     }
 
     onSnapshotSettled?.(noteId)
+
+    // AUTO-CENTER: Pan viewport to show the note visually centered
+    // Use setTimeout to ensure DOM is ready
+    setTimeout(() => {
+      const mainPanel = restoredItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
+      if (mainPanel?.position) {
+        const mainStoreKey = ensurePanelKey(noteId, 'main')
+        const panelPosition = mainPanel.position
+
+        panToPanel(
+          mainStoreKey,
+          (id) => id === mainStoreKey ? panelPosition : null,
+          {
+            x: canvasState.translateX ?? 0,
+            y: canvasState.translateY ?? 0,
+            zoom: canvasState.zoom ?? 1
+          },
+          (newState) => {
+            if (newState.x !== undefined && newState.y !== undefined) {
+              setCanvasState(prev => ({
+                ...prev,
+                translateX: newState.x!,
+                translateY: newState.y!,
+              }))
+            }
+          }
+        )
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'auto_center_on_snapshot_restore',
+          metadata: { noteId, panelPosition }
+        })
+      }
+    }, 100)
 
     return
   }, [noteId, onSnapshotLoadComplete, skipSnapshotForNote, onSnapshotSettled, activeWorkspaceVersion])
@@ -2684,7 +2834,25 @@ const mainPanelSeededRef = useRef(false)
     }
 
     autoSaveTimerRef.current = window.setTimeout(() => {
-      const dedupeResult = dedupeCanvasItems(canvasItems, { fallbackNoteId: noteId })
+      // CRITICAL FIX: Only save items belonging to THIS note
+      // Filter out items from other notes to prevent cross-contamination
+      const thisNoteItems = canvasItems.filter(item => {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId === noteId
+      })
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'snapshot_save_filter',
+        metadata: {
+          noteId,
+          totalItems: canvasItems.length,
+          thisNoteItems: thisNoteItems.length,
+          filteredOut: canvasItems.length - thisNoteItems.length
+        }
+      })
+
+      const dedupeResult = dedupeCanvasItems(thisNoteItems, { fallbackNoteId: noteId })
 
       if (dedupeResult.removedCount > 0) {
         debugLog({
@@ -2953,8 +3121,16 @@ const mainPanelSeededRef = useRef(false)
     },
     resetView: () => {
       updateCanvasTransform(prev => {
-        return { ...prev, zoom: 1, translateX: -1000, translateY: -1200 }
+        return { ...prev, zoom: 1, translateX: 0, translateY: 0 }
       })
+    },
+    getCameraState: () => {
+      // Use ref to get current value, not stale closure value
+      return {
+        translateX: canvasStateRef.current.translateX,
+        translateY: canvasStateRef.current.translateY,
+        zoom: canvasStateRef.current.zoom
+      }
     },
     panBy,
     toggleConnections: () => {
@@ -3331,9 +3507,23 @@ function PanelsRenderer({
           isNew: branch.isNew,
           isEditable: branch.isEditable
         })
-        
-        const position = branch.position || { x: 2000, y: 1500 }
+
+        // CRITICAL FIX: Use workspacePosition FIRST, before falling back to branch.position
+        // This ensures computed viewport-centered positions take priority
         const workspacePosition = resolveWorkspacePosition?.(panelNoteId) ?? null
+        const position = workspacePosition ?? branch.position ?? getDefaultMainPosition()
+
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'panel_position_resolution',
+          metadata: {
+            panelId,
+            panelNoteId,
+            branchPosition: branch.position,
+            workspacePosition,
+            finalPosition: position
+          }
+        })
         const shouldOfferRestore =
           panelId === 'main' &&
           workspacePosition &&

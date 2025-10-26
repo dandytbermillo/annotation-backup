@@ -26,6 +26,7 @@ import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 import {
   computeVisuallyCenteredWorldPosition,
   computeCenteredPositionWithDecay,
+  type RapidSequenceState,
 } from "@/lib/canvas/visual-centering"
 
 // Helper to derive display name from path when folder.name is empty
@@ -444,7 +445,17 @@ function AnnotationAppContent() {
     },
     [],
   )
-  const reopenSequenceRef = useRef<{ count: number; lastTimestamp: number }>({ count: 0, lastTimestamp: 0 })
+  const reopenSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
+  const newNoteSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
+  const [freshNoteSeeds, setFreshNoteSeeds] = useState<Record<string, { x: number; y: number }>>({})
+  const consumeFreshNoteSeed = useCallback((targetNoteId: string) => {
+    setFreshNoteSeeds(prev => {
+      if (!prev[targetNoteId]) return prev
+      const next = { ...prev }
+      delete next[targetNoteId]
+      return next
+    })
+  }, [])
   const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
   const [mainOnlyNotes, setMainOnlyNotes] = useState<string[]>([])
   const requestMainOnlyNote = useCallback((noteId: string) => {
@@ -1312,7 +1323,9 @@ const initialWorkspaceSyncRef = useRef(false)
       metadata: {
         noteId,
         activeNoteId,
-        isReselect: noteId === activeNoteId
+        isReselect: noteId === activeNoteId,
+        source: options?.source,
+        hasOptions: !!options
       }
     })
 
@@ -1378,21 +1391,85 @@ const initialWorkspaceSyncRef = useRef(false)
     // Different note - ensure it's marked open and marked as focused
     setSkipSnapshotForNote(noteId)
     const alreadyOpen = openNotes.some(open => open.noteId === noteId)
+
+    // CRITICAL FIX (infinite-canvas approach): Separate new note creation from reopening
+    // NEW NOTES: Always compute fresh viewport-centered position (NO CACHING)
+    // EXISTING NOTES: Look up persisted position from database
+    const hasExplicitPosition = Boolean(options?.initialPosition)
+    let resolvedPosition = options?.initialPosition ?? null
+
+    if (isToolbarCreation && !hasExplicitPosition) {
+      // NEW NOTE: Compute viewport-centered position using simple, direct formula
+      // This is the infinite-canvas approach - no caching, no async lookups
+      const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_camera_state',
+        metadata: {
+          noteId,
+          currentCamera,
+          canvasState,
+          hasGetCameraState: !!canvasRef.current?.getCameraState
+        }
+      })
+
+      // Get viewport center in screen coordinates
+      const viewportCenterX = typeof window !== 'undefined' ? window.innerWidth / 2 : 960
+      const viewportCenterY = typeof window !== 'undefined' ? window.innerHeight / 2 : 540
+
+      // Convert to world coordinates accounting for camera transform
+      // Formula: worldX = (screenX - cameraX) / zoom
+      const PANEL_WIDTH = 500
+      const PANEL_HEIGHT = 400
+      const worldX = (viewportCenterX - (currentCamera.translateX ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_WIDTH / 2
+      const worldY = (viewportCenterY - (currentCamera.translateY ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_HEIGHT / 2
+
+      resolvedPosition = { x: worldX, y: worldY }
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_viewport_centered',
+        metadata: {
+          noteId,
+          viewportCenter: { x: viewportCenterX, y: viewportCenterY },
+          camera: currentCamera,
+          worldPosition: resolvedPosition,
+          formula: `x = (${viewportCenterX} - ${currentCamera.translateX ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_WIDTH / 2}`,
+          formulaY: `y = (${viewportCenterY} - ${currentCamera.translateY ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_HEIGHT / 2}`
+        }
+      })
+
+      // DO NOT cache this position - use it immediately
+    } else if (!hasExplicitPosition && !alreadyOpen) {
+      // EXISTING NOTE: Look up persisted position
+      const persistedPosition = resolveMainPanelPosition(noteId)
+      resolvedPosition = persistedPosition ?? null
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'existing_note_persisted_position',
+        metadata: {
+          noteId,
+          persistedPosition: resolvedPosition
+        }
+      })
+    }
+
     if (!alreadyOpen) {
-      const hasExplicitPosition = Boolean(options?.initialPosition)
-      const persistedPosition = hasExplicitPosition ? null : resolveMainPanelPosition(noteId)
-      let resolvedPosition = options?.initialPosition ?? persistedPosition ?? null
 
       const shouldCenterExisting =
         CENTER_EXISTING_NOTES_ENABLED && !isToolbarCreation && !hasExplicitPosition
 
       let usedCenteredOverride = false
       if (shouldCenterExisting) {
+        // Get current camera state directly from canvas ref to avoid stale React state
+        const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
         const centeredCandidate = computeVisuallyCenteredWorldPosition(
           {
-            translateX: canvasState.translateX,
-            translateY: canvasState.translateY,
-            zoom: canvasState.zoom,
+            translateX: currentCamera.translateX,
+            translateY: currentCamera.translateY,
+            zoom: currentCamera.zoom,
           },
           reopenSequenceRef.current,
           lastCanvasInteractionRef.current,
@@ -1411,6 +1488,7 @@ const initialWorkspaceSyncRef = useRef(false)
         }
 
         if (usedCenteredOverride) {
+          const persistedPosition = resolveMainPanelPosition(noteId)
           debugLog({
             component: "AnnotationApp",
             action: "open_note_centered_override",
@@ -1428,6 +1506,18 @@ const initialWorkspaceSyncRef = useRef(false)
       }
 
       const skipPersistPosition = false
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'calling_openWorkspaceNote',
+        metadata: {
+          noteId,
+          resolvedPosition,
+          isToolbarCreation,
+          hasExplicitPosition
+        }
+      })
+
       void openWorkspaceNote(noteId, {
         persist: true,
         mainPosition: resolvedPosition ?? undefined,
@@ -2478,6 +2568,8 @@ const handleCenterNote = useCallback(
                   noteIds={openNotes.map(note => note.noteId)}
                   primaryNoteId={activeNoteId ?? openNotes[0].noteId}
                   ref={canvasRef}
+                  freshNoteSeeds={freshNoteSeeds}
+                  onConsumeFreshNoteSeed={consumeFreshNoteSeed}
                   isNotesExplorerOpen={false}
                   freshNoteIds={freshNoteIds}
                   onFreshNoteHydrated={handleFreshNoteHydrated}

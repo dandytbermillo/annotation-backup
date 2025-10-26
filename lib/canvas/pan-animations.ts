@@ -10,7 +10,7 @@
 import { debugLog } from "@/lib/utils/debug-logger"
 
 // TEMPORARY: Disable all automatic panning to debug panel movement issue
-const DISABLE_AUTO_PAN = true
+const DISABLE_AUTO_PAN = false // Re-enabled for visual centering feature
 
 export interface ViewportState {
   x: number
