@@ -816,13 +816,17 @@ const mainPanelSeededRef = useRef(false)
   const cameraUserId = useCameraUserId()
 
   // Hydrate canvas state on mount (panels + camera)
+  // Skip camera restore for centered existing notes (main-only mode)
+  const skipCameraRestore = mainOnlyNoteSet.has(noteId)
+
   const primaryHydrationStatus = useCanvasHydration({
     noteId,
     userId: cameraUserId ?? undefined,
     dataStore,
     branchesMap,
     layerManager: layerManagerApi.manager,
-    enabled: Boolean(noteId)
+    enabled: Boolean(noteId),
+    skipCameraRestore
   })
 
   // CRITICAL FIX: Track initial hydration PER NOTE (not per component)

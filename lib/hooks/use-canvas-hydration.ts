@@ -161,6 +161,8 @@ export interface HydrationOptions {
   enabled?: boolean
   /** Workspace version used to validate local snapshot caches */
   workspaceVersion?: number
+  /** Skip restoring camera state (for centered existing notes) */
+  skipCameraRestore?: boolean
 }
 
 export interface HydrationStatus {
@@ -202,7 +204,8 @@ export function useCanvasHydration(options: HydrationOptions) {
     branchesMap,
     layerManager,
     enabled = true,
-    workspaceVersion
+    workspaceVersion,
+    skipCameraRestore = false
   } = options
 
   const { state, dispatch } = useCanvas()
@@ -751,8 +754,20 @@ export function useCanvasHydration(options: HydrationOptions) {
       })
 
       // Apply camera to canvas context only if server camera is newer than local snapshot
-      if (cameraResult && shouldApplyServerCamera) {
+      // SKIP if skipCameraRestore is true (for centered existing notes)
+      if (cameraResult && shouldApplyServerCamera && !skipCameraRestore) {
         applyCameraState(cameraResult.camera)
+        debugLog({
+          component: 'CanvasHydration',
+          action: 'applied_camera_state',
+          metadata: { camera: cameraResult.camera }
+        })
+      } else if (skipCameraRestore) {
+        debugLog({
+          component: 'CanvasHydration',
+          action: 'skipped_camera_restore',
+          metadata: { reason: 'centered_existing_note' }
+        })
       }
 
       // Load panel layout (don't check abort until after both camera and panels are loaded)

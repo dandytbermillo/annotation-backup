@@ -25,7 +25,6 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 import {
   computeVisuallyCenteredWorldPosition,
-  computeCenteredPositionWithDecay,
   type RapidSequenceState,
 } from "@/lib/canvas/visual-centering"
 
@@ -1465,6 +1464,20 @@ const initialWorkspaceSyncRef = useRef(false)
       if (shouldCenterExisting) {
         // Get current camera state directly from canvas ref to avoid stale React state
         const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centering_camera_state',
+          metadata: {
+            noteId,
+            currentCamera,
+            canvasState,
+            hasGetCameraState: !!canvasRef.current?.getCameraState
+          }
+        })
+
+        // EXISTING NOTES: Always use viewport center (null = use viewport center)
+        // Don't use lastCanvasInteractionRef because we want screen center, not last click position
         const centeredCandidate = computeVisuallyCenteredWorldPosition(
           {
             translateX: currentCamera.translateX,
@@ -1472,19 +1485,31 @@ const initialWorkspaceSyncRef = useRef(false)
             zoom: currentCamera.zoom,
           },
           reopenSequenceRef.current,
-          lastCanvasInteractionRef.current,
+          null,  // Force viewport center, ignore last interaction
         )
 
-        if (centeredCandidate && resolvedPosition) {
-          resolvedPosition = computeCenteredPositionWithDecay(
-            resolvedPosition,
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centered_candidate',
+          metadata: {
+            noteId,
             centeredCandidate,
-            lastCanvasInteractionRef.current,
-          )
-          usedCenteredOverride = true
-        } else if (centeredCandidate && !resolvedPosition) {
+            lastInteraction: lastCanvasInteractionRef.current,
+            sequenceCount: reopenSequenceRef.current.count
+          }
+        })
+
+        // Use pure centered position (100%) - same behavior as new notes
+        if (centeredCandidate) {
           resolvedPosition = centeredCandidate
           usedCenteredOverride = true
+
+          // CRITICAL: Store in freshNoteSeeds so canvas gets position BEFORE first paint
+          // This prevents the panel from appearing elsewhere and then moving
+          setFreshNoteSeeds(prev => ({
+            ...prev,
+            [noteId]: centeredCandidate
+          }))
         }
 
         if (usedCenteredOverride) {
@@ -1496,6 +1521,7 @@ const initialWorkspaceSyncRef = useRef(false)
               noteId,
               persistedPosition,
               centeredPosition: resolvedPosition,
+              storedInFreshNoteSeeds: true
             },
           })
         }
