@@ -36,6 +36,18 @@ export interface Branch {
   branches?: string[]
   parentId?: string
   position: { x: number; y: number }
+
+  // NEW: Unified dimensions (preferred going forward)
+  // Defaults: 520×440 (DEFAULT_PANEL_DIMENSIONS)
+  // Database default: 400×300
+  // Type-specific widths: note=380, explore=500, promote=550, main=600
+  dimensions?: { width: number; height: number }
+
+  // DEPRECATED: Legacy width prop (kept for backward compatibility)
+  // Use dimensions.width instead in new code
+  // @deprecated Use dimensions.width instead
+  width?: number
+
   isEditable: boolean
   originalText?: string
 }

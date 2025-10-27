@@ -10,6 +10,7 @@ import type { TiptapEditorHandle } from './tiptap-editor-collab'
 import type * as Y from 'yjs'
 import { v4 as uuidv4 } from "uuid"
 import { createAnnotationBranch, getDefaultPanelWidth } from "@/lib/models/annotation"
+import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
@@ -38,9 +39,16 @@ const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr
 const CORE_ANNOTATION_TYPES = ['note', 'explore', 'promote'] as const
 type CoreAnnotationType = typeof CORE_ANNOTATION_TYPES[number]
 
+// Resize direction types
+type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
 function isCoreAnnotationType(value: string): value is CoreAnnotationType {
   return CORE_ANNOTATION_TYPES.includes(value as CoreAnnotationType)
 }
+
+// Minimum panel dimensions for resize
+const MIN_PANEL_WIDTH = 300
+const MIN_PANEL_HEIGHT = 200
 
 // Track which panel is currently being dragged globally
 let globalDraggingPanelId: string | null = null
@@ -129,6 +137,25 @@ export function CanvasPanel({
   const toolsDropdownRef = useRef<HTMLDivElement>(null)
   const showToolsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const hideToolsTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Resize state management
+  const [isResizing, setIsResizing] = useState(false)
+  const [resizeDirection, setResizeDirection] = useState<string | null>(null)
+  const [resizeStart, setResizeStart] = useState({
+    mouseX: 0,
+    mouseY: 0,
+    width: 0,
+    height: 0,
+    x: 0,
+    y: 0
+  })
+  // Use refs for resize feedback (avoids re-triggering useEffect during drag)
+  const currentResizeDimensionsRef = useRef<{width: number, height: number} | null>(null)
+  const currentResizePositionRef = useRef<{x: number, y: number} | null>(null)
+  // State version for triggering re-renders (updated less frequently)
+  const [resizeRenderTrigger, setResizeRenderTrigger] = useState(0)
+  // Show resize handles only when hovering near edges or actively resizing
+  const [showResizeHandles, setShowResizeHandles] = useState(false)
 
   // Close Tools dropdown when clicking outside
   useEffect(() => {
@@ -1261,9 +1288,19 @@ export function CanvasPanel({
   })
 
   // Calculate panel width based on type (if not explicitly provided)
-  const panelWidth = width ?? getDefaultPanelWidth(
+  // Priority: currentResizeDimensionsRef (during active resize) > currentBranch.dimensions (from dataStore) > width prop > default
+  // CRITICAL: Use currentBranch (from dataStore) NOT branch (prop) to avoid stale prop causing shrink on release
+  const panelWidth = currentResizeDimensionsRef.current?.width ?? currentBranch.dimensions?.width ?? width ?? getDefaultPanelWidth(
     currentBranch.type === 'main' ? 'main' : (currentBranch.type as 'note' | 'explore' | 'promote')
   )
+
+  // Calculate effective panel height
+  // Priority: currentResizeDimensionsRef (during active resize) > currentBranch.dimensions (from dataStore) > panelHeight state
+  // CRITICAL: Use currentBranch (from dataStore) NOT branch (prop) to avoid stale prop causing shrink on release
+  const effectivePanelHeight = currentResizeDimensionsRef.current?.height ?? currentBranch.dimensions?.height ?? panelHeight
+
+  // Calculate effective render position - use currentResizePositionRef during active resize
+  const effectiveRenderPosition = currentResizePositionRef.current ?? renderPosition
 
   // Generate title for branch panels if not set
   const getPanelTitle = () => {
@@ -1597,6 +1634,436 @@ export function CanvasPanel({
       console.error('[CanvasPanel] Failed to fetch folders:', error)
     }
   }, [])
+
+  // Resize mousedown handler
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent, direction: ResizeDirection) => {
+    e.stopPropagation()
+    e.preventDefault()
+
+    // CRITICAL: Get fresh branch from dataStore, not stale prop
+    // Using branch (prop) causes jumping on subsequent resizes because it lags behind dataStore by 1-2 render cycles
+    const currentBranch = dataStore.get(storeKey) ?? branch
+
+    // Get current dimensions from fresh dataStore branch or use defaults
+    const currentWidth = currentBranch.dimensions?.width ?? DEFAULT_PANEL_DIMENSIONS.width
+    const currentHeight = currentBranch.dimensions?.height ?? DEFAULT_PANEL_DIMENSIONS.height
+
+    // Set cursor for entire document during resize
+    const cursorMap: Record<ResizeDirection, string> = {
+      'n': 'ns-resize',
+      's': 'ns-resize',
+      'e': 'ew-resize',
+      'w': 'ew-resize',
+      'ne': 'nesw-resize',
+      'nw': 'nwse-resize',
+      'se': 'nwse-resize',
+      'sw': 'nesw-resize'
+    }
+    document.body.style.cursor = cursorMap[direction] || 'default'
+
+    // CRITICAL: Attach synchronous fallback cleanup to prevent cursor race
+    // If user releases before useEffect attaches the main listener, this ensures cursor is reset
+    const emergencyCursorCleanup = () => {
+      document.body.style.cursor = ''
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'resize_emergency_cursor_cleanup',
+        metadata: { panelId, triggeredBy: 'synchronous_fallback' }
+      })
+    }
+    // FIXED: Changed from window to document for consistency with main listener (line 2044)
+    document.addEventListener('mouseup', emergencyCursorCleanup, { once: true, capture: true })
+
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'resize_mousedown_triggered',
+      metadata: {
+        panelId,
+        noteId: effectiveNoteId,
+        direction,
+        cursorSet: cursorMap[direction],
+        currentDimensions: currentBranch.dimensions,
+        fallbackDimensions: { width: currentWidth, height: currentHeight },
+        staleBranchDimensions: branch.dimensions,
+        currentPosition: position,
+        mousePosition: { x: e.clientX, y: e.clientY },
+        zoom: state.canvasState.zoom,
+        emergencyCleanupAttached: true
+      }
+    })
+
+    setIsResizing(true)
+    setResizeDirection(direction)
+
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'resize_state_set',
+      metadata: {
+        panelId,
+        isResizing: true,
+        direction,
+        resizeStartState: {
+          mouseX: e.clientX,
+          mouseY: e.clientY,
+          width: currentWidth,
+          height: currentHeight,
+          x: position.x,
+          y: position.y
+        }
+      }
+    })
+
+    setResizeStart({
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      width: currentWidth,
+      height: currentHeight,
+      x: position.x,
+      y: position.y
+    })
+  }, [branch.dimensions, position, panelId, effectiveNoteId, state.canvasState.zoom])
+
+  // Store refs for values that change but shouldn't retrigger useEffect
+  const zoomRef = useRef(state.canvasState.zoom)
+  const dataStoreRef = useRef(dataStore)
+  const persistPanelUpdateRef = useRef(persistPanelUpdate)
+  const storeKeyRef = useRef(storeKey)
+  const branchRef = useRef(branch)
+  const resizeStartRef = useRef(resizeStart)
+  const resizeDirectionRef = useRef(resizeDirection)
+
+  // Update refs on every render
+  useEffect(() => {
+    zoomRef.current = state.canvasState.zoom
+    dataStoreRef.current = dataStore
+    persistPanelUpdateRef.current = persistPanelUpdate
+    storeKeyRef.current = storeKey
+    branchRef.current = branch
+    resizeStartRef.current = resizeStart
+    resizeDirectionRef.current = resizeDirection
+  })
+
+  // Resize mousemove and mouseup handlers - ONLY re-run when isResizing changes
+  useEffect(() => {
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'resize_useEffect_triggered',
+      metadata: {
+        panelId,
+        isResizing,
+        resizeDirection,
+        hasResizeStart: !!resizeStart
+      }
+    })
+
+    if (!isResizing || !resizeDirection) {
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'resize_useEffect_early_return',
+        metadata: {
+          panelId,
+          isResizing,
+          resizeDirection,
+          reason: 'not_resizing_or_no_direction'
+        }
+      })
+      return
+    }
+
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'resize_listeners_attaching',
+      metadata: {
+        panelId,
+        resizeDirection,
+        resizeStart
+      }
+    })
+
+    let animationFrameId: number
+    let mouseMoveCount = 0
+
+    const handleMouseMove = (e: MouseEvent) => {
+      e.preventDefault()
+
+      // Cancel previous animation frame if still pending
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId)
+      }
+
+      // Use RAF for smooth 60fps updates
+      animationFrameId = requestAnimationFrame(() => {
+        mouseMoveCount++
+
+        // Use refs for current values (don't trigger useEffect re-run)
+        const currentZoom = zoomRef.current
+        const currentResizeStart = resizeStartRef.current
+        const currentResizeDirection = resizeDirectionRef.current
+
+        // Calculate mouse delta in world coordinates (accounting for zoom)
+        const dx = (e.clientX - currentResizeStart.mouseX) / currentZoom
+        const dy = (e.clientY - currentResizeStart.mouseY) / currentZoom
+
+        // Log every 10th mouse move to avoid flooding
+        if (mouseMoveCount % 10 === 1) {
+          debugLog({
+            component: 'CanvasPanel',
+            action: 'resize_mousemove',
+            metadata: {
+              panelId,
+              mousePosition: { x: e.clientX, y: e.clientY },
+              deltas: { dx, dy },
+              zoom: state.canvasState.zoom,
+              resizeStart,
+              moveCount: mouseMoveCount
+            }
+          })
+        }
+
+        // Null check for safety
+        if (!currentResizeDirection) return
+
+        // Initialize new dimensions and position from refs
+        let newWidth = currentResizeStart.width
+        let newHeight = currentResizeStart.height
+        let newX = currentResizeStart.x
+        let newY = currentResizeStart.y
+
+        // Calculate based on resize direction from ref
+        if (currentResizeDirection.includes('e')) {
+          // East: expand/contract right edge
+          newWidth = Math.max(MIN_PANEL_WIDTH, currentResizeStart.width + dx)
+        }
+        if (currentResizeDirection.includes('w')) {
+          // West: expand/contract left edge (requires position shift)
+          const candidateWidth = currentResizeStart.width - dx
+          if (candidateWidth >= MIN_PANEL_WIDTH) {
+            newWidth = candidateWidth
+            newX = currentResizeStart.x + dx
+          } else {
+            newWidth = MIN_PANEL_WIDTH
+            newX = currentResizeStart.x + (currentResizeStart.width - MIN_PANEL_WIDTH)
+          }
+        }
+        if (currentResizeDirection.includes('s')) {
+          // South: expand/contract bottom edge
+          newHeight = Math.max(MIN_PANEL_HEIGHT, currentResizeStart.height + dy)
+        }
+        if (currentResizeDirection.includes('n')) {
+          // North: expand/contract top edge (requires position shift)
+          const candidateHeight = currentResizeStart.height - dy
+          if (candidateHeight >= MIN_PANEL_HEIGHT) {
+            newHeight = candidateHeight
+            newY = currentResizeStart.y + dy
+          } else {
+            newHeight = MIN_PANEL_HEIGHT
+            newY = currentResizeStart.y + (currentResizeStart.height - MIN_PANEL_HEIGHT)
+          }
+        }
+
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'resize_dimensions_calculated',
+          metadata: {
+            panelId,
+            direction: currentResizeDirection,
+            newDimensions: { width: newWidth, height: newHeight },
+            newPosition: { x: newX, y: newY },
+            oldDimensions: branchRef.current.dimensions,
+            oldPosition: branchRef.current.position
+          }
+        })
+
+        // Update refs immediately (no re-render, no useEffect re-run)
+        currentResizeDimensionsRef.current = { width: newWidth, height: newHeight }
+        currentResizePositionRef.current = { x: newX, y: newY }
+
+        // Trigger re-render on every RAF for smooth visual update (~30fps)
+        // RAF itself is already throttled by the browser to ~30-60fps
+        // React can easily handle 30 renders/sec for dimension updates
+        setResizeRenderTrigger(prev => prev + 1)
+
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'resize_refs_updated',
+          metadata: {
+            panelId,
+            direction: currentResizeDirection,
+            newDimensions: { width: newWidth, height: newHeight },
+            newPosition: { x: newX, y: newY },
+            triggeredRender: true
+          }
+        })
+      })
+    }
+
+    const handleMouseUp = (e: MouseEvent) => {
+      // CRITICAL: Cancel any pending RAF immediately to prevent race condition
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId)
+      }
+
+      // Get current values from refs
+      const currentZoom = zoomRef.current
+      const currentResizeStart = resizeStartRef.current
+      const currentResizeDirection = resizeDirectionRef.current
+      const currentBranch = branchRef.current
+      const currentStoreKey = storeKeyRef.current
+      const currentDataStore = dataStoreRef.current
+      const currentPersistPanelUpdate = persistPanelUpdateRef.current
+
+      // Recalculate dimensions from EXACT mouse release position (not refs!)
+      // This ensures we persist exactly what user saw when they released
+      const dx = (e.clientX - currentResizeStart.mouseX) / currentZoom
+      const dy = (e.clientY - currentResizeStart.mouseY) / currentZoom
+
+      let finalWidth = currentResizeStart.width
+      let finalHeight = currentResizeStart.height
+      let finalX = currentResizeStart.x
+      let finalY = currentResizeStart.y
+
+      if (currentResizeDirection) {
+        if (currentResizeDirection.includes('e')) {
+          finalWidth = Math.max(MIN_PANEL_WIDTH, currentResizeStart.width + dx)
+        }
+        if (currentResizeDirection.includes('w')) {
+          const candidateWidth = currentResizeStart.width - dx
+          if (candidateWidth >= MIN_PANEL_WIDTH) {
+            finalWidth = candidateWidth
+            finalX = currentResizeStart.x + dx
+          } else {
+            finalWidth = MIN_PANEL_WIDTH
+            finalX = currentResizeStart.x + (currentResizeStart.width - MIN_PANEL_WIDTH)
+          }
+        }
+        if (currentResizeDirection.includes('s')) {
+          finalHeight = Math.max(MIN_PANEL_HEIGHT, currentResizeStart.height + dy)
+        }
+        if (currentResizeDirection.includes('n')) {
+          const candidateHeight = currentResizeStart.height - dy
+          if (candidateHeight >= MIN_PANEL_HEIGHT) {
+            finalHeight = candidateHeight
+            finalY = currentResizeStart.y + dy
+          } else {
+            finalHeight = MIN_PANEL_HEIGHT
+            finalY = currentResizeStart.y + (currentResizeStart.height - MIN_PANEL_HEIGHT)
+          }
+        }
+      }
+
+      const finalDimensions = { width: finalWidth, height: finalHeight }
+      const finalPosition = { x: finalX, y: finalY }
+
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'resize_mouseup',
+        metadata: {
+          panelId,
+          mousePosition: { x: e.clientX, y: e.clientY },
+          calculatedFromMouseup: true,
+          finalDimensions,
+          finalPosition,
+          refDimensions: currentResizeDimensionsRef.current,
+          staleBranchDimensions: currentBranch.dimensions,
+          staleBranchPosition: currentBranch.position
+        }
+      })
+
+      // Update dataStore with final dimensions and position
+      if (finalDimensions && finalPosition) {
+        const updatedBranch: Branch = {
+          ...currentBranch,
+          dimensions: finalDimensions,
+          position: finalPosition
+        }
+        currentDataStore.set(currentStoreKey, updatedBranch)
+
+        // Update renderPosition state so it persists after resize ends
+        setRenderPosition(finalPosition)
+
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'resize_datastore_committed',
+          metadata: {
+            panelId,
+            storeKey: currentStoreKey,
+            finalDimensions,
+            finalPosition
+          }
+        })
+
+        // Persist to database
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'resize_persisting',
+          metadata: {
+            panelId,
+            storeKey: currentStoreKey,
+            size: finalDimensions,
+            position: finalPosition,
+            coordinateSpace: 'world'
+          }
+        })
+        currentPersistPanelUpdate({
+          panelId: panelId,
+          storeKey: currentStoreKey,
+          size: finalDimensions,
+          position: finalPosition,
+          coordinateSpace: 'world'
+        })
+      }
+
+      // Clear resize state and refs
+      setIsResizing(false)
+      setResizeDirection(null)
+      currentResizeDimensionsRef.current = null
+      currentResizePositionRef.current = null
+      setResizeRenderTrigger(0)
+
+      // Reset cursor to default
+      document.body.style.cursor = ''
+
+      debugLog({
+        component: 'CanvasPanel',
+        action: 'resize_state_cleared',
+        metadata: {
+          panelId,
+          isResizing: false,
+          resizeDirection: null,
+          clearedRefs: true,
+          cursorReset: true
+        }
+      })
+
+      // RAF already canceled at start of function to prevent race condition
+    }
+
+    // Attach global listeners
+    debugLog({
+      component: 'CanvasPanel',
+      action: 'resize_listeners_attached',
+      metadata: {
+        panelId,
+        resizeDirection,
+        timestamp: Date.now()
+      }
+    })
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId)
+      }
+    }
+  }, [
+    isResizing,  // Only re-run when resize starts/stops
+    panelId      // Panel identity (stable)
+    // All other values accessed via refs - NO re-runs during drag
+  ])
 
   // Create new folder (from notes-explorer)
   const createSaveAsFolder = async (folderName: string, parentId?: string) => {
@@ -2140,9 +2607,10 @@ export function CanvasPanel({
       dragState.current.pointerDelta = { x: 0, y: 0 }
       dragState.current.autoScrollOffset = { x: 0, y: 0 }
       
-      // Reset cursor
+      // Reset cursor (both body and panel - must match what was set in mousedown)
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
+      panel.style.cursor = ''
 
       if (event instanceof MouseEvent) {
         event.preventDefault()
@@ -2652,10 +3120,10 @@ export function CanvasPanel({
       }}
       style={{
         position: 'absolute',
-        left: renderPosition.x + 'px',
-        top: renderPosition.y + 'px',
+        left: effectiveRenderPosition.x + 'px',
+        top: effectiveRenderPosition.y + 'px',
         width: `${panelWidth}px`,
-        height: `${panelHeight}px`,
+        height: `${effectivePanelHeight}px`,
         maxHeight: isPanelHeightExpanded ? 'none' : '80vh',
         background: isIsolated ? '#fff5f5' : 'white',
         borderRadius: '16px',
@@ -3285,6 +3753,115 @@ export function CanvasPanel({
         border: '3px solid white',
         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
       }} />
+
+      {/* Resize Handles - Available for all panels */}
+      {(() => {
+        debugLog({
+          component: 'CanvasPanel',
+          action: 'resize_handles_rendered',
+          metadata: {
+            panelId,
+            isResizing,
+            resizeDirection,
+            panelType: branch.type
+          }
+        })
+        return (
+        <>
+          {/* Southeast Handle (bottom-right corner) */}
+          <div
+            className="resize-handle resize-handle-se"
+            style={{
+              position: 'absolute',
+              bottom: -6,
+              right: -6,
+              width: 20,
+              height: 20,
+              backgroundColor: '#3b82f6',
+              border: '2px solid #1e40af',
+              borderRadius: '2px',
+              cursor: 'nwse-resize',
+              zIndex: 1000,
+              opacity: isResizing && resizeDirection === 'se' ? 0.8 : 1,
+              transition: 'background-color 0.15s ease, opacity 0.1s ease',
+            }}
+            onMouseDown={(e) => handleResizeMouseDown(e, 'se')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+            title="Resize panel (drag corner)"
+          />
+
+          {/* Southwest Handle (bottom-left corner) */}
+          <div
+            className="resize-handle resize-handle-sw"
+            style={{
+              position: 'absolute',
+              bottom: -6,
+              left: -6,
+              width: 20,
+              height: 20,
+              backgroundColor: '#3b82f6',
+              border: '2px solid #1e40af',
+              borderRadius: '2px',
+              cursor: 'nesw-resize',
+              zIndex: 1000,
+              opacity: isResizing && resizeDirection === 'sw' ? 0.8 : 1,
+              transition: 'background-color 0.15s ease, opacity 0.1s ease',
+            }}
+            onMouseDown={(e) => handleResizeMouseDown(e, 'sw')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+            title="Resize panel (drag corner)"
+          />
+
+          {/* Northeast Handle (top-right corner) */}
+          <div
+            className="resize-handle resize-handle-ne"
+            style={{
+              position: 'absolute',
+              top: -6,
+              right: -6,
+              width: 20,
+              height: 20,
+              backgroundColor: '#3b82f6',
+              border: '2px solid #1e40af',
+              borderRadius: '2px',
+              cursor: 'nesw-resize',
+              zIndex: 1000,
+              opacity: isResizing && resizeDirection === 'ne' ? 0.8 : 1,
+              transition: 'background-color 0.15s ease, opacity 0.1s ease',
+            }}
+            onMouseDown={(e) => handleResizeMouseDown(e, 'ne')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+            title="Resize panel (drag corner)"
+          />
+
+          {/* Northwest Handle (top-left corner) */}
+          <div
+            className="resize-handle resize-handle-nw"
+            style={{
+              position: 'absolute',
+              top: -6,
+              left: -6,
+              width: 20,
+              height: 20,
+              backgroundColor: '#3b82f6',
+              border: '2px solid #1e40af',
+              borderRadius: '2px',
+              cursor: 'nwse-resize',
+              zIndex: 1000,
+              opacity: isResizing && resizeDirection === 'nw' ? 0.8 : 1,
+              transition: 'background-color 0.15s ease, opacity 0.1s ease',
+            }}
+            onMouseDown={(e) => handleResizeMouseDown(e, 'nw')}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2563eb')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#3b82f6')}
+            title="Resize panel (drag corner)"
+          />
+        </>
+        )
+      })()}
 
     </div>
 

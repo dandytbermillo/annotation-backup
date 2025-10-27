@@ -8,6 +8,7 @@
  */
 
 import type { PlainAnchor } from '../utils/text-anchoring'
+import { DEFAULT_PANEL_DIMENSIONS } from '../canvas/panel-metrics'
 
 /**
  * Annotation Type
@@ -50,6 +51,7 @@ export interface AnnotationBranch {
   metadata: Record<string, any>
   branches: string[]  // Child branch IDs
   position: { x: number; y: number }
+  dimensions?: { width: number; height: number }  // Panel dimensions for resize feature
   isEditable: boolean
   created_at: Date
   updated_at: Date
@@ -183,6 +185,10 @@ export function createAnnotationBranch(
     },
     branches: [],
     position,
+    dimensions: {
+      width: DEFAULT_PANEL_DIMENSIONS.width,
+      height: DEFAULT_PANEL_DIMENSIONS.height
+    },
     isEditable: true
   }
 }

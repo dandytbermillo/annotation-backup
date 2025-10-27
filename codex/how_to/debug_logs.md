@@ -6,7 +6,7 @@ This guide explains how the Next.js app records diagnostic events in Postgres an
 
 The debug infrastructure ships with migrations that create and maintain the table:
 
-- `migrations/007_debug_logs.up.sql` — creates the `debug_logs` table, indexes, and a cleanup function that trims rows older than 24 hours.
+- `migrations/007_debug_logs.up.sql` — creates the `debug_logs` table, indexes, and a cleanup function that trims rows older a 24 hours.
 - `migrations/019_fix_debug_logs_trigger.up.sql` — adjusts the `debug_logs_ws_guard` trigger so `workspace_id` stays consistent when `note_id` is supplied (and tolerates `NULL` note IDs).
 
 If you are setting up a fresh environment, run the project’s migration workflow so these files execute (for local development we use the `annotation_dev` database). After migrations, confirm the table is present:
