@@ -362,7 +362,8 @@ ORDER BY created_at DESC LIMIT 10;
 1. **New notes centering:** `docs/proposal/canvas_state_persistence/plan/new_note_centered/implementation_plan.md`
 2. **Three bugs fix:** `docs/proposal/canvas_state_persistence/fixing_doc/2025-10-26-FINAL-FIX-hardcoded-legacy-positions.md`
 3. **Camera restore fix:** `2025-10-26-pure-centering-implementation.md` (this directory)
-4. **Original proposal:** This file (original plan from 2025-10-24)
+4. **App reload fix:** `2025-10-27-visibility-based-centering-plan.md` (this directory) - **NEW**
+5. **Original proposal:** This file (original plan from 2025-10-24)
 
 ---
 
@@ -373,11 +374,33 @@ ORDER BY created_at DESC LIMIT 10;
 3. **freshNoteSeeds usage:** Store centered position before canvas renders
 4. **Skip camera restoration:** Don't restore old camera position for centered notes
 5. **Fix branch following:** Only use workspace position for main panel, not branches
+6. **App reload fix (2025-10-27):** Visibility-based centering - only center if note is NOT visible in viewport
 
-**Result:** Existing notes appear centered in viewport, canvas stays still, branches maintain their positions independently.
+**Result:** Existing notes appear centered when opened, canvas stays still, branches maintain their positions independently, and app reload preserves exact camera position when notes are visible.
 
 ---
 
-**Last Updated:** 2025-10-26
+## Post-Implementation Fix: App Reload Centering (2025-10-27)
+
+### Issue
+After implementing visual centering for existing notes, a new issue was discovered: **app reload caused unwanted camera movement** even when notes were already visible in the viewport. The AUTO-CENTER block was running unconditionally on every snapshot restoration.
+
+### Solution
+Implemented visibility-based centering with three-part fix:
+1. **Visibility helper function:** `isPanelVisibleInViewport()` checks if panel intersects with viewport
+2. **Conditional camera restoration:** Restore camera from snapshot for reload/tab switch, skip for newly opened notes
+3. **Visibility-aware AUTO-CENTER:** Only center if note is newly opened OR not visible in viewport
+
+### Result (Verified 2025-10-27)
+- ✅ App reload preserves exact camera position (no unwanted movement)
+- ✅ Notes still center correctly when opened from Recents/search
+- ✅ Off-screen notes get centered on reload (helpful behavior)
+- ✅ Debug logs confirm visibility checks working correctly
+
+**Implementation Details:** See `2025-10-27-visibility-based-centering-plan.md`
+
+---
+
+**Last Updated:** 2025-10-27
 **Owner:** Canvas Platform Team
-**Status:** Implementation Complete, User Verified
+**Status:** Implementation Complete, User Verified (includes app reload fix)

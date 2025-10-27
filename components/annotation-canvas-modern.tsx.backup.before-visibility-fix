@@ -160,38 +160,6 @@ const isDefaultMainPosition = (position: { x: number; y: number } | null | undef
   return matchesCurrent || matchesLegacy
 }
 
-/**
- * Check if a panel is visible in the current viewport
- * A panel is considered visible if any part of it intersects with the viewport
- *
- * @param panelPosition - Panel world coordinates {x, y}
- * @param panelDimensions - Panel size {width, height}
- * @param camera - Current camera state {translateX, translateY, zoom}
- * @returns true if any part of panel is visible in viewport
- */
-const isPanelVisibleInViewport = (
-  panelPosition: { x: number; y: number },
-  panelDimensions: { width: number; height: number },
-  camera: { translateX: number; translateY: number; zoom: number }
-): boolean => {
-  if (typeof window === 'undefined') return false
-
-  const viewportWidth = window.innerWidth
-  const viewportHeight = window.innerHeight
-
-  // Convert panel world coordinates to screen coordinates
-  const panelScreenX = (panelPosition.x + camera.translateX) * camera.zoom
-  const panelScreenY = (panelPosition.y + camera.translateY) * camera.zoom
-  const panelScreenWidth = panelDimensions.width * camera.zoom
-  const panelScreenHeight = panelDimensions.height * camera.zoom
-
-  // Check if panel intersects with viewport (any part visible)
-  const isHorizontallyVisible = panelScreenX + panelScreenWidth > 0 && panelScreenX < viewportWidth
-  const isVerticallyVisible = panelScreenY + panelScreenHeight > 0 && panelScreenY < viewportHeight
-
-  return isHorizontallyVisible && isVerticallyVisible
-}
-
 const createDefaultCanvasItems = (noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => [
   createPanelItem(
     "main",
@@ -1955,37 +1923,18 @@ const mainPanelSeededRef = useRef(false)
     // Mark that we're restoring snapshot to prevent syncing effect from running
     isRestoringSnapshotRef.current = true
 
-    // Check if this is a newly opened note (via centering mechanism)
-    // If freshNoteSeeds exists for this note, it means it was just opened via handleNoteSelect
-    // and should be centered, not have its camera restored
-    const isNewlyOpened = freshNoteSeeds?.[noteId] !== undefined
-
-    // CONDITIONAL CAMERA RESTORE:
-    // - Newly opened notes: Skip restore, will be centered by AUTO-CENTER block
-    // - Reload/tab switch: Restore camera from snapshot (exact previous state)
-    // This ensures newly opened notes are centered while preserving viewport on reload
+    // CRITICAL FIX: Don't restore viewport from snapshot
+    // Instead, we'll auto-center the note after items are restored
+    // This ensures notes always appear visually centered when opened
     setCanvasState((prev) => ({
       ...prev,
       zoom: restoredZoom,
-      // Conditionally restore camera based on whether this is a new note opening
-      ...(isNewlyOpened ? {} : {
-        translateX: restoredTranslateX,
-        translateY: restoredTranslateY,
-      }),
+      // Keep current viewport instead of restoring saved viewport
+      // translateX: restoredTranslateX,
+      // translateY: restoredTranslateY,
       showConnections:
         typeof viewport.showConnections === 'boolean' ? viewport.showConnections : prev.showConnections,
     }))
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'snapshot_camera_restoration',
-      metadata: {
-        noteId,
-        isNewlyOpened,
-        restoredCamera: isNewlyOpened ? 'skipped' : { translateX: restoredTranslateX, translateY: restoredTranslateY, zoom: restoredZoom },
-        reason: isNewlyOpened ? 'newly_opened_will_be_centered' : 'reload_or_tab_switch'
-      }
-    })
 
     // Don't dispatch viewport changes - we'll let auto-centering handle it
     // dispatch({
@@ -2173,93 +2122,37 @@ const mainPanelSeededRef = useRef(false)
 
     onSnapshotSettled?.(noteId)
 
-    // AUTO-CENTER: Only pan if note is NOT visible in viewport
-    // This prevents unwanted camera movement on reload when note is already visible
+    // AUTO-CENTER: Pan viewport to show the note visually centered
+    // Use setTimeout to ensure DOM is ready
     setTimeout(() => {
       const mainPanel = restoredItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
       if (mainPanel?.position) {
         const mainStoreKey = ensurePanelKey(noteId, 'main')
         const panelPosition = mainPanel.position
-        const panelDimensions = mainPanel.dimensions ?? DEFAULT_PANEL_DIMENSIONS
 
-        // Get current camera state for visibility check and panToPanel
-        const currentCameraForVisibility = {
-          translateX: canvasState.translateX ?? 0,
-          translateY: canvasState.translateY ?? 0,
-          zoom: canvasState.zoom ?? 1
-        }
-
-        // panToPanel expects x/y instead of translateX/translateY
-        const currentViewport = {
-          x: canvasState.translateX ?? 0,
-          y: canvasState.translateY ?? 0,
-          zoom: canvasState.zoom ?? 1
-        }
-
-        // Check if panel is visible in current viewport
-        const isPanelVisible = isPanelVisibleInViewport(
-          panelPosition,
-          panelDimensions,
-          currentCameraForVisibility
+        panToPanel(
+          mainStoreKey,
+          (id) => id === mainStoreKey ? panelPosition : null,
+          {
+            x: canvasState.translateX ?? 0,
+            y: canvasState.translateY ?? 0,
+            zoom: canvasState.zoom ?? 1
+          },
+          (newState) => {
+            if (newState.x !== undefined && newState.y !== undefined) {
+              setCanvasState(prev => ({
+                ...prev,
+                translateX: newState.x!,
+                translateY: newState.y!,
+              }))
+            }
+          }
         )
-
-        // Check if this is a newly opened note (centering mechanism)
-        const isNewlyOpened = freshNoteSeeds?.[noteId] !== undefined
-
-        // Decision tree:
-        // 1. Newly opened note → Always center (regardless of visibility)
-        // 2. Reload/tab switch + visible → No centering, just highlight
-        // 3. Reload/tab switch + NOT visible → Center it
-        const shouldCenter = isNewlyOpened || !isPanelVisible
-
-        if (shouldCenter) {
-          panToPanel(
-            mainStoreKey,
-            (id) => id === mainStoreKey ? panelPosition : null,
-            currentViewport,
-            (newState) => {
-              if (newState.x !== undefined && newState.y !== undefined) {
-                setCanvasState(prev => ({
-                  ...prev,
-                  translateX: newState.x!,
-                  translateY: newState.y!,
-                }))
-              }
-            }
-          )
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'auto_center_on_snapshot_restore',
-            metadata: {
-              noteId,
-              panelPosition,
-              reason: isNewlyOpened ? 'newly_opened_note' : 'note_not_visible_in_viewport',
-              isPanelVisible
-            }
-          })
-        } else {
-          // Panel is visible, skip centering
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'skipped_auto_center',
-            metadata: {
-              noteId,
-              panelPosition,
-              reason: 'panel_already_visible_in_viewport',
-              isPanelVisible: true,
-              panelScreenBounds: {
-                x: (panelPosition.x + currentCameraForVisibility.translateX) * currentCameraForVisibility.zoom,
-                y: (panelPosition.y + currentCameraForVisibility.translateY) * currentCameraForVisibility.zoom,
-                width: panelDimensions.width * currentCameraForVisibility.zoom,
-                height: panelDimensions.height * currentCameraForVisibility.zoom
-              },
-              viewportSize: {
-                width: typeof window !== 'undefined' ? window.innerWidth : 0,
-                height: typeof window !== 'undefined' ? window.innerHeight : 0
-              }
-            }
-          })
-        }
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'auto_center_on_snapshot_restore',
+          metadata: { noteId, panelPosition }
+        })
       }
     }, 100)
 

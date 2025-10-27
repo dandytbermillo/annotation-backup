@@ -1,8 +1,31 @@
 # Visibility-Based Centering on App Reload - Implementation Plan
 
 **Date:** 2025-10-27
-**Status:** PLANNING
+**Status:** ✅ IMPLEMENTED & VERIFIED
+**Implementation Date:** 2025-10-27
 **Related Issue:** App reload causes unwanted camera pan/centering
+
+---
+
+## ✅ Implementation Summary
+
+**Result:** Successfully implemented and verified. App reload no longer causes unwanted camera movement when notes are visible.
+
+### What Was Implemented
+1. **Visibility helper function** (`isPanelVisibleInViewport`) at line 172
+2. **Conditional camera restoration** based on `freshNoteSeeds` signal (lines 1958-1988)
+3. **Visibility-based AUTO-CENTER** with decision tree (lines 2176-2263)
+
+### Verification Results (2025-10-27 02:42)
+- ✅ **User Testing:** "when the app is reloaded, the canvas and components are not disturbed, no note is forced to move the center"
+- ✅ **Camera Restoration:** Logs show `isNewlyOpened: false`, `reason: reload_or_tab_switch`, camera restored from snapshot
+- ✅ **Centering Decision:** Logs show `action: skipped_auto_center`, `reason: panel_already_visible_in_viewport`, `isPanelVisible: true`
+- ✅ **Visibility Calculation:** Panel at screen position `{x: 527, y: 246, width: 500, height: 400}` correctly detected as visible in viewport `{width: 1554, height: 892}`
+- ✅ **Type-Check:** Passes with no errors
+
+### Files Changed
+- `components/annotation-canvas-modern.tsx`: ~120 lines added/modified
+- Backup created: `components/annotation-canvas-modern.tsx.backup.before-visibility-fix`
 
 ---
 
@@ -699,16 +722,38 @@ If implementation causes issues:
 
 ---
 
-## Next Steps
+## Implementation Complete ✅
 
-1. **User approval:** Confirm this plan matches desired behavior
-2. **Create backups:** Backup current file before any changes
-3. **Implement Phase 1:** Add visibility helper function
-4. **Test incrementally:** Verify each phase before proceeding
-5. **Document results:** Update this plan with actual results
+### Phases Completed
+
+**Phase 1: Visibility Helper Function** ✅
+- Added `isPanelVisibleInViewport()` at line 172
+- Handles world-to-screen coordinate conversion
+- Intersection test for viewport visibility
+
+**Phase 2: Conditional Camera Restoration** ✅
+- Modified lines 1958-1988
+- Uses `freshNoteSeeds[noteId]` signal to detect newly opened notes
+- Restores camera from snapshot for reload/tab switch
+- Skips restore for newly opened notes
+
+**Phase 3: Visibility-Based AUTO-CENTER** ✅
+- Modified lines 2176-2263
+- Decision tree: newly opened → center, reload+visible → skip, reload+invisible → center
+- Enhanced debug logging with screen bounds and visibility status
+
+**Phase 4: Testing & Verification** ✅
+- User tested: No unwanted movement on reload
+- Debug logs verified: Correct camera restoration and centering decisions
+- Type-check: Passes with no errors
+
+**Phase 5: Documentation** ✅
+- Updated plan document status to IMPLEMENTED
+- Added implementation summary with verification results
+- Documented actual implementation details
 
 ---
 
 **Last Updated:** 2025-10-27
-**Status:** AWAITING USER APPROVAL
-**Estimated Implementation Time:** 30-45 minutes (including testing)
+**Status:** ✅ IMPLEMENTED & VERIFIED
+**Actual Implementation Time:** ~45 minutes (planning + implementation + testing)
