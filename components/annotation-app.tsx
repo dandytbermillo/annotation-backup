@@ -7,7 +7,7 @@ import { FloatingToolbar } from "./floating-toolbar"
 import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
-import { trackNoteAccess } from "@/lib/utils/note-creator"
+import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
 import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
@@ -23,6 +23,7 @@ import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
+import { AutoHideToolbar } from "./canvas/auto-hide-toolbar"
 import {
   computeVisuallyCenteredWorldPosition,
   type RapidSequenceState,
@@ -2546,32 +2547,58 @@ const handleCenterNote = useCallback(
 
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   
+  // Track note creation state to prevent double-clicks
+  const [isCreatingNoteFromToolbar, setIsCreatingNoteFromToolbar] = useState(false)
+
+  // Handler for creating new note from workspace toolbar
+  // Reuses the same logic as floating toolbar's "+ Note" button
+  const handleNewNoteFromToolbar = useCallback(async () => {
+    if (isCreatingNoteFromToolbar) return // Prevent double-clicks
+
+    setIsCreatingNoteFromToolbar(true)
+    try {
+      const result = await createNote({})
+
+      if (result.success && result.noteId) {
+        // Open the newly created note
+        handleNoteSelect(result.noteId, {
+          source: 'toolbar-create'
+        })
+      } else {
+        console.error('[AnnotationApp] Failed to create note:', result.error)
+      }
+    } catch (error) {
+      console.error('[AnnotationApp] Error creating note:', error)
+    } finally {
+      setIsCreatingNoteFromToolbar(false)
+    }
+  }, [isCreatingNoteFromToolbar, handleNoteSelect])
+
+  // Handler for opening settings from workspace toolbar
+  const handleSettingsFromToolbar = useCallback(() => {
+    // TODO: Implement settings panel
+    console.log('[AnnotationApp] Settings clicked')
+  }, [])
+
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
-      <div className="border-b border-neutral-800 bg-neutral-950/80 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+    <>
+      <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
           <WorkspaceToolbar
             notes={sortedOpenNotes}
             activeNoteId={activeNoteId}
-            isLoading={isWorkspaceLoading}
+            isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
             formatNoteLabel={formatNoteLabel}
             onActivateNote={handleNoteSelect}
             onCenterNote={handleCenterNote}
             onCloseNote={handleCloseNote}
+            onNewNote={handleNewNoteFromToolbar}
+            onSettings={handleSettingsFromToolbar}
           />
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => refreshWorkspace().catch(error => {
-                console.error('[AnnotationApp] Manual workspace refresh failed:', error)
-              })}
-              className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 transition hover:border-neutral-500 hover:text-neutral-100"
-            >
-              Refresh
-            </button>
-          </div>
         </div>
-      </div>
+      </AutoHideToolbar>
+
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
 
       <div
         className="relative flex-1"
@@ -2690,7 +2717,8 @@ const handleCenterNote = useCallback(
           />
         )}
       </div>
-    </div>
+      </div>
+    </>
   )
 }
 

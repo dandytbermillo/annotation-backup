@@ -34,6 +34,16 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   const isDraggingRef = useRef(false)
   const mouseMoveHandlerRef = useRef<((e: MouseEvent) => void) | null>(null)
   const mouseUpHandlerRef = useRef<(() => void) | null>(null)
+
+  // CRITICAL FIX: Use refs for canvasState and viewport to avoid infinite loop
+  // These values are read when callback executes, but don't need to trigger recreation
+  const canvasStateRef = useRef(canvasState)
+  // Initialize viewportRef with placeholder, will be updated in useEffect
+  const viewportRef = useRef({ x: 0, y: 0, width: 0, height: 0 })
+
+  useEffect(() => {
+    canvasStateRef.current = canvasState
+  }, [canvasState])
   
   // Status tracking states
   const [isShiftPressed, setIsShiftPressed] = useState(false)
@@ -153,7 +163,12 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       height: viewHeight
     }
   }, [canvasState])
-  
+
+  // Update viewportRef when viewport changes
+  useEffect(() => {
+    viewportRef.current = viewport
+  }, [viewport])
+
   // Draw minimap
   const drawMinimap = useCallback(() => {
     const canvas = canvasRef.current
@@ -371,10 +386,11 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     const minimapY = event.clientY - rect.top
     
     // Check if clicking within viewport rectangle for dragging
-    const viewportMinimap = worldToMinimap(viewport.x, viewport.y)
+    // CRITICAL FIX: Read from viewportRef to avoid infinite loop
+    const viewportMinimap = worldToMinimap(viewportRef.current.x, viewportRef.current.y)
     const viewportSize = {
-      width: viewport.width * scale,
-      height: viewport.height * scale
+      width: viewportRef.current.width * scale,
+      height: viewportRef.current.height * scale
     }
     
     const isInViewport = minimapX >= viewportMinimap.x && 
@@ -390,8 +406,9 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       // Store drag start position and initial viewport offset
       const dragStartX = minimapX
       const dragStartY = minimapY
-      const initialX = canvasState.translateX
-      const initialY = canvasState.translateY
+      // CRITICAL FIX: Read from canvasStateRef to avoid infinite loop
+      const initialX = canvasStateRef.current.translateX
+      const initialY = canvasStateRef.current.translateY
       
       setMinimapDragStart({ x: dragStartX, y: dragStartY })
       setInitialViewportOffset({ x: initialX, y: initialY })
@@ -450,14 +467,17 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       
       // To center viewport at worldPos, we need to set canvas translate
       // such that worldPos appears at center of screen
-      const newTranslateX = -worldPos.x + (viewportWidth / canvasState.zoom) / 2
-      const newTranslateY = -worldPos.y + (viewportHeight / canvasState.zoom) / 2
+      // CRITICAL FIX: Read from canvasStateRef to avoid infinite loop
+      const newTranslateX = -worldPos.x + (viewportWidth / canvasStateRef.current.zoom) / 2
+      const newTranslateY = -worldPos.y + (viewportHeight / canvasStateRef.current.zoom) / 2
       
       onNavigate(newTranslateX, newTranslateY)
     }
     
     event.preventDefault()
-  }, [worldToMinimap, minimapToWorld, viewport, scale, canvasState, onNavigate])
+  }, [worldToMinimap, minimapToWorld, scale, onNavigate])
+  // NOTE: viewport and canvasState deliberately excluded from dependencies
+  // We read them via refs to avoid infinite loop when minimap dragging causes state changes
   
   // Handle mouse move for hover detection
   const handleMouseMoveOnCanvas = useCallback((e: React.MouseEvent) => {

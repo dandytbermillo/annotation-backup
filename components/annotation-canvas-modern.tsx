@@ -1523,6 +1523,20 @@ const mainPanelSeededRef = useRef(false)
     [updateCanvasTransform]
   )
 
+  // CRITICAL FIX: Memoize minimap navigation callback to prevent infinite loop
+  // The inline callback was being recreated on every render, causing minimap's
+  // useCallback to recreate whenever onNavigate changed, leading to infinite loop
+  const handleMinimapNavigate = useCallback(
+    (x: number, y: number) => {
+      updateCanvasTransform(prev => ({
+        ...prev,
+        translateX: x,
+        translateY: y,
+      }))
+    },
+    [updateCanvasTransform]
+  )
+
   useEffect(() => {
     // Skip syncing if we're currently restoring from snapshot
     // This prevents the visible "jump" from default viewport to restored viewport
@@ -3377,10 +3391,10 @@ const mainPanelSeededRef = useRef(false)
         {/* Isolation Debug now integrated into Control Panel */}
 
         {/* Enhanced Minimap */}
-        <EnhancedMinimap 
+        <EnhancedMinimap
           canvasItems={canvasItems}
           canvasState={canvasState}
-          onNavigate={(x, y) => updateCanvasTransform(prev => ({ ...prev, translateX: x, translateY: y }))}
+          onNavigate={handleMinimapNavigate}
         />
         
         {/* Add Components Menu */}

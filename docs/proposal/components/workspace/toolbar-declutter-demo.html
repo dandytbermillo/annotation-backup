@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workspace Toolbar Declutter - Interactive Demo</title>
+    <title>Improved Workspace Toolbar - Interactive Demo</title>
     <style>
         * {
             margin: 0;
@@ -13,8 +13,8 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f172a;
-            color: #e2e8f0;
+            background: #0a0a0a;
+            color: #e5e5e5;
             overflow: hidden;
             height: 100vh;
         }
@@ -22,924 +22,1056 @@
         /* Demo Container */
         .demo-container {
             display: flex;
+            flex-direction: column;
             height: 100vh;
         }
 
-        /* Sidebar with options */
-        .sidebar {
-            width: 300px;
-            background: #1e293b;
-            padding: 20px;
-            overflow-y: auto;
-            border-right: 1px solid #334155;
+        /* Control Panel */
+        .control-panel {
+            background: #171717;
+            border-bottom: 1px solid #262626;
+            padding: 16px 24px;
         }
 
-        .sidebar h1 {
-            font-size: 18px;
-            margin-bottom: 20px;
-            color: #f1f5f9;
+        .control-panel h1 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: #fafafa;
+            font-weight: 600;
         }
 
-        .option-group {
-            margin-bottom: 30px;
+        .controls {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
         }
 
-        .option-group h3 {
-            font-size: 14px;
-            color: #94a3b8;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .option {
-            margin-bottom: 15px;
-        }
-
-        .option label {
+        .control-group {
             display: flex;
             align-items: center;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 6px;
-            transition: background 0.2s;
+            gap: 8px;
         }
 
-        .option label:hover {
-            background: #334155;
-        }
-
-        .option input[type="radio"] {
-            margin-right: 10px;
-            accent-color: #6366f1;
-        }
-
-        .option-desc {
-            font-size: 12px;
-            color: #64748b;
-            margin-left: 30px;
-            margin-top: 4px;
-        }
-
-        .slider-group {
-            margin-bottom: 15px;
-        }
-
-        .slider-group label {
-            display: block;
+        .control-group label {
             font-size: 13px;
-            color: #cbd5e1;
-            margin-bottom: 8px;
+            color: #a3a3a3;
         }
 
-        .slider-group input[type="range"] {
-            width: 100%;
-            height: 4px;
-            background: #334155;
-            border-radius: 2px;
-            outline: none;
-            accent-color: #6366f1;
-        }
-
-        .slider-value {
-            display: inline-block;
-            float: right;
-            color: #94a3b8;
-            font-size: 12px;
-        }
-
-        .checkbox-option {
-            display: flex;
-            align-items: center;
-            margin-bottom: 10px;
-            padding: 8px;
+        .control-group button {
+            padding: 6px 12px;
+            background: #262626;
+            border: 1px solid #404040;
             border-radius: 6px;
+            color: #d4d4d4;
+            font-size: 12px;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s;
         }
 
-        .checkbox-option:hover {
-            background: #334155;
+        .control-group button:hover {
+            background: #404040;
+            border-color: #525252;
         }
 
-        .checkbox-option input[type="checkbox"] {
-            margin-right: 10px;
-            accent-color: #6366f1;
+        .control-group select {
+            padding: 6px 12px;
+            background: #262626;
+            border: 1px solid #404040;
+            border-radius: 6px;
+            color: #d4d4d4;
+            font-size: 12px;
+            cursor: pointer;
         }
 
         /* Canvas Area */
         .canvas-area {
             flex: 1;
+            background: #0a0a0a;
             position: relative;
-            background: linear-gradient(to bottom, #1e293b, #0f172a);
             overflow: hidden;
         }
 
-        /* Mock Canvas Content */
-        .mock-panel {
+        .canvas-content {
             position: absolute;
-            background: rgba(30, 41, 59, 0.8);
-            border: 1px solid #475569;
-            border-radius: 12px;
-            padding: 20px;
-            backdrop-filter: blur(10px);
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #404040;
+            font-size: 14px;
         }
 
-        .panel-header {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: #f1f5f9;
-        }
-
-        .panel-content {
-            font-size: 13px;
-            line-height: 1.6;
-            color: #cbd5e1;
-        }
-
-        /* Edge Hover Zone Indicator */
-        .edge-zone {
-            position: absolute;
-            top: 0;
+        /* Auto-hide Toolbar Container */
+        .toolbar-container {
+            position: fixed;
             left: 0;
             right: 0;
-            height: 30px;
-            background: rgba(99, 102, 241, 0.1);
-            border-bottom: 1px dashed rgba(99, 102, 241, 0.3);
-            display: none;
-            pointer-events: none;
-        }
-
-        .edge-zone.active {
-            display: block;
-        }
-
-        /* Toolbar Styles */
-        .toolbar {
-            position: fixed;
             top: 0;
-            left: 300px;
-            right: 0;
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 12px 20px;
+            z-index: 50;
+            transition: transform 300ms ease-in-out;
+        }
+
+        .toolbar-container.hidden {
             transform: translateY(-100%);
-            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 100;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
         }
 
-        .toolbar.visible {
-            transform: translateY(0);
-        }
-
-        .toolbar.peek {
-            transform: translateY(-70%);
-        }
-
-        .toolbar.collapsed .toolbar-content {
-            display: none;
-        }
-
-        .toolbar-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 16px;
-        }
-
-        .toolbar-toggle {
-            background: #334155;
-            border: 1px solid #475569;
-            color: #e2e8f0;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.2s;
-        }
-
-        .toolbar-toggle:hover {
-            background: #475569;
-            border-color: #64748b;
-        }
-
-        .toolbar-tabs {
-            display: flex;
-            gap: 8px;
-            flex: 1;
-        }
-
-        .toolbar-tab {
-            background: transparent;
-            border: 1px solid #475569;
-            color: #94a3b8;
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .toolbar-tab:hover {
-            background: #334155;
-            color: #e2e8f0;
-        }
-
-        .toolbar-tab.active {
-            background: #6366f1;
-            border-color: #6366f1;
-            color: white;
-        }
-
-        .toolbar-actions {
-            display: flex;
-            gap: 8px;
-        }
-
-        .toolbar-action {
-            background: transparent;
-            border: 1px solid #475569;
-            color: #94a3b8;
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-        }
-
-        .toolbar-action:hover {
-            background: #334155;
-            color: #e2e8f0;
-        }
-
-        /* Note tabs styling - top navigation buttons removed */
-        .workspace-notes {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            flex: 1;
-        }
-
-        .note-chip {
-            background: rgba(51, 65, 81, 0.5);
-            border: 1px solid #475569;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.2s;
-            cursor: pointer;
-        }
-
-        .note-chip:hover {
-            background: rgba(51, 65, 81, 0.8);
-            border-color: #64748b;
-        }
-
-        .note-chip.active {
-            background: rgba(99, 102, 241, 0.2);
-            border-color: #6366f1;
-            color: #a5b4fc;
-        }
-
-        .note-chip-close {
-            cursor: pointer;
-            opacity: 0.5;
-            transition: opacity 0.2s;
-        }
-
-        .note-chip-close:hover {
-            opacity: 1;
-        }
-
-        /* Collapsible Toolbar Button */
-        .collapsed-toolbar-btn {
-            position: fixed;
-            top: 12px;
-            left: 320px;
-            background: rgba(15, 23, 42, 0.95);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #e2e8f0;
-            padding: 10px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            backdrop-filter: blur(20px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            z-index: 99;
-            display: none;
-            transition: all 0.2s;
-        }
-
-        .collapsed-toolbar-btn:hover {
-            background: rgba(30, 41, 59, 0.95);
-            border-color: rgba(255, 255, 255, 0.3);
-        }
-
-        .collapsed-toolbar-btn.visible {
-            display: block;
-        }
-
-        /* Command Palette */
-        .command-palette {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%) scale(0.95);
-            width: 600px;
-            max-width: 90%;
-            background: rgba(15, 23, 42, 0.98);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-            backdrop-filter: blur(20px);
-            opacity: 0;
-            pointer-events: none;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 200;
-        }
-
-        .command-palette.visible {
-            opacity: 1;
-            pointer-events: all;
-            transform: translate(-50%, -50%) scale(1);
-        }
-
-        .command-search {
-            width: 100%;
-            background: transparent;
-            border: none;
-            padding: 20px;
-            font-size: 16px;
-            color: #f1f5f9;
-            outline: none;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .command-search::placeholder {
-            color: #64748b;
-        }
-
-        .command-list {
-            max-height: 400px;
-            overflow-y: auto;
-            padding: 8px;
-        }
-
-        .command-item {
+        /* Toolbar */
+        .toolbar {
+            border-bottom: 1px solid #262626;
+            background: rgba(23, 23, 23, 0.95);
+            backdrop-filter: blur(12px);
             padding: 12px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background 0.15s;
+        }
+
+        .toolbar-inner {
             display: flex;
             align-items: center;
             gap: 12px;
         }
 
-        .command-item:hover {
-            background: rgba(99, 102, 241, 0.1);
+        /* Workspace Label */
+        .workspace-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
         }
 
-        .command-icon {
-            width: 32px;
-            height: 32px;
+        .workspace-label span {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #a3a3a3;
+        }
+
+        .note-count {
+            background: #262626;
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 500;
+            color: #a3a3a3;
+        }
+
+        /* Divider */
+        .divider {
+            width: 1px;
+            height: 16px;
+            background: #404040;
+            flex-shrink: 0;
+        }
+
+        /* Notes Container */
+        .notes-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .visible-notes {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .empty-state {
+            font-size: 13px;
+            font-style: italic;
+            color: #737373;
+        }
+
+        /* Note Chip */
+        .note-chip {
+            position: relative;
+            display: flex;
+            align-items: stretch;
+            border-radius: 8px;
+            border: 1px solid #404040;
+            background: rgba(38, 38, 38, 0.8);
+            backdrop-filter: blur(8px);
+            overflow: hidden;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+
+        .note-chip:hover {
+            border-color: #525252;
+            background: rgba(64, 64, 64, 0.9);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .note-chip.active {
+            border-color: rgba(99, 102, 241, 0.5);
             background: rgba(99, 102, 241, 0.1);
-            border-radius: 6px;
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.2);
+        }
+
+        .note-chip.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #6366f1;
+        }
+
+        .note-chip .note-button {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .note-chip.active .note-button {
+            padding-left: 14px;
+        }
+
+        .note-name {
+            font-weight: 500;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: #d4d4d4;
+        }
+
+        .note-chip.active .note-name {
+            color: #e0e7ff;
+        }
+
+        .note-time {
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            color: #737373;
+            transition: color 0.2s;
+        }
+
+        .note-chip:hover .note-time {
+            color: #a3a3a3;
+        }
+
+        .note-chip.active .note-time {
+            color: rgba(99, 102, 241, 0.7);
+        }
+
+        .note-actions {
+            display: flex;
+            align-items: stretch;
+        }
+
+        .note-action {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 16px;
+            width: 32px;
+            background: none;
+            border: none;
+            border-left: 1px solid rgba(64, 64, 64, 0.6);
+            color: #737373;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        .command-details {
-            flex: 1;
+        .note-chip.active .note-action {
+            border-left-color: rgba(99, 102, 241, 0.3);
+            color: #a5b4fc;
         }
 
-        .command-title {
-            font-size: 14px;
-            color: #f1f5f9;
-            margin-bottom: 2px;
+        .note-action:hover {
+            background: rgba(64, 64, 64, 0.8);
+            color: #e5e5e5;
         }
 
-        .command-desc {
-            font-size: 12px;
-            color: #64748b;
+        .note-chip.active .note-action:hover {
+            background: rgba(99, 102, 241, 0.2);
+            color: #e0e7ff;
         }
 
-        .command-shortcut {
+        .note-action:last-child:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: #fca5a5;
+        }
+
+        .note-action svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        /* Loading Indicator */
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .loading-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #737373;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        .loading-text {
             font-size: 11px;
-            color: #64748b;
-            background: rgba(255, 255, 255, 0.05);
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-family: monospace;
+            color: #737373;
         }
 
-        /* Keyboard Hint */
-        .keyboard-hint {
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .btn-new-note {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: rgba(38, 38, 38, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid #404040;
+            border-radius: 8px;
+            color: #d4d4d4;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-new-note:hover {
+            border-color: rgba(99, 102, 241, 0.5);
+            background: rgba(99, 102, 241, 0.1);
+            color: #e0e7ff;
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.1);
+        }
+
+        .btn-new-note:hover svg {
+            transform: scale(1.1);
+        }
+
+        .btn-new-note svg {
+            width: 16px;
+            height: 16px;
+            transition: transform 0.2s;
+        }
+
+        .btn-settings {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            background: rgba(38, 38, 38, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid #404040;
+            border-radius: 8px;
+            color: #d4d4d4;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-settings:hover {
+            border-color: #525252;
+            background: rgba(64, 64, 64, 0.8);
+            color: #e5e5e5;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn-settings:hover svg {
+            transform: rotate(45deg);
+        }
+
+        .btn-settings svg {
+            width: 16px;
+            height: 16px;
+            transition: transform 0.3s;
+        }
+
+        /* Hover Zone Indicator */
+        .hover-zone {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 50px;
+            background: linear-gradient(to bottom, rgba(99, 102, 241, 0.1), transparent);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .hover-zone.active {
+            opacity: 1;
+        }
+
+        /* Info Badge */
+        .info-badge {
             position: fixed;
             bottom: 20px;
-            left: 320px;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 12px 16px;
-            border-radius: 8px;
-            font-size: 13px;
-            color: #94a3b8;
-            backdrop-filter: blur(10px);
-        }
-
-        .keyboard-hint kbd {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 12px;
-            margin: 0 2px;
-        }
-
-        /* Instructions */
-        .instructions {
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.3);
-            padding: 16px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .instructions h4 {
-            font-size: 13px;
-            color: #a5b4fc;
-            margin-bottom: 8px;
-        }
-
-        .instructions ul {
-            list-style: none;
-            font-size: 12px;
-            color: #cbd5e1;
-            line-height: 1.6;
-        }
-
-        .instructions li::before {
-            content: "→ ";
-            color: #6366f1;
-            margin-right: 4px;
-        }
-
-        /* Status Indicator */
-        .status-indicator {
-            position: fixed;
-            top: 20px;
             right: 20px;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            padding: 12px 20px;
+            background: rgba(23, 23, 23, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid #404040;
             border-radius: 8px;
-            font-size: 13px;
-            backdrop-filter: blur(10px);
-            z-index: 50;
+            padding: 12px 16px;
+            font-size: 12px;
+            color: #a3a3a3;
+            max-width: 300px;
         }
 
-        .status-label {
-            color: #64748b;
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 4px;
+        .info-badge strong {
+            color: #e5e5e5;
         }
 
-        .status-value {
-            color: #f1f5f9;
+        /* Overflow Dropdown Button */
+        .overflow-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: rgba(38, 38, 38, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid #404040;
+            border-radius: 6px;
+            color: #737373;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+            margin-left: 8px;
+        }
+
+        .overflow-btn:hover {
+            background: rgba(64, 64, 64, 0.9);
+            border-color: #525252;
+            color: #e5e5e5;
+        }
+
+        .overflow-btn.active {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: rgba(99, 102, 241, 0.5);
+            color: #a5b4fc;
+        }
+
+        .overflow-btn svg {
+            width: 14px;
+            height: 14px;
+            transition: transform 0.3s;
+        }
+
+        .overflow-btn.active svg {
+            transform: rotate(180deg);
+        }
+
+        .overflow-count {
+            position: absolute;
+            top: -4px;
+            right: -4px;
+            min-width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #6366f1;
+            border: 2px solid #171717;
+            border-radius: 999px;
+            font-size: 10px;
             font-weight: 600;
+            color: white;
+            padding: 0 4px;
+        }
+
+        /* Dropdown Menu */
+        .overflow-dropdown {
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            min-width: 280px;
+            max-width: 400px;
+            max-height: 400px;
+            background: rgba(23, 23, 23, 0.98);
+            backdrop-filter: blur(12px);
+            border: 1px solid #404040;
+            border-radius: 8px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            transform: translateY(-8px);
+            pointer-events: none;
+            transition: all 0.2s;
+            z-index: 100;
+            overflow: hidden;
+        }
+
+        .overflow-dropdown.active {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        .dropdown-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid #262626;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #a3a3a3;
+        }
+
+        .dropdown-list {
+            max-height: 340px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #404040 transparent;
+        }
+
+        .dropdown-list::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .dropdown-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .dropdown-list::-webkit-scrollbar-thumb {
+            background: #404040;
+            border-radius: 3px;
+        }
+
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            cursor: pointer;
+            transition: background 0.15s;
+            border-bottom: 1px solid rgba(38, 38, 38, 0.5);
+        }
+
+        .dropdown-item:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-item:hover {
+            background: rgba(64, 64, 64, 0.5);
+        }
+
+        .dropdown-item.active {
+            background: rgba(99, 102, 241, 0.15);
+        }
+
+        .dropdown-item-indicator {
+            width: 3px;
+            height: 24px;
+            background: transparent;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        .dropdown-item.active .dropdown-item-indicator {
+            background: #6366f1;
+        }
+
+        .dropdown-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .dropdown-item-name {
+            font-size: 13px;
+            font-weight: 500;
+            color: #d4d4d4;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .dropdown-item.active .dropdown-item-name {
+            color: #e0e7ff;
+        }
+
+        .dropdown-item-time {
+            font-size: 11px;
+            font-variant-numeric: tabular-nums;
+            color: #737373;
+            margin-top: 2px;
+        }
+
+        .dropdown-item.active .dropdown-item-time {
+            color: rgba(99, 102, 241, 0.7);
+        }
+
+        .dropdown-item-actions {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .dropdown-item-action {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: none;
+            border: none;
+            border-radius: 4px;
+            color: #737373;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .dropdown-item-action:hover {
+            background: rgba(64, 64, 64, 0.8);
+            color: #e5e5e5;
+        }
+
+        .dropdown-item-action:last-child:hover {
+            background: rgba(239, 68, 68, 0.15);
+            color: #fca5a5;
+        }
+
+        .dropdown-item-action svg {
+            width: 14px;
+            height: 14px;
         }
     </style>
 </head>
 <body>
     <div class="demo-container">
-        <!-- Sidebar Controls -->
-        <div class="sidebar">
-            <h1>🎨 Toolbar Design Options</h1>
-
-            <div class="instructions">
-                <h4>Try These Interactions:</h4>
-                <ul>
-                    <li>Move mouse to top edge</li>
-                    <li>Press <kbd>Cmd+K</kbd> or <kbd>/</kbd></li>
-                    <li>Click toolbar buttons</li>
-                    <li>Change options below</li>
-                </ul>
-            </div>
-
-            <div class="option-group">
-                <h3>Toolbar Mode</h3>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="mode" value="auto-hide" checked>
-                        Auto-Hide (Edge Hover)
-                    </label>
-                    <div class="option-desc">Toolbar hides, appears on edge hover</div>
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <h1>Improved Workspace Toolbar Demo</h1>
+            <div class="controls">
+                <div class="control-group">
+                    <button onclick="addNote()">Add Note</button>
+                    <button onclick="removeNote()">Remove Note</button>
+                    <button onclick="clearNotes()">Clear All</button>
                 </div>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="mode" value="collapsible">
-                        Collapsible Button
-                    </label>
-                    <div class="option-desc">Single button, expands on click</div>
+                <div class="control-group">
+                    <label>Design:</label>
+                    <select onchange="changeDesign(this.value)">
+                        <option value="improved">Improved (Current)</option>
+                        <option value="compact">Compact</option>
+                        <option value="spacious">Spacious</option>
+                    </select>
                 </div>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="mode" value="always-visible">
-                        Always Visible
-                    </label>
-                    <div class="option-desc">Traditional always-on toolbar</div>
-                </div>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="mode" value="command-only">
-                        Command Palette Only
-                    </label>
-                    <div class="option-desc">Zero UI, keyboard-driven</div>
-                </div>
-            </div>
-
-            <div class="option-group">
-                <h3>Behavior Settings</h3>
-                <div class="slider-group">
-                    <label>
-                        Edge Hover Zone
-                        <span class="slider-value" id="edge-value">30px</span>
-                    </label>
-                    <input type="range" id="edge-slider" min="10" max="100" value="30" step="5">
-                </div>
-
-                <div class="slider-group">
-                    <label>
-                        Hide Delay
-                        <span class="slider-value" id="delay-value">1000ms</span>
-                    </label>
-                    <input type="range" id="delay-slider" min="0" max="3000" value="1000" step="100">
-                </div>
-
-                <div class="checkbox-option">
-                    <input type="checkbox" id="show-edge-zone" checked>
-                    <label for="show-edge-zone">Show Edge Zone Indicator</label>
-                </div>
-
-                <div class="checkbox-option">
-                    <input type="checkbox" id="enable-peek">
-                    <label for="enable-peek">Enable Peek Mode</label>
-                </div>
-
-                <div class="checkbox-option">
-                    <input type="checkbox" id="blur-background">
-                    <label for="blur-background">Blur Background</label>
-                </div>
-            </div>
-
-            <div class="option-group">
-                <h3>Workspace Notes</h3>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="notes-display" value="tabs" checked>
-                        Show as Tabs
-                    </label>
-                </div>
-                <div class="option">
-                    <label>
-                        <input type="radio" name="notes-display" value="dropdown">
-                        Collapse to Dropdown
-                    </label>
+                <div class="control-group">
+                    <button onclick="toggleAutoHide()">Toggle Auto-hide</button>
                 </div>
             </div>
         </div>
 
         <!-- Canvas Area -->
-        <div class="canvas-area" id="canvas">
-            <!-- Edge Hover Zone Indicator -->
-            <div class="edge-zone" id="edge-zone"></div>
-
-            <!-- Mock Panels -->
-            <div class="mock-panel" style="top: 120px; left: 400px; width: 300px;">
-                <div class="panel-header">📝 Main Note Panel</div>
-                <div class="panel-content">
-                    This is a main panel containing note content. Move your mouse to the top edge to reveal the toolbar.
-                </div>
+        <div class="canvas-area" id="canvasArea">
+            <div class="canvas-content">
+                Move mouse to top edge to reveal toolbar
             </div>
 
-            <div class="mock-panel" style="top: 300px; left: 750px; width: 280px;">
-                <div class="panel-header">🔍 Explore Panel</div>
-                <div class="panel-content">
-                    Additional panel for exploring related content. Notice how the toolbar doesn't obstruct your view.
-                </div>
-            </div>
+            <!-- Hover Zone Indicator -->
+            <div class="hover-zone" id="hoverZone"></div>
 
-            <div class="mock-panel" style="top: 450px; left: 420px; width: 250px;">
-                <div class="panel-header">💡 Annotation</div>
-                <div class="panel-content">
-                    Annotation panel with notes and highlights. The workspace remains uncluttered.
-                </div>
-            </div>
+            <!-- Auto-hide Toolbar -->
+            <div class="toolbar-container" id="toolbar">
+                <div class="toolbar">
+                    <div class="toolbar-inner">
+                        <!-- Workspace Label -->
+                        <div class="workspace-label">
+                            <span>Workspace</span>
+                            <div class="note-count" id="noteCount">0</div>
+                        </div>
 
-            <!-- Toolbar -->
-            <div class="toolbar" id="toolbar">
-                <div class="toolbar-header">
-                    <!-- Top navigation buttons removed - keeping only note tabs -->
-                    <div class="workspace-notes" id="workspace-notes">
-                        <div class="note-chip active">
-                            <span>Design Proposal</span>
-                            <span class="note-chip-close">×</span>
-                        </div>
-                        <div class="note-chip">
-                            <span>Research Notes</span>
-                            <span class="note-chip-close">×</span>
-                        </div>
-                        <div class="note-chip">
-                            <span>Meeting Minutes</span>
-                            <span class="note-chip-close">×</span>
-                        </div>
-                    </div>
+                        <!-- Divider -->
+                        <div class="divider" id="divider1" style="display: none;"></div>
 
-                    <div class="toolbar-actions">
-                        <button class="toolbar-action">+ New Note</button>
-                        <button class="toolbar-action">⚙️</button>
-                    </div>
-                </div>
-            </div>
+                        <!-- Notes Container -->
+                        <div class="notes-container" id="notesContainer">
+                            <div class="visible-notes" id="visibleNotes">
+                                <div class="empty-state">No notes open</div>
+                            </div>
 
-            <!-- Collapsible Toolbar Button -->
-            <button class="collapsed-toolbar-btn" id="collapsed-btn">
-                ≡ Workspace Toolbar
-            </button>
+                            <!-- Overflow Dropdown Button -->
+                            <div style="position: relative;" id="overflowContainer">
+                                <button class="overflow-btn" id="overflowBtn" onclick="toggleOverflowDropdown()" style="display: none;">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                    </svg>
+                                    <span class="overflow-count" id="overflowCount">0</span>
+                                </button>
 
-            <!-- Command Palette -->
-            <div class="command-palette" id="command-palette">
-                <input
-                    type="text"
-                    class="command-search"
-                    placeholder="Type a command or search..."
-                    id="command-input"
-                >
-                <div class="command-list">
-                    <div class="command-item">
-                        <div class="command-icon">📝</div>
-                        <div class="command-details">
-                            <div class="command-title">Create New Note</div>
-                            <div class="command-desc">Start a new note in the workspace</div>
+                                <!-- Dropdown Menu -->
+                                <div class="overflow-dropdown" id="overflowDropdown">
+                                    <div class="dropdown-header">Hidden Notes</div>
+                                    <div class="dropdown-list" id="dropdownList"></div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="command-shortcut">Cmd+N</div>
-                    </div>
-                    <div class="command-item">
-                        <div class="command-icon">📂</div>
-                        <div class="command-details">
-                            <div class="command-title">Open Recent</div>
-                            <div class="command-desc">Browse recently accessed notes</div>
+
+                        <!-- Loading Indicator -->
+                        <div class="loading-indicator" id="loadingIndicator" style="display: none;">
+                            <div class="loading-dot"></div>
+                            <span class="loading-text">Syncing…</span>
                         </div>
-                        <div class="command-shortcut">Cmd+O</div>
-                    </div>
-                    <div class="command-item">
-                        <div class="command-icon">🔍</div>
-                        <div class="command-details">
-                            <div class="command-title">Search Everything</div>
-                            <div class="command-desc">Search across all notes and content</div>
+
+                        <!-- Divider -->
+                        <div class="divider"></div>
+
+                        <!-- Action Buttons -->
+                        <div class="action-buttons">
+                            <button class="btn-new-note" onclick="addNote()">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                </svg>
+                                <span>New Note</span>
+                            </button>
+                            <button class="btn-settings">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                            </button>
                         </div>
-                        <div class="command-shortcut">Cmd+F</div>
-                    </div>
-                    <div class="command-item">
-                        <div class="command-icon">🎨</div>
-                        <div class="command-details">
-                            <div class="command-title">Add Component</div>
-                            <div class="command-desc">Insert a new component on canvas</div>
-                        </div>
-                        <div class="command-shortcut">Cmd+Shift+A</div>
-                    </div>
-                    <div class="command-item">
-                        <div class="command-icon">🗺️</div>
-                        <div class="command-details">
-                            <div class="command-title">Toggle Minimap</div>
-                            <div class="command-desc">Show or hide the canvas minimap</div>
-                        </div>
-                        <div class="command-shortcut">Cmd+M</div>
                     </div>
                 </div>
             </div>
+        </div>
 
-            <!-- Keyboard Hint -->
-            <div class="keyboard-hint">
-                Press <kbd>Cmd+K</kbd> or <kbd>/</kbd> for command palette • <kbd>ESC</kbd> to close
-            </div>
-
-            <!-- Status Indicator -->
-            <div class="status-indicator">
-                <div class="status-label">Toolbar State</div>
-                <div class="status-value" id="status-value">Hidden</div>
-            </div>
+        <!-- Info Badge -->
+        <div class="info-badge">
+            <strong>Key Improvements:</strong><br>
+            • Relative timestamps (2m ago, just now)<br>
+            • Note count badge<br>
+            • Better active state with indicator<br>
+            • Smooth hover effects & shadows<br>
+            • <strong>Overflow dropdown (max 4 visible)</strong><br>
+            • Double chevron with count badge<br>
+            • Auto-hide with edge detection
         </div>
     </div>
 
     <script>
-        // State
-        let currentMode = 'auto-hide';
-        let edgeThreshold = 30;
-        let hideDelay = 1000;
-        let hideTimeout = null;
-        let isToolbarLocked = false;
-        let showEdgeZone = true;
-        let enablePeek = false;
+        let notes = [];
+        let activeNoteId = null;
+        let noteCounter = 1;
+        let autoHideEnabled = true;
+        let isDropdownOpen = false;
+        const MAX_VISIBLE_NOTES = 4; // Maximum notes to show before overflow
 
-        // Elements
-        const toolbar = document.getElementById('toolbar');
-        const collapsedBtn = document.getElementById('collapsed-btn');
-        const edgeZone = document.getElementById('edge-zone');
-        const commandPalette = document.getElementById('command-palette');
-        const commandInput = document.getElementById('command-input');
-        const statusValue = document.getElementById('status-value');
-        const canvas = document.getElementById('canvas');
+        // Format relative time
+        function formatRelativeTime(date) {
+            const seconds = Math.floor((new Date() - date) / 1000);
 
-        // Update status indicator
-        function updateStatus(status) {
-            statusValue.textContent = status;
+            if (seconds < 10) return 'just now';
+            if (seconds < 60) return `${seconds}s ago`;
+
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m ago`;
+
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return `${hours}h ago`;
+
+            const days = Math.floor(hours / 24);
+            if (days === 1) return 'yesterday';
+            if (days < 7) return `${days}d ago`;
+
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         }
 
-        // Mode handlers
-        const modes = {
-            'auto-hide': {
-                init() {
-                    toolbar.classList.remove('visible');
-                    collapsedBtn.classList.remove('visible');
-                    updateStatus('Hidden');
-                },
-                showToolbar() {
-                    if (!isToolbarLocked) {
-                        toolbar.classList.add('visible');
-                        updateStatus('Visible');
-                    }
-                },
-                hideToolbar() {
-                    if (!isToolbarLocked) {
-                        toolbar.classList.remove('visible');
-                        updateStatus('Hidden');
-                    }
-                },
-                peekToolbar() {
-                    if (!isToolbarLocked && enablePeek) {
-                        toolbar.classList.add('peek');
-                        updateStatus('Peek');
-                    }
-                }
-            },
-            'collapsible': {
-                init() {
-                    toolbar.classList.remove('visible');
-                    collapsedBtn.classList.add('visible');
-                    updateStatus('Collapsed');
-                },
-                showToolbar() {
-                    toolbar.classList.add('visible');
-                    collapsedBtn.classList.remove('visible');
-                    updateStatus('Expanded');
-                },
-                hideToolbar() {
-                    toolbar.classList.remove('visible');
-                    collapsedBtn.classList.add('visible');
-                    updateStatus('Collapsed');
-                }
-            },
-            'always-visible': {
-                init() {
-                    toolbar.classList.add('visible');
-                    collapsedBtn.classList.remove('visible');
-                    updateStatus('Always Visible');
-                },
-                showToolbar() {},
-                hideToolbar() {}
-            },
-            'command-only': {
-                init() {
-                    toolbar.classList.remove('visible');
-                    collapsedBtn.classList.remove('visible');
-                    updateStatus('Command Only');
-                },
-                showToolbar() {},
-                hideToolbar() {}
+        // Add note
+        function addNote() {
+            const noteId = `note-${noteCounter++}`;
+            const note = {
+                id: noteId,
+                name: `New Note - Oct 27, 7:57 PM ${noteCounter - 1}`,
+                createdAt: new Date(),
+            };
+            notes.push(note);
+            if (!activeNoteId) {
+                activeNoteId = noteId;
             }
-        };
+            renderNotes();
+        }
 
-        // Mouse move handler for edge detection
-        canvas.addEventListener('mousemove', (e) => {
-            if (currentMode !== 'auto-hide') return;
+        // Remove note
+        function removeNote() {
+            if (notes.length > 0) {
+                const removedNote = notes.pop();
+                if (activeNoteId === removedNote.id && notes.length > 0) {
+                    activeNoteId = notes[notes.length - 1].id;
+                } else if (notes.length === 0) {
+                    activeNoteId = null;
+                }
+                renderNotes();
+            }
+        }
 
-            const rect = canvas.getBoundingClientRect();
-            const y = e.clientY - rect.top;
+        // Clear all notes
+        function clearNotes() {
+            notes = [];
+            activeNoteId = null;
+            noteCounter = 1;
+            renderNotes();
+        }
 
-            if (showEdgeZone) {
-                edgeZone.style.height = edgeThreshold + 'px';
-                edgeZone.classList.toggle('active', y < edgeThreshold);
+        // Set active note
+        function setActiveNote(noteId) {
+            activeNoteId = noteId;
+            renderNotes();
+        }
+
+        // Center note (demo)
+        function centerNote(noteId) {
+            console.log('Center note:', noteId);
+        }
+
+        // Close note
+        function closeNote(noteId) {
+            notes = notes.filter(n => n.id !== noteId);
+            if (activeNoteId === noteId && notes.length > 0) {
+                activeNoteId = notes[0].id;
+            } else if (notes.length === 0) {
+                activeNoteId = null;
+            }
+            renderNotes();
+        }
+
+        // Toggle overflow dropdown
+        function toggleOverflowDropdown() {
+            isDropdownOpen = !isDropdownOpen;
+            const dropdown = document.getElementById('overflowDropdown');
+            const btn = document.getElementById('overflowBtn');
+
+            if (isDropdownOpen) {
+                dropdown.classList.add('active');
+                btn.classList.add('active');
+            } else {
+                dropdown.classList.remove('active');
+                btn.classList.remove('active');
+            }
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            const overflowContainer = document.getElementById('overflowContainer');
+            if (isDropdownOpen && !overflowContainer.contains(e.target)) {
+                toggleOverflowDropdown();
+            }
+        });
+
+        // Render notes
+        function renderNotes() {
+            const visibleNotesContainer = document.getElementById('visibleNotes');
+            const dropdownList = document.getElementById('dropdownList');
+            const noteCount = document.getElementById('noteCount');
+            const divider1 = document.getElementById('divider1');
+            const overflowBtn = document.getElementById('overflowBtn');
+            const overflowCount = document.getElementById('overflowCount');
+
+            noteCount.textContent = notes.length;
+            divider1.style.display = notes.length > 0 ? 'block' : 'none';
+
+            if (notes.length === 0) {
+                visibleNotesContainer.innerHTML = '<div class="empty-state">No notes open</div>';
+                overflowBtn.style.display = 'none';
+                return;
             }
 
-            if (y < edgeThreshold) {
+            // Split notes into visible and overflow
+            const visibleNotes = notes.slice(0, MAX_VISIBLE_NOTES);
+            const overflowNotes = notes.slice(MAX_VISIBLE_NOTES);
+
+            // Render visible notes
+            visibleNotesContainer.innerHTML = visibleNotes.map(note => {
+                const isActive = note.id === activeNoteId;
+                const timeLabel = formatRelativeTime(note.createdAt);
+
+                return `
+                    <div class="note-chip ${isActive ? 'active' : ''}">
+                        <button class="note-button" onclick="setActiveNote('${note.id}')">
+                            <span class="note-name">${note.name}</span>
+                            <span class="note-time">${timeLabel}</span>
+                        </button>
+                        <div class="note-actions">
+                            <button class="note-action" onclick="centerNote('${note.id}')" title="Center note on canvas">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                </svg>
+                            </button>
+                            <button class="note-action" onclick="closeNote('${note.id}')" title="Close note">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Show/hide overflow button
+            if (overflowNotes.length > 0) {
+                overflowBtn.style.display = 'flex';
+                overflowCount.textContent = overflowNotes.length;
+
+                // Render dropdown items
+                dropdownList.innerHTML = overflowNotes.map(note => {
+                    const isActive = note.id === activeNoteId;
+                    const timeLabel = formatRelativeTime(note.createdAt);
+
+                    return `
+                        <div class="dropdown-item ${isActive ? 'active' : ''}" onclick="selectNoteFromDropdown('${note.id}')">
+                            <div class="dropdown-item-indicator"></div>
+                            <div class="dropdown-item-info">
+                                <div class="dropdown-item-name">${note.name}</div>
+                                <div class="dropdown-item-time">${timeLabel}</div>
+                            </div>
+                            <div class="dropdown-item-actions">
+                                <button class="dropdown-item-action" onclick="event.stopPropagation(); centerNote('${note.id}')" title="Center note">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                                    </svg>
+                                </button>
+                                <button class="dropdown-item-action" onclick="event.stopPropagation(); closeNote('${note.id}')" title="Close note">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                overflowBtn.style.display = 'none';
+            }
+        }
+
+        // Select note from dropdown and close dropdown
+        function selectNoteFromDropdown(noteId) {
+            setActiveNote(noteId);
+            if (isDropdownOpen) {
+                toggleOverflowDropdown();
+            }
+        }
+
+        // Auto-hide toolbar logic
+        const toolbar = document.getElementById('toolbar');
+        const canvasArea = document.getElementById('canvasArea');
+        const hoverZone = document.getElementById('hoverZone');
+        let isToolbarVisible = true;
+        let hideTimeout = null;
+        let isHoveringToolbar = false;
+
+        canvasArea.addEventListener('mousemove', (e) => {
+            if (!autoHideEnabled) return;
+
+            const mouseY = e.clientY;
+
+            if (mouseY <= 50) {
+                // Near top edge - show toolbar
                 clearTimeout(hideTimeout);
-                if (enablePeek && !toolbar.classList.contains('visible')) {
-                    modes[currentMode].peekToolbar();
-                } else {
-                    modes[currentMode].showToolbar();
-                }
-            } else if (y > 150 && !isToolbarLocked) {
-                hideTimeout = setTimeout(() => {
-                    modes[currentMode].hideToolbar();
-                    toolbar.classList.remove('peek');
-                }, hideDelay);
+                showToolbar();
+                hoverZone.classList.add('active');
+            } else if (mouseY > 150 && !isHoveringToolbar) {
+                // Away from top - hide after delay
+                hoverZone.classList.remove('active');
+                scheduleHide();
             }
         });
 
-        // Toolbar click to lock
-        toolbar.addEventListener('click', () => {
-            if (currentMode === 'auto-hide') {
-                isToolbarLocked = !isToolbarLocked;
-                updateStatus(isToolbarLocked ? 'Locked' : 'Visible');
+        toolbar.addEventListener('mouseenter', () => {
+            isHoveringToolbar = true;
+            clearTimeout(hideTimeout);
+            showToolbar();
+        });
+
+        toolbar.addEventListener('mouseleave', () => {
+            isHoveringToolbar = false;
+            scheduleHide();
+        });
+
+        function showToolbar() {
+            toolbar.classList.remove('hidden');
+            isToolbarVisible = true;
+        }
+
+        function hideToolbar() {
+            if (!isHoveringToolbar) {
+                toolbar.classList.add('hidden');
+                isToolbarVisible = false;
             }
-        });
+        }
 
-        // Collapsed button handler
-        collapsedBtn.addEventListener('click', () => {
-            modes[currentMode].showToolbar();
-        });
+        function scheduleHide() {
+            clearTimeout(hideTimeout);
+            hideTimeout = setTimeout(hideToolbar, 800);
+        }
 
-        // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
-            // Cmd+K or / for command palette
-            if ((e.metaKey && e.key === 'k') || e.key === '/') {
-                e.preventDefault();
-                commandPalette.classList.add('visible');
-                commandInput.focus();
-                updateStatus('Command Palette');
+        function toggleAutoHide() {
+            autoHideEnabled = !autoHideEnabled;
+            if (!autoHideEnabled) {
+                showToolbar();
+                hoverZone.classList.remove('active');
             }
+        }
 
-            // ESC to close
-            if (e.key === 'Escape') {
-                commandPalette.classList.remove('visible');
-                if (currentMode === 'collapsible') {
-                    modes[currentMode].hideToolbar();
-                }
-                isToolbarLocked = false;
-                if (currentMode === 'auto-hide') {
-                    modes[currentMode].hideToolbar();
-                }
+        // Design presets
+        function changeDesign(preset) {
+            const root = document.documentElement.style;
+
+            switch(preset) {
+                case 'compact':
+                    root.setProperty('--chip-padding', '6px 10px');
+                    root.setProperty('--chip-gap', '6px');
+                    root.setProperty('--font-size', '12px');
+                    break;
+                case 'spacious':
+                    root.setProperty('--chip-padding', '10px 16px');
+                    root.setProperty('--chip-gap', '10px');
+                    root.setProperty('--font-size', '14px');
+                    break;
+                default: // improved
+                    root.setProperty('--chip-padding', '8px 12px');
+                    root.setProperty('--chip-gap', '8px');
+                    root.setProperty('--font-size', '13px');
             }
-        });
+        }
 
-        // Click outside command palette to close
-        commandPalette.addEventListener('click', (e) => {
-            if (e.target === commandPalette) {
-                commandPalette.classList.remove('visible');
+        // Update timestamps every 10 seconds
+        setInterval(() => {
+            if (notes.length > 0) {
+                renderNotes();
             }
-        });
+        }, 10000);
 
-        // Mode selection
-        document.querySelectorAll('input[name="mode"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                currentMode = e.target.value;
-                isToolbarLocked = false;
-                toolbar.classList.remove('peek');
-                modes[currentMode].init();
-            });
-        });
-
-        // Edge threshold slider
-        const edgeSlider = document.getElementById('edge-slider');
-        const edgeValue = document.getElementById('edge-value');
-        edgeSlider.addEventListener('input', (e) => {
-            edgeThreshold = parseInt(e.target.value);
-            edgeValue.textContent = edgeThreshold + 'px';
-        });
-
-        // Hide delay slider
-        const delaySlider = document.getElementById('delay-slider');
-        const delayValue = document.getElementById('delay-value');
-        delaySlider.addEventListener('input', (e) => {
-            hideDelay = parseInt(e.target.value);
-            delayValue.textContent = hideDelay + 'ms';
-        });
-
-        // Edge zone visibility
-        document.getElementById('show-edge-zone').addEventListener('change', (e) => {
-            showEdgeZone = e.target.checked;
-            if (!showEdgeZone) {
-                edgeZone.classList.remove('active');
-            }
-        });
-
-        // Peek mode
-        document.getElementById('enable-peek').addEventListener('change', (e) => {
-            enablePeek = e.target.checked;
-        });
-
-        // Initialize
-        modes[currentMode].init();
+        // Initialize with some demo notes
+        setTimeout(() => {
+            addNote();
+            addNote();
+            addNote();
+        }, 500);
     </script>
 </body>
 </html>
