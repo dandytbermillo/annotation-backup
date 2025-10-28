@@ -724,8 +724,12 @@ const mainPanelSeededRef = useRef(false)
           nextMainItems.push(
             createPanelItem('main', targetPosition, 'main', id, targetStoreKey)
           )
-          if (seedPosition) {
-            onConsumeFreshNoteSeed?.(id)
+          if (seedPosition && onConsumeFreshNoteSeed) {
+            // CRITICAL: Defer state update to avoid "Cannot update while rendering" error
+            // onConsumeFreshNoteSeed triggers setState in parent AnnotationAppContent,
+            // which cannot be called during this setState updater function.
+            // queueMicrotask executes after this updater completes but before next render.
+            queueMicrotask(() => onConsumeFreshNoteSeed(id))
           }
           changed = true
         }
@@ -943,8 +947,11 @@ const mainPanelSeededRef = useRef(false)
       const hydratedNoteId = panel.noteId || parsedId?.noteId || targetNoteId
       const hydratedPanelId = parsedId?.panelId || panel.id
       const storeKey = ensurePanelKey(hydratedNoteId, hydratedPanelId)
-      const camera = { x: canvasState.translateX, y: canvasState.translateY }
-      const screenPosition = worldToScreen(panel.position, camera, canvasState.zoom)
+      // CRITICAL FIX: Use ref to avoid infinite loop when canvas pans/zooms
+      // Reading from canvasStateRef instead of canvasState prevents this callback
+      // from being recreated every time translateX/translateY/zoom changes
+      const camera = { x: canvasStateRef.current.translateX, y: canvasStateRef.current.translateY }
+      const screenPosition = worldToScreen(panel.position, camera, canvasStateRef.current.zoom)
 
       if (mainOnlyNoteSet.has(hydratedNoteId) && hydratedPanelId !== 'main') {
         debugLog({
@@ -1108,7 +1115,9 @@ const mainPanelSeededRef = useRef(false)
         onFreshNoteHydrated?.(targetNoteId)
       })
     }
-  }, [canvasItems, canvasState.translateX, canvasState.translateY, canvasState.zoom, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated])
+  }, [canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated])
+  // NOTE: canvasState.translateX/translateY/zoom deliberately excluded from dependencies
+  // We read them via canvasStateRef to avoid infinite loop when minimap dragging causes pan/zoom changes
 
   useEffect(() => {
     if (!noteId) return
@@ -2319,10 +2328,13 @@ const mainPanelSeededRef = useRef(false)
 
   const handleCanvasMouseMove = (e: MouseEvent) => {
     captureInteractionPoint(e)
-    if (!canvasState.isDragging) return
-    
-    const deltaX = e.clientX - canvasState.lastMouseX
-    const deltaY = e.clientY - canvasState.lastMouseY
+    // CRITICAL FIX: Use ref to avoid infinite loop
+    // Reading from canvasStateRef prevents useEffect from re-running
+    // when lastMouseX/lastMouseY change during dragging
+    if (!canvasStateRef.current.isDragging) return
+
+    const deltaX = e.clientX - canvasStateRef.current.lastMouseX
+    const deltaY = e.clientY - canvasStateRef.current.lastMouseY
 
     updateCanvasTransform(prev => ({
       ...prev,
@@ -2368,12 +2380,14 @@ const mainPanelSeededRef = useRef(false)
   useEffect(() => {
     document.addEventListener('mousemove', handleCanvasMouseMove)
     document.addEventListener('mouseup', handleCanvasMouseUp)
-    
+
     return () => {
       document.removeEventListener('mousemove', handleCanvasMouseMove)
       document.removeEventListener('mouseup', handleCanvasMouseUp)
     }
-  }, [canvasState.isDragging, canvasState.lastMouseX, canvasState.lastMouseY])
+  }, [canvasState.isDragging])
+  // NOTE: lastMouseX/lastMouseY deliberately excluded from dependencies
+  // We read them via canvasStateRef to avoid infinite loop when dragging updates mouse position
 
   useEffect(() => {
     if (typeof document === 'undefined') return

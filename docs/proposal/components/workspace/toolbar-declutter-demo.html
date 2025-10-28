@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workspace Toolbar Declutter - Interactive Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        /* Demo Container */
+        .demo-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar with options */
+        .sidebar {
+            width: 300px;
+            background: #1e293b;
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid #334155;
+        }
+
+        .sidebar h1 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #f1f5f9;
+        }
+
+        .option-group {
+            margin-bottom: 30px;
+        }
+
+        .option-group h3 {
+            font-size: 14px;
+            color: #94a3b8;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .option {
+            margin-bottom: 15px;
+        }
+
+        .option label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+
+        .option label:hover {
+            background: #334155;
+        }
+
+        .option input[type="radio"] {
+            margin-right: 10px;
+            accent-color: #6366f1;
+        }
+
+        .option-desc {
+            font-size: 12px;
+            color: #64748b;
+            margin-left: 30px;
+            margin-top: 4px;
+        }
+
+        .slider-group {
+            margin-bottom: 15px;
+        }
+
+        .slider-group label {
+            display: block;
+            font-size: 13px;
+            color: #cbd5e1;
+            margin-bottom: 8px;
+        }
+
+        .slider-group input[type="range"] {
+            width: 100%;
+            height: 4px;
+            background: #334155;
+            border-radius: 2px;
+            outline: none;
+            accent-color: #6366f1;
+        }
+
+        .slider-value {
+            display: inline-block;
+            float: right;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+
+        .checkbox-option {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .checkbox-option:hover {
+            background: #334155;
+        }
+
+        .checkbox-option input[type="checkbox"] {
+            margin-right: 10px;
+            accent-color: #6366f1;
+        }
+
+        /* Canvas Area */
+        .canvas-area {
+            flex: 1;
+            position: relative;
+            background: linear-gradient(to bottom, #1e293b, #0f172a);
+            overflow: hidden;
+        }
+
+        /* Mock Canvas Content */
+        .mock-panel {
+            position: absolute;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #475569;
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .panel-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #f1f5f9;
+        }
+
+        .panel-content {
+            font-size: 13px;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+
+        /* Edge Hover Zone Indicator */
+        .edge-zone {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: rgba(99, 102, 241, 0.1);
+            border-bottom: 1px dashed rgba(99, 102, 241, 0.3);
+            display: none;
+            pointer-events: none;
+        }
+
+        .edge-zone.active {
+            display: block;
+        }
+
+        /* Toolbar Styles */
+        .toolbar {
+            position: fixed;
+            top: 0;
+            left: 300px;
+            right: 0;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 20px;
+            transform: translateY(-100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .toolbar.visible {
+            transform: translateY(0);
+        }
+
+        .toolbar.peek {
+            transform: translateY(-70%);
+        }
+
+        .toolbar.collapsed .toolbar-content {
+            display: none;
+        }
+
+        .toolbar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .toolbar-toggle {
+            background: #334155;
+            border: 1px solid #475569;
+            color: #e2e8f0;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .toolbar-toggle:hover {
+            background: #475569;
+            border-color: #64748b;
+        }
+
+        .toolbar-tabs {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+        }
+
+        .toolbar-tab {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .toolbar-tab:hover {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        .toolbar-tab.active {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: white;
+        }
+
+        .toolbar-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .toolbar-action {
+            background: transparent;
+            border: 1px solid #475569;
+            color: #94a3b8;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .toolbar-action:hover {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        /* Note tabs styling - top navigation buttons removed */
+        .workspace-notes {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            flex: 1;
+        }
+
+        .note-chip {
+            background: rgba(51, 65, 81, 0.5);
+            border: 1px solid #475569;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .note-chip:hover {
+            background: rgba(51, 65, 81, 0.8);
+            border-color: #64748b;
+        }
+
+        .note-chip.active {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: #6366f1;
+            color: #a5b4fc;
+        }
+
+        .note-chip-close {
+            cursor: pointer;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .note-chip-close:hover {
+            opacity: 1;
+        }
+
+        /* Collapsible Toolbar Button */
+        .collapsed-toolbar-btn {
+            position: fixed;
+            top: 12px;
+            left: 320px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e2e8f0;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 99;
+            display: none;
+            transition: all 0.2s;
+        }
+
+        .collapsed-toolbar-btn:hover {
+            background: rgba(30, 41, 59, 0.95);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .collapsed-toolbar-btn.visible {
+            display: block;
+        }
+
+        /* Command Palette */
+        .command-palette {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0.95);
+            width: 600px;
+            max-width: 90%;
+            background: rgba(15, 23, 42, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            opacity: 0;
+            pointer-events: none;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 200;
+        }
+
+        .command-palette.visible {
+            opacity: 1;
+            pointer-events: all;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        .command-search {
+            width: 100%;
+            background: transparent;
+            border: none;
+            padding: 20px;
+            font-size: 16px;
+            color: #f1f5f9;
+            outline: none;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .command-search::placeholder {
+            color: #64748b;
+        }
+
+        .command-list {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .command-item {
+            padding: 12px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .command-item:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .command-icon {
+            width: 32px;
+            height: 32px;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+        }
+
+        .command-details {
+            flex: 1;
+        }
+
+        .command-title {
+            font-size: 14px;
+            color: #f1f5f9;
+            margin-bottom: 2px;
+        }
+
+        .command-desc {
+            font-size: 12px;
+            color: #64748b;
+        }
+
+        .command-shortcut {
+            font-size: 11px;
+            color: #64748b;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        /* Keyboard Hint */
+        .keyboard-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 320px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #94a3b8;
+            backdrop-filter: blur(10px);
+        }
+
+        .keyboard-hint kbd {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            margin: 0 2px;
+        }
+
+        /* Instructions */
+        .instructions {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .instructions h4 {
+            font-size: 13px;
+            color: #a5b4fc;
+            margin-bottom: 8px;
+        }
+
+        .instructions ul {
+            list-style: none;
+            font-size: 12px;
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+
+        .instructions li::before {
+            content: "→ ";
+            color: #6366f1;
+            margin-right: 4px;
+        }
+
+        /* Status Indicator */
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+            z-index: 50;
+        }
+
+        .status-label {
+            color: #64748b;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .status-value {
+            color: #f1f5f9;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <!-- Sidebar Controls -->
+        <div class="sidebar">
+            <h1>🎨 Toolbar Design Options</h1>
+
+            <div class="instructions">
+                <h4>Try These Interactions:</h4>
+                <ul>
+                    <li>Move mouse to top edge</li>
+                    <li>Press <kbd>Cmd+K</kbd> or <kbd>/</kbd></li>
+                    <li>Click toolbar buttons</li>
+                    <li>Change options below</li>
+                </ul>
+            </div>
+
+            <div class="option-group">
+                <h3>Toolbar Mode</h3>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="mode" value="auto-hide" checked>
+                        Auto-Hide (Edge Hover)
+                    </label>
+                    <div class="option-desc">Toolbar hides, appears on edge hover</div>
+                </div>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="mode" value="collapsible">
+                        Collapsible Button
+                    </label>
+                    <div class="option-desc">Single button, expands on click</div>
+                </div>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="mode" value="always-visible">
+                        Always Visible
+                    </label>
+                    <div class="option-desc">Traditional always-on toolbar</div>
+                </div>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="mode" value="command-only">
+                        Command Palette Only
+                    </label>
+                    <div class="option-desc">Zero UI, keyboard-driven</div>
+                </div>
+            </div>
+
+            <div class="option-group">
+                <h3>Behavior Settings</h3>
+                <div class="slider-group">
+                    <label>
+                        Edge Hover Zone
+                        <span class="slider-value" id="edge-value">30px</span>
+                    </label>
+                    <input type="range" id="edge-slider" min="10" max="100" value="30" step="5">
+                </div>
+
+                <div class="slider-group">
+                    <label>
+                        Hide Delay
+                        <span class="slider-value" id="delay-value">1000ms</span>
+                    </label>
+                    <input type="range" id="delay-slider" min="0" max="3000" value="1000" step="100">
+                </div>
+
+                <div class="checkbox-option">
+                    <input type="checkbox" id="show-edge-zone" checked>
+                    <label for="show-edge-zone">Show Edge Zone Indicator</label>
+                </div>
+
+                <div class="checkbox-option">
+                    <input type="checkbox" id="enable-peek">
+                    <label for="enable-peek">Enable Peek Mode</label>
+                </div>
+
+                <div class="checkbox-option">
+                    <input type="checkbox" id="blur-background">
+                    <label for="blur-background">Blur Background</label>
+                </div>
+            </div>
+
+            <div class="option-group">
+                <h3>Workspace Notes</h3>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="notes-display" value="tabs" checked>
+                        Show as Tabs
+                    </label>
+                </div>
+                <div class="option">
+                    <label>
+                        <input type="radio" name="notes-display" value="dropdown">
+                        Collapse to Dropdown
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Canvas Area -->
+        <div class="canvas-area" id="canvas">
+            <!-- Edge Hover Zone Indicator -->
+            <div class="edge-zone" id="edge-zone"></div>
+
+            <!-- Mock Panels -->
+            <div class="mock-panel" style="top: 120px; left: 400px; width: 300px;">
+                <div class="panel-header">📝 Main Note Panel</div>
+                <div class="panel-content">
+                    This is a main panel containing note content. Move your mouse to the top edge to reveal the toolbar.
+                </div>
+            </div>
+
+            <div class="mock-panel" style="top: 300px; left: 750px; width: 280px;">
+                <div class="panel-header">🔍 Explore Panel</div>
+                <div class="panel-content">
+                    Additional panel for exploring related content. Notice how the toolbar doesn't obstruct your view.
+                </div>
+            </div>
+
+            <div class="mock-panel" style="top: 450px; left: 420px; width: 250px;">
+                <div class="panel-header">💡 Annotation</div>
+                <div class="panel-content">
+                    Annotation panel with notes and highlights. The workspace remains uncluttered.
+                </div>
+            </div>
+
+            <!-- Toolbar -->
+            <div class="toolbar" id="toolbar">
+                <div class="toolbar-header">
+                    <!-- Top navigation buttons removed - keeping only note tabs -->
+                    <div class="workspace-notes" id="workspace-notes">
+                        <div class="note-chip active">
+                            <span>Design Proposal</span>
+                            <span class="note-chip-close">×</span>
+                        </div>
+                        <div class="note-chip">
+                            <span>Research Notes</span>
+                            <span class="note-chip-close">×</span>
+                        </div>
+                        <div class="note-chip">
+                            <span>Meeting Minutes</span>
+                            <span class="note-chip-close">×</span>
+                        </div>
+                    </div>
+
+                    <div class="toolbar-actions">
+                        <button class="toolbar-action">+ New Note</button>
+                        <button class="toolbar-action">⚙️</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Collapsible Toolbar Button -->
+            <button class="collapsed-toolbar-btn" id="collapsed-btn">
+                ≡ Workspace Toolbar
+            </button>
+
+            <!-- Command Palette -->
+            <div class="command-palette" id="command-palette">
+                <input
+                    type="text"
+                    class="command-search"
+                    placeholder="Type a command or search..."
+                    id="command-input"
+                >
+                <div class="command-list">
+                    <div class="command-item">
+                        <div class="command-icon">📝</div>
+                        <div class="command-details">
+                            <div class="command-title">Create New Note</div>
+                            <div class="command-desc">Start a new note in the workspace</div>
+                        </div>
+                        <div class="command-shortcut">Cmd+N</div>
+                    </div>
+                    <div class="command-item">
+                        <div class="command-icon">📂</div>
+                        <div class="command-details">
+                            <div class="command-title">Open Recent</div>
+                            <div class="command-desc">Browse recently accessed notes</div>
+                        </div>
+                        <div class="command-shortcut">Cmd+O</div>
+                    </div>
+                    <div class="command-item">
+                        <div class="command-icon">🔍</div>
+                        <div class="command-details">
+                            <div class="command-title">Search Everything</div>
+                            <div class="command-desc">Search across all notes and content</div>
+                        </div>
+                        <div class="command-shortcut">Cmd+F</div>
+                    </div>
+                    <div class="command-item">
+                        <div class="command-icon">🎨</div>
+                        <div class="command-details">
+                            <div class="command-title">Add Component</div>
+                            <div class="command-desc">Insert a new component on canvas</div>
+                        </div>
+                        <div class="command-shortcut">Cmd+Shift+A</div>
+                    </div>
+                    <div class="command-item">
+                        <div class="command-icon">🗺️</div>
+                        <div class="command-details">
+                            <div class="command-title">Toggle Minimap</div>
+                            <div class="command-desc">Show or hide the canvas minimap</div>
+                        </div>
+                        <div class="command-shortcut">Cmd+M</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keyboard Hint -->
+            <div class="keyboard-hint">
+                Press <kbd>Cmd+K</kbd> or <kbd>/</kbd> for command palette • <kbd>ESC</kbd> to close
+            </div>
+
+            <!-- Status Indicator -->
+            <div class="status-indicator">
+                <div class="status-label">Toolbar State</div>
+                <div class="status-value" id="status-value">Hidden</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentMode = 'auto-hide';
+        let edgeThreshold = 30;
+        let hideDelay = 1000;
+        let hideTimeout = null;
+        let isToolbarLocked = false;
+        let showEdgeZone = true;
+        let enablePeek = false;
+
+        // Elements
+        const toolbar = document.getElementById('toolbar');
+        const collapsedBtn = document.getElementById('collapsed-btn');
+        const edgeZone = document.getElementById('edge-zone');
+        const commandPalette = document.getElementById('command-palette');
+        const commandInput = document.getElementById('command-input');
+        const statusValue = document.getElementById('status-value');
+        const canvas = document.getElementById('canvas');
+
+        // Update status indicator
+        function updateStatus(status) {
+            statusValue.textContent = status;
+        }
+
+        // Mode handlers
+        const modes = {
+            'auto-hide': {
+                init() {
+                    toolbar.classList.remove('visible');
+                    collapsedBtn.classList.remove('visible');
+                    updateStatus('Hidden');
+                },
+                showToolbar() {
+                    if (!isToolbarLocked) {
+                        toolbar.classList.add('visible');
+                        updateStatus('Visible');
+                    }
+                },
+                hideToolbar() {
+                    if (!isToolbarLocked) {
+                        toolbar.classList.remove('visible');
+                        updateStatus('Hidden');
+                    }
+                },
+                peekToolbar() {
+                    if (!isToolbarLocked && enablePeek) {
+                        toolbar.classList.add('peek');
+                        updateStatus('Peek');
+                    }
+                }
+            },
+            'collapsible': {
+                init() {
+                    toolbar.classList.remove('visible');
+                    collapsedBtn.classList.add('visible');
+                    updateStatus('Collapsed');
+                },
+                showToolbar() {
+                    toolbar.classList.add('visible');
+                    collapsedBtn.classList.remove('visible');
+                    updateStatus('Expanded');
+                },
+                hideToolbar() {
+                    toolbar.classList.remove('visible');
+                    collapsedBtn.classList.add('visible');
+                    updateStatus('Collapsed');
+                }
+            },
+            'always-visible': {
+                init() {
+                    toolbar.classList.add('visible');
+                    collapsedBtn.classList.remove('visible');
+                    updateStatus('Always Visible');
+                },
+                showToolbar() {},
+                hideToolbar() {}
+            },
+            'command-only': {
+                init() {
+                    toolbar.classList.remove('visible');
+                    collapsedBtn.classList.remove('visible');
+                    updateStatus('Command Only');
+                },
+                showToolbar() {},
+                hideToolbar() {}
+            }
+        };
+
+        // Mouse move handler for edge detection
+        canvas.addEventListener('mousemove', (e) => {
+            if (currentMode !== 'auto-hide') return;
+
+            const rect = canvas.getBoundingClientRect();
+            const y = e.clientY - rect.top;
+
+            if (showEdgeZone) {
+                edgeZone.style.height = edgeThreshold + 'px';
+                edgeZone.classList.toggle('active', y < edgeThreshold);
+            }
+
+            if (y < edgeThreshold) {
+                clearTimeout(hideTimeout);
+                if (enablePeek && !toolbar.classList.contains('visible')) {
+                    modes[currentMode].peekToolbar();
+                } else {
+                    modes[currentMode].showToolbar();
+                }
+            } else if (y > 150 && !isToolbarLocked) {
+                hideTimeout = setTimeout(() => {
+                    modes[currentMode].hideToolbar();
+                    toolbar.classList.remove('peek');
+                }, hideDelay);
+            }
+        });
+
+        // Toolbar click to lock
+        toolbar.addEventListener('click', () => {
+            if (currentMode === 'auto-hide') {
+                isToolbarLocked = !isToolbarLocked;
+                updateStatus(isToolbarLocked ? 'Locked' : 'Visible');
+            }
+        });
+
+        // Collapsed button handler
+        collapsedBtn.addEventListener('click', () => {
+            modes[currentMode].showToolbar();
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            // Cmd+K or / for command palette
+            if ((e.metaKey && e.key === 'k') || e.key === '/') {
+                e.preventDefault();
+                commandPalette.classList.add('visible');
+                commandInput.focus();
+                updateStatus('Command Palette');
+            }
+
+            // ESC to close
+            if (e.key === 'Escape') {
+                commandPalette.classList.remove('visible');
+                if (currentMode === 'collapsible') {
+                    modes[currentMode].hideToolbar();
+                }
+                isToolbarLocked = false;
+                if (currentMode === 'auto-hide') {
+                    modes[currentMode].hideToolbar();
+                }
+            }
+        });
+
+        // Click outside command palette to close
+        commandPalette.addEventListener('click', (e) => {
+            if (e.target === commandPalette) {
+                commandPalette.classList.remove('visible');
+            }
+        });
+
+        // Mode selection
+        document.querySelectorAll('input[name="mode"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                currentMode = e.target.value;
+                isToolbarLocked = false;
+                toolbar.classList.remove('peek');
+                modes[currentMode].init();
+            });
+        });
+
+        // Edge threshold slider
+        const edgeSlider = document.getElementById('edge-slider');
+        const edgeValue = document.getElementById('edge-value');
+        edgeSlider.addEventListener('input', (e) => {
+            edgeThreshold = parseInt(e.target.value);
+            edgeValue.textContent = edgeThreshold + 'px';
+        });
+
+        // Hide delay slider
+        const delaySlider = document.getElementById('delay-slider');
+        const delayValue = document.getElementById('delay-value');
+        delaySlider.addEventListener('input', (e) => {
+            hideDelay = parseInt(e.target.value);
+            delayValue.textContent = hideDelay + 'ms';
+        });
+
+        // Edge zone visibility
+        document.getElementById('show-edge-zone').addEventListener('change', (e) => {
+            showEdgeZone = e.target.checked;
+            if (!showEdgeZone) {
+                edgeZone.classList.remove('active');
+            }
+        });
+
+        // Peek mode
+        document.getElementById('enable-peek').addEventListener('change', (e) => {
+            enablePeek = e.target.checked;
+        });
+
+        // Initialize
+        modes[currentMode].init();
+    </script>
+</body>
+</html>

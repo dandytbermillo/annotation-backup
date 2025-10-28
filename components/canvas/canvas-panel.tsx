@@ -1635,6 +1635,53 @@ export function CanvasPanel({
     }
   }, [])
 
+  // Detect when mouse is near panel edges to show resize handles
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+
+    const EDGE_THRESHOLD = 30 // pixels from edge to trigger handle visibility
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const rect = panel.getBoundingClientRect()
+      const x = e.clientX
+      const y = e.clientY
+
+      // Check if mouse is within panel bounds
+      const isInPanel = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+
+      if (!isInPanel) {
+        setShowResizeHandles(false)
+        return
+      }
+
+      // Check if mouse is near any edge
+      const nearLeft = x - rect.left < EDGE_THRESHOLD
+      const nearRight = rect.right - x < EDGE_THRESHOLD
+      const nearTop = y - rect.top < EDGE_THRESHOLD
+      const nearBottom = rect.bottom - y < EDGE_THRESHOLD
+
+      const nearAnyEdge = nearLeft || nearRight || nearTop || nearBottom
+
+      setShowResizeHandles(nearAnyEdge)
+    }
+
+    const handleMouseLeave = () => {
+      // Don't hide if actively resizing
+      if (!isResizing) {
+        setShowResizeHandles(false)
+      }
+    }
+
+    panel.addEventListener('mousemove', handleMouseMove)
+    panel.addEventListener('mouseleave', handleMouseLeave)
+
+    return () => {
+      panel.removeEventListener('mousemove', handleMouseMove)
+      panel.removeEventListener('mouseleave', handleMouseLeave)
+    }
+  }, [isResizing])
+
   // Resize mousedown handler
   const handleResizeMouseDown = useCallback((e: React.MouseEvent, direction: ResizeDirection) => {
     e.stopPropagation()
@@ -1660,6 +1707,9 @@ export function CanvasPanel({
       'sw': 'nesw-resize'
     }
     document.body.style.cursor = cursorMap[direction] || 'default'
+
+    // Keep handles visible during resize
+    setShowResizeHandles(true)
 
     // CRITICAL: Attach synchronous fallback cleanup to prevent cursor race
     // If user releases before useEffect attaches the main listener, this ensures cursor is reset
@@ -3754,8 +3804,8 @@ export function CanvasPanel({
         boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
       }} />
 
-      {/* Resize Handles - Available for all panels */}
-      {(() => {
+      {/* Resize Handles - Show only when hovering near edges or actively resizing */}
+      {(showResizeHandles || isResizing) && (() => {
         debugLog({
           component: 'CanvasPanel',
           action: 'resize_handles_rendered',
@@ -3763,7 +3813,8 @@ export function CanvasPanel({
             panelId,
             isResizing,
             resizeDirection,
-            panelType: branch.type
+            panelType: branch.type,
+            showResizeHandles
           }
         })
         return (
