@@ -77,6 +77,8 @@ type FloatingToolbarProps = {
   activePanel?: PanelKey // Controlled active panel state from parent
   onActivePanelChange?: (panel: PanelKey) => void // Callback when active panel changes
   refreshRecentNotes?: number // Increment this counter to trigger recent notes refresh (fixes stale list when toolbar stays open)
+  onToggleConstellationPanel?: () => void // Callback to toggle constellation panel visibility
+  showConstellationPanel?: boolean // Whether constellation panel is currently visible
   // Canvas context props (provided by CanvasAwareFloatingToolbar wrapper)
   canvasState?: any // CanvasState from useCanvas()
   canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
@@ -186,7 +188,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, canvasState, canvasDispatch, canvasDataStore, canvasNoteId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
@@ -2386,17 +2388,23 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           {/* Org - Dock style */}
           <button
             className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
-              activePanel === "org"
+              showConstellationPanel
                 ? "bg-white/20 border-2 border-white/30 shadow-lg"
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
             }`}
             style={{ backdropFilter: 'blur(10px)' }}
-            onClick={() => setActivePanel("org")}
+            onClick={() => {
+              console.log('🌌 Canvas button clicked!', {
+                hasToggleFunc: !!onToggleConstellationPanel,
+                currentState: showConstellationPanel
+              })
+              onToggleConstellationPanel?.()
+            }}
             onMouseEnter={() => handleButtonHover("org")}
-            data-tooltip="Organization"
+            data-tooltip="Constellation View"
           >
-            <span className="text-xl">📁</span>
-            <span className="text-[10px] text-white/90 font-medium">Org</span>
+            <span className="text-xl">🌌</span>
+            <span className="text-[10px] text-white/90 font-medium">Canvas</span>
           </button>
 
           {/* Tools - Dock style */}
@@ -2452,7 +2460,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       {/* Panels - Absolutely positioned below toolbar */}
       <div className="absolute left-1/2 -translate-x-1/2" style={{ top: 'calc(100% + 8px)' }}>
         {activePanel === "recents" && renderRecentNotes()}
-        {activePanel === "org" && renderOrg()}
         {(activePanel === "tools" || activePanel === "layer" || activePanel === "format" || activePanel === "resize" || activePanel === "branches" || activePanel === "actions") && renderToolCategories()}
         {activePanel === "layer" && renderLayerPanel()}
         {activePanel === "format" && renderFormatPanel()}

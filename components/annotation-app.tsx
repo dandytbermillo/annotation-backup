@@ -29,6 +29,7 @@ import {
   computeVisuallyCenteredWorldPosition,
   type RapidSequenceState,
 } from "@/lib/canvas/visual-centering"
+import { ConstellationPanel } from "@/components/constellation/constellation-panel"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -103,6 +104,13 @@ function AnnotationAppContent() {
     return null
   })
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
+  const [showConstellationPanel, setShowConstellationPanel] = useState(false)
+
+  // Debug constellation panel state changes
+  useEffect(() => {
+    console.log('🎨 Constellation panel state changed:', showConstellationPanel)
+  }, [showConstellationPanel])
+
   const activeNoteIdRef = useRef<string | null>(activeNoteId)
   useEffect(() => {
     activeNoteIdRef.current = activeNoteId
@@ -2669,8 +2677,10 @@ const handleCenterNote = useCallback(
 
   return (
     <>
-      <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+      {!showConstellationPanel && (
+        <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+
           <WorkspaceToolbar
             notes={sortedOpenNotes}
             activeNoteId={activeNoteId}
@@ -2684,6 +2694,7 @@ const handleCenterNote = useCallback(
           />
         </div>
       </AutoHideToolbar>
+      )}
 
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
 
@@ -2692,16 +2703,24 @@ const handleCenterNote = useCallback(
         onContextMenu={handleContextMenu}
       >
         <div className="flex h-full w-full">
-          {/* Canvas Area */}
-          <div 
-            className="flex-1 relative transition-all duration-300 ease-in-out"
-            style={{
-              pointerEvents: isPopupLayerActive ? 'none' : 'auto',
-              position: 'relative',
-              zIndex: 1,
-              isolation: 'isolate',
-            }}
-          >
+          {/* Constellation Canvas - Full screen when open */}
+          {showConstellationPanel && (
+            <div className="fixed left-0 top-0 w-screen h-screen z-40 bg-gray-900">
+              <ConstellationPanel />
+            </div>
+          )}
+
+          {/* Canvas Area - Hidden when constellation panel is open */}
+          {!showConstellationPanel && (
+            <div
+              className="flex-1 relative transition-all duration-300 ease-in-out"
+              style={{
+                pointerEvents: isPopupLayerActive ? 'none' : 'auto',
+                position: 'relative',
+                zIndex: 1,
+                isolation: 'isolate',
+              }}
+            >
             {openNotes.length > 0 ? (
                 <ModernAnnotationCanvas
                   key="workspace"
@@ -2739,6 +2758,8 @@ const handleCenterNote = useCallback(
                     activePanel={toolbarActivePanel}
                     onActivePanelChange={setToolbarActivePanel}
                     refreshRecentNotes={recentNotesRefreshTrigger}
+                    onToggleConstellationPanel={() => setShowConstellationPanel(prev => !prev)}
+                    showConstellationPanel={showConstellationPanel}
                   />
                 )}
               </ModernAnnotationCanvas>
@@ -2755,6 +2776,7 @@ const handleCenterNote = useCallback(
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Overlay canvas popups - always mounted to avoid re-initialization */}
@@ -2801,6 +2823,8 @@ const handleCenterNote = useCallback(
             activePanel={toolbarActivePanel}
             onActivePanelChange={setToolbarActivePanel}
             refreshRecentNotes={recentNotesRefreshTrigger}
+            onToggleConstellationPanel={() => setShowConstellationPanel(prev => !prev)}
+            showConstellationPanel={showConstellationPanel}
           />
         )}
       </div>
