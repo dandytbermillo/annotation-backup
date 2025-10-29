@@ -1,5 +1,9 @@
 import { ConstellationItem, ItemType, Position, Constellation } from '@/types/constellation';
 
+const BASE_CHILD_RADIUS = 140;       // Default radius for direct children
+const CHILD_RADIUS_STEP = 45;        // Additional radius per nesting depth
+const MAX_VISIBLE_CHILDREN = 10;     // Matches server-side visibility limit
+
 // Calculate child position based on parent position and child's angle/distance
 export function calculateChildPosition(
   child: ConstellationItem,
@@ -26,14 +30,16 @@ function processChildrenRecursively(
     return;
   }
 
-  const MAX_VISIBLE_CHILDREN = 10;
   const childrenToShow = parentItem.children.slice(0, MAX_VISIBLE_CHILDREN);
   const hasMoreChildren = parentItem.children.length > MAX_VISIBLE_CHILDREN;
+  const radius = BASE_CHILD_RADIUS + depth * CHILD_RADIUS_STEP;
+  const angleStep = childrenToShow.length > 1 ? 360 / childrenToShow.length : 360;
 
-  childrenToShow.forEach(child => {
-    const childRadian = (child.angle * Math.PI) / 180;
-    const childX = parentPos.x + Math.cos(childRadian) * child.distance;
-    const childY = parentPos.y + Math.sin(childRadian) * child.distance;
+  childrenToShow.forEach((child, index) => {
+    const computedAngle = childrenToShow.length > 1 ? angleStep * index : 0;
+    const childRadian = (computedAngle * Math.PI) / 180;
+    const childX = parentPos.x + Math.cos(childRadian) * radius;
+    const childY = parentPos.y + Math.sin(childRadian) * radius;
 
     const inheritedDepth = child.depthLayer !== undefined
       ? child.depthLayer
@@ -41,6 +47,8 @@ function processChildrenRecursively(
 
     const fullChild: ConstellationItem = {
       ...child,
+      angle: computedAngle,
+      distance: radius,
       constellation: constellation.id,
       x: childX,
       y: childY,
@@ -64,13 +72,14 @@ function processChildrenRecursively(
     }
   });
 
-  // Overflow node logic (same as before)
+  // Overflow node logic
   if (hasMoreChildren) {
     const remainingCount = parentItem.children.length - MAX_VISIBLE_CHILDREN;
-    const moreNodeAngle = 360;
-    const moreNodeRadian = (moreNodeAngle * Math.PI) / 180;
-    const moreNodeX = parentPos.x + Math.cos(moreNodeRadian) * parentItem.distance;
-    const moreNodeY = parentPos.y + Math.sin(moreNodeRadian) * parentItem.distance;
+    const overflowSlot = childrenToShow.length;
+    const overflowAngle = childrenToShow.length > 0 ? angleStep * overflowSlot : 0;
+    const moreNodeRadian = (overflowAngle * Math.PI) / 180;
+    const moreNodeX = parentPos.x + Math.cos(moreNodeRadian) * radius;
+    const moreNodeY = parentPos.y + Math.sin(moreNodeRadian) * radius;
 
     const moreNode: ConstellationItem = {
       id: `${parentItem.id}_more`,
@@ -78,8 +87,8 @@ function processChildrenRecursively(
       type: 'folder',
       constellation: constellation.id,
       importance: 3,
-      angle: moreNodeAngle,
-      distance: parentItem.distance,
+      angle: overflowAngle,
+      distance: radius,
       x: moreNodeX,
       y: moreNodeY,
       color: constellation.color,
@@ -122,17 +131,25 @@ export function initializeConstellations(constellations: Constellation[]): Const
     };
     allItems.push(centerNode);
 
-    // Add items
-    constellation.items.forEach(item => {
-      const radian = (item.angle * Math.PI) / 180;
-      const x = constellation.centerX + Math.cos(radian) * item.distance;
-      const y = constellation.centerY + Math.sin(radian) * item.distance;
+    const visibleChildren = constellation.items.filter(item => !item.isOverflowNode);
+    const overflowItems = constellation.items.filter(item => item.isOverflowNode);
+    const childRadius = BASE_CHILD_RADIUS;
+    const angleStep = visibleChildren.length > 1 ? 360 / visibleChildren.length : 360;
+
+    visibleChildren.forEach((item, index) => {
+      const computedAngle = visibleChildren.length > 1 ? angleStep * index : 0;
+      const distance = childRadius;
+      const radian = (computedAngle * Math.PI) / 180;
+      const x = constellation.centerX + Math.cos(radian) * distance;
+      const y = constellation.centerY + Math.sin(radian) * distance;
 
       const fullItem: ConstellationItem = {
         ...item,
+        angle: computedAngle,
+        distance,
         constellation: constellation.id,
-        x: x,
-        y: y,
+        x,
+        y,
         color: constellation.color,
         content: item.content || `This is a ${item.type} from ${constellation.name}. It contains important information related to your ${constellation.name.toLowerCase()}.`,
         tags: item.tags || [constellation.name.toLowerCase(), item.type],
@@ -145,6 +162,21 @@ export function initializeConstellations(constellations: Constellation[]): Const
       if (item.children && item.children.length > 0) {
         processChildrenRecursively(item, { x, y }, constellation, allItems, 0);
       }
+    });
+
+    // Add overflow items at the end
+    overflowItems.forEach(item => {
+      const radian = (item.angle * Math.PI) / 180;
+      const x = constellation.centerX + Math.cos(radian) * item.distance;
+      const y = constellation.centerY + Math.sin(radian) * item.distance;
+
+      allItems.push({
+        ...item,
+        constellation: constellation.id,
+        x,
+        y,
+        color: constellation.color
+      });
     });
   });
 

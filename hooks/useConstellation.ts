@@ -216,14 +216,11 @@ export function useConstellation() {
     console.log('👶 Children found:', items.filter(item => item.parentId));
     setAllItems(items);
 
-    // Do NOT auto-expand folders - let them start collapsed to maintain 3D depth effect
-    // Only expand the main constellations (the 5 root folders)
+    // Do NOT auto-expand anything - let all constellations start collapsed to maintain 3D depth effect
+    // Users can double-click constellation centers to expand them manually
     const expandedIds = new Set<string>();
 
-    // Add only constellation IDs (not their children folders)
-    constellations.forEach(c => expandedIds.add(c.id));
-
-    console.log('🔓 Auto-expanded constellations:', Array.from(expandedIds));
+    console.log('🔓 Auto-expanded constellations:', Array.from(expandedIds), '(none - all start collapsed)');
     setState(prev => ({ ...prev, expandedConstellations: expandedIds }));
 
     // Create connections from fully populated items
