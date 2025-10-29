@@ -2199,48 +2199,77 @@ const mainPanelSeededRef = useRef(false)
     // AUTO-CENTER: Only pan if note is NOT visible in viewport
     // This prevents unwanted camera movement on reload when note is already visible
     setTimeout(() => {
-      const mainPanel = restoredItems.find(item => item.itemType === 'panel' && item.panelId === 'main')
-      if (mainPanel?.position) {
+      const runVisibilityCheck = () => {
+        const mainPanel = restoredItems.find(
+          item => item.itemType === 'panel' && item.panelId === 'main'
+        )
+
+        if (!mainPanel?.position) {
+          return
+        }
+
+        const latestState = canvasStateRef.current
         const mainStoreKey = ensurePanelKey(noteId, 'main')
         const panelPosition = mainPanel.position
         const panelDimensions = mainPanel.dimensions ?? DEFAULT_PANEL_DIMENSIONS
 
-        // Get current camera state for visibility check and panToPanel
         const currentCameraForVisibility = {
-          translateX: canvasState.translateX ?? 0,
-          translateY: canvasState.translateY ?? 0,
-          zoom: canvasState.zoom ?? 1
+          translateX: latestState.translateX ?? 0,
+          translateY: latestState.translateY ?? 0,
+          zoom: latestState.zoom ?? 1,
         }
 
-        // panToPanel expects x/y instead of translateX/translateY
         const currentViewport = {
-          x: canvasState.translateX ?? 0,
-          y: canvasState.translateY ?? 0,
-          zoom: canvasState.zoom ?? 1
+          x: currentCameraForVisibility.translateX,
+          y: currentCameraForVisibility.translateY,
+          zoom: currentCameraForVisibility.zoom,
         }
 
-        // Check if panel is visible in current viewport
         const isPanelVisible = isPanelVisibleInViewport(
           panelPosition,
           panelDimensions,
           currentCameraForVisibility
         )
 
-        // Check if this is a newly opened note (centering mechanism)
-        const isNewlyOpened = freshNoteSeeds?.[noteId] !== undefined
+        const panelScreenBounds = {
+          x:
+            (panelPosition.x + currentCameraForVisibility.translateX) *
+            currentCameraForVisibility.zoom,
+          y:
+            (panelPosition.y + currentCameraForVisibility.translateY) *
+            currentCameraForVisibility.zoom,
+          width: panelDimensions.width * currentCameraForVisibility.zoom,
+          height: panelDimensions.height * currentCameraForVisibility.zoom,
+        }
 
-        // Decision tree:
-        // 1. Newly opened note → Always center (regardless of visibility)
-        // 2. Reload/tab switch + visible → No centering, just highlight
-        // 3. Reload/tab switch + NOT visible → Center it
+        const viewportSize = {
+          width: typeof window !== 'undefined' ? window.innerWidth : 0,
+          height: typeof window !== 'undefined' ? window.innerHeight : 0,
+        }
+
+        const isNewlyOpened = freshNoteSeeds?.[noteId] !== undefined
         const shouldCenter = isNewlyOpened || !isPanelVisible
+
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'auto_center_visibility_check',
+          metadata: {
+            noteId,
+            isNewlyOpened,
+            isPanelVisible,
+            panelPosition,
+            panelScreenBounds,
+            viewportSize,
+            camera: currentCameraForVisibility,
+          },
+        })
 
         if (shouldCenter) {
           panToPanel(
             mainStoreKey,
-            (id) => id === mainStoreKey ? panelPosition : null,
+            id => (id === mainStoreKey ? panelPosition : null),
             currentViewport,
-            (newState) => {
+            newState => {
               if (newState.x !== undefined && newState.y !== undefined) {
                 setCanvasState(prev => ({
                   ...prev,
@@ -2256,12 +2285,13 @@ const mainPanelSeededRef = useRef(false)
             metadata: {
               noteId,
               panelPosition,
-              reason: isNewlyOpened ? 'newly_opened_note' : 'note_not_visible_in_viewport',
-              isPanelVisible
-            }
+              reason: isNewlyOpened
+                ? 'newly_opened_note'
+                : 'note_not_visible_in_viewport',
+              isPanelVisible,
+            },
           })
         } else {
-          // Panel is visible, skip centering
           debugLog({
             component: 'AnnotationCanvas',
             action: 'skipped_auto_center',
@@ -2270,24 +2300,31 @@ const mainPanelSeededRef = useRef(false)
               panelPosition,
               reason: 'panel_already_visible_in_viewport',
               isPanelVisible: true,
-              panelScreenBounds: {
-                x: (panelPosition.x + currentCameraForVisibility.translateX) * currentCameraForVisibility.zoom,
-                y: (panelPosition.y + currentCameraForVisibility.translateY) * currentCameraForVisibility.zoom,
-                width: panelDimensions.width * currentCameraForVisibility.zoom,
-                height: panelDimensions.height * currentCameraForVisibility.zoom
-              },
-              viewportSize: {
-                width: typeof window !== 'undefined' ? window.innerWidth : 0,
-                height: typeof window !== 'undefined' ? window.innerHeight : 0
-              }
-            }
+              panelScreenBounds,
+              viewportSize,
+            },
           })
         }
+      }
+
+      if (typeof window !== 'undefined') {
+        requestAnimationFrame(runVisibilityCheck)
+      } else {
+        runVisibilityCheck()
       }
     }, 100)
 
     return
-  }, [noteId, onSnapshotLoadComplete, skipSnapshotForNote, onSnapshotSettled, activeWorkspaceVersion])
+  }, [
+    noteId,
+    onSnapshotLoadComplete,
+    onSnapshotSettled,
+    activeWorkspaceVersion
+    // skipSnapshotForNote intentionally omitted to prevent the guard from re-running after
+    // we clear the flag via onSnapshotSettled. The flag is read during the render triggered by
+    // setSkipSnapshotForNote, so the skip still applies on each new note selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ])
 
   // Cleanup auto-save timer on unmount
   useEffect(() => {
