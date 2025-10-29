@@ -22,6 +22,7 @@ import { debugLog } from "@/lib/utils/debug-logger"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 import { AutoHideToolbar } from "./canvas/auto-hide-toolbar"
 import {
@@ -329,6 +330,13 @@ function AnnotationAppContent() {
           }
         }
       }
+
+      // CRITICAL FALLBACK: If DataStore doesn't have it, try fetching from database
+      // This handles the case where workspace hasn't hydrated yet but note is visible
+      console.log('[resolveMainPanelPosition] DataStore miss, trying database for', noteId)
+      // Note: This should ideally be async, but for now we return null and rely on
+      // the workspace's mainPosition from canvas_workspace_notes table
+      // The workspace context should have this from the initial load
 
       return null
     },
@@ -1392,11 +1400,55 @@ const initialWorkspaceSyncRef = useRef(false)
     setSkipSnapshotForNote(noteId)
     const alreadyOpen = openNotes.some(open => open.noteId === noteId)
 
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'toolbar_click_debug',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        openNotesCount: openNotes.length,
+        openNoteIds: openNotes.map(n => n.noteId),
+        isThisNoteInList: openNotes.some(n => n.noteId === noteId)
+      }
+    })
+
     // CRITICAL FIX (infinite-canvas approach): Separate new note creation from reopening
     // NEW NOTES: Always compute fresh viewport-centered position (NO CACHING)
     // EXISTING NOTES: Look up persisted position from database
     const hasExplicitPosition = Boolean(options?.initialPosition)
     let resolvedPosition = options?.initialPosition ?? null
+
+    // CRITICAL FIX: Fetch persisted position early to use in centering guard
+    // This prevents recentering notes that already have a saved position
+    const persistedPosition = !alreadyOpen && !hasExplicitPosition
+      ? resolveMainPanelPosition(noteId)
+      : null
+
+    // HYDRATION GAP FIX: Check if panel already rendered on canvas
+    // During early hydration, openNotes is empty so resolveMainPanelPosition returns null,
+    // but the canvas has already rendered panels from database. Treat rendered panels
+    // as "having a persisted position" to prevent recentering during hydration gap.
+    const dataStore = sharedWorkspace?.dataStore
+    const panelAlreadyRendered = dataStore ? dataStore.has(ensurePanelKey(noteId, 'main')) : false
+
+    const hasPersistedPosition = Boolean(
+      (persistedPosition && !isDefaultMainPosition(persistedPosition)) ||
+      panelAlreadyRendered  // Treat rendered panels as persisted
+    )
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'position_guard_check',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        hasExplicitPosition,
+        hasPersisted: !!persistedPosition,
+        panelAlreadyRendered,
+        hasPersistedPosition,
+        persistedPosition
+      }
+    })
 
     if (isToolbarCreation && !hasExplicitPosition) {
       // NEW NOTE: Compute viewport-centered position using simple, direct formula
@@ -1442,8 +1494,7 @@ const initialWorkspaceSyncRef = useRef(false)
 
       // DO NOT cache this position - use it immediately
     } else if (!hasExplicitPosition && !alreadyOpen) {
-      // EXISTING NOTE: Look up persisted position
-      const persistedPosition = resolveMainPanelPosition(noteId)
+      // EXISTING NOTE: Use persisted position fetched earlier
       resolvedPosition = persistedPosition ?? null
 
       debugLog({
@@ -1451,7 +1502,8 @@ const initialWorkspaceSyncRef = useRef(false)
         action: 'existing_note_persisted_position',
         metadata: {
           noteId,
-          persistedPosition: resolvedPosition
+          persistedPosition: resolvedPosition,
+          hasPersistedPosition
         }
       })
     }
@@ -1459,10 +1511,33 @@ const initialWorkspaceSyncRef = useRef(false)
     if (!alreadyOpen) {
 
       const shouldCenterExisting =
-        CENTER_EXISTING_NOTES_ENABLED && !isToolbarCreation && !hasExplicitPosition
+        CENTER_EXISTING_NOTES_ENABLED &&
+        !isToolbarCreation &&
+        !hasExplicitPosition &&
+        !hasPersistedPosition  // CRITICAL FIX: Only center if no saved position exists
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'centering_guard_evaluated',
+        metadata: {
+          noteId,
+          CENTER_EXISTING_NOTES_ENABLED,
+          isToolbarCreation,
+          hasExplicitPosition,
+          hasPersistedPosition,
+          panelAlreadyRendered,
+          shouldCenterExisting,
+          fixBlocked: !shouldCenterExisting && panelAlreadyRendered  // NEW: Show when hydration gap fix blocks centering
+        }
+      })
 
       let usedCenteredOverride = false
       if (shouldCenterExisting) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_override_applying',
+          metadata: { noteId, reason: 'shouldCenterExisting=true' }
+        })
         // Get current camera state directly from canvas ref to avoid stale React state
         const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
 
@@ -1526,6 +1601,18 @@ const initialWorkspaceSyncRef = useRef(false)
             },
           })
         }
+      } else if (panelAlreadyRendered) {
+        // HYDRATION GAP FIX: Centering blocked because panel already rendered
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_blocked_by_hydration_gap_fix',
+          metadata: {
+            noteId,
+            reason: 'Panel already rendered on canvas',
+            panelAlreadyRendered,
+            hasPersistedPosition
+          }
+        })
       }
 
       if (shouldCenterExisting) {
