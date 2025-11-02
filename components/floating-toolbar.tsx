@@ -276,9 +276,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Backdrop style preference (persistent)
   const [backdropStyle, setBackdropStyle] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('backdropStyle') || 'none'
+      return localStorage.getItem('backdropStyle') || 'opaque'
     }
-    return 'none'
+    return 'opaque'
   })
 
   // Save backdrop style to localStorage whenever it changes
@@ -2271,6 +2271,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
   const renderDisplaySettingsPanel = () => {
     const backdropOptions = [
+      { value: 'opaque', label: 'Opaque', desc: 'Solid background, no transparency' },
       { value: 'none', label: 'None', desc: 'No backdrop overlay' },
       { value: 'subtle', label: 'Subtle', desc: 'Light overlay + slight blur' },
       { value: 'moderate', label: 'Moderate', desc: 'Medium overlay + blur' },

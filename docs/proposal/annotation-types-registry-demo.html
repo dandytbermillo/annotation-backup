@@ -2,555 +2,479 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Annotation Types Registry Demo</title>
+  <title>Vertical Constellation Navigator Demo</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      color-scheme: light;
-      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f6f7fb;
-      color: #1f2933;
-    }
-
-    body {
+    * {
       margin: 0;
-      padding: 2.5rem clamp(1rem, 3vw, 4rem);
-      line-height: 1.55;
-    }
-
-    h1, h2, h3 {
-      margin: 0 0 0.75rem;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-    }
-
-    pre {
-      background: #111827;
-      color: #f9fafb;
-      border-radius: 10px;
-      padding: 1rem 1.25rem;
-      overflow-x: auto;
-      font-size: 0.9rem;
-    }
-
-    .layout {
-      display: grid;
-      gap: 2rem clamp(1rem, 2vw, 2.5rem);
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      margin-top: 2rem;
-    }
-
-    .card {
-      background: #fff;
-      border-radius: 16px;
-      border: 1px solid rgba(15, 23, 42, 0.08);
-      box-shadow: 0 20px 45px -35px rgba(15, 23, 42, 0.45);
-      padding: clamp(1rem, 3vw, 1.6rem);
-    }
-
-    .card h3 {
-      margin-bottom: 0.5rem;
-    }
-
-    label {
-      display: block;
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      font-weight: 600;
-      color: #52606d;
-      margin-bottom: 0.35rem;
-    }
-
-    input, select {
-      width: 100%;
-      border-radius: 12px;
-      border: 1px solid rgba(100, 116, 139, 0.25);
-      padding: 0.6rem 0.75rem;
-      font-size: 0.95rem;
-      background: #fff;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      padding: 0;
       box-sizing: border-box;
     }
 
-    input:focus, select:focus {
-      outline: none;
-      border-color: #2563eb;
-      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      overflow: hidden;
+      height: 100vh;
+      position: relative;
     }
 
-    .field-grid {
-      display: grid;
-      gap: 0.9rem clamp(0.6rem, 1.5vw, 1rem);
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      margin-top: 1rem;
+    /* Info Panel */
+    .info-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: rgba(30, 41, 59, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 350px;
+      z-index: 100;
     }
 
-    .btn {
-      display: inline-flex;
+    .info-panel h1 {
+      font-size: 20px;
+      color: #60a5fa;
+      margin-bottom: 10px;
+    }
+
+    .info-panel p {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #94a3b8;
+      margin-bottom: 8px;
+    }
+
+    .info-panel .instructions {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid rgba(71, 85, 105, 0.5);
+    }
+
+    .info-panel .instruction-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .info-panel .instruction-item::before {
+      content: "→";
+      color: #60a5fa;
+      font-weight: bold;
+    }
+
+    /* Vertical Navigator Strip */
+    .constellation-navigator {
+      position: fixed;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 70px;
+      max-height: 80vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(71, 85, 105, 0.3);
+      border-radius: 12px;
+      padding: 10px 5px;
+      z-index: 50;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(71, 85, 105, 0.5) transparent;
+    }
+
+    .constellation-navigator::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .constellation-navigator::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .constellation-navigator::-webkit-scrollbar-thumb {
+      background: rgba(71, 85, 105, 0.5);
+      border-radius: 2px;
+    }
+
+    /* Constellation Thumbnail */
+    .constellation-thumbnail {
+      position: relative;
+      width: 60px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .constellation-circle {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: 2px solid rgba(148, 163, 184, 0.3);
+      background: rgba(30, 41, 59, 0.6);
+      display: flex;
       align-items: center;
       justify-content: center;
-      gap: 0.45rem;
-      padding: 0.6rem 1.1rem;
-      border-radius: 12px;
-      border: none;
-      background: linear-gradient(135deg, #2563eb, #3b82f6);
-      color: #fff;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .constellation-circle::before {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      background: transparent;
+      transition: all 0.3s;
+    }
+
+    .constellation-thumbnail:hover .constellation-circle {
+      border-color: rgba(96, 165, 250, 0.5);
+      transform: scale(1.05);
+    }
+
+    .constellation-thumbnail.active .constellation-circle {
+      border: 3px solid #60a5fa;
+      box-shadow: 0 0 20px rgba(96, 165, 250, 0.5),
+                  inset 0 0 20px rgba(96, 165, 250, 0.1);
+      background: rgba(59, 130, 246, 0.2);
+    }
+
+    .constellation-thumbnail.active .constellation-circle::before {
+      background: radial-gradient(circle, rgba(96, 165, 250, 0.2) 0%, transparent 70%);
+    }
+
+    .constellation-icon {
+      font-size: 24px;
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+    }
+
+    /* Center Button */
+    .center-button {
+      position: absolute;
+      bottom: -28px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.8);
+      padding: 4px 10px;
+      font-size: 10px;
       font-weight: 600;
-      letter-spacing: 0.02em;
+      background: rgba(30, 41, 59, 0.95);
+      color: #60a5fa;
+      border: 1px solid rgba(71, 85, 105, 0.6);
+      border-radius: 6px;
+      white-space: nowrap;
       cursor: pointer;
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 10;
     }
 
-    .btn:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 10px 20px -15px rgba(59, 130, 246, 0.8);
+    .constellation-thumbnail:hover .center-button {
+      opacity: 1;
+      transform: translateX(-50%) scale(1);
+      pointer-events: auto;
     }
 
-    .registry-table {
-      margin-top: 1.25rem;
-      border-collapse: collapse;
-      width: 100%;
-      font-size: 0.95rem;
+    .center-button:hover {
+      background: rgba(59, 130, 246, 0.9);
+      color: white;
+      border-color: #60a5fa;
     }
 
-    .registry-table th,
-    .registry-table td {
-      padding: 0.85rem 0.75rem;
-      text-align: left;
-      border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+    .center-button:active {
+      transform: translateX(-50%) scale(0.95);
     }
 
-    .registry-table th {
-      font-size: 0.75rem;
+    /* Mock Canvas Area */
+    .mock-canvas {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 400px;
+      height: 400px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .constellation-preview {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, rgba(59, 130, 246, 0.05) 50%, transparent 70%);
+      border: 3px solid rgba(96, 165, 250, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 80px;
+      transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      animation: pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        box-shadow: 0 0 40px rgba(96, 165, 250, 0.3);
+      }
+      50% {
+        box-shadow: 0 0 60px rgba(96, 165, 250, 0.5);
+      }
+    }
+
+    .constellation-info {
+      text-align: center;
+      opacity: 0.9;
+    }
+
+    .constellation-info h2 {
+      font-size: 28px;
+      color: #60a5fa;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .constellation-info p {
+      font-size: 14px;
+      color: #94a3b8;
+    }
+
+    /* Action Feedback */
+    .action-feedback {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(30, 41, 59, 0.95);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: 14px;
+      color: #e2e8f0;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      z-index: 200;
+    }
+
+    .action-feedback.show {
+      opacity: 1;
+    }
+
+    .action-feedback.center-action {
+      border-color: #60a5fa;
+      color: #60a5fa;
+      box-shadow: 0 4px 20px rgba(96, 165, 250, 0.3);
+    }
+
+    /* Stats Panel */
+    .stats-panel {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(30, 41, 59, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(71, 85, 105, 0.5);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 12px;
+      color: #94a3b8;
+      display: flex;
+      gap: 15px;
+      z-index: 100;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stat-label {
+      font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: #64748b;
     }
 
-    .tag {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.2rem 0.55rem;
-      border-radius: 999px;
+    .stat-value {
+      font-size: 16px;
       font-weight: 600;
-      font-size: 0.75rem;
-      background: rgba(37, 99, 235, 0.08);
-      color: #1d4ed8;
-    }
-
-    .canvas-preview {
-      background: #111827;
-      border-radius: 18px;
-      padding: 1.5rem;
-      color: #e2e8f0;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .canvas-preview::before {
-      content: "";
-      position: absolute;
-      inset: -40% -30%;
-      background: radial-gradient(circle at 30% 20%, rgba(59, 130, 246, 0.25), transparent 45%);
-      pointer-events: none;
-    }
-
-    .panel-grid {
-      display: flex;
-      gap: 1.2rem;
-      position: relative;
-    }
-
-    .panel {
-      position: relative;
-      border-radius: 16px;
-      background: #fff;
-      color: #1f2933;
-      box-shadow: 0 25px 55px -40px rgba(148, 163, 184, 0.85);
-      min-height: 260px;
-      transition: width 0.25s ease, transform 0.2s ease;
-      overflow: hidden;
-    }
-
-    .panel.active {
-      transform: translateY(-6px);
-      box-shadow: 0 30px 70px -40px rgba(59, 130, 246, 0.9);
-    }
-
-    .panel-header {
-      padding: 0.9rem 1.1rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 0.65rem;
-      background: rgba(15, 23, 42, 0.04);
-    }
-
-    .panel-body {
-      padding: 1.1rem;
-    }
-
-    .icon-circle {
-      width: 30px;
-      height: 30px;
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1rem;
-      background: rgba(15, 23, 42, 0.08);
-      color: #1f2933;
-    }
-
-    .connections {
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-
-    .legend {
-      display: flex;
-      gap: 0.5rem 1.5rem;
-      flex-wrap: wrap;
-      margin-top: 1rem;
-      font-size: 0.85rem;
-      color: #c7d2fe;
-    }
-
-    @media (max-width: 830px) {
-      .panel-grid {
-        flex-direction: column;
-      }
-
-      .panel {
-        width: 100% !important;
-      }
+      color: #60a5fa;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Annotation Types Registry – Interactive Prototype</h1>
-    <p>
-      This sandbox mirrors the proposal’s registry model. You can register new annotation types,
-      inspect the registry table, and preview branch panels sized using type metadata.
-      It’s a static client‑side implementation designed for exploration and demos.
-    </p>
-  </header>
-
-  <section class="layout">
-    <article class="card">
-      <h3>Register Annotation Type</h3>
-      <p style="margin-bottom: 0.9rem;">
-        Built-in types (<span class="tag">note</span>, <span class="tag">explore</span>, <span class="tag">promote</span>)
-        are seeded automatically. Add more to see how the registry updates live.
-      </p>
-      <form id="type-form">
-        <div class="field-grid">
-          <label>
-            Type ID
-            <input name="id" placeholder="e.g. critical" required pattern="^[a-z][a-z0-9-]{1,31}$" />
-          </label>
-          <label>
-            Label
-            <input name="label" placeholder="Critical Insight" required />
-          </label>
-          <label>
-            Icon
-            <input name="icon" placeholder="🚨" minlength="1" maxlength="6" />
-          </label>
-          <label>
-            Default Width (px)
-            <input name="width" type="number" min="180" max="900" step="10" placeholder="500" required />
-          </label>
-          <label>
-            Hex Color
-            <input name="color" type="text" placeholder="#e74c3c" pattern="^#[0-9a-fA-F]{6}$" required />
-          </label>
-          <label>
-            Gradient
-            <input
-              name="gradient"
-              placeholder="linear-gradient(135deg, #e74c3c 0%, #c0392b 100%)"
-              required />
-          </label>
-        </div>
-        <div style="margin-top: 1.25rem;">
-          <button class="btn" type="submit">Register Type</button>
-        </div>
-        <p id="form-error" style="margin-top: 0.8rem; color: #dc2626; display: none;"></p>
-      </form>
-    </article>
-
-    <article class="card">
-      <h3>Registry Snapshot</h3>
-      <table class="registry-table" id="registry-table" aria-live="polite">
-        <thead>
-          <tr>
-            <th>Type ID</th>
-            <th>Label</th>
-            <th>Icon</th>
-            <th>Width</th>
-            <th>Preview</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </article>
-  </section>
-
-  <section class="card" style="margin-top: 2rem;">
-    <h3>Canvas Preview</h3>
-    <p style="margin-bottom: 1rem;">
-      Select a branch type to see how its configuration affects panel size and styling. The preview simulates a simple canvas with a main document and two branch panels.
-    </p>
-    <div style="max-width: 360px; margin-bottom: 1rem;">
-      <label for="type-select">Active Branch Type</label>
-      <select id="type-select"></select>
+  <!-- Info Panel -->
+  <div class="info-panel">
+    <h1>Vertical Constellation Navigator</h1>
+    <p>A slim vertical strip showing circular constellation thumbnails for quick navigation.</p>
+    <div class="instructions">
+      <div class="instruction-item">Click a circle to select that constellation</div>
+      <div class="instruction-item">Hover over a circle to reveal "Center" button</div>
+      <div class="instruction-item">Click "Center" to recenter the view</div>
+      <div class="instruction-item">Scroll the strip to see more constellations</div>
     </div>
-    <div class="canvas-preview">
-      <svg class="connections" viewBox="0 0 600 260" aria-hidden="true">
-        <path id="connection-path" d="M120 150 C 240 75, 340 120, 470 90" stroke="rgba(96, 165, 250, 0.45)" stroke-width="4" fill="none" stroke-linecap="round"/>
-        <path d="M 470 90 L 482 95 L 470 100 Z" fill="rgba(96, 165, 250, 0.45)"/>
-      </svg>
-      <div class="panel-grid">
-        <div class="panel" id="panel-main" style="width: 320px;">
-          <div class="panel-header">
-            <span class="icon-circle">📄</span>
-            <span>Main Document</span>
-          </div>
-          <div class="panel-body">
-            <p style="margin: 0;">
-              “AI in Healthcare Research”<br />
-              <small style="color: #64748b;">Root note content preview...</small>
-            </p>
-          </div>
-        </div>
-        <div class="panel" id="panel-branch-a">
-          <div class="panel-header">
-            <span class="icon-circle" id="panel-icon">📝</span>
-            <span id="panel-label">Note Branch</span>
-          </div>
-          <div class="panel-body">
-            <p style="margin: 0 0 0.75rem;">
-              The branch panel adopts the width declared in the registry. Active panels grow slightly to emphasise focus.
-            </p>
-            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
-              <span class="tag" id="panel-id-tag">note</span>
-              <span class="tag" id="panel-width-tag">W: 380</span>
-            </div>
-          </div>
-        </div>
-        <div class="panel" id="panel-branch-b" style="width: 240px;">
-          <div class="panel-header">
-            <span class="icon-circle">🔍</span>
-            <span>Explore Branch</span>
-          </div>
-          <div class="panel-body">
-            <p style="margin: 0;">
-              Supporting research threads can remain compact while still feeling connected.
-            </p>
-          </div>
-        </div>
-      </div>
-      <footer class="legend">
-        <span>• Main panel fixed width (320px)</span>
-        <span>• Selected branch uses registry width + active bump</span>
-        <span>• Branch accents derive from type color/gradient</span>
-      </footer>
+  </div>
+
+  <!-- Vertical Constellation Navigator -->
+  <div class="constellation-navigator" id="navigator">
+    <!-- Thumbnails will be generated by JavaScript -->
+  </div>
+
+  <!-- Mock Canvas Area -->
+  <div class="mock-canvas">
+    <div class="constellation-preview" id="preview">
+      <span id="preview-icon">⭐</span>
     </div>
-  </section>
+    <div class="constellation-info">
+      <h2 id="constellation-name">Knowledge Base</h2>
+      <p id="constellation-path">/knowledge-base</p>
+    </div>
+  </div>
 
-  <section class="card" style="margin-top: 2rem;">
-    <h3>How It Works</h3>
-    <p style="margin-bottom: 0.9rem;">
-      The demo keeps a local “registry” Map. In the real implementation the registry lives on the server,
-      pulls data from Postgres, emits metrics, and exposes an event API to clients (e.g. via BroadcastChannel).
-    </p>
-    <pre><code>// Simplified registry used in this demo
-const registry = new Map();
+  <!-- Action Feedback -->
+  <div class="action-feedback" id="feedback"></div>
 
-function registerType(config) {
-  validate(config);
-
-  registry.set(config.id, {
-    ...config,
-    defaultWidth: Number(config.defaultWidth),
-  });
-
-  broadcast(); // notify subscribers
-}
-
-function getTypes() {
-  return Array.from(registry.values());
-}</code></pre>
-  </section>
+  <!-- Stats Panel -->
+  <div class="stats-panel">
+    <div class="stat-item">
+      <span class="stat-label">Total</span>
+      <span class="stat-value" id="total-count">8</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Selected</span>
+      <span class="stat-value" id="selected-index">1</span>
+    </div>
+    <div class="stat-item">
+      <span class="stat-label">Actions</span>
+      <span class="stat-value" id="action-count">0</span>
+    </div>
+  </div>
 
   <script>
-    const registry = new Map();
-    const subscribers = new Set();
-
-    const builtIns = [
-      {
-        id: 'note',
-        label: 'Note',
-        icon: '📝',
-        color: '#3498db',
-        gradient: 'linear-gradient(135deg, #3498db 0%, #2980b9 100%)',
-        defaultWidth: 380
-      },
-      {
-        id: 'explore',
-        label: 'Explore',
-        icon: '🔍',
-        color: '#f39c12',
-        gradient: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
-        defaultWidth: 500
-      },
-      {
-        id: 'promote',
-        label: 'Promote',
-        icon: '⭐',
-        color: '#27ae60',
-        gradient: 'linear-gradient(135deg, #27ae60 0%, #229954 100%)',
-        defaultWidth: 550
-      }
+    // Sample constellation data
+    const constellations = [
+      { id: '1', name: 'Knowledge Base', icon: '⭐', path: '/knowledge-base' },
+      { id: '2', name: 'Research Projects', icon: '🔬', path: '/knowledge-base/research' },
+      { id: '3', name: 'Personal Notes', icon: '📝', path: '/knowledge-base/personal' },
+      { id: '4', name: 'Work Documents', icon: '💼', path: '/knowledge-base/work' },
+      { id: '5', name: 'Creative Ideas', icon: '💡', path: '/knowledge-base/ideas' },
+      { id: '6', name: 'Code Snippets', icon: '💻', path: '/knowledge-base/code' },
+      { id: '7', name: 'Learning Resources', icon: '📚', path: '/knowledge-base/learning' },
+      { id: '8', name: 'Archive', icon: '📦', path: '/knowledge-base/archive' }
     ];
 
-    const idRegex = /^[a-z][a-z0-9-]{1,31}$/;
-    const gradientRegex = /^linear-gradient\([^<>"]+\)$/;
-    const form = document.getElementById('type-form');
-    const errorEl = document.getElementById('form-error');
-    const registryTableBody = document.querySelector('#registry-table tbody');
-    const typeSelect = document.getElementById('type-select');
+    let selectedId = '1';
+    let actionCount = 0;
+    const navigator = document.getElementById('navigator');
+    const preview = document.getElementById('preview');
+    const previewIcon = document.getElementById('preview-icon');
+    const constellationName = document.getElementById('constellation-name');
+    const constellationPath = document.getElementById('constellation-path');
+    const feedback = document.getElementById('feedback');
+    const actionCountEl = document.getElementById('action-count');
+    const selectedIndexEl = document.getElementById('selected-index');
 
-    function validateConfig(config) {
-      if (!idRegex.test(config.id)) {
-        throw new Error('Type ID must be lowercase alphanumeric with optional hyphens (max 32 chars).');
-      }
-      if (!gradientRegex.test(config.gradient)) {
-        throw new Error('Gradient must be a CSS linear-gradient without quotes or angle brackets.');
-      }
-      if (!/^#[0-9a-fA-F]{6}$/.test(config.color)) {
-        throw new Error('Color must be a hex value, e.g. #ff0000.');
-      }
-      const width = Number(config.defaultWidth);
-      if (Number.isNaN(width) || width < 180 || width > 900) {
-        throw new Error('Default width must be between 180 and 900.');
-      }
-      if (registry.has(config.id) && registry.get(config.id).isSystem) {
-        throw new Error(`Cannot overwrite system type "${config.id}".`);
-      }
-    }
-
-    function registerType(config, { isSystem = false } = {}) {
-      validateConfig(config);
-      registry.set(config.id, {
-        ...config,
-        defaultWidth: Number(config.defaultWidth),
-        isSystem
-      });
-      notifySubscribers();
-    }
-
-    function notifySubscribers() {
-      for (const listener of subscribers) {
-        try {
-          listener(Array.from(registry.values()));
-        } catch (error) {
-          console.error('[Registry subscriber] error', error);
-        }
-      }
-    }
-
-    function subscribe(listener) {
-      subscribers.add(listener);
-      listener(Array.from(registry.values()));
-      return () => subscribers.delete(listener);
-    }
-
-    function updateRegistryTable(types) {
-      registryTableBody.innerHTML = types.map(type => `
-        <tr>
-          <td><strong>${type.id}</strong>${type.isSystem ? ' <span class="tag">built-in</span>' : ''}</td>
-          <td>${type.label}</td>
-          <td>${type.icon || '—'}</td>
-          <td>${type.defaultWidth}px</td>
-          <td><span class="tag" style="background:${type.color}20;color:${type.color};"> ${type.color}</span></td>
-        </tr>`).join('');
-
-      typeSelect.innerHTML = types.map(type => `
-        <option value="${type.id}">${type.icon || '•'} ${type.label} (${type.id})</option>
+    // Generate constellation thumbnails
+    function generateThumbnails() {
+      navigator.innerHTML = constellations.map((constellation, index) => `
+        <div class="constellation-thumbnail ${constellation.id === selectedId ? 'active' : ''}"
+             data-id="${constellation.id}"
+             data-index="${index + 1}">
+          <div class="constellation-circle">
+            <span class="constellation-icon">${constellation.icon}</span>
+          </div>
+          <button class="center-button" onclick="handleCenter('${constellation.id}', event)">
+            Center
+          </button>
+        </div>
       `).join('');
 
-      updatePreview();
+      // Add click handlers
+      document.querySelectorAll('.constellation-thumbnail').forEach(thumb => {
+        thumb.addEventListener('click', (e) => {
+          if (!e.target.classList.contains('center-button')) {
+            handleSelect(thumb.dataset.id);
+          }
+        });
+      });
     }
 
-    function updatePreview() {
-      const selectedId = typeSelect.value;
-      const type = registry.get(selectedId);
-      if (!type) return;
+    // Handle constellation selection
+    function handleSelect(id) {
+      selectedId = id;
+      const constellation = constellations.find(c => c.id === id);
 
-      const panel = document.getElementById('panel-branch-a');
-      const iconEl = document.getElementById('panel-icon');
-      const labelEl = document.getElementById('panel-label');
-      const idTag = document.getElementById('panel-id-tag');
-      const widthTag = document.getElementById('panel-width-tag');
-      const connection = document.getElementById('connection-path');
+      // Update active state
+      document.querySelectorAll('.constellation-thumbnail').forEach(thumb => {
+        thumb.classList.toggle('active', thumb.dataset.id === id);
+      });
 
-      const activeWidth = type.defaultWidth + 40;
+      // Update preview
+      previewIcon.textContent = constellation.icon;
+      constellationName.textContent = constellation.name;
+      constellationPath.textContent = constellation.path;
 
-      panel.style.width = `${activeWidth}px`;
-      panel.classList.add('active');
-      panel.style.background = type.gradient;
-      panel.style.color = '#0f172a';
+      // Update stats
+      const index = document.querySelector(`[data-id="${id}"]`).dataset.index;
+      selectedIndexEl.textContent = index;
+      actionCount++;
+      actionCountEl.textContent = actionCount;
 
-      iconEl.textContent = type.icon || '•';
-      labelEl.textContent = `${type.label} Branch`;
-      idTag.textContent = type.id;
-      widthTag.textContent = `W: ${type.defaultWidth}px (+40px active)`;
-      widthTag.style.background = `${type.color}20`;
-      widthTag.style.color = type.color;
+      // Show feedback
+      showFeedback(`Selected: ${constellation.name}`);
 
-      connection.setAttribute('stroke', `${type.color}70`);
+      // Add visual effect
+      preview.style.transform = 'scale(1.1)';
+      setTimeout(() => {
+        preview.style.transform = 'scale(1)';
+      }, 200);
     }
 
-    builtIns.forEach(type => registerType(type, { isSystem: true }));
+    // Handle center action
+    function handleCenter(id, event) {
+      event.stopPropagation();
+      const constellation = constellations.find(c => c.id === id);
 
-    subscribe(updateRegistryTable);
+      actionCount++;
+      actionCountEl.textContent = actionCount;
 
-    typeSelect.addEventListener('change', updatePreview);
+      // Show feedback
+      showFeedback(`Centering view on: ${constellation.name}`, true);
 
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      errorEl.style.display = 'none';
-      const formData = new FormData(form);
-      const config = {
-        id: formData.get('id').trim(),
-        label: formData.get('label').trim(),
-        icon: formData.get('icon').trim(),
-        color: formData.get('color').trim(),
-        gradient: formData.get('gradient').trim(),
-        defaultWidth: formData.get('width').trim()
-      };
-
-      try {
-        registerType(config);
-        form.reset();
-        typeSelect.value = config.id;
-        updatePreview();
-      } catch (error) {
-        errorEl.textContent = error.message;
-        errorEl.style.display = 'block';
-      }
-    });
-
-    // Initialize preview with first option
-    if (typeSelect.options.length > 0) {
-      typeSelect.value = typeSelect.options[0].value;
-      updatePreview();
+      // Add visual effect
+      preview.style.transform = 'scale(0.9)';
+      setTimeout(() => {
+        preview.style.transform = 'scale(1)';
+      }, 300);
     }
+
+    // Show action feedback
+    function showFeedback(message, isCenter = false) {
+      feedback.textContent = message;
+      feedback.classList.toggle('center-action', isCenter);
+      feedback.classList.add('show');
+
+      setTimeout(() => {
+        feedback.classList.remove('show');
+      }, 2000);
+    }
+
+    // Initialize
+    generateThumbnails();
+    handleSelect('1');
   </script>
 </body>
 </html>

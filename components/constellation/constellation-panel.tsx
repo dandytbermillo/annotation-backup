@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { useConstellation } from '@/hooks/useConstellation';
+import { useConstellationContext } from './constellation-context';
 import { useNotifications } from '@/hooks/useNotifications';
 import { debugLog } from '@/lib/utils/debug-logger';
 import ConstellationVisualization from './constellation-canvas';
 import SearchControls from './SearchControls';
-import ConstellationSidebar from './ConstellationSidebar';
 import StatusPanel from './StatusPanel';
 import NotificationContainer from './NotificationContainer';
 import GravityCore from './GravityCore';
@@ -44,12 +43,10 @@ export function ConstellationPanel() {
     getConstellationDepthZ,
     // Panel visibility functions
     toggleWelcomePanel,
-    toggleSidebar,
     toggleStatusPanel,
     toggleDebugPanel,
     toggleSearchControls,
     closeWelcomePanel,
-    closeSidebar,
     closeStatusPanel,
     closeDebugPanel,
     closeSearchControls,
@@ -60,7 +57,7 @@ export function ConstellationPanel() {
     resetGravityCore,
     // Group selection functions
     clearGroupSelection,
-  } = useConstellation();
+  } = useConstellationContext();
 
   const { notifications, showNotification, removeNotification } = useNotifications();
 
@@ -412,23 +409,6 @@ export function ConstellationPanel() {
             ✨ Welcome
           </button>
           <button
-            onClick={toggleSidebar}
-            className="w-full text-left rounded text-xs transition-colors"
-            style={{
-              padding: '2px 6px',
-              backgroundColor: state.showSidebar ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
-              color: state.showSidebar ? '#93c5fd' : '#94a3b8'
-            }}
-            onMouseEnter={(e) => {
-              if (!state.showSidebar) e.currentTarget.style.color = '#e2e8f0';
-            }}
-            onMouseLeave={(e) => {
-              if (!state.showSidebar) e.currentTarget.style.color = '#94a3b8';
-            }}
-          >
-            📋 Sidebar
-          </button>
-          <button
             onClick={toggleStatusPanel}
             className="w-full text-left rounded text-xs transition-colors"
             style={{
@@ -509,19 +489,6 @@ export function ConstellationPanel() {
           filterType={state.filterType}
           onSearchChange={handleSearch}
           onFilterChange={handleTypeFilter}
-        />
-      )}
-      
-      {/* Sidebar with constellation navigation */}
-      {state.showSidebar && (
-        <ConstellationSidebar
-          constellations={constellations}
-          allItems={allItems}
-          selectedItem={state.selectedItem}
-          highlightedConstellation={state.highlightedConstellation}
-          onConstellationClick={handleConstellationClick}
-          onItemClick={handleOverflowNodeClick}
-          onClose={closeSidebar}
         />
       )}
       

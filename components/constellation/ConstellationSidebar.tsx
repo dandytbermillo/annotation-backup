@@ -12,6 +12,8 @@ interface ConstellationSidebarProps {
   onConstellationClick: (constellationId: string) => void;
   onItemClick: (item: ConstellationItem) => void;
   onClose?: () => void;
+  layout?: 'floating' | 'embedded';
+  showHeader?: boolean;
 }
 
 export default function ConstellationSidebar({
@@ -22,51 +24,68 @@ export default function ConstellationSidebar({
   onConstellationClick,
   onItemClick,
   onClose,
+  layout = 'floating',
+  showHeader = true,
 }: ConstellationSidebarProps) {
-  return (
-    <div
-      className="rounded-lg shadow-2xl overflow-hidden"
-      style={{
-        position: 'absolute',
-        left: '20px',
-        top: '20px',
-        bottom: '20px',
-        width: '320px',
-        backgroundColor: 'rgba(30, 41, 59, 0.9)',
-        backdropFilter: 'blur(8px)',
-        border: '1px solid rgba(71, 85, 105, 0.5)',
-        zIndex: 20
-      }}
-    >
-      {/* Header */}
-      <div className="p-4 relative" style={{ borderBottom: '1px solid rgba(71, 85, 105, 0.5)' }}>
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 transition-colors text-xl leading-none w-6 h-6 flex items-center justify-center"
-            style={{ color: '#94a3b8' }}
-            onMouseEnter={(e) => e.currentTarget.style.color = '#ffffff'}
-            onMouseLeave={(e) => e.currentTarget.style.color = '#94a3b8'}
-          >
-            ×
-          </button>
-        )}
-        <h2 className="text-xl font-semibold mb-1" style={{ color: '#60a5fa' }}>
-          Universal Data Constellation
-        </h2>
-        <p className="text-sm" style={{ color: '#94a3b8' }}>
-          Your personal data universe organized by context
-        </p>
+  const containerClass =
+    layout === 'floating'
+      ? 'rounded-lg shadow-2xl overflow-hidden'
+      : 'flex h-full w-full flex-col rounded-2xl shadow-2xl overflow-hidden';
 
-        {/* Stats */}
-        <div className="flex gap-4 mt-3 text-xs" style={{ color: '#64748b' }}>
-          <span>Items: {allItems.length}</span>
-          <span>Groups: {constellations.length}</span>
-          <span>Connections: {allItems.length - 1 + 5}</span>
+  const containerStyle: React.CSSProperties =
+    layout === 'floating'
+      ? {
+          position: 'absolute',
+          left: '20px',
+          top: '20px',
+          bottom: '20px',
+          width: '320px',
+          backgroundColor: 'rgba(30, 41, 59, 0.9)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(71, 85, 105, 0.5)',
+          zIndex: 20,
+        }
+      : {
+          width: '100%',
+          height: '100%',
+          backgroundColor: 'rgba(30, 41, 59, 0.94)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(71, 85, 105, 0.45)',
+        };
+
+  const headerBorderColor =
+    layout === 'embedded' ? 'rgba(71, 85, 105, 0.35)' : 'rgba(71, 85, 105, 0.5)';
+
+  return (
+    <div className={containerClass} style={containerStyle}>
+      {showHeader && (
+        <div className="relative p-4 border-b" style={{ borderBottomColor: headerBorderColor }}>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 transition-colors text-xl leading-none w-6 h-6 flex items-center justify-center"
+              style={{ color: '#94a3b8' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#94a3b8')}
+            >
+              ×
+            </button>
+          )}
+          <h2 className="text-xl font-semibold mb-1" style={{ color: '#60a5fa' }}>
+            Universal Data Constellation
+          </h2>
+          <p className="text-sm" style={{ color: '#94a3b8' }}>
+            Your personal data universe organized by context
+          </p>
+
+          <div className="flex gap-4 mt-3 text-xs" style={{ color: '#64748b' }}>
+            <span>Items: {allItems.length}</span>
+            <span>Groups: {constellations.length}</span>
+            <span>Connections: {allItems.length - 1 + 5}</span>
+          </div>
         </div>
-      </div>
+      )}
       
-      {/* Constellations - Show only centers (Layer 0/1) */}
       <div className="flex-1 overflow-y-auto">
         {/* Get center nodes from allItems instead of constellation.items */}
         {allItems

@@ -1,6 +1,7 @@
 "use client"
 
 import { ConstellationPanel } from '@/components/constellation/constellation-panel'
+import { ConstellationProvider } from '@/components/constellation/constellation-context'
 
 export default function TestConstellationPage() {
   return (
@@ -9,7 +10,9 @@ export default function TestConstellationPage() {
         <h1 className="text-3xl text-white mb-4">Constellation Canvas Test</h1>
         <p className="text-slate-400 mb-8">This is a standalone test of the canvas component</p>
 
-        <ConstellationPanel />
+        <ConstellationProvider>
+          <ConstellationPanel />
+        </ConstellationProvider>
       </div>
     </div>
   )

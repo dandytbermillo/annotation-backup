@@ -8,7 +8,6 @@ import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
-import { Menu } from "lucide-react"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
   OverlayLayoutAdapter,
@@ -30,6 +29,10 @@ import {
   type RapidSequenceState,
 } from "@/lib/canvas/visual-centering"
 import { ConstellationPanel } from "@/components/constellation/constellation-panel"
+import { ConstellationProvider } from "@/components/constellation/constellation-context"
+import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
+import { OrganizationSidebarContent } from "@/components/sidebar/organization-sidebar-content"
+import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -104,12 +107,46 @@ function AnnotationAppContent() {
     return null
   })
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
+  const [activeSidebarTab, setActiveSidebarTab] = useState<CanvasSidebarTab>('organization')
   const [showConstellationPanel, setShowConstellationPanel] = useState(false)
+  const layerContext = useLayer()
 
-  // Debug constellation panel state changes
   useEffect(() => {
     console.log('🎨 Constellation panel state changed:', showConstellationPanel)
   }, [showConstellationPanel])
+
+  const handleSidebarTabChange = useCallback((tab: CanvasSidebarTab) => {
+    setActiveSidebarTab(tab)
+
+    if (tab === 'constellation') {
+      setShowConstellationPanel(true)
+      if (layerContext?.activeLayer !== 'notes') {
+        layerContext?.setActiveLayer('notes')
+      }
+    } else {
+      setShowConstellationPanel(false)
+      if (layerContext?.activeLayer !== 'popups') {
+        layerContext?.setActiveLayer('popups')
+      }
+    }
+  }, [layerContext])
+
+  const toggleConstellationView = useCallback(() => {
+    setShowConstellationPanel(prev => !prev)
+  }, [])
+
+  const activeLayer = layerContext?.activeLayer
+
+  useEffect(() => {
+    if (showConstellationPanel && activeSidebarTab !== 'constellation') {
+      setActiveSidebarTab('constellation')
+      if (activeLayer !== 'notes') {
+        layerContext?.setActiveLayer('notes')
+      }
+    } else if (!showConstellationPanel && activeLayer === 'popups' && activeSidebarTab !== 'organization') {
+      setActiveSidebarTab('organization')
+    }
+  }, [showConstellationPanel, activeLayer, activeSidebarTab, layerContext])
 
   const activeNoteIdRef = useRef<string | null>(activeNoteId)
   useEffect(() => {
@@ -500,7 +537,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const [recentNotesRefreshTrigger, setRecentNotesRefreshTrigger] = useState(0)
 
   // Display settings state (backdrop style preference)
-  const [backdropStyle, setBackdropStyle] = useState<string>('none')
+  const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
 
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
@@ -510,6 +547,44 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+
+  const organizationSidebarData = useMemo(() => {
+    const folderMap = new Map<
+      string,
+      { id: string; name: string; count: number; icon?: string; pinned?: boolean }
+    >()
+
+    overlayPopups.forEach(popup => {
+      const folderId = popup.folderId || popup.id
+      const childCount = popup.children ? popup.children.length : 0
+      const existing = folderMap.get(folderId)
+
+      if (existing) {
+        existing.count = Math.max(existing.count, childCount)
+        existing.pinned = existing.pinned || !!popup.isPinned
+      } else {
+        folderMap.set(folderId, {
+          id: folderId,
+          name: popup.folderName || 'Untitled',
+          count: childCount,
+          icon: popup.folder?.icon ?? '📁',
+          pinned: popup.isPinned ?? false,
+        })
+      }
+    })
+
+    const items = Array.from(folderMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+    const totalItems = items.reduce((sum, item) => sum + item.count, 0)
+
+    return {
+      items,
+      stats: {
+        openPopups: overlayPopups.length,
+        totalItems,
+        pinnedPopups: overlayPopups.filter(popup => popup.isPinned).length,
+      },
+    }
+  }, [overlayPopups])
 
   // Persistence state for overlay layout
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
@@ -627,7 +702,6 @@ const initialWorkspaceSyncRef = useRef(false)
   
   // Multi-layer canvas is always enabled
   const multiLayerEnabled = true
-  const layerContext = useLayer()
 
   // Adapt overlay popups for PopupOverlay component
   // Only show popups when popups layer is active, otherwise pass empty Map
@@ -1874,6 +1948,23 @@ const handleCenterNote = useCallback(
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
+  const handleOrganizationSidebarSelect = useCallback((folderId: string) => {
+    setOverlayPopups(prev =>
+      prev.map(popup => {
+        if (popup.folderId === folderId) {
+          if (popup.isHighlighted) {
+            return popup
+          }
+          return { ...popup, isHighlighted: true }
+        }
+        if (!popup.isHighlighted) {
+          return popup
+        }
+        return { ...popup, isHighlighted: false }
+      })
+    )
+  }, [])
+
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
     setOverlayPopups(prev => {
@@ -2641,6 +2732,7 @@ const handleCenterNote = useCallback(
   }
 
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
+  const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
   
   // Track note creation state to prevent double-clicks
   const [isCreatingNoteFromToolbar, setIsCreatingNoteFromToolbar] = useState(false)
@@ -2676,160 +2768,170 @@ const handleCenterNote = useCallback(
   }, [])
 
   return (
-    <>
-      {!showConstellationPanel && (
-        <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
-          <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
-
-          <WorkspaceToolbar
-            notes={sortedOpenNotes}
-            activeNoteId={activeNoteId}
-            isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
-            formatNoteLabel={formatNoteLabel}
-            onActivateNote={handleNoteSelect}
-            onCenterNote={handleCenterNote}
-            onCloseNote={handleCloseNote}
-            onNewNote={handleNewNoteFromToolbar}
-            onSettings={handleSettingsFromToolbar}
-          />
-        </div>
-      </AutoHideToolbar>
-      )}
-
-      <div className="flex h-screen w-screen flex-col overflow-hidden bg-neutral-950/80">
-
-      <div
-        className="relative flex-1"
-        onContextMenu={handleContextMenu}
-      >
+    <ConstellationProvider>
+      <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
         <div className="flex h-full w-full">
-          {/* Constellation Canvas - Full screen when open */}
-          {showConstellationPanel && (
-            <div className="fixed left-0 top-0 w-screen h-screen z-40 bg-gray-900">
-              <ConstellationPanel />
+          {shouldShowSidebar && (
+            <div
+              data-sidebar="sidebar"
+              className="h-full"
+              style={{ position: showConstellationPanel ? 'absolute' : 'relative', zIndex: 50 }}
+            >
+              <CanvasSidebar
+                activeTab={activeSidebarTab}
+                onTabChange={handleSidebarTabChange}
+                constellationContent={<ConstellationSidebarShared />}
+                organizationContent={
+                  <OrganizationSidebarContent
+                    items={organizationSidebarData.items}
+                    stats={organizationSidebarData.stats}
+                    onSelect={handleOrganizationSidebarSelect}
+                  />
+                }
+              />
             </div>
           )}
 
-          {/* Canvas Area - Hidden when constellation panel is open */}
-          {!showConstellationPanel && (
-            <div
-              className="flex-1 relative transition-all duration-300 ease-in-out"
-              style={{
-                pointerEvents: isPopupLayerActive ? 'none' : 'auto',
-                position: 'relative',
-                zIndex: 1,
-                isolation: 'isolate',
-              }}
-            >
-            {openNotes.length > 0 ? (
-                <ModernAnnotationCanvas
-                  key="workspace"
-                  noteIds={openNotes.map(note => note.noteId)}
-                  primaryNoteId={activeNoteId ?? openNotes[0].noteId}
-                  ref={canvasRef}
-                  freshNoteSeeds={freshNoteSeeds}
-                  onConsumeFreshNoteSeed={consumeFreshNoteSeed}
-                  isNotesExplorerOpen={false}
-                  freshNoteIds={freshNoteIds}
-                  onFreshNoteHydrated={handleFreshNoteHydrated}
-                  onCanvasStateChange={handleCanvasStateChange}
-                  mainOnlyNoteIds={mainOnlyNotes}
-                  onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
-                  showAddComponentMenu={showAddComponentMenu}
-                onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
-                onRegisterActiveEditor={handleRegisterActiveEditor}
-                onSnapshotLoadComplete={handleSnapshotLoadComplete}
-                skipSnapshotForNote={skipSnapshotForNote}
-                onSnapshotSettled={handleSnapshotSettled}
+          <div className="flex-1 flex flex-col overflow-hidden" style={{ marginLeft: shouldShowSidebar ? '20rem' : 0 }}>
+          {!showConstellationPanel && !isPopupLayerActive && (
+            <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+                <WorkspaceToolbar
+                  notes={sortedOpenNotes}
+                  activeNoteId={activeNoteId}
+                  isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
+                  formatNoteLabel={formatNoteLabel}
+                  onActivateNote={handleNoteSelect}
+                  onCenterNote={handleCenterNote}
+                  onCloseNote={handleCloseNote}
+                  onNewNote={handleNewNoteFromToolbar}
+                  onSettings={handleSettingsFromToolbar}
+                />
+              </div>
+            </AutoHideToolbar>
+          )}
+
+          <div className="relative flex-1" onContextMenu={handleContextMenu}>
+            <div className="flex h-full w-full">
+              <div
+                className="flex-1 relative transition-all duration-300 ease-in-out"
+                style={{
+                  pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+                  position: 'relative',
+                  zIndex: 1,
+                  isolation: 'isolate',
+                }}
               >
-                {/* Floating Toolbar - rendered inside CanvasProvider tree */}
-                {showNotesWidget && (
-                  <CanvasAwareFloatingToolbar
-                    x={notesWidgetPosition.x}
-                    y={notesWidgetPosition.y}
-                    onClose={handleCloseNotesWidget}
-                    onSelectNote={handleNoteSelect}
-                    onCreateOverlayPopup={handleCreateOverlayPopup}
-                    onAddComponent={handleAddComponentFromToolbar}
-                    editorRef={activeEditorRef}
-                    activePanelId={activePanelId}
-                    onBackdropStyleChange={handleBackdropStyleChange}
-                    onFolderRenamed={handleFolderRenamed}
-                    activePanel={toolbarActivePanel}
-                    onActivePanelChange={setToolbarActivePanel}
-                    refreshRecentNotes={recentNotesRefreshTrigger}
-                    onToggleConstellationPanel={() => setShowConstellationPanel(prev => !prev)}
-                    showConstellationPanel={showConstellationPanel}
-                  />
+                {openNotes.length > 0 ? (
+                  <ModernAnnotationCanvas
+                    key="workspace"
+                    noteIds={openNotes.map(note => note.noteId)}
+                    primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+                    ref={canvasRef}
+                    freshNoteSeeds={freshNoteSeeds}
+                    onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+                    isNotesExplorerOpen={false}
+                    freshNoteIds={freshNoteIds}
+                    onFreshNoteHydrated={handleFreshNoteHydrated}
+                    onCanvasStateChange={handleCanvasStateChange}
+                    mainOnlyNoteIds={mainOnlyNotes}
+                    onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+                    showAddComponentMenu={showAddComponentMenu}
+                    onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+                    onRegisterActiveEditor={handleRegisterActiveEditor}
+                    onSnapshotLoadComplete={handleSnapshotLoadComplete}
+                    skipSnapshotForNote={skipSnapshotForNote}
+                    onSnapshotSettled={handleSnapshotSettled}
+                  >
+                    {showNotesWidget && (
+                      <CanvasAwareFloatingToolbar
+                        x={notesWidgetPosition.x}
+                        y={notesWidgetPosition.y}
+                        onClose={handleCloseNotesWidget}
+                        onSelectNote={handleNoteSelect}
+                        onCreateOverlayPopup={handleCreateOverlayPopup}
+                        onAddComponent={handleAddComponentFromToolbar}
+                        editorRef={activeEditorRef}
+                        activePanelId={activePanelId}
+                        onBackdropStyleChange={handleBackdropStyleChange}
+                        onFolderRenamed={handleFolderRenamed}
+                        activePanel={toolbarActivePanel}
+                        onActivePanelChange={setToolbarActivePanel}
+                        refreshRecentNotes={recentNotesRefreshTrigger}
+                        onToggleConstellationPanel={toggleConstellationView}
+                        showConstellationPanel={showConstellationPanel}
+                      />
+                    )}
+                  </ModernAnnotationCanvas>
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-gray-950">
+                    <div className="text-center">
+                      <h2 className="mb-4 text-3xl font-bold text-gray-600">
+                        Welcome to Annotation Canvas
+                      </h2>
+                      <p className="mb-6 text-gray-500">
+                        Right-click anywhere to open Notes Explorer and create a new note
+                      </p>
+                    </div>
+                  </div>
                 )}
-              </ModernAnnotationCanvas>
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-gray-950">
-                <div className="text-center">
-                  <h2 className="mb-4 text-3xl font-bold text-gray-600">
-                    Welcome to Annotation Canvas
-                  </h2>
-                  <p className="mb-6 text-gray-500">
-                    Right-click anywhere to open Notes Explorer and create a new note
-                  </p>
-                </div>
+              </div>
+            </div>
+
+            {!showConstellationPanel && multiLayerEnabled && adaptedPopups && (
+              <PopupOverlay
+                popups={adaptedPopups}
+                draggingPopup={draggingPopup}
+                onClosePopup={handleCloseOverlayPopup}
+                onInitiateClose={handleInitiateClose}
+                onConfirmClose={handleConfirmClose}
+                onCancelClose={handleCancelClose}
+                onTogglePin={handleTogglePin}
+                onDragStart={handlePopupDragStart}
+                onHoverFolder={handleFolderHover}
+                onLeaveFolder={handleFolderHoverLeave}
+                onPopupHover={handlePopupHover}
+                onSelectNote={handleNoteSelect}
+                onDeleteSelected={handleDeleteSelected}
+                onBulkMove={handleBulkMove}
+                onFolderCreated={handleFolderCreated}
+                onFolderRenamed={handleFolderRenamed}
+                onPopupCardClick={handleCloseNotesWidget}
+                onContextMenu={handleContextMenu}
+                sidebarOpen={isPopupLayerActive}
+                backdropStyle={backdropStyle}
+              />
+            )}
+
+            {showNotesWidget && !activeNoteId && !showConstellationPanel && (
+              <FloatingToolbar
+                x={notesWidgetPosition.x}
+                y={notesWidgetPosition.y}
+                onClose={handleCloseNotesWidget}
+                onSelectNote={handleNoteSelect}
+                onCreateOverlayPopup={handleCreateOverlayPopup}
+                onAddComponent={handleAddComponentFromToolbar}
+                editorRef={activeEditorRef}
+                activePanelId={activePanelId}
+                onBackdropStyleChange={handleBackdropStyleChange}
+                onFolderRenamed={handleFolderRenamed}
+                activePanel={toolbarActivePanel}
+                onActivePanelChange={setToolbarActivePanel}
+                refreshRecentNotes={recentNotesRefreshTrigger}
+                onToggleConstellationPanel={toggleConstellationView}
+                showConstellationPanel={showConstellationPanel}
+              />
+            )}
+
+            {showConstellationPanel && (
+              <div className="fixed left-0 top-0 w-screen h-screen z-40 bg-gray-900">
+                <ConstellationPanel />
               </div>
             )}
           </div>
-          )}
         </div>
-
-        {/* Overlay canvas popups - always mounted to avoid re-initialization */}
-        {/* Shows empty Map when notes layer is active, popups when popups layer is active */}
-        {multiLayerEnabled && adaptedPopups && (
-          <PopupOverlay
-            popups={adaptedPopups}
-            draggingPopup={draggingPopup}
-            onClosePopup={handleCloseOverlayPopup}
-            onInitiateClose={handleInitiateClose}
-            onConfirmClose={handleConfirmClose}
-            onCancelClose={handleCancelClose}
-            onTogglePin={handleTogglePin}
-            onDragStart={handlePopupDragStart}
-            onHoverFolder={handleFolderHover}
-            onLeaveFolder={handleFolderHoverLeave}
-            onPopupHover={handlePopupHover}
-            onSelectNote={handleNoteSelect}
-            onDeleteSelected={handleDeleteSelected}
-            onBulkMove={handleBulkMove}
-            onFolderCreated={handleFolderCreated}
-            onFolderRenamed={handleFolderRenamed}
-            onPopupCardClick={handleCloseNotesWidget}
-            onContextMenu={handleContextMenu}
-            sidebarOpen={false}
-            backdropStyle={backdropStyle}
-          />
-        )}
-
-        {/* Fallback Floating Toolbar - renders when no note is focused (activeNoteId is null) */}
-        {/* This ensures right-click and Cmd+K work immediately after app reload */}
-        {showNotesWidget && !activeNoteId && (
-          <FloatingToolbar
-            x={notesWidgetPosition.x}
-            y={notesWidgetPosition.y}
-            onClose={handleCloseNotesWidget}
-            onSelectNote={handleNoteSelect}
-            onCreateOverlayPopup={handleCreateOverlayPopup}
-            onAddComponent={handleAddComponentFromToolbar}
-            editorRef={activeEditorRef}
-            activePanelId={activePanelId}
-            onBackdropStyleChange={handleBackdropStyleChange}
-            onFolderRenamed={handleFolderRenamed}
-            activePanel={toolbarActivePanel}
-            onActivePanelChange={setToolbarActivePanel}
-            refreshRecentNotes={recentNotesRefreshTrigger}
-            onToggleConstellationPanel={() => setShowConstellationPanel(prev => !prev)}
-            showConstellationPanel={showConstellationPanel}
-          />
-        )}
       </div>
-      </div>
-    </>
+    </ConstellationProvider>
   )
 }
 

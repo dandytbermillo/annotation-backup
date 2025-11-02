@@ -817,6 +817,7 @@ const mainPanelSeededRef = useRef(false)
     })
   }, [noteId])
   const isRestoringSnapshotRef = useRef(false)
+  const skipNextContextSyncRef = useRef(false)
 
   useEffect(() => {
     if (!mainOnlyNoteIds || mainOnlyNoteIds.length === 0) {
@@ -1549,6 +1550,16 @@ const mainPanelSeededRef = useRef(false)
       return
     }
 
+    if (skipNextContextSyncRef.current) {
+      skipNextContextSyncRef.current = false
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'skip_context_sync_after_snapshot_skip',
+        metadata: { noteId }
+      })
+      return
+    }
+
     const { translateX, translateY, zoom } = canvasContextState.canvasState
     setCanvasState(prev => {
       if (
@@ -1673,6 +1684,7 @@ const mainPanelSeededRef = useRef(false)
         action: 'snapshot_restore_skipped',
         metadata: { noteId }
       })
+      skipNextContextSyncRef.current = true
       initialCanvasSetupRef.current = true
       isRestoringSnapshotRef.current = false
       setIsStateLoaded(true)

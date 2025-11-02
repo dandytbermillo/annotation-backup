@@ -207,7 +207,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onPopupCardClick,
   onContextMenu,
   sidebarOpen, // Accept sidebar state
-  backdropStyle = 'none', // Backdrop style preference (default to 'none')
+  backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
 }) => {
   const multiLayerEnabled = true;
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
@@ -262,6 +262,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     switch (style) {
       case 'none':
         return {};
+      case 'opaque':
+        return { backgroundColor: '#111827' };
       case 'subtle':
         return { backgroundColor: 'rgba(0, 0, 0, 0.2)', backdropFilter: 'blur(1px)', WebkitBackdropFilter: 'blur(1px)' };
       case 'moderate':
