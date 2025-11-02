@@ -72,7 +72,6 @@ export function ConstellationPanel() {
   } | null>(null);
 
   // Minimap state
-  const [showMinimap, setShowMinimap] = useState(true);
   const [draggedPositions, setDraggedPositions] = useState<Record<string, { x: number; y: number }>>({});
 
   // Initialize constellation panel
@@ -443,26 +442,6 @@ export function ConstellationPanel() {
             🐛 Debug Panel
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setShowMinimap(!showMinimap);
-            }}
-            className="w-full text-left rounded text-xs transition-colors"
-            style={{
-              padding: '2px 6px',
-              backgroundColor: showMinimap ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
-              color: showMinimap ? '#93c5fd' : '#94a3b8'
-            }}
-            onMouseEnter={(e) => {
-              if (!showMinimap) e.currentTarget.style.color = '#e2e8f0';
-            }}
-            onMouseLeave={(e) => {
-              if (!showMinimap) e.currentTarget.style.color = '#94a3b8';
-            }}
-          >
-            🗺️ Minimap
-          </button>
-          <button
             onClick={toggleSearchControls}
             className="w-full text-left rounded text-xs transition-colors"
             style={{
@@ -502,24 +481,22 @@ export function ConstellationPanel() {
               )}
 
       {/* Constellation Minimap */}
-      {showMinimap && (
-        <ConstellationMinimap
-          allItems={allItems}
-          connections={connections}
-          state={state}
-          onNavigate={handleMinimapNavigate}
-          onItemSelect={(item) => {
-            handleOverflowNodeClick(item);
-            const itemPos = state.nodePositions[item.id] || item;
-            handleMinimapNavigate(itemPos.x, itemPos.y, 1.5);
-          }}
-          onItemHover={handleItemHover}
-          draggedPositions={draggedPositions}
-          getItemDepthLayer={getItemDepthLayer}
-          getDepthZ={getDepthZ}
-          getConstellationDepthZ={getConstellationDepthZ}
-        />
-      )}
+      <ConstellationMinimap
+        allItems={allItems}
+        connections={connections}
+        state={state}
+        onNavigate={handleMinimapNavigate}
+        onItemSelect={(item) => {
+          handleOverflowNodeClick(item);
+          const itemPos = state.nodePositions[item.id] || item;
+          handleMinimapNavigate(itemPos.x, itemPos.y, 1.5);
+        }}
+        onItemHover={handleItemHover}
+        draggedPositions={draggedPositions}
+        getItemDepthLayer={getItemDepthLayer}
+        getDepthZ={getDepthZ}
+        getConstellationDepthZ={getConstellationDepthZ}
+      />
 
       {/* Connection Tooltip - Disabled */}
       {/* <ConnectionTooltip connectionInfo={connectionTooltip} /> */}

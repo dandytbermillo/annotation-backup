@@ -2792,8 +2792,11 @@ const handleCenterNote = useCallback(
             </div>
           )}
 
-          <div className="flex-1 flex flex-col overflow-hidden" style={{ marginLeft: shouldShowSidebar ? '20rem' : 0 }}>
-          {!showConstellationPanel && !isPopupLayerActive && (
+          <div
+            className="flex-1 flex flex-col overflow-hidden"
+            style={{ marginLeft: shouldShowSidebar && !showConstellationPanel ? '20rem' : 0 }}
+          >
+            {!showConstellationPanel && !isPopupLayerActive && (
             <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
               <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
                 <WorkspaceToolbar
@@ -2820,7 +2823,10 @@ const handleCenterNote = useCallback(
                   position: 'relative',
                   zIndex: 1,
                   isolation: 'isolate',
+                  opacity: showConstellationPanel ? 0 : 1,
+                  visibility: showConstellationPanel ? 'hidden' : 'visible',
                 }}
+                aria-hidden={showConstellationPanel}
               >
                 {openNotes.length > 0 ? (
                   <ModernAnnotationCanvas
@@ -2924,14 +2930,15 @@ const handleCenterNote = useCallback(
             )}
 
             {showConstellationPanel && (
-              <div className="fixed left-0 top-0 w-screen h-screen z-40 bg-gray-900">
+              <div className="absolute inset-0 z-40">
                 <ConstellationPanel />
               </div>
             )}
           </div>
         </div>
       </div>
-    </ConstellationProvider>
+    </div>
+  </ConstellationProvider>
   )
 }
 
