@@ -31,7 +31,7 @@ import {
 import { ConstellationPanel } from "@/components/constellation/constellation-panel"
 import { ConstellationProvider } from "@/components/constellation/constellation-context"
 import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
-import { OrganizationSidebarContent } from "@/components/sidebar/organization-sidebar-content"
+import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 
 // Helper to derive display name from path when folder.name is empty
@@ -547,44 +547,115 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
 
-  const organizationSidebarData = useMemo(() => {
-    const folderMap = new Map<
-      string,
-      { id: string; name: string; count: number; icon?: string; pinned?: boolean }
-    >()
+  useEffect(() => {
+    let cancelled = false
 
-    overlayPopups.forEach(popup => {
-      const folderId = popup.folderId || popup.id
-      const childCount = popup.children ? popup.children.length : 0
-      const existing = folderMap.get(folderId)
+    const mapCount = (item: any): number => {
+      if (typeof item?.itemCount === 'number') return item.itemCount
+      if (typeof item?.itemsCount === 'number') return item.itemsCount
+      if (typeof item?.childrenCount === 'number') return item.childrenCount
+      if (typeof item?.childCount === 'number') return item.childCount
+      if (typeof item?.stats?.itemCount === 'number') return item.stats.itemCount
+      if (Array.isArray(item?.children)) return item.children.length
+      return 0
+    }
 
-      if (existing) {
-        existing.count = Math.max(existing.count, childCount)
-        existing.pinned = existing.pinned || !!popup.isPinned
-      } else {
-        folderMap.set(folderId, {
-          id: folderId,
-          name: popup.folderName || 'Untitled',
-          count: childCount,
-          icon: popup.folder?.icon ?? '📁',
-          pinned: popup.isPinned ?? false,
-        })
-      }
+    const toSidebarItem = (item: any): OrganizationSidebarItem => ({
+      id: item.id,
+      name: item.name ?? deriveFromPath(item.path) ?? 'Untitled',
+      icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+      count: mapCount(item),
     })
 
-    const items = Array.from(folderMap.values()).sort((a, b) => a.name.localeCompare(b.name))
-    const totalItems = items.reduce((sum, item) => sum + item.count, 0)
+    const loadOrganizationSidebar = async () => {
+      try {
+        const rootResponse = await fetch('/api/items?parentId=null')
+        if (!rootResponse.ok) return
+        const rootData = await rootResponse.json().catch(() => ({ items: [] }))
+        const rootItems: any[] = Array.isArray(rootData?.items) ? rootData.items : []
+
+        const knowledgeBase = rootItems.find(
+          item => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
+        )
+
+        let sidebarItems: OrganizationSidebarItem[] = []
+
+        if (knowledgeBase) {
+          let children: any[] = []
+          try {
+            const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
+            if (childResponse.ok) {
+              const childData = await childResponse.json().catch(() => ({ items: [] }))
+              if (Array.isArray(childData?.items)) {
+                children = childData.items
+              }
+            }
+          } catch (error) {
+            console.error('[AnnotationApp] Failed to fetch Knowledge Base children:', error)
+          }
+
+          const formattedChildren = children.map(toSidebarItem)
+          const knowledgeBaseCount = mapCount(knowledgeBase)
+
+          sidebarItems = [
+            {
+              id: knowledgeBase.id,
+              name: knowledgeBase.name ?? 'Knowledge Base',
+              icon: knowledgeBase.icon || '🗃️',
+              count: knowledgeBaseCount,
+              interactive: false,
+            },
+            ...formattedChildren.map(child => ({ ...child, interactive: true })),
+          ]
+          setKnowledgeBaseId(knowledgeBase.id)
+        } else {
+          sidebarItems = rootItems.map(item => ({ ...toSidebarItem(item), interactive: true }))
+          setKnowledgeBaseId(null)
+        }
+
+        if (!cancelled) {
+          setOrganizationFolders(sidebarItems)
+        }
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to load organization sidebar items:', error)
+        if (!cancelled) {
+          setOrganizationFolders([])
+          setKnowledgeBaseId(null)
+        }
+      }
+    }
+
+    loadOrganizationSidebar()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const organizationSidebarData = useMemo(() => {
+    const pinnedIds = new Set(
+      overlayPopups.filter(popup => popup.isPinned).map(popup => popup.folderId || popup.id)
+    )
+
+    const items = organizationFolders.map(item => ({
+      ...item,
+      pinned: pinnedIds.has(item.id),
+    }))
+
+    const totalItems = items.reduce((sum, item) => sum + (item.count ?? 0), 0)
 
     return {
       items,
       stats: {
         openPopups: overlayPopups.length,
         totalItems,
-        pinnedPopups: overlayPopups.filter(popup => popup.isPinned).length,
+        pinnedPopups: pinnedIds.size,
       },
     }
-  }, [overlayPopups])
+  }, [organizationFolders, overlayPopups])
 
   // Persistence state for overlay layout
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
@@ -1948,22 +2019,120 @@ const handleCenterNote = useCallback(
   }, [])
 
   // Handle creating overlay popup (callback from FloatingToolbar)
-  const handleOrganizationSidebarSelect = useCallback((folderId: string) => {
-    setOverlayPopups(prev =>
-      prev.map(popup => {
-        if (popup.folderId === folderId) {
-          if (popup.isHighlighted) {
-            return popup
-          }
-          return { ...popup, isHighlighted: true }
+  const handleOrganizationSidebarSelect = useCallback(
+    async (folderId: string, rect?: DOMRect) => {
+      if (knowledgeBaseId && folderId === knowledgeBaseId) return
+
+      const existingIndex = overlayPopups.findIndex(p => p.folderId === folderId)
+      if (existingIndex >= 0) {
+        const existingPopup = overlayPopups[existingIndex]
+        setOverlayPopups(prev => {
+          const without = prev.filter(p => p.id !== existingPopup.id).map(p => ({ ...p, isHighlighted: false }))
+          const highlighted = { ...existingPopup, isHighlighted: true }
+          return [...without, highlighted]
+        })
+        layerContext?.setActiveLayer('popups')
+        setShowConstellationPanel(false)
+        return
+      }
+
+      try {
+        const detailResponse = await fetch(`/api/items/${folderId}`)
+        if (!detailResponse.ok) throw new Error('Failed to load folder metadata')
+        const detailData = await detailResponse.json()
+        const detail = detailData.item || detailData
+
+        const folderName = detail?.name ?? organizationFolders.find(item => item.id === folderId)?.name ?? 'Untitled'
+        const folderColor = detail?.color ?? null
+        const folderPath = detail?.path ?? null
+        const folderLevel = typeof detail?.level === 'number' ? detail.level : 0
+
+        const targetRect = rect || new DOMRect(0, 80, 320, 40)
+
+        const popupWidth = 320
+        let popupX = targetRect.right + 16
+        if (popupX + popupWidth > window.innerWidth) {
+          popupX = Math.max(16, targetRect.left - popupWidth - 16)
         }
-        if (!popup.isHighlighted) {
-          return popup
+        const popupY = Math.min(Math.max(16, targetRect.top), window.innerHeight - 360)
+
+        const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+        const screenPosition = { x: popupX, y: popupY }
+        const canvasPosition = CoordinateBridge.screenToCanvas(screenPosition, sharedTransform)
+
+        const popupId = `overlay-sidebar-${Date.now()}-${folderId}`
+
+        layerContext?.setActiveLayer('popups')
+        setShowConstellationPanel(false)
+
+        setOverlayPopups(prev => [
+          ...prev.map(p => ({ ...p, isHighlighted: false })),
+          {
+            id: popupId,
+            folderId,
+            folderName,
+            folder: {
+              id: folderId,
+              name: folderName,
+              type: 'folder',
+              level: folderLevel,
+              color: folderColor,
+              path: folderPath,
+              children: [],
+            },
+            position: screenPosition,
+            canvasPosition,
+            children: [],
+            isLoading: true,
+            isPersistent: true,
+            isHighlighted: true,
+            level: folderLevel,
+          },
+        ])
+
+        try {
+          const childResponse = await fetch(`/api/items?parentId=${folderId}`)
+          if (!childResponse.ok) throw new Error('Failed to load folder contents')
+
+          const childData = await childResponse.json()
+          const childItems: any[] = Array.isArray(childData?.items) ? childData.items : []
+          const formattedChildren: OrgItem[] = childItems.map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            type: item.type,
+            icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+            color: item.color,
+            path: item.path,
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+            hasChildren: item.type === 'folder',
+            level: (detail?.level ?? 0) + 1,
+            children: [],
+            parentId: item.parentId,
+          }))
+
+          setOverlayPopups(prev =>
+            prev.map(p =>
+              p.id === popupId
+                ? {
+                    ...p,
+                    children: formattedChildren,
+                    isLoading: false,
+                    folder: p.folder ? { ...p.folder, children: formattedChildren } : null,
+                  }
+                : p
+            )
+          )
+        } catch (childError) {
+          console.error('[AnnotationApp] Failed to load folder children:', childError)
+          setOverlayPopups(prev => prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p)))
         }
-        return { ...popup, isHighlighted: false }
-      })
-    )
-  }, [])
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to open folder popup from sidebar:', error)
+      }
+    },
+    [knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
+  )
 
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
@@ -2792,10 +2961,7 @@ const handleCenterNote = useCallback(
             </div>
           )}
 
-          <div
-            className="flex-1 flex flex-col overflow-hidden"
-            style={{ marginLeft: shouldShowSidebar && !showConstellationPanel ? '20rem' : 0 }}
-          >
+          <div className="flex-1 flex flex-col overflow-hidden">
             {!showConstellationPanel && !isPopupLayerActive && (
             <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
               <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">

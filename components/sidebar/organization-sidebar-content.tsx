@@ -1,14 +1,15 @@
 "use client"
 
-interface OrganizationSidebarItem {
+export interface OrganizationSidebarItem {
   id: string
   name: string
   count: number
   icon?: string
   pinned?: boolean
+  interactive?: boolean
 }
 
-interface OrganizationSidebarStats {
+export interface OrganizationSidebarStats {
   openPopups: number
   totalItems: number
   pinnedPopups: number
@@ -17,7 +18,7 @@ interface OrganizationSidebarStats {
 interface OrganizationSidebarContentProps {
   items: OrganizationSidebarItem[]
   stats: OrganizationSidebarStats
-  onSelect?: (id: string) => void
+  onSelect?: (id: string, rect: DOMRect) => void
 }
 
 export function OrganizationSidebarContent({
@@ -45,30 +46,40 @@ export function OrganizationSidebarContent({
             No overlay folders are active yet. Toggle the overlay canvas to populate this list.
           </div>
         ) : (
-          items.map(item => (
-            <button
-              key={item.id}
-              onClick={() => onSelect?.(item.id)}
-              className="w-full text-left px-4 py-3 border-b border-white/5 hover:bg-white/10 transition-colors"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-lg leading-none">{item.icon ?? '📁'}</span>
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-white/90">{item.name}</span>
-                    {item.pinned && (
-                      <span className="text-[10px] uppercase tracking-wider text-yellow-300/70">
-                        Pinned
-                      </span>
-                    )}
+          items.map(item => {
+            const disabled = item.interactive === false
+            return (
+              <button
+                key={item.id}
+                disabled={disabled}
+                onClick={(event) => {
+                  if (disabled) return
+                  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+                  onSelect?.(item.id, rect)
+                }}
+                className={`w-full text-left px-4 py-3 border-b border-white/5 transition-colors ${
+                  disabled ? 'cursor-default opacity-70' : 'hover:bg-white/10'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg leading-none">{item.icon ?? '📁'}</span>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium text-white/90">{item.name}</span>
+                      {item.pinned && (
+                        <span className="text-[10px] uppercase tracking-wider text-yellow-300/70">
+                          Pinned
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  <span className="text-xs font-semibold text-white/60 px-2 py-1 rounded-full bg-white/10">
+                    {item.count}
+                  </span>
                 </div>
-                <span className="text-xs font-semibold text-white/60 px-2 py-1 rounded-full bg-white/10">
-                  {item.count}
-                </span>
-              </div>
-            </button>
-          ))
+              </button>
+            )
+          })
         )}
       </div>
     </div>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Organization Workspace Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --sidebar-width: 320px;
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --accent: #60a5fa;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --border: rgba(148, 163, 184, 0.15);
+    }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: linear-gradient(120deg, #312e81, #7c3aed);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+    }
+
+    aside {
+      width: var(--sidebar-width);
+      backdrop-filter: blur(12px);
+      background: rgba(15, 23, 42, 0.85);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tab-bar {
+      display: flex;
+      gap: 8px;
+      padding: 16px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      text-align: center;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: rgba(148, 163, 184, 0.1);
+      color: var(--muted);
+    }
+
+    .tab.active {
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(96, 165, 250, 0.35);
+    }
+
+    .panel-header {
+      padding: 20px 24px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .panel-header p {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 18px 24px 8px;
+    }
+
+    .workspace-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 8px 16px;
+    }
+
+    .workspace-item {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 0 16px 12px;
+      background: rgba(30, 41, 59, 0.85);
+      cursor: pointer;
+      transition: border 0.2s ease, transform 0.2s ease;
+    }
+
+    .workspace-item:hover {
+      border-color: rgba(96, 165, 250, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .workspace-item h3 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .workspace-meta {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .workspace-actions {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px 16px;
+      border-top: 1px solid var(--border);
+      background: rgba(15, 23, 42, 0.8);
+    }
+
+    button.primary {
+      flex: 1;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      color: #0f172a;
+      padding: 10px 12px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 6px 16px rgba(96, 165, 250, 0.35);
+      transition: transform 0.2s ease;
+    }
+
+    button.primary:hover {
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.2s ease;
+    }
+
+    button.secondary:hover {
+      border-color: rgba(148, 163, 184, 0.4);
+    }
+
+    main {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .canvas-chrome {
+      position: absolute;
+      top: 16px;
+      inset-inline: 0;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .workspace-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid var(--border);
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.45);
+      pointer-events: auto;
+    }
+
+    .workspace-toggle span {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      cursor: pointer;
+    }
+
+    .workspace-toggle button {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #0f172a;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: transform 0.2s ease;
+    }
+
+    .workspace-toggle button:hover {
+      transform: translateY(-1px);
+    }
+
+    .workspace-canvas {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.28);
+      display: grid;
+      place-content: center;
+      color: rgba(226, 232, 240, 0.8);
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div class="tab-bar">
+      <div class="tab">Constellation</div>
+      <div class="tab active">Organization</div>
+      <div class="tab">Workspace</div>
+    </div>
+
+    <div class="panel-header">
+      <h2>Workspace Library</h2>
+      <p>Select a saved layout to swap the overlay canvas instantly.</p>
+    </div>
+
+    <div class="section-label">Saved Workspaces</div>
+    <div class="workspace-list">
+      <div class="workspace-item">
+        <h3>Research Review</h3>
+        <div class="workspace-meta">
+          <span>Updated 2h ago • 12 panels</span>
+          <span>by dandy</span>
+        </div>
+      </div>
+
+      <div class="workspace-item">
+        <h3>Product Planning</h3>
+        <div class="workspace-meta">
+          <span>Updated yesterday • 8 panels</span>
+          <span>by dandy</span>
+        </div>
+      </div>
+
+      <div class="workspace-item">
+        <h3>Workspace • Focus Mode</h3>
+        <div class="workspace-meta">
+          <span>Updated 4 days ago • 5 panels</span>
+          <span>by luna</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="workspace-actions">
+      <button class="primary">Load Selected</button>
+      <button class="secondary">Save Current Layout</button>
+    </div>
+  </aside>
+
+  <main>
+    <div class="canvas-chrome">
+      <div class="workspace-toggle">
+        <span>Workspace: Research Review</span>
+        <button title="Create workspace">+</button>
+      </div>
+    </div>
+    <div class="workspace-canvas">
+      Overlay canvas preview goes here
+    </div>
+  </main>
+</body>
+</html>
