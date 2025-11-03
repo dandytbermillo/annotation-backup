@@ -20,12 +20,14 @@ const ensureOverlayPositions = (layout: OverlayLayoutPayload): OverlayLayoutPayl
 export interface OverlayWorkspaceSummary {
   id: string
   name: string
+  isDefault: boolean
   updatedAt: string | null
   popupCount: number
 }
 
 interface ListWorkspaceResponse {
   workspaces: OverlayWorkspaceSummary[]
+  nextWorkspaceName?: string
 }
 
 interface CreateWorkspaceResponse {
@@ -181,13 +183,60 @@ export class OverlayLayoutAdapter {
     return data
   }
 
-  setWorkspace(workspaceKey: string) {
-    ;(this as { workspaceKey: string }).workspaceKey = workspaceKey
+  static async deleteWorkspace({
+    workspaceId,
+    userId,
+    baseUrl = DEFAULT_WORKSPACES_BASE_URL,
+  }: {
+    workspaceId: string
+    userId?: string | null
+    baseUrl?: string
+  }): Promise<void> {
+    const target = `${baseUrl}/${encodeURIComponent(workspaceId)}`
+    const url = userId ? `${target}?userId=${encodeURIComponent(userId)}` : target
+    const response = await fetch(url, {
+      method: 'DELETE',
+      cache: 'no-store',
+    })
+
+    if (!response.ok) {
+      let detail: string | undefined
+      try {
+        const payload = (await response.json()) as { error?: string }
+        if (payload && typeof payload.error === 'string') {
+          detail = payload.error
+        }
+      } catch {
+        // Ignore JSON parsing errors; fall back to status text
+      }
+      throw new Error(
+        `Failed to delete overlay workspace: ${detail ?? response.statusText}`
+      )
+    }
   }
+
 }
 
 export function isOverlayPersistenceEnabled(): boolean {
-  return isPlainModeActive()
+  if (isPlainModeActive()) return true
+
+  if (typeof window !== 'undefined') {
+    // Surface a warning once so teams know persistence is still running in collaborative mode.
+    const key = '__OVERLAY_PERSIST_WARNED__'
+    const globalAny = window as unknown as Record<string, unknown>
+    if (!globalAny[key]) {
+      console.warn(
+        '[overlay-layout-adapter] Overlay persistence is active outside plain mode; ensure this is intentional.'
+      )
+      globalAny[key] = true
+    }
+  } else {
+    console.warn(
+      '[overlay-layout-adapter] Overlay persistence is active outside plain mode (server render).'
+    )
+  }
+
+  return true
 }
 
 export { OVERLAY_LAYOUT_SCHEMA_VERSION } from '@/lib/types/overlay-layout'

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Pool } from 'pg'
 
 import {
   MAX_LAYOUT_BYTES,
@@ -8,14 +7,14 @@ import {
   parseUserId,
 } from '../layout/shared'
 
-const pool = new Pool({
-  connectionString:
-    process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev',
-})
+import { closeWorkspacePool, getWorkspacePool } from './_pool'
+
+const pool = getWorkspacePool()
 
 interface WorkspaceRow {
   id: string
   name: string
+  is_default: boolean
   updated_at: string | Date
   layout: unknown
   version: string | null
@@ -46,6 +45,7 @@ export async function GET() {
     const result = await pool.query<WorkspaceRow>(
       `SELECT w.id,
               w.name,
+              w.is_default,
               w.updated_at,
               l.layout,
               l.version,
@@ -63,11 +63,27 @@ export async function GET() {
     const workspaces = result.rows.map(row => ({
       id: row.id,
       name: row.name,
+      isDefault: row.is_default,
       updatedAt: deriveUpdatedAt(row),
       popupCount: row.layout ? derivePopupCount(row.layout) : 0,
     }))
 
-    return NextResponse.json({ workspaces })
+    const nextIndexResult = await pool.query<{ next_index: number }>(
+      `SELECT COALESCE(MAX(
+                CASE
+                  WHEN name ~ '^Workspace ([0-9]+)$'
+                  THEN (regexp_replace(name, '^Workspace ', '')::int)
+                  ELSE NULL
+                END
+              ), 0) + 1 AS next_index
+         FROM workspaces`
+    )
+    const nextIndex = nextIndexResult.rows[0]?.next_index ?? 1
+
+    return NextResponse.json({
+      workspaces,
+      nextWorkspaceName: `Workspace ${nextIndex}`,
+    })
   } catch (error) {
     console.error('Overlay workspace list failed', error)
     return NextResponse.json({ error: 'Failed to list overlay workspaces' }, { status: 500 })
@@ -167,6 +183,7 @@ export async function POST(request: NextRequest) {
     const workspaceSummary = {
       id: workspaceId,
       name: workspaceRecord.name,
+      isDefault: false,
       updatedAt: envelope.layout.lastSavedAt ?? workspaceUpdatedAt,
       popupCount: envelope.layout.popups.length,
     }
@@ -185,5 +202,5 @@ export async function POST(request: NextRequest) {
 }
 
 export async function __testing__closeOverlayWorkspacePool() {
-  await pool.end()
+  await closeWorkspacePool()
 }

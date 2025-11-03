@@ -9,6 +9,7 @@ import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
+import { Trash2 } from 'lucide-react'
 import {
   OverlayLayoutAdapter,
   OverlayLayoutConflictError,
@@ -19,6 +20,8 @@ import {
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { useCanvasMode, type CanvasMode } from "@/lib/canvas/use-canvas-mode"
+import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -51,6 +54,17 @@ function deriveFromPath(path: string | undefined | null): string | null {
   const segments = normalized.split('/')
   const lastSegment = segments[segments.length - 1]
   return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
+function computeNextWorkspaceName(workspaceSummaries: OverlayWorkspaceSummary[]): string {
+  const pattern = /^Workspace (\d+)$/i
+  const highest = workspaceSummaries.reduce((max, workspace) => {
+    const match = pattern.exec(workspace.name)
+    if (!match) return max
+    const value = Number.parseInt(match[1], 10)
+    return Number.isNaN(value) ? max : Math.max(max, value)
+  }, 0)
+  return `Workspace ${highest + 1}`
 }
 
 const ModernAnnotationCanvas = dynamic(
@@ -111,48 +125,38 @@ function AnnotationAppContent() {
   })
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
   const [activeSidebarTab, setActiveSidebarTab] = useState<CanvasSidebarTab>('organization')
-  const [showConstellationPanel, setShowConstellationPanel] = useState(false)
   const layerContext = useLayer()
+  const { mode: canvasMode, setMode: setCanvasMode } = useCanvasMode({
+    layerContext,
+    onModeChange: useCallback(
+      (nextMode: CanvasMode) => {
+        if (nextMode === 'constellation') {
+          setActiveSidebarTab('constellation')
+        } else if (activeSidebarTab === 'constellation') {
+          setActiveSidebarTab('organization')
+        }
+      },
+      [activeSidebarTab]
+    ),
+  })
+  const showConstellationPanel = canvasMode === 'constellation'
   const multiLayerEnabled = true
 
-  useEffect(() => {
-    console.log('🎨 Constellation panel state changed:', showConstellationPanel)
-  }, [showConstellationPanel])
-
-  const handleSidebarTabChange = useCallback((tab: CanvasSidebarTab) => {
-    setActiveSidebarTab(tab)
-
-    if (tab === 'constellation') {
-      setShowConstellationPanel(true)
-      if (layerContext?.activeLayer !== 'notes') {
-        layerContext?.setActiveLayer('notes')
+  const handleSidebarTabChange = useCallback(
+    (tab: CanvasSidebarTab) => {
+      setActiveSidebarTab(tab)
+      if (tab === 'constellation') {
+        setCanvasMode('constellation')
+        return
       }
-    } else {
-      setShowConstellationPanel(false)
-      if (layerContext?.activeLayer !== 'popups') {
-        layerContext?.setActiveLayer('popups')
-      }
-    }
-  }, [layerContext])
+      setCanvasMode('overlay')
+    },
+    [setCanvasMode]
+  )
 
   const toggleConstellationView = useCallback(() => {
-    setShowConstellationPanel(prev => !prev)
-  }, [])
-
-  const activeLayer = layerContext?.activeLayer
-
-  useEffect(() => {
-    if (showConstellationPanel) {
-      if (activeSidebarTab !== 'constellation') {
-        setActiveSidebarTab('constellation')
-        if (activeLayer !== 'notes') {
-          layerContext?.setActiveLayer('notes')
-        }
-      }
-    } else if (activeSidebarTab === 'constellation') {
-      setActiveSidebarTab('organization')
-    }
-  }, [showConstellationPanel, activeLayer, activeSidebarTab, layerContext])
+    setCanvasMode(canvasMode === 'constellation' ? 'overlay' : 'constellation')
+  }, [canvasMode, setCanvasMode])
 
   const activeNoteIdRef = useRef<string | null>(activeNoteId)
   useEffect(() => {
@@ -560,6 +564,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
   const [isWorkspaceLayoutLoading, setIsWorkspaceLayoutLoading] = useState(false)
   const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false)
+  const [workspaceDeletionId, setWorkspaceDeletionId] = useState<string | null>(null)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const workspacesLoadedRef = useRef(false)
   const workspaceToggleRef = useRef<HTMLDivElement | null>(null)
@@ -568,7 +573,9 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     [workspaces, currentWorkspaceId]
   )
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
-  const workspaceStatusLabel = isWorkspaceSaving
+  const workspaceStatusLabel = workspaceDeletionId
+    ? 'Deleting...'
+    : isWorkspaceSaving
     ? 'Saving...'
     : isWorkspaceLayoutLoading
     ? 'Hydrating...'
@@ -713,6 +720,11 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
       })
       .catch(error => {
         console.error('[AnnotationApp] Failed to load workspace list:', error)
+        toast({
+          variant: 'destructive',
+          title: 'Unable to load workspaces',
+          description: error instanceof Error ? error.message : 'Unexpected error while listing workspaces.',
+        })
       })
       .finally(() => {
         if (!cancelled) {
@@ -723,7 +735,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     return () => {
       cancelled = true
     }
-  }, [overlayPersistenceEnabled, currentWorkspaceId])
+  }, [overlayPersistenceEnabled, currentWorkspaceId, toast])
 
   useEffect(() => {
     if (!workspaceMenuOpen) return
@@ -835,9 +847,6 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     layoutRevisionRef.current = null
     lastSavedLayoutHashRef.current = null
     pendingLayoutRef.current = null
-    if (overlayPopups.length > 0) {
-      setOverlayPopups([])
-    }
   }, [overlayPersistenceEnabled, currentWorkspaceId])
 
   // Force re-center trigger - increment to force effect to run
@@ -1325,7 +1334,10 @@ const initialWorkspaceSyncRef = useRef(false)
 
         if (!envelope) {
           console.log('[AnnotationApp] No saved layout found')
+          layoutRevisionRef.current = null
+          lastSavedLayoutHashRef.current = null
           layoutLoadedRef.current = true
+          setOverlayPopups([])
           setIsWorkspaceLayoutLoading(false)
           return
         }
@@ -1348,6 +1360,12 @@ const initialWorkspaceSyncRef = useRef(false)
         if (!cancelled) {
           console.error('[AnnotationApp] Failed to load overlay layout:', error)
           layoutLoadedRef.current = true // Set on error so we don't block saves
+          toast({
+            variant: 'destructive',
+            title: 'Failed to load workspace layout',
+            description:
+              error instanceof Error ? error.message : 'Unexpected error while loading the workspace.',
+          })
         }
       } finally {
         if (!cancelled) {
@@ -1359,7 +1377,7 @@ const initialWorkspaceSyncRef = useRef(false)
     return () => {
       cancelled = true
     }
-  }, [applyOverlayLayout, overlayPersistenceEnabled, currentWorkspaceId])
+  }, [applyOverlayLayout, overlayPersistenceEnabled, currentWorkspaceId, setOverlayPopups])
 
   // Set layoutLoadedRef.current = true AFTER initial popups load completes
   // This ensures auto-switch doesn't trigger during database hydration
@@ -2079,7 +2097,7 @@ const handleCenterNote = useCallback(
           return [...without, highlighted]
         })
         layerContext?.setActiveLayer('popups')
-        setShowConstellationPanel(false)
+        setCanvasMode('overlay')
         return
       }
 
@@ -2110,7 +2128,7 @@ const handleCenterNote = useCallback(
         const popupId = `overlay-sidebar-${Date.now()}-${folderId}`
 
         layerContext?.setActiveLayer('popups')
-        setShowConstellationPanel(false)
+        setCanvasMode('overlay')
 
         setOverlayPopups(prev => [
           ...prev.map(p => ({ ...p, isHighlighted: false })),
@@ -2184,24 +2202,38 @@ const handleCenterNote = useCallback(
   const handleWorkspaceSelect = useCallback(
     (workspaceId: string) => {
       setWorkspaceMenuOpen(false)
-      setShowConstellationPanel(false)
-      layerContext?.setActiveLayer('popups')
+      setCanvasMode('overlay')
       setActiveSidebarTab('workspace')
       setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
     },
-    [layerContext]
+    [setCanvasMode]
   )
 
   const handleCreateWorkspace = useCallback(async () => {
     if (!overlayPersistenceEnabled) return
 
     const snapshot = buildLayoutPayload()
+    const defaultName = computeNextWorkspaceName(workspaces)
+    let nameHint = defaultName
+
+    if (typeof window !== 'undefined') {
+      const proposed = window.prompt('Name this workspace', defaultName)
+      if (proposed === null) {
+        return
+      }
+      const trimmed = proposed.trim()
+      if (trimmed.length > 0) {
+        nameHint = trimmed
+      }
+    }
+
     setIsWorkspaceSaving(true)
 
     try {
       const result = await OverlayLayoutAdapter.createWorkspace({
         layout: snapshot.payload,
         version: snapshot.payload.schemaVersion,
+        nameHint,
       })
 
       setWorkspaces(prev => {
@@ -2222,17 +2254,94 @@ const handleCenterNote = useCallback(
       })
       layoutLoadedRef.current = true
       applyOverlayLayout(result.envelope.layout)
-      setShowConstellationPanel(false)
-      layerContext?.setActiveLayer('popups')
+      setCanvasMode('overlay')
       setCurrentWorkspaceId(result.workspace.id)
       setActiveSidebarTab('workspace')
       setWorkspaceMenuOpen(false)
+      toast({
+        title: 'Workspace saved',
+        description: `${result.workspace.name} is ready to use.`,
+      })
     } catch (error) {
       console.error('[AnnotationApp] Failed to create workspace:', error)
+      toast({
+        variant: 'destructive',
+        title: 'Failed to snapshot workspace',
+        description: error instanceof Error ? error.message : 'Unexpected error while saving the workspace.',
+      })
     } finally {
       setIsWorkspaceSaving(false)
     }
-  }, [overlayPersistenceEnabled, buildLayoutPayload, applyOverlayLayout, layerContext])
+  }, [
+    overlayPersistenceEnabled,
+    buildLayoutPayload,
+    applyOverlayLayout,
+    setCanvasMode,
+    workspaces,
+  ])
+
+  const handleDeleteWorkspace = useCallback(
+    async (workspaceId: string) => {
+      if (workspaceDeletionId) return
+
+      const targetWorkspace = workspaces.find(ws => ws.id === workspaceId)
+      if (!targetWorkspace || targetWorkspace.isDefault) return
+
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm(
+          `Delete "${targetWorkspace.name}"? This will remove its saved overlay layout.`
+        )
+        if (!confirmed) {
+          return
+        }
+      }
+
+      setWorkspaceDeletionId(workspaceId)
+
+      try {
+        await OverlayLayoutAdapter.deleteWorkspace({ workspaceId })
+
+        const updatedWorkspaces = workspaces.filter(ws => ws.id !== workspaceId)
+        setWorkspaces(updatedWorkspaces)
+        setWorkspaceMenuOpen(false)
+
+        if (currentWorkspaceId === workspaceId) {
+          const fallback = updatedWorkspaces[0]?.id ?? null
+          setCurrentWorkspaceId(fallback)
+          setCanvasMode('overlay')
+          if (!fallback) {
+            overlayAdapterRef.current = null
+            layoutRevisionRef.current = null
+            lastSavedLayoutHashRef.current = null
+            layoutLoadedRef.current = true
+            setOverlayPopups([])
+          }
+        }
+
+        toast({
+          title: 'Workspace deleted',
+          description: `${targetWorkspace.name} has been removed.`,
+        })
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to delete workspace:', error)
+        toast({
+          variant: 'destructive',
+          title: 'Failed to delete workspace',
+          description:
+            error instanceof Error ? error.message : 'Unexpected error while deleting the workspace.',
+        })
+      } finally {
+        setWorkspaceDeletionId(null)
+      }
+    },
+    [
+      workspaceDeletionId,
+      workspaces,
+      currentWorkspaceId,
+      setCanvasMode,
+      setOverlayPopups,
+    ]
+  )
 
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
@@ -3062,6 +3171,8 @@ const handleCenterNote = useCallback(
                     isSaving={isWorkspaceSaving}
                     onSelectWorkspace={handleWorkspaceSelect}
                     onCreateWorkspace={handleCreateWorkspace}
+                    onDeleteWorkspace={handleDeleteWorkspace}
+                    deletingWorkspaceId={workspaceDeletionId}
                   />
                 }
               />
@@ -3148,13 +3259,15 @@ const handleCenterNote = useCallback(
                         <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
                           {workspaces.map(workspace => {
                             const isActive = workspace.id === currentWorkspaceId
+                            const isDeleting = workspaceDeletionId === workspace.id
+                            const disableDelete = workspace.isDefault || isDeleting
                             const updatedDate = workspace.updatedAt ? new Date(workspace.updatedAt) : null
                             const lastUpdated =
                               updatedDate && !Number.isNaN(updatedDate.getTime())
                                 ? updatedDate.toLocaleString()
                                 : 'Never saved'
                             return (
-                              <li key={workspace.id}>
+                              <li key={workspace.id} className="group relative">
                                 <button
                                   type="button"
                                   onClick={() => handleWorkspaceSelect(workspace.id)}
@@ -3174,6 +3287,31 @@ const handleCenterNote = useCallback(
                                   <div className="mt-1 text-[11px] text-white/50">
                                     {lastUpdated}
                                   </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={event => {
+                                    event.stopPropagation()
+                                    handleDeleteWorkspace(workspace.id)
+                                  }}
+                                  disabled={disableDelete}
+                                  className={[
+                                    'absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 text-white/70 opacity-0 transition-all group-hover:opacity-100',
+                                    disableDelete
+                                      ? 'cursor-not-allowed opacity-30'
+                                      : 'hover:border-red-400/60 hover:bg-red-600/20 hover:text-red-200',
+                                  ].join(' ')}
+                                  aria-label={
+                                    workspace.isDefault
+                                      ? 'Default workspace cannot be deleted'
+                                      : 'Delete workspace'
+                                  }
+                                >
+                                  {isDeleting ? (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide">…</span>
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
                                 </button>
                               </li>
                             )

@@ -4,6 +4,7 @@ import {
   GET as overlayWorkspacesGet,
   __testing__closeOverlayWorkspacePool,
 } from '@/app/api/overlay/workspaces/route'
+import { DELETE as overlayWorkspaceDelete } from '@/app/api/overlay/workspaces/[workspaceId]/route'
 import { NextRequest } from 'next/server'
 
 const pool = new Pool({
@@ -68,6 +69,8 @@ describe('/api/overlay/workspaces', () => {
 
     const names = payload.workspaces.map((ws: any) => ws.name)
     expect(names.some((name: string) => typeof name === 'string' && name.length > 0)).toBe(true)
+    expect(payload.workspaces.some((ws: any) => ws.isDefault === true)).toBe(true)
+    expect(typeof payload.nextWorkspaceName).toBe('string')
   })
 
   it('creates and lists a new overlay workspace with snapshot metadata', async () => {
@@ -100,5 +103,36 @@ describe('/api/overlay/workspaces', () => {
     )
     expect(created).toBeDefined()
     expect(created.popupCount).toBe(1)
+    expect(created.isDefault).toBe(false)
+  })
+
+  it('deletes a non-default workspace', async () => {
+    const layout = buildLayoutPayload()
+    const nameHint = `${TEST_NAME_PREFIX} delete ${Date.now()}`
+    const postRequest = new NextRequest('http://localhost:3000/api/overlay/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ layout, version: '2.0.0', nameHint }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const postResponse = await overlayWorkspacesPost(postRequest)
+    const postPayload = await postResponse.json()
+    const workspaceId = postPayload.workspace.id
+
+    const deleteRequest = new NextRequest(
+      `http://localhost:3000/api/overlay/workspaces/${workspaceId}`,
+      { method: 'DELETE' }
+    )
+
+    const deleteResponse = await overlayWorkspaceDelete(deleteRequest, {
+      params: Promise.resolve({ workspaceId }),
+    })
+
+    expect(deleteResponse.status).toBe(200)
+
+    const listResponse = await overlayWorkspacesGet()
+    const listPayload = await listResponse.json()
+    const found = listPayload.workspaces.find((workspace: any) => workspace.id === workspaceId)
+    expect(found).toBeUndefined()
   })
 })

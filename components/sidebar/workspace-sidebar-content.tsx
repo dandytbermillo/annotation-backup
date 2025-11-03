@@ -1,6 +1,7 @@
 "use client"
 
 import React from 'react'
+import { Trash2 } from 'lucide-react'
 
 import type { OverlayWorkspaceSummary } from '@/lib/adapters/overlay-layout-adapter'
 
@@ -11,6 +12,8 @@ interface WorkspaceSidebarContentProps {
   isSaving: boolean
   onSelectWorkspace: (workspaceId: string) => void
   onCreateWorkspace: () => void
+  onDeleteWorkspace: (workspaceId: string) => void
+  deletingWorkspaceId?: string | null
 }
 
 function formatUpdatedAt(updatedAt?: string | null): string {
@@ -46,6 +49,8 @@ export function WorkspaceSidebarContent({
   isSaving,
   onSelectWorkspace,
   onCreateWorkspace,
+  onDeleteWorkspace,
+  deletingWorkspaceId,
 }: WorkspaceSidebarContentProps) {
   return (
     <div className="flex h-full flex-col bg-slate-900/95">
@@ -72,27 +77,56 @@ export function WorkspaceSidebarContent({
         ) : (
           workspaces.map(workspace => {
             const isActive = workspace.id === currentWorkspaceId
+            const isDeleting = deletingWorkspaceId === workspace.id
+            const disableDelete = workspace.isDefault || isDeleting
             return (
-              <button
-                key={workspace.id}
-                onClick={() => onSelectWorkspace(workspace.id)}
-                className={[
-                  'w-full text-left rounded-xl border px-4 py-3 transition-colors',
-                  isActive
-                    ? 'border-blue-400/60 bg-blue-500/15 text-white'
-                    : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
-                ].join(' ')}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium">{workspace.name}</span>
-                  <span className="text-[11px] text-white/50">
-                    {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <div className="mt-1 text-xs text-white/50">
-                  {formatUpdatedAt(workspace.updatedAt)}
-                </div>
-              </button>
+              <div key={workspace.id} className="group relative">
+                <button
+                  type="button"
+                  onClick={() => onSelectWorkspace(workspace.id)}
+                  className={[
+                    'w-full text-left rounded-xl border px-4 py-3 transition-colors',
+                    isActive
+                      ? 'border-blue-400/60 bg-blue-500/15 text-white'
+                      : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
+                  ].join(' ')}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{workspace.name}</span>
+                    <span className="flex items-center gap-2 text-[11px] text-white/50">
+                      {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-xs text-white/50">
+                    {formatUpdatedAt(workspace.updatedAt)}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={event => {
+                    event.stopPropagation()
+                    onDeleteWorkspace(workspace.id)
+                  }}
+                  disabled={disableDelete}
+                  className={[
+                    'absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-slate-900/70 text-white/70 opacity-0 transition-all group-hover:opacity-100 group-focus-within:opacity-100',
+                    disableDelete
+                      ? 'cursor-not-allowed opacity-30'
+                      : 'hover:border-red-400/60 hover:bg-red-500/20 hover:text-red-200',
+                  ].join(' ')}
+                  aria-label={
+                    workspace.isDefault
+                      ? 'Default workspace cannot be deleted'
+                      : 'Delete workspace'
+                  }
+                >
+                  {isDeleting ? (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide">…</span>
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
             )
           })
         )}

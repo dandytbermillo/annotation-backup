@@ -17,7 +17,7 @@ interface GestureState {
   txId: number;
 }
 
-interface LayerContextValue {
+export interface LayerContextValue {
   activeLayer: 'notes' | 'popups';
   transforms: LayerTransforms;
   layers: Map<LayerId, UILayerState_Type>;

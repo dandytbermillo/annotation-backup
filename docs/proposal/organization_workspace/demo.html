@@ -240,34 +240,44 @@
 
     <div class="section-label">Saved Workspaces</div>
     <div class="workspace-list">
+      <div class="workspace-item is-default">
+        <div class="workspace-heading">
+          <h3>Default Workspace</h3>
+          <span class="badge">Default</span>
+        </div>
+        <div class="workspace-meta">
+          <span>Updated just now • 3 panels</span>
+          <span>Seeded automatically</span>
+        </div>
+        <button class="delete" title="Default workspace cannot be deleted" disabled>🗑</button>
+      </div>
+
       <div class="workspace-item">
-        <h3>Research Review</h3>
+        <div class="workspace-heading">
+          <h3>Research Review</h3>
+        </div>
         <div class="workspace-meta">
           <span>Updated 2h ago • 12 panels</span>
-          <span>by dandy</span>
+          <span>Last saved by dandy</span>
         </div>
+        <button class="delete" title="Delete workspace">🗑</button>
       </div>
 
       <div class="workspace-item">
-        <h3>Product Planning</h3>
-        <div class="workspace-meta">
-          <span>Updated yesterday • 8 panels</span>
-          <span>by dandy</span>
+        <div class="workspace-heading">
+          <h3>Focus Mode</h3>
         </div>
-      </div>
-
-      <div class="workspace-item">
-        <h3>Workspace • Focus Mode</h3>
         <div class="workspace-meta">
           <span>Updated 4 days ago • 5 panels</span>
-          <span>by luna</span>
+          <span>Last saved by luna</span>
         </div>
+        <button class="delete" title="Delete workspace">🗑</button>
       </div>
     </div>
 
     <div class="workspace-actions">
-      <button class="primary">Load Selected</button>
-      <button class="secondary">Save Current Layout</button>
+      <button class="secondary">Snapshot Current Layout</button>
+      <div class="hint">Snapshots prompt for a custom name (default suggestion <em>Workspace 4</em>).</div>
     </div>
   </aside>
 
@@ -275,11 +285,13 @@
     <div class="canvas-chrome">
       <div class="workspace-toggle">
         <span>Workspace: Research Review</span>
-        <button title="Create workspace">+</button>
+        <button title="Snapshot current layout">+</button>
       </div>
+      <div class="workspace-status">Status: Saving…</div>
     </div>
     <div class="workspace-canvas">
       Overlay canvas preview goes here
+      <div class="toast toast-success">Workspace saved! “Research Review” is up to date.</div>
     </div>
   </main>
 </body>

@@ -1,5 +1,33 @@
 # UI Workflows and Interaction Patterns
 
+## Overlay Workspace Controls
+
+### Overview
+Plain-mode users now have full control over workspace snapshots directly from the canvas. A centred chip shows the active workspace name, exposes a dropdown list, and offers a quick snapshot button.
+
+### Workspace Chip
+- Displays the current workspace name and the latest persistence state (`Loading…`, `Saving…`, `Deleting…` messages surface as a status).
+- Clicking the chip opens a dropdown listing every saved workspace (newest first). Each entry highlights when active and shows a “panels • updated at” summary.
+- A delete button appears when you hover over non-default entries; default workspaces cannot be removed.
+
+### Snapshot Button (`+`)
+- Opens a prompt asking for a custom workspace name. Enter any label, or leave the default suggestion (e.g., “Workspace 3”); canceling leaves the layout unchanged.
+- On success, the chip and sidebar refresh immediately, a toast confirms the save, and the new workspace becomes active.
+- Errors surface via a toast so the user can retry without guessing why the save failed.
+
+### Deleting Workspaces
+- Available from both the sidebar list and the chip dropdown. Deletions run immediately, show a “Deleting…” status, and broadcast a confirmation toast.
+- If the deleted workspace was active, the app falls back to the next saved layout (or clears to an empty canvas if none remain).
+- Default workspaces are protected and show a disabled delete icon with an explanatory tooltip.
+
+### Sidebar Integration
+- The “Workspace” tab mirrors the dropdown list, includes the new delete affordance, and keeps the call-to-action button (“Snapshot Current Layout”) in sync with the chip behavior.
+- Loading and saving spinners now align between the sidebar and chip so users always see consistent status feedback.
+
+### Empty/Seeded State
+- A shared “Workspace 1” snapshot ships automatically. The first migration clones the default layout into this entry, guaranteeing that the picker is never empty on fresh databases.
+- When no layout exists, the dropdown and sidebar display guidance copy instead of blank lists, nudging users to snapshot the current overlay.
+
 ## Popup System Workflow
 
 ### Overview
