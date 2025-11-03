@@ -703,9 +703,12 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   }, [shouldShowWorkspaceToggle, workspaceMenuOpen])
 
   useEffect(() => {
-    if (!overlayPersistenceEnabled || workspacesLoadedRef.current) return
+    if (!overlayPersistenceEnabled) {
+      setIsWorkspaceListLoading(false)
+      return
+    }
+    if (workspacesLoadedRef.current) return
 
-    workspacesLoadedRef.current = true
     let cancelled = false
 
     setIsWorkspaceListLoading(true)
@@ -717,6 +720,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
         if (!currentWorkspaceId && list.length > 0) {
           setCurrentWorkspaceId(list[0].id)
         }
+        workspacesLoadedRef.current = true
       })
       .catch(error => {
         console.error('[AnnotationApp] Failed to load workspace list:', error)
@@ -735,7 +739,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     return () => {
       cancelled = true
     }
-  }, [overlayPersistenceEnabled, currentWorkspaceId, toast])
+  }, [overlayPersistenceEnabled, toast, currentWorkspaceId])
 
   useEffect(() => {
     if (!workspaceMenuOpen) return
@@ -2253,14 +2257,14 @@ const handleCenterNote = useCallback(
         inspectors: result.envelope.layout.inspectors,
       })
       layoutLoadedRef.current = true
-      applyOverlayLayout(result.envelope.layout)
       setCanvasMode('overlay')
       setCurrentWorkspaceId(result.workspace.id)
       setActiveSidebarTab('workspace')
       setWorkspaceMenuOpen(false)
+      setOverlayPopups([])
       toast({
-        title: 'Workspace saved',
-        description: `${result.workspace.name} is ready to use.`,
+        title: 'Workspace created',
+        description: `${result.workspace.name} is ready — start arranging panels.`,
       })
     } catch (error) {
       console.error('[AnnotationApp] Failed to create workspace:', error)

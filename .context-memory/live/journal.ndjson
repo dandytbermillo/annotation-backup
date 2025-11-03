@@ -413,3 +413,4 @@
 {"ts":"2025-11-03T00:27:21.115Z","type":"commit","sha":"ddd461399a255dfbb4a020a82a7d78f3792af1c4","files_changed":6,"message":"before workspace tab implementation"}
 {"ts":"2025-11-03T04:07:33.475Z","type":"commit","sha":"8bfbba109725ad40e7a380418b5e558639daf452","files_changed":16,"message":"fix the gap vs plan"}
 {"ts":"2025-11-03T05:15:00.000Z","type":"note","text":"Completed workspace CRUD polish: added delete endpoint/UI with toasts, custom naming prompt, canvas mode hook, and seeded Workspace 1 migration; integration + unit suites pass."}
+{"ts":"2025-11-03T04:59:39.790Z","type":"commit","sha":"db08cf4df49896968b8b2f45e5ee3b9088662aac","files_changed":18,"message":"polished the gap vs plan"}
