@@ -310,6 +310,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const host = ensureFloatingOverlayHost();
+    if (host) {
+      setOverlayContainer(host);
+    }
+  }, []);
+
   const [lastSelectedIds, setLastSelectedIds] = useState<Map<string, string>>(new Map());
 
   // Drag and drop state
@@ -1894,7 +1902,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
-  const [usingFallbackHost, setUsingFallbackHost] = useState(false);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   // LOD: Track which popups are visible in the viewport to limit connection lines
   const visibleIdSetRef = useRef<Set<string>>(new Set());
@@ -2388,8 +2395,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         height: Math.max(0, rect.height),
       });
       setPointerGuardOffset(guardOffset);
-      setOverlayContainer(canvasEl as HTMLElement);
-      setUsingFallbackHost(false);
       debugLog('PopupOverlay', 'overlay_bounds_updated', { rect, effectiveLeft, effectiveWidth, guardOffset });
     } else {
       const fallbackHost = ensureFloatingOverlayHost();
@@ -2402,8 +2407,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           height: rect.height,
         });
         setPointerGuardOffset(0);
-        setOverlayContainer(fallbackHost);
-        setUsingFallbackHost(fallbackHost.id === FLOATING_OVERLAY_HOST_ID);
         debugLog('PopupOverlay', 'overlay_bounds_fallback', {
           hostId: fallbackHost.id,
           rect,
@@ -2411,8 +2414,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       } else {
         setOverlayBounds({ top: 0, left: 0, width: window.innerWidth, height: window.innerHeight });
         setPointerGuardOffset(0);
-        setOverlayContainer(null);
-        setUsingFallbackHost(false);
       }
     }
   }, []);
@@ -2469,7 +2470,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const rootEl = overlayContainer || overlayRef.current || undefined;
+    const rootEl = overlayRef.current || undefined;
     if (!rootEl) return;
 
     // Clear any previous observers
@@ -2490,7 +2491,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           }
         });
       },
-      { root: rootEl === overlayRef.current ? overlayRef.current : null, threshold: 0 }
+      { root: rootEl, threshold: 0 }
     );
 
     // Observe current rendered popups on next frame
@@ -2511,7 +2512,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           void el.offsetHeight;
         });
       },
-      { root: rootEl === overlayRef.current ? overlayRef.current : null, rootMargin: '400px', threshold: 0 }
+      { root: rootEl, rootMargin: '400px', threshold: 0 }
     );
 
     requestAnimationFrame(() => {
@@ -2526,7 +2527,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       visibilityObserversRef.current.delete('main');
       visibilityObserversRef.current.delete('near');
     };
-  }, [overlayContainer, popups.size]);
+  }, [overlayBounds, popups.size]);
 
   // Debug log container style
   useEffect(() => {
@@ -2569,13 +2570,20 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   }, [popups, activeTransform])
   
   // Build overlay contents (absolute inside canvas container)
+  const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
+
   const overlayInner = (
     <div
       ref={overlayRef}
       id="popup-overlay"
-      className={`${usingFallbackHost ? 'fixed' : 'absolute'} inset-0 ${isPanning ? 'popup-overlay-panning' : ''}`}
+      className={`${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
       style={{
+        position: 'fixed',
+        top: overlayBox.top,
+        left: overlayBox.left,
+        width: overlayBox.width,
+        height: overlayBox.height,
         zIndex: Z_INDEX.POPUP_OVERLAY,
         overflow: 'hidden',
         pointerEvents: (popups.size > 0) ? 'auto' : 'none',
@@ -2584,8 +2592,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         opacity: (popups.size > 0) ? 1 : 0,
         visibility: (popups.size > 0) ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
-        clipPath: !usingFallbackHost && pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
-        ...getBackdropStyle(backdropStyle), // TEMPORARY: Apply backdrop style
+        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
+        ...getBackdropStyle(backdropStyle),
       }}
       data-layer="popups"
       onPointerDown={handlePointerDown}
@@ -2595,7 +2603,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       onPointerEnter={() => setIsOverlayHovered(true)}
       onPointerLeave={() => setIsOverlayHovered(false)}
       onClick={(e) => {
-        // Close floating toolbar when clicking on empty space (not on popup cards)
         if (isOverlayEmptySpace(e as any)) {
           onPopupCardClick?.();
         }
@@ -3219,18 +3226,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   );
 
   useEffect(() => {
-    if (!usingFallbackHost || !overlayContainer) {
+    if (!overlayContainer) {
       return;
     }
 
     const host = overlayContainer;
-    host.style.pointerEvents = popups.size > 0 ? 'auto' : 'none';
+    host.style.pointerEvents = 'none';
     host.style.zIndex = String(Z_INDEX.POPUP_OVERLAY);
 
     return () => {
       host.style.pointerEvents = 'none';
     };
-  }, [overlayContainer, popups.size, usingFallbackHost]);
+  }, [overlayContainer]);
 
   // Preview tooltip using shared PreviewPopover component
   const tooltipPortal = activePreviewTooltip && createPortal(
