@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { AppState, ConstellationItem } from '@/types/constellation';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 interface StatusPanelProps {
   state: AppState;
@@ -34,7 +35,10 @@ export default function StatusPanel({ state, allItems, onClose }: StatusPanelPro
   const customPositions = Object.keys(state.nodePositions).length;
 
   return (
-    <div className="absolute bottom-5 right-5 bg-slate-800/90 backdrop-blur-sm border border-slate-600/50 rounded-lg shadow-2xl p-4 z-20 min-w-64 relative">
+    <div
+      className="absolute bottom-5 right-5 bg-slate-800/90 backdrop-blur-sm border border-slate-600/50 rounded-lg shadow-2xl p-4 min-w-64 relative"
+      style={{ zIndex: Z_INDEX.CONSTELLATION }}
+    >
       {onClose && (
         <button
           onClick={onClose}

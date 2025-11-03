@@ -2,6 +2,7 @@
 
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { useState, useEffect } from "react"
+import { Z_INDEX } from "@/lib/constants/z-index"
 
 interface MinimapProps {
   panels: string[]
@@ -38,7 +39,10 @@ export function Minimap({ panels, canvasState, onNavigate }: MinimapProps) {
   }
 
   return (
-    <div className="fixed bottom-4 right-4 bg-white/90 backdrop-blur-xl rounded-lg shadow-lg border border-gray-200 overflow-hidden z-[900]">
+    <div
+      className="fixed bottom-4 right-4 bg-white/90 backdrop-blur-xl rounded-lg shadow-lg border border-gray-200 overflow-hidden"
+      style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
+    >
       <div 
         className="relative cursor-pointer"
         style={{ width: '200px', height: '150px' }}

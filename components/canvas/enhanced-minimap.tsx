@@ -6,6 +6,7 @@ import { ChevronUp, ChevronDown } from 'lucide-react'
 import { CanvasItem, isPanel, isComponent } from '@/types/canvas-items'
 import { useIsolatedIds } from '@/lib/isolation/context'
 import { ensurePanelKey } from '@/lib/canvas/composite-id'
+import { Z_INDEX } from '@/lib/constants/z-index'
 
 interface MinimapProps {
   canvasItems: CanvasItem[]
@@ -527,7 +528,10 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   
   if (!isExpanded) {
     return (
-      <div className="fixed bottom-4 right-4 z-[900]">
+      <div
+        className="fixed bottom-4 right-4"
+        style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
+      >
         <button
           onClick={() => setIsExpanded(true)}
           className="bg-gray-900 text-white p-2 rounded-lg shadow-lg hover:bg-gray-800 transition-colors"
@@ -539,7 +543,10 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   }
   
   return (
-    <div className="fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg shadow-2xl overflow-hidden z-[900]">
+    <div
+      className="fixed bottom-4 right-4 bg-gray-900 text-white rounded-lg shadow-2xl overflow-hidden"
+      style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
+    >
       {/* Header */}
       <div className="bg-gray-800 px-4 py-2 flex items-center justify-between border-b border-gray-700">
         <h3 className="text-sm font-semibold">Minimap</h3>

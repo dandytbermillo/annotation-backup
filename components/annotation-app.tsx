@@ -38,6 +38,7 @@ import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canva
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
+import { Z_INDEX } from "@/lib/constants/z-index"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -3190,8 +3191,14 @@ const handleCenterNote = useCallback(
 
           <div className="relative flex-1" onContextMenu={handleContextMenu}>
             {shouldShowWorkspaceToggle && (
-              <div className="absolute inset-x-0 top-4 z-40 flex justify-center">
-                <div ref={workspaceToggleRef} className="flex flex-col items-center gap-2">
+              <div
+                className="absolute inset-x-0 top-4 flex justify-center"
+                style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
+              >
+                <div
+                  ref={workspaceToggleRef}
+                  className="flex flex-col items-center gap-2 pointer-events-auto"
+                >
                   <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
                     <button
                       type="button"
@@ -3314,7 +3321,6 @@ const handleCenterNote = useCallback(
               <div
                 className="flex-1 relative transition-all duration-300 ease-in-out"
                 style={{
-                  pointerEvents: showConstellationPanel ? 'none' : 'auto',
                   position: 'relative',
                   zIndex: 1,
                   isolation: 'isolate',
@@ -3323,59 +3329,66 @@ const handleCenterNote = useCallback(
                 }}
                 aria-hidden={showConstellationPanel}
               >
-                {openNotes.length > 0 ? (
-                  <ModernAnnotationCanvas
-                    key="workspace"
-                    noteIds={openNotes.map(note => note.noteId)}
-                    primaryNoteId={activeNoteId ?? openNotes[0].noteId}
-                    ref={canvasRef}
-                    freshNoteSeeds={freshNoteSeeds}
-                    onConsumeFreshNoteSeed={consumeFreshNoteSeed}
-                    isNotesExplorerOpen={false}
-                    freshNoteIds={freshNoteIds}
-                    onFreshNoteHydrated={handleFreshNoteHydrated}
-                    onCanvasStateChange={handleCanvasStateChange}
-                    mainOnlyNoteIds={mainOnlyNotes}
-                    onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
-                    showAddComponentMenu={showAddComponentMenu}
-                    onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
-                    onRegisterActiveEditor={handleRegisterActiveEditor}
-                    onSnapshotLoadComplete={handleSnapshotLoadComplete}
-                    skipSnapshotForNote={skipSnapshotForNote}
-                    onSnapshotSettled={handleSnapshotSettled}
-                  >
-                    {showNotesWidget && (
-                      <CanvasAwareFloatingToolbar
-                        x={notesWidgetPosition.x}
-                        y={notesWidgetPosition.y}
-                        onClose={handleCloseNotesWidget}
-                        onSelectNote={handleNoteSelect}
-                        onCreateOverlayPopup={handleCreateOverlayPopup}
-                        onAddComponent={handleAddComponentFromToolbar}
-                        editorRef={activeEditorRef}
-                        activePanelId={activePanelId}
-                        onBackdropStyleChange={handleBackdropStyleChange}
-                        onFolderRenamed={handleFolderRenamed}
-                        activePanel={toolbarActivePanel}
-                        onActivePanelChange={setToolbarActivePanel}
-                        refreshRecentNotes={recentNotesRefreshTrigger}
-                        onToggleConstellationPanel={toggleConstellationView}
-                        showConstellationPanel={showConstellationPanel}
-                      />
-                    )}
-                  </ModernAnnotationCanvas>
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gray-950">
-                    <div className="text-center">
-                      <h2 className="mb-4 text-3xl font-bold text-gray-600">
-                        Welcome to Annotation Canvas
-                      </h2>
-                      <p className="mb-6 text-gray-500">
-                        Right-click anywhere to open Notes Explorer and create a new note
-                      </p>
+                <div
+                  className="h-full w-full"
+                  style={{
+                    pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+                  }}
+                >
+                  {openNotes.length > 0 ? (
+                    <ModernAnnotationCanvas
+                      key="workspace"
+                      noteIds={openNotes.map(note => note.noteId)}
+                      primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+                      ref={canvasRef}
+                      freshNoteSeeds={freshNoteSeeds}
+                      onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+                      isNotesExplorerOpen={false}
+                      freshNoteIds={freshNoteIds}
+                      onFreshNoteHydrated={handleFreshNoteHydrated}
+                      onCanvasStateChange={handleCanvasStateChange}
+                      mainOnlyNoteIds={mainOnlyNotes}
+                      onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+                      showAddComponentMenu={showAddComponentMenu}
+                      onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+                      onRegisterActiveEditor={handleRegisterActiveEditor}
+                      onSnapshotLoadComplete={handleSnapshotLoadComplete}
+                      skipSnapshotForNote={skipSnapshotForNote}
+                      onSnapshotSettled={handleSnapshotSettled}
+                    >
+                      {showNotesWidget && (
+                        <CanvasAwareFloatingToolbar
+                          x={notesWidgetPosition.x}
+                          y={notesWidgetPosition.y}
+                          onClose={handleCloseNotesWidget}
+                          onSelectNote={handleNoteSelect}
+                          onCreateOverlayPopup={handleCreateOverlayPopup}
+                          onAddComponent={handleAddComponentFromToolbar}
+                          editorRef={activeEditorRef}
+                          activePanelId={activePanelId}
+                          onBackdropStyleChange={handleBackdropStyleChange}
+                          onFolderRenamed={handleFolderRenamed}
+                          activePanel={toolbarActivePanel}
+                          onActivePanelChange={setToolbarActivePanel}
+                          refreshRecentNotes={recentNotesRefreshTrigger}
+                          onToggleConstellationPanel={toggleConstellationView}
+                          showConstellationPanel={showConstellationPanel}
+                        />
+                      )}
+                    </ModernAnnotationCanvas>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gray-950">
+                      <div className="text-center">
+                        <h2 className="mb-4 text-3xl font-bold text-gray-600">
+                          Welcome to Annotation Canvas
+                        </h2>
+                        <p className="mb-6 text-gray-500">
+                          Right-click anywhere to open Notes Explorer and create a new note
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
 

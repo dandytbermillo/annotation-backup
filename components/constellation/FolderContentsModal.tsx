@@ -6,6 +6,7 @@ import { ConstellationItem } from '@/types/constellation';
 import { getItemIcon } from '@/lib/constellation/constellation-utils';
 import PreviewPopover from './PreviewPopover';
 import { PREVIEW_HOVER_DELAY_MS, PREVIEW_CLOSE_DELAY_MS } from '@/lib/constants/ui-timings';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 interface FolderContentsModalProps {
   isOpen: boolean;
@@ -201,14 +202,16 @@ export default function FolderContentsModal({
     <>
       {/* Backdrop - no blur, just slight darkening, allows clicks to pass through to constellation */}
       <div
-        className="fixed inset-0 bg-black/20 z-50 pointer-events-none"
+        className="fixed inset-0 bg-black/20 pointer-events-none"
+        style={{ zIndex: Z_INDEX.CONSTELLATION }}
       />
 
       {/* Modal */}
       <div
         ref={modalRef}
-        className="fixed z-50 w-full max-w-lg pointer-events-auto"
+        className="fixed w-full max-w-lg pointer-events-auto"
         style={{
+          zIndex: Z_INDEX.CONSTELLATION,
           left: `${position.x}px`,
           top: `${position.y}px`,
           transform: 'translate(-50%, -50%)',

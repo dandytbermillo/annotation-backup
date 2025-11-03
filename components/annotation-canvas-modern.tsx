@@ -42,6 +42,7 @@ import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from 
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 import { dedupeCanvasItems, type CanvasDedupeWarning } from "@/lib/canvas/dedupe-canvas-items"
 import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
+import { Z_INDEX } from "@/lib/constants/z-index"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -3420,7 +3421,8 @@ const mainPanelSeededRef = useRef(false)
         {/* Control Panel Toggle Button - Always visible */}
         <button
           onClick={() => setShowControlPanel(!showControlPanel)}
-          className="fixed top-16 right-4 z-[900] p-3 bg-gray-900 hover:bg-gray-800 text-white rounded-lg shadow-lg transition-all duration-200 hover:scale-110"
+          className="fixed top-16 right-4 p-3 bg-gray-900 hover:bg-gray-800 text-white rounded-lg shadow-lg transition-all duration-200 hover:scale-110"
+          style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
           title="Toggle Control Panel"
         >
           <Settings size={20} />

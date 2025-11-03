@@ -15,6 +15,7 @@ import FolderContentsModal from './FolderContentsModal';
 import { ConstellationErrorBoundary } from './ConstellationErrorBoundary';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ConstellationItem } from '@/types/constellation';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 export function ConstellationPanel() {
   const {
@@ -310,7 +311,10 @@ export function ConstellationPanel() {
       >
       {/* Loading Indicator */}
       {isLoading && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/95">
+        <div
+          className="absolute inset-0 flex items-center justify-center bg-slate-900/95"
+          style={{ zIndex: Z_INDEX.CONSTELLATION }}
+        >
           <div className="text-center">
             <div className="inline-block animate-spin rounded-full h-16 w-16 border-b-2 border-blue-400 mb-4"></div>
             <p className="text-blue-400 text-lg">Loading constellation from database...</p>
@@ -368,8 +372,9 @@ export function ConstellationPanel() {
       
       {/* Floating panel controls - moved below welcome panel */}
       <div
-        className="absolute rounded-lg p-2 z-40"
+        className="absolute rounded-lg p-2"
         style={{
+          zIndex: Z_INDEX.CONSTELLATION,
           left: `${panelControlsPosition.x}px`,
           top: `${panelControlsPosition.y}px`,
           cursor: isDraggingPanelControls ? 'grabbing' : 'default',
@@ -503,7 +508,10 @@ export function ConstellationPanel() {
       
       {/* Welcome message overlay - moved to upper right corner */}
       {state.showWelcomePanel && (
-        <div className="absolute top-5 right-5 w-80 z-50 pointer-events-none">
+        <div
+          className="absolute top-5 right-5 w-80 pointer-events-none"
+          style={{ zIndex: Z_INDEX.CONSTELLATION }}
+        >
           <div className="bg-slate-800/95 backdrop-blur-sm p-4 rounded-lg border border-slate-600/50 shadow-2xl relative pointer-events-auto">
             <button
               onClick={() => {

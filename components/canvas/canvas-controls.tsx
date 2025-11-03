@@ -1,5 +1,7 @@
 "use client"
 
+import { Z_INDEX } from "@/lib/constants/z-index"
+
 interface CanvasControlsProps {
   zoom: number
   onZoomIn: () => void
@@ -18,7 +20,10 @@ export function CanvasControls({
   showConnections 
 }: CanvasControlsProps) {
   return (
-    <div className="fixed top-16 left-4 z-[900] flex flex-col gap-3">
+    <div
+      className="fixed top-16 left-4 flex flex-col gap-3"
+      style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
+    >
       {/* Navigation Panel */}
       <div className="bg-white/90 backdrop-blur-xl rounded-lg shadow-lg p-3 border border-gray-200">
         <div className="text-xs font-semibold text-gray-700 mb-2">Navigation</div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from 'react'
+import { Z_INDEX } from '@/lib/constants/z-index'
 
 export function PersistenceMonitor() {
   const [persistCalls, setPersistCalls] = useState(0)
@@ -48,18 +49,21 @@ export function PersistenceMonitor() {
   }, [isMonitoring])
 
   return (
-    <div style={{
-      position: 'fixed',
-      bottom: 20,
-      right: 20,
-      background: 'black',
-      color: 'white',
-      padding: '10px 15pen',
-      borderRadius: '8px',
-      fontSize: '12px',
-      zIndex: 9999,
-      minWidth: '200px'
-    }}>
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 20,
+        right: 20,
+        background: 'black',
+        color: 'white',
+        padding: '10px 15px',
+        borderRadius: '8px',
+        fontSize: '12px',
+        zIndex: Z_INDEX.TOAST,
+        minWidth: '200px',
+        pointerEvents: 'auto',
+      }}
+    >
       <div style={{ marginBottom: '10px', fontWeight: 'bold' }}>
         PostgreSQL Persistence Monitor
       </div>

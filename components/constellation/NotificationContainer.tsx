@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Notification } from '@/types/constellation';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 interface NotificationContainerProps {
   notifications: Notification[];
@@ -36,7 +37,10 @@ export default function NotificationContainer({ notifications, onRemove }: Notif
   };
 
   return (
-    <div className="fixed top-5 right-5 z-50 space-y-2">
+    <div
+      className="fixed top-5 right-5 space-y-2"
+      style={{ zIndex: Z_INDEX.CONSTELLATION }}
+    >
       {notifications.map((notification) => (
         <div
           key={notification.id}

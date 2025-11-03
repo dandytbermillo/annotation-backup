@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useCallback } from 'react';
 import { ConstellationItem } from '@/types/constellation';
 import { getItemIcon, getItemColor, getItemSize, transformPoint, getNodePosition } from '@/lib/constellation/constellation-utils';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 interface ConstellationVisualizationProps {
   allItems: ConstellationItem[];
@@ -1625,7 +1626,10 @@ export default function ConstellationVisualization({
       
       {/* Debug panel showing all folders */}
       {state.showDebugPanel && (
-        <div className="absolute top-20 right-5 bg-slate-800/90 backdrop-blur-sm border border-slate-600/50 rounded-lg p-3 z-30 max-w-xs relative">
+        <div
+          className="absolute top-20 right-5 bg-slate-800/90 backdrop-blur-sm border border-slate-600/50 rounded-lg p-3 max-w-xs relative"
+          style={{ zIndex: Z_INDEX.CONSTELLATION }}
+        >
           {onCloseDebugPanel && (
             <button
               onClick={onCloseDebugPanel}

@@ -415,3 +415,7 @@
 {"ts":"2025-11-03T05:15:00.000Z","type":"note","text":"Completed workspace CRUD polish: added delete endpoint/UI with toasts, custom naming prompt, canvas mode hook, and seeded Workspace 1 migration; integration + unit suites pass."}
 {"ts":"2025-11-03T04:59:39.790Z","type":"commit","sha":"db08cf4df49896968b8b2f45e5ee3b9088662aac","files_changed":18,"message":"polished the gap vs plan"}
 {"ts":"2025-11-03T05:19:38.363Z","type":"commit","sha":"2674528e222103a1373a43cab3da4199fe5976a2","files_changed":3,"message":"success full implemented"}
+{"ts":"2025-11-03T06:14:23.506Z","type":"commit","sha":"222a0b0329356ea8537cae4df12e16d59e5fd778","files_changed":5,"message":"fixing the chrome bar not interactive"}
+{"ts":"2025-11-03T20:37:03.121Z","type":"note","text":"Drafted minimap layering implementation plan and saved to docs/proposal/minimap/top/IMPLEMENTATION_PLAN.md."}
+{"ts":"2025-11-03T20:47:58.654Z","type":"note","text":"Applied minimap layering plan: updated z-index tokens, refactored minimap/control HUD, aligned overlay & constellation layers; ran npm run lint (warnings pre-existing)."}
+{"ts":"2025-11-03T21:00:16.586Z","type":"note","text":"Raised overlay z-index tiers (overlay base 1800, constellation 2200), updated PersistenceMonitor to use shared tokens, reran npm run lint (pre-existing warnings only)."}

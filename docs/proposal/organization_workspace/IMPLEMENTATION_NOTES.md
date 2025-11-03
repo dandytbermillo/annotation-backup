@@ -19,6 +19,7 @@
 - **UI/state updates**  
   - Overlay canvas loads snapshots via the hydrator, coordinates mode switching through `useCanvasMode`, and surfaces toast feedback for load/save/delete failures.  
   - Workspace dropdown renders live workspace list, handles custom naming with a `Workspace N` fallback, and exposes delete controls (default workspace protected).
+  - Workspace chrome now sits above the popup overlay (`components/annotation-app.tsx` leveraging `Z_INDEX.DROPDOWN + 10`) so caret/snapshot buttons stay interactive when the overlay layer is active.
 
 - **Data seeding**  
   - Migration 038 seeds a shared "Workspace 1" snapshot (cloning the default layout when available, otherwise creating an empty layout).

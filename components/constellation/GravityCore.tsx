@@ -1,4 +1,5 @@
 import React from 'react';
+import { Z_INDEX } from '@/lib/constants/z-index';
 
 interface GravityCoreProps {
   position: { x: number; y: number };
@@ -39,8 +40,9 @@ export default function GravityCore({
 
   return (
     <div
-      className={`fixed z-50 select-none ${isLocked ? 'cursor-not-allowed' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+      className={`fixed select-none ${isLocked ? 'cursor-not-allowed' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       style={{
+        zIndex: Z_INDEX.CONSTELLATION,
         left: position.x,
         top: position.y,
         transform: 'translate(-50%, -50%)',

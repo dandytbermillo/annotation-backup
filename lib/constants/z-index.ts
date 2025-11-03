@@ -7,24 +7,34 @@
 
 export const Z_INDEX = {
   // Base layers - normalized values
-  NOTES_CANVAS: 1,              // Bottom layer - world space for panels
-  POPUP_OVERLAY: 100,           // Middle layer - popup overlay
-  SIDEBAR: 1000,                // Top layer - always above content
-  
-  // Popup specifics - consistent with overlay base
-  POPUP_BASE: 100,              // Same as POPUP_OVERLAY for consistency
-  POPUP_LEVEL_INCREMENT: 10,    // Each nested popup level adds this
-  POPUP_DRAGGING_BOOST: 1000,   // Added when dragging a popup
-  
-  // Canvas nodes (panels and components) - unified tokens
-  CANVAS_NODE_BASE: 110,        // Base z-index for all canvas nodes
-  CANVAS_NODE_ACTIVE: 160,      // Z-index for active/dragged nodes
-  CANVAS_UI: 300,               // Canvas UI controls (minimap, controls)
-  
-  // UI elements
-  DROPDOWN: 1500,               // Dropdowns above sidebar
-  TOAST: 2000,                  // Toast notifications
-  MODAL: 3000,                  // Modal dialogs - highest priority
+  NOTES_CANVAS: 1,                 // Bottom layer - world space for panels
+
+  // Canvas nodes (panels and components)
+  CANVAS_NODE_BASE: 110,           // Base z-index for all canvas nodes
+  CANVAS_NODE_ACTIVE: 160,         // Z-index for active/dragged nodes
+
+  // Canvas UI controls
+  CANVAS_UI: 280,                  // Generic canvas HUD widgets
+  CANVAS_MINIMAP: 320,             // Annotation minimap + HUD variants
+
+  // Overlay canvas + popups
+  POPUP_OVERLAY: 1800,             // Overlay canvas host (legacy name retained)
+  OVERLAY_CANVAS: 1800,            // Alias for clarity in new code
+  OVERLAY_MINIMAP: 1820,           // Reserved for future overlay minimap / HUD
+
+  // Constellation / global visualization layers
+  CONSTELLATION: 2200,             // Constellation canvas + HUD overlays
+
+  // Sidebar + global UI
+  SIDEBAR: 2400,                   // Sidebar + docked chrome
+  DROPDOWN: 2600,                  // Dropdowns above sidebar
+  TOAST: 3000,                     // Toast notifications
+  MODAL: 4000,                     // Modal dialogs - highest priority
+
+  // Popup specifics - aligned with overlay base
+  POPUP_BASE: 1800,                // Same as POPUP_OVERLAY for consistency
+  POPUP_LEVEL_INCREMENT: 25,       // Each nested popup level adds this
+  POPUP_DRAGGING_BOOST: 1000,      // Added when dragging a popup
 } as const;
 
 // Type for z-index keys
