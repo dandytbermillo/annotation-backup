@@ -15,6 +15,7 @@ import {
   OVERLAY_LAYOUT_SCHEMA_VERSION,
   type OverlayLayoutPayload,
   type OverlayPopupDescriptor,
+  type OverlayWorkspaceSummary,
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog } from "@/lib/utils/debug-logger"
@@ -33,6 +34,8 @@ import { ConstellationProvider } from "@/components/constellation/constellation-
 import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
+import { WorkspaceSidebarContent } from "@/components/sidebar/workspace-sidebar-content"
+import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -110,6 +113,7 @@ function AnnotationAppContent() {
   const [activeSidebarTab, setActiveSidebarTab] = useState<CanvasSidebarTab>('organization')
   const [showConstellationPanel, setShowConstellationPanel] = useState(false)
   const layerContext = useLayer()
+  const multiLayerEnabled = true
 
   useEffect(() => {
     console.log('🎨 Constellation panel state changed:', showConstellationPanel)
@@ -138,12 +142,14 @@ function AnnotationAppContent() {
   const activeLayer = layerContext?.activeLayer
 
   useEffect(() => {
-    if (showConstellationPanel && activeSidebarTab !== 'constellation') {
-      setActiveSidebarTab('constellation')
-      if (activeLayer !== 'notes') {
-        layerContext?.setActiveLayer('notes')
+    if (showConstellationPanel) {
+      if (activeSidebarTab !== 'constellation') {
+        setActiveSidebarTab('constellation')
+        if (activeLayer !== 'notes') {
+          layerContext?.setActiveLayer('notes')
+        }
       }
-    } else if (!showConstellationPanel && activeLayer === 'popups' && activeSidebarTab !== 'organization') {
+    } else if (activeSidebarTab === 'constellation') {
       setActiveSidebarTab('organization')
     }
   }, [showConstellationPanel, activeLayer, activeSidebarTab, layerContext])
@@ -549,6 +555,26 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
+  const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+  const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
+  const [isWorkspaceLayoutLoading, setIsWorkspaceLayoutLoading] = useState(false)
+  const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const workspacesLoadedRef = useRef(false)
+  const workspaceToggleRef = useRef<HTMLDivElement | null>(null)
+  const currentWorkspace = useMemo(
+    () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
+    [workspaces, currentWorkspaceId]
+  )
+  const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
+  const workspaceStatusLabel = isWorkspaceSaving
+    ? 'Saving...'
+    : isWorkspaceLayoutLoading
+    ? 'Hydrating...'
+    : isWorkspaceListLoading
+    ? 'Loading...'
+    : currentWorkspaceName
 
   useEffect(() => {
     let cancelled = false
@@ -657,8 +683,64 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     }
   }, [organizationFolders, overlayPopups])
 
+  const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
+  const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
+
   // Persistence state for overlay layout
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
+  const shouldShowWorkspaceToggle = overlayPersistenceEnabled && shouldShowSidebar
+  useEffect(() => {
+    if (!shouldShowWorkspaceToggle && workspaceMenuOpen) {
+      setWorkspaceMenuOpen(false)
+    }
+  }, [shouldShowWorkspaceToggle, workspaceMenuOpen])
+
+  useEffect(() => {
+    if (!overlayPersistenceEnabled || workspacesLoadedRef.current) return
+
+    workspacesLoadedRef.current = true
+    let cancelled = false
+
+    setIsWorkspaceListLoading(true)
+
+    OverlayLayoutAdapter.listWorkspaces()
+      .then(list => {
+        if (cancelled) return
+        setWorkspaces(list)
+        if (!currentWorkspaceId && list.length > 0) {
+          setCurrentWorkspaceId(list[0].id)
+        }
+      })
+      .catch(error => {
+        console.error('[AnnotationApp] Failed to load workspace list:', error)
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsWorkspaceListLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [overlayPersistenceEnabled, currentWorkspaceId])
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return
+
+    const handleClickAway = (event: MouseEvent) => {
+      if (!workspaceToggleRef.current) return
+      if (!workspaceToggleRef.current.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickAway)
+    return () => {
+      document.removeEventListener('mousedown', handleClickAway)
+    }
+  }, [workspaceMenuOpen])
+
   const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
   const layoutLoadedRef = useRef(false)
   const layoutRevisionRef = useRef<string | null>(null)
@@ -743,11 +825,20 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     }
   }, [activeNoteId, logWorkspaceNotePositions])
 
-  // Initialize overlay adapter
+  // Initialize overlay adapter when workspace changes
   useEffect(() => {
     if (!overlayPersistenceEnabled) return
-    overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey: 'default' })
-  }, [overlayPersistenceEnabled])
+
+    const workspaceKey = currentWorkspaceId ?? 'default'
+    overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey })
+    layoutLoadedRef.current = false
+    layoutRevisionRef.current = null
+    lastSavedLayoutHashRef.current = null
+    pendingLayoutRef.current = null
+    if (overlayPopups.length > 0) {
+      setOverlayPopups([])
+    }
+  }, [overlayPersistenceEnabled, currentWorkspaceId])
 
   // Force re-center trigger - increment to force effect to run
   // Ref to access canvas methods
@@ -770,10 +861,6 @@ const initialWorkspaceSyncRef = useRef(false)
   // Determine collaboration mode from environment
   const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
   const isPlainMode = collabMode === 'plain'
-  
-  // Multi-layer canvas is always enabled
-  const multiLayerEnabled = true
-
   // Adapt overlay popups for PopupOverlay component
   // Only show popups when popups layer is active, otherwise pass empty Map
   const adaptedPopups = useMemo(() => {
@@ -975,65 +1062,19 @@ const initialWorkspaceSyncRef = useRef(false)
 
   // Apply layout from database
   const applyOverlayLayout = useCallback((layout: OverlayLayoutPayload) => {
-    const sanitizedPopups = Array.isArray(layout.popups) ? layout.popups : []
     const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
-
-    const coreHash = JSON.stringify({
-      schemaVersion: layout.schemaVersion || OVERLAY_LAYOUT_SCHEMA_VERSION,
-      popups: sanitizedPopups,
-      inspectors: [],
-    })
-
+    const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, sharedTransform)
     lastSavedLayoutHashRef.current = coreHash
     // NOTE: Do NOT set layoutLoadedRef.current = true here!
     // It must be set AFTER setOverlayPopups completes, to prevent auto-switch during hydration
     // The load effect (lines 562-604) sets it correctly at line 596
 
-    if (sanitizedPopups.length === 0) {
-      console.log('[Layout Restoration] No saved popups, clearing overlay popups')
+    if (hydratedPopups.length === 0) {
       setOverlayPopups([])
       return
     }
 
-    // Convert descriptors back to OverlayPopup objects
-    const restoredPopups: OverlayPopup[] = sanitizedPopups.map(descriptor => {
-      const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, sharedTransform)
-
-      // Use stored folder name with fallback to ensure we have a displayable label
-      const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
-
-      console.log('[Restore] Descriptor for', displayName, ':', {
-        folderId: descriptor.folderId,
-        folderColor: descriptor.folderColor,
-        parentId: descriptor.parentId
-      })
-
-      const restoredPopup = {
-        id: descriptor.id,
-        folderId: descriptor.folderId || '',
-        folderName: displayName,
-        folder: descriptor.folderId ? {
-          id: descriptor.folderId,
-          name: displayName,
-          type: 'folder' as const,
-          level: descriptor.level || 0,
-          color: descriptor.folderColor || undefined,
-          children: []
-        } : null, // Will be loaded when needed
-        position: screenPosition,
-        canvasPosition: descriptor.canvasPosition,
-        children: [],
-        isLoading: Boolean(descriptor.folderId),
-        isPersistent: true,
-        level: descriptor.level || 0,
-        parentPopupId: descriptor.parentId || undefined,
-      }
-
-      console.log('[Restore] Initial popup.folder.color for', displayName, ':', restoredPopup.folder?.color)
-
-      return restoredPopup
-    })
-
+    const restoredPopups = hydratedPopups as OverlayPopup[]
     setOverlayPopups(restoredPopups)
 
     // Fetch folder data for each popup (needed to get color if not cached)
@@ -1274,6 +1315,7 @@ const initialWorkspaceSyncRef = useRef(false)
     if (!adapter) return
 
     let cancelled = false
+    setIsWorkspaceLayoutLoading(true)
 
     void (async () => {
       try {
@@ -1284,6 +1326,7 @@ const initialWorkspaceSyncRef = useRef(false)
         if (!envelope) {
           console.log('[AnnotationApp] No saved layout found')
           layoutLoadedRef.current = true
+          setIsWorkspaceLayoutLoading(false)
           return
         }
 
@@ -1306,13 +1349,17 @@ const initialWorkspaceSyncRef = useRef(false)
           console.error('[AnnotationApp] Failed to load overlay layout:', error)
           layoutLoadedRef.current = true // Set on error so we don't block saves
         }
+      } finally {
+        if (!cancelled) {
+          setIsWorkspaceLayoutLoading(false)
+        }
       }
     })()
 
     return () => {
       cancelled = true
     }
-  }, [applyOverlayLayout, overlayPersistenceEnabled])
+  }, [applyOverlayLayout, overlayPersistenceEnabled, currentWorkspaceId])
 
   // Set layoutLoadedRef.current = true AFTER initial popups load completes
   // This ensures auto-switch doesn't trigger during database hydration
@@ -2134,6 +2181,59 @@ const handleCenterNote = useCallback(
     [knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
   )
 
+  const handleWorkspaceSelect = useCallback(
+    (workspaceId: string) => {
+      setWorkspaceMenuOpen(false)
+      setShowConstellationPanel(false)
+      layerContext?.setActiveLayer('popups')
+      setActiveSidebarTab('workspace')
+      setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
+    },
+    [layerContext]
+  )
+
+  const handleCreateWorkspace = useCallback(async () => {
+    if (!overlayPersistenceEnabled) return
+
+    const snapshot = buildLayoutPayload()
+    setIsWorkspaceSaving(true)
+
+    try {
+      const result = await OverlayLayoutAdapter.createWorkspace({
+        layout: snapshot.payload,
+        version: snapshot.payload.schemaVersion,
+      })
+
+      setWorkspaces(prev => {
+        const withoutDuplicate = prev.filter(ws => ws.id !== result.workspace.id)
+        const updated = [result.workspace, ...withoutDuplicate]
+        return updated.sort((a, b) => {
+          const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0
+          const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0
+          return bTime - aTime
+        })
+      })
+
+      layoutRevisionRef.current = result.envelope.revision
+      lastSavedLayoutHashRef.current = JSON.stringify({
+        schemaVersion: result.envelope.layout.schemaVersion,
+        popups: result.envelope.layout.popups,
+        inspectors: result.envelope.layout.inspectors,
+      })
+      layoutLoadedRef.current = true
+      applyOverlayLayout(result.envelope.layout)
+      setShowConstellationPanel(false)
+      layerContext?.setActiveLayer('popups')
+      setCurrentWorkspaceId(result.workspace.id)
+      setActiveSidebarTab('workspace')
+      setWorkspaceMenuOpen(false)
+    } catch (error) {
+      console.error('[AnnotationApp] Failed to create workspace:', error)
+    } finally {
+      setIsWorkspaceSaving(false)
+    }
+  }, [overlayPersistenceEnabled, buildLayoutPayload, applyOverlayLayout, layerContext])
+
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
     setOverlayPopups(prev => {
@@ -2900,9 +3000,6 @@ const handleCenterNote = useCallback(
     }
   }
 
-  const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
-  const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
-  
   // Track note creation state to prevent double-clicks
   const [isCreatingNoteFromToolbar, setIsCreatingNoteFromToolbar] = useState(false)
 
@@ -2954,7 +3051,17 @@ const handleCenterNote = useCallback(
                   <OrganizationSidebarContent
                     items={organizationSidebarData.items}
                     stats={organizationSidebarData.stats}
-                    onSelect={handleOrganizationSidebarSelect}
+                    onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
+                  />
+                }
+                workspaceContent={
+                  <WorkspaceSidebarContent
+                    workspaces={workspaces}
+                    currentWorkspaceId={currentWorkspaceId}
+                    isLoading={isWorkspaceListLoading}
+                    isSaving={isWorkspaceSaving}
+                    onSelectWorkspace={handleWorkspaceSelect}
+                    onCreateWorkspace={handleCreateWorkspace}
                   />
                 }
               />
@@ -2981,6 +3088,103 @@ const handleCenterNote = useCallback(
           )}
 
           <div className="relative flex-1" onContextMenu={handleContextMenu}>
+            {shouldShowWorkspaceToggle && (
+              <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center">
+                <div
+                  ref={workspaceToggleRef}
+                  className="pointer-events-auto flex flex-col items-center gap-2"
+                >
+                  <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-3 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceMenuOpen(prev => !prev)}
+                      className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10"
+                    >
+                      <span className="text-[11px] uppercase tracking-wide text-white/60">
+                        Workspace
+                      </span>
+                      <span className="flex items-center gap-1">
+                        {workspaceStatusLabel}
+                        <svg
+                          aria-hidden="true"
+                          className={`h-3 w-3 transition-transform ${
+                            workspaceMenuOpen ? 'rotate-180' : ''
+                          }`}
+                          viewBox="0 0 12 12"
+                          fill="none"
+                        >
+                          <path
+                            d="M3 4.5L6 7.5L9 4.5"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateWorkspace}
+                      disabled={isWorkspaceSaving || isWorkspaceLayoutLoading}
+                      className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/90 text-slate-950 transition-transform hover:translate-y-[-1px] disabled:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                      aria-label="Snapshot current workspace"
+                    >
+                      <span className="text-lg font-semibold leading-none">+</span>
+                    </button>
+                  </div>
+
+                  {workspaceMenuOpen && (
+                    <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+                      {isWorkspaceListLoading ? (
+                        <div className="py-6 text-center text-sm text-white/60">
+                          Loading workspaces...
+                        </div>
+                      ) : workspaces.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-white/60 px-4">
+                          No saved workspaces yet. Use the + button to snapshot this layout.
+                        </div>
+                      ) : (
+                        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                          {workspaces.map(workspace => {
+                            const isActive = workspace.id === currentWorkspaceId
+                            const updatedDate = workspace.updatedAt ? new Date(workspace.updatedAt) : null
+                            const lastUpdated =
+                              updatedDate && !Number.isNaN(updatedDate.getTime())
+                                ? updatedDate.toLocaleString()
+                                : 'Never saved'
+                            return (
+                              <li key={workspace.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleWorkspaceSelect(workspace.id)}
+                                  className={[
+                                    'w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors',
+                                    isActive
+                                      ? 'border-blue-400/60 bg-blue-500/20 text-white shadow-lg'
+                                      : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
+                                  ].join(' ')}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium">{workspace.name}</span>
+                                    <span className="text-xs text-white/60">
+                                      {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-white/50">
+                                    {lastUpdated}
+                                  </div>
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <div className="flex h-full w-full">
               <div
                 className="flex-1 relative transition-all duration-300 ease-in-out"

@@ -2,18 +2,20 @@
 
 import React from 'react'
 
-export type CanvasSidebarTab = 'constellation' | 'organization'
+export type CanvasSidebarTab = 'constellation' | 'organization' | 'workspace'
 
 interface CanvasSidebarProps {
   activeTab: CanvasSidebarTab
   onTabChange: (tab: CanvasSidebarTab) => void
   constellationContent?: React.ReactNode
   organizationContent?: React.ReactNode
+  workspaceContent?: React.ReactNode
 }
 
 const tabs: Array<{ id: CanvasSidebarTab; label: string }> = [
   { id: 'constellation', label: 'Constellation' },
   { id: 'organization', label: 'Organization' },
+  { id: 'workspace', label: 'Workspace' },
 ]
 
 export function CanvasSidebar({
@@ -21,6 +23,7 @@ export function CanvasSidebar({
   onTabChange,
   constellationContent,
   organizationContent,
+  workspaceContent,
 }: CanvasSidebarProps) {
   return (
     <aside className="w-80 h-full bg-slate-950/90 border-r border-white/10 flex flex-col backdrop-blur-sm">
@@ -53,11 +56,19 @@ export function CanvasSidebar({
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === 'organization' ? (
           <div className="h-full overflow-hidden">
             {organizationContent ?? (
               <div className="flex h-full items-center justify-center text-sm text-white/60 px-4">
                 No organization data available yet.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="h-full overflow-hidden">
+            {workspaceContent ?? (
+              <div className="flex h-full items-center justify-center text-sm text-white/60 px-4">
+                No workspaces yet. Create one from the canvas toggle.
               </div>
             )}
           </div>

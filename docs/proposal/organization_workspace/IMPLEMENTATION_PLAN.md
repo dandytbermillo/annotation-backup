@@ -2,26 +2,26 @@
 
 ## 1. Goals & Scope
 - Add a centered workspace toggle to the overlay canvas (mirroring the note canvas) that lists and loads saved workspaces.
-- Reuse the existing popup overlay canvas to render workspace layouts; no new canvas mode required.
-- Persist named workspaces in Postgres via the overlay layout adapter.
+- Reuse the popup overlay canvas to render workspace layouts; no new canvas mode required.
+- Persist named workspaces in Postgres via the overlay layout adapter; auto-name new ones “Workspace 1”, “Workspace 2”, … for now.
 - Keep Constellation integration untouched; workspaces are scoped to the Organization/overlay experience.
 
 ## 2. Architectural Updates
 1. **Workspace Registry**
    - Extend `overlay-layout-adapter` with workspace CRUD: `listWorkspaces()`, `loadWorkspace(name)`, `saveWorkspace(name, layout)`, `deleteWorkspace(name)`.
-   - Store layouts as the existing descriptor array with an added workspace key/timestamp/author.
+   - Track `nextIndex` server-side so auto-generated names (“Workspace N”) remain stable across sessions.
 2. **Mode Coordination**
-   - Wrap `showConstellationPanel` + `layerContext.activeLayer` in a small hook (`useCanvasMode`) so we have a single `mode: 'notes' | 'overlay' | 'constellation'` source of truth.
+   - Wrap `showConstellationPanel` + `layerContext.activeLayer` in a small hook (`useCanvasMode`) to get a single `mode: 'notes' | 'overlay' | 'constellation'` state.
    - Workspace selection simply calls `setMode('overlay')`; constellation off, notes hidden.
 3. **State Loading**
-   - On app boot, preload workspace metadata (`workspaceList`) and the Knowledge Base children (for organization list).
-   - Clicking a workspace row loads the saved layout and swaps `overlayPopups` in one step.
+   - On app boot, preload workspace metadata (`workspaceList`) and Knowledge Base children (for the organization list).
+   - Clicking a workspace row loads the saved layout and swaps `overlayPopups` accordingly.
 
 ## 3. UI Behaviour
-- Sidebar tabs: Constellation / Organization / Workspace. Workspace tab shows saved layouts with last-updated metadata.
-- Canvas chrome: center-aligned chip reading “Workspace: {name}” with a `+` button used to create/overwrite workspaces. Dropdown interaction (click label) opens workspace list; `+` opens save dialog.
-- Knowledge Base entry stays disabled (non-interactive), children behave as quick “open folder” shortcuts.
-- When a workspace is active, sidebar still lists folders; selecting one spawns a popup using the workspace’s overlay canvas.
+- Sidebar tabs: Constellation / Organization / Workspace. Workspace tab lists saved layouts with timestamps + author.
+- Canvas chrome: center-aligned chip showing `Workspace: {name}` plus a `+` button. Clicking the label opens a dropdown; clicking `+` snapshots the current overlay layout and appends “Workspace N”.
+- Knowledge Base entry remains disabled; child folders spawn overlay popups as quick shortcuts.
+- Workspace chip updates as you switch layouts; the sidebar still reflects the active workspace’s folders.
 
 ## 4. Data Flow
 1. **Loading Workspaces**
@@ -30,32 +30,32 @@
    setMode('overlay')
    setOverlayPopups(descriptors)
    ```
-   - Optional: store workspace metadata (last loaded) to highlight current selection in the chip.
+   - Store `currentWorkspace` in state to highlight the chip / dropdown selection.
 2. **Saving Workspaces**
+   - Determine name: prompt for custom label or default to `Workspace {nextIndex}` (auto-incremented via adapter).
    ```ts
    const descriptors = serializeOverlayPopups(overlayPopups)
-   await overlayAdapter.saveWorkspace(name, descriptors, transform)
+   const name = await overlayAdapter.saveWorkspace({ nameHint })
    refreshWorkspaceList()
+   setCurrentWorkspace(name)
    ```
-   - If `name` exists, prompt overwrite confirmation; else create new entry.
 3. **Sidebar Folder Click**
-   - If popup already open, highlight it.
-   - Else fetch `/api/items/{folderId}` + children and instantiate overlay popup at default position (reusing current overlay creation code).
+   - If popup exists, highlight/focus it; otherwise fetch metadata + children and instantiate overlay popup via existing creation logic.
 
 ## 5. Edge Cases & Resilience
-- Workspace load failure ⇒ toast + leave previous overlay intact.
+- Workspace load failure ⇒ toast + revert to previous overlay state.
 - Missing folders in saved layout ⇒ skip with warning; do not block others.
-- Concurrency: serialize save/load via adapter lock to prevent partial writes.
-- Feature flag `NEXT_PUBLIC_ORG_WORKSPACES` guards new UI until DB migration is deployed.
+- Concurrency: serialize save/load through adapter locks to prevent partial states.
+- Feature flag `NEXT_PUBLIC_ORG_WORKSPACES` gates UI until DB migration is live.
 
 ## 6. Testing Strategy
-- Adapter unit tests for workspace CRUD.
-- Sidebar integration test: selecting workspace transitions overlay state + highlights chip.
-- Regression: constellation toggle still hides notes/overlay; organization tab still lists live popups.
-- Snapshot new workspace chip in Storybook (optional) for visual regression.
+- Adapter unit tests for workspace CRUD + index incrementing.
+- Sidebar integration test: select workspace → overlay layer active, layout applied, chip updated.
+- Regression: constellation toggle hides overlay; organization still shows live session popups.
+- Storybook or screenshot for workspace chip/dropdown.
 
 ## 7. Rollout Checklist
-- DB migration: add workspace table or extend existing overlay layout store with workspace column + unique index.
-- Backfill script to seed a default workspace from current overlay layout.
-- Update user docs onboarding; add “Workspace” section with screenshot (use `demo.html` as reference).
-- Monitor error logs for `loadWorkspace` / `saveWorkspace` operations post-release.
+- ✅ DB migration: add workspace table/columns (name, metadata) and seed default/workspace overlay snapshot.
+- ✅ Backfill script: snapshot current overlay layout into “Workspace 1”.
+- Update documentation (include `demo.html` visuals) and release notes for workspace feature.
+- Monitor `loadWorkspace`/`saveWorkspace` logs after launch for early errors.
