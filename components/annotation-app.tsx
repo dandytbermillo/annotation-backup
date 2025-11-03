@@ -37,7 +37,6 @@ import { ConstellationProvider } from "@/components/constellation/constellation-
 import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
-import { WorkspaceSidebarContent } from "@/components/sidebar/workspace-sidebar-content"
 import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
 
 // Helper to derive display name from path when folder.name is empty
@@ -2207,7 +2206,6 @@ const handleCenterNote = useCallback(
     (workspaceId: string) => {
       setWorkspaceMenuOpen(false)
       setCanvasMode('overlay')
-      setActiveSidebarTab('workspace')
       setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
     },
     [setCanvasMode]
@@ -2259,7 +2257,6 @@ const handleCenterNote = useCallback(
       layoutLoadedRef.current = true
       setCanvasMode('overlay')
       setCurrentWorkspaceId(result.workspace.id)
-      setActiveSidebarTab('workspace')
       setWorkspaceMenuOpen(false)
       setOverlayPopups([])
       toast({
@@ -3159,24 +3156,13 @@ const handleCenterNote = useCallback(
               <CanvasSidebar
                 activeTab={activeSidebarTab}
                 onTabChange={handleSidebarTabChange}
+                showWorkspaceTab={false}
                 constellationContent={<ConstellationSidebarShared />}
                 organizationContent={
                   <OrganizationSidebarContent
                     items={organizationSidebarData.items}
                     stats={organizationSidebarData.stats}
                     onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
-                  />
-                }
-                workspaceContent={
-                  <WorkspaceSidebarContent
-                    workspaces={workspaces}
-                    currentWorkspaceId={currentWorkspaceId}
-                    isLoading={isWorkspaceListLoading}
-                    isSaving={isWorkspaceSaving}
-                    onSelectWorkspace={handleWorkspaceSelect}
-                    onCreateWorkspace={handleCreateWorkspace}
-                    onDeleteWorkspace={handleDeleteWorkspace}
-                    deletingWorkspaceId={workspaceDeletionId}
                   />
                 }
               />
@@ -3204,39 +3190,36 @@ const handleCenterNote = useCallback(
 
           <div className="relative flex-1" onContextMenu={handleContextMenu}>
             {shouldShowWorkspaceToggle && (
-              <div className="pointer-events-none absolute inset-x-0 top-4 z-40 flex justify-center">
-                <div
-                  ref={workspaceToggleRef}
-                  className="pointer-events-auto flex flex-col items-center gap-2"
-                >
-                  <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-3 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
+              <div className="absolute inset-x-0 top-4 z-40 flex justify-center">
+                <div ref={workspaceToggleRef} className="flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
                     <button
                       type="button"
                       onClick={() => setWorkspaceMenuOpen(prev => !prev)}
-                      className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10"
+                      aria-expanded={workspaceMenuOpen}
+                      aria-label="Choose workspace"
+                      className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                     >
                       <span className="text-[11px] uppercase tracking-wide text-white/60">
                         Workspace
                       </span>
-                      <span className="flex items-center gap-1">
-                        {workspaceStatusLabel}
-                        <svg
-                          aria-hidden="true"
-                          className={`h-3 w-3 transition-transform ${
-                            workspaceMenuOpen ? 'rotate-180' : ''
-                          }`}
-                          viewBox="0 0 12 12"
-                          fill="none"
-                        >
-                          <path
-                            d="M3 4.5L6 7.5L9 4.5"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
+                      <span>{workspaceStatusLabel}</span>
+                      <svg
+                        aria-hidden="true"
+                        className={`h-3 w-3 transition-transform ${
+                          workspaceMenuOpen ? 'rotate-180' : ''
+                        }`}
+                        viewBox="0 0 12 12"
+                        fill="none"
+                      >
+                        <path
+                          d="M3 4.5L6 7.5L9 4.5"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
                     </button>
                     <button
                       type="button"
@@ -3331,7 +3314,7 @@ const handleCenterNote = useCallback(
               <div
                 className="flex-1 relative transition-all duration-300 ease-in-out"
                 style={{
-                  pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+                  pointerEvents: showConstellationPanel ? 'none' : 'auto',
                   position: 'relative',
                   zIndex: 1,
                   isolation: 'isolate',

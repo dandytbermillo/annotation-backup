@@ -10,9 +10,10 @@ interface CanvasSidebarProps {
   constellationContent?: React.ReactNode
   organizationContent?: React.ReactNode
   workspaceContent?: React.ReactNode
+  showWorkspaceTab?: boolean
 }
 
-const tabs: Array<{ id: CanvasSidebarTab; label: string }> = [
+const BASE_TABS: Array<{ id: CanvasSidebarTab; label: string }> = [
   { id: 'constellation', label: 'Constellation' },
   { id: 'organization', label: 'Organization' },
   { id: 'workspace', label: 'Workspace' },
@@ -24,12 +25,25 @@ export function CanvasSidebar({
   constellationContent,
   organizationContent,
   workspaceContent,
+  showWorkspaceTab = true,
 }: CanvasSidebarProps) {
+  const tabs = React.useMemo(() => {
+    if (showWorkspaceTab) return BASE_TABS
+    return BASE_TABS.filter(tab => tab.id !== 'workspace')
+  }, [showWorkspaceTab])
+
+  const resolvedActiveTab = React.useMemo<CanvasSidebarTab>(() => {
+    if (!showWorkspaceTab && activeTab === 'workspace') {
+      return 'organization'
+    }
+    return activeTab
+  }, [activeTab, showWorkspaceTab])
+
   return (
     <aside className="w-80 h-full bg-slate-950/90 border-r border-white/10 flex flex-col backdrop-blur-sm">
       <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2">
         {tabs.map(tab => {
-          const isActive = tab.id === activeTab
+          const isActive = tab.id === resolvedActiveTab
           return (
             <button
               key={tab.id}
@@ -48,7 +62,7 @@ export function CanvasSidebar({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'constellation' ? (
+        {resolvedActiveTab === 'constellation' ? (
           <div className="h-full overflow-hidden">
             {constellationContent ?? (
               <div className="flex h-full items-center justify-center text-sm text-white/60 px-4">
@@ -56,7 +70,7 @@ export function CanvasSidebar({
               </div>
             )}
           </div>
-        ) : activeTab === 'organization' ? (
+        ) : resolvedActiveTab === 'organization' ? (
           <div className="h-full overflow-hidden">
             {organizationContent ?? (
               <div className="flex h-full items-center justify-center text-sm text-white/60 px-4">
