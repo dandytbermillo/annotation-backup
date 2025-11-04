@@ -429,3 +429,5 @@
 {"ts":"2025-11-04T22:11:05.253Z","type":"commit","sha":"f34432b77a630f9739022f73d5b9a43cc6a6c7c3","files_changed":3,"message":"implement the resize popup"}
 {"ts":"2025-11-04T22:16:08Z","type":"note","text":"Resumed session: reviewed codex/previous-sessions/RESUME.md and re-read isolation reactivity anti-patterns guardrails per startup policy."}
 {"ts":"2025-11-04T22:23:35Z","type":"note","text":"Implemented popup resize affordance: added corner handle with pointer-based resizing in components/canvas/popup-overlay.tsx, clamped state updates in components/annotation-app.tsx, and supporting styles in styles/popup-overlay.css."}
+{"ts":"2025-11-04T22:30:54.543Z","type":"commit","sha":"0473eb4696a4ca655870dc1ec17a429dd0c24049","files_changed":5,"message":"resize popup implemented successfully"}
+{"ts":"2025-11-04T22:50:22Z","type":"note","text":"Captured popup auto-resize implementation plan at docs/proposal/components/popups/resize/fixed_sizes/IMPLEMENTATION_PLAN.md."}
