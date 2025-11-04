@@ -14,6 +14,7 @@ export interface OverlayPopupDescriptor {
   canvasPosition: OverlayCanvasPosition
   overlayPosition?: OverlayCanvasPosition
   level: number
+  width?: number
   height?: number
 }
 

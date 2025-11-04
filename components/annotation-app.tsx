@@ -86,6 +86,8 @@ const POST_LOAD_CENTER_DELAY_MS = 180
 const POST_LOAD_SECOND_PASS_DELAY_MS = 420
 const POST_LOAD_PENDING_CLEAR_DELAY_MS = 2200
 const CENTER_EXISTING_NOTES_ENABLED = process.env.NEXT_PUBLIC_CANVAS_CENTER_EXISTING_NOTES !== "disabled"
+const DEFAULT_POPUP_WIDTH = 300
+const DEFAULT_POPUP_HEIGHT = 400
 
 function AnnotationAppContent() {
   const {
@@ -877,30 +879,37 @@ const initialWorkspaceSyncRef = useRef(false)
   // Adapt overlay popups for PopupOverlay component
   // Only show popups when popups layer is active, otherwise pass empty Map
   const adaptedPopups = useMemo(() => {
-    if (!multiLayerEnabled || !layerContext) return null
-
-    // When notes layer is active, return empty Map to hide popups
-    // but keep PopupOverlay component mounted to avoid re-initialization
-    if (layerContext.activeLayer === 'notes') {
-      return new Map()
+    const adapt = () => {
+      const adapted = new Map()
+      overlayPopups.forEach((popup) => {
+        const adaptedPopup = {
+          ...popup,
+          width: popup.width ?? DEFAULT_POPUP_WIDTH,
+          height: popup.height ?? DEFAULT_POPUP_HEIGHT,
+          folder: popup.folder || {
+            id: popup.folderId,
+            name: popup.folderName,
+            type: 'folder' as const,
+            children: popup.children
+          },
+          canvasPosition: popup.canvasPosition,
+          parentId: popup.parentPopupId // Map parentPopupId to parentId for PopupOverlay
+        }
+        adapted.set(popup.id, adaptedPopup)
+      })
+      return adapted
     }
 
-    const adapted = new Map()
-    overlayPopups.forEach((popup) => {
-      const adaptedPopup = {
-        ...popup,
-        folder: popup.folder || {
-          id: popup.folderId,
-          name: popup.folderName,
-          type: 'folder' as const,
-          children: popup.children
-        },
-        canvasPosition: popup.canvasPosition,
-        parentId: popup.parentPopupId // Map parentPopupId to parentId for PopupOverlay
-      }
-      adapted.set(popup.id, adaptedPopup)
-    })
-    return adapted
+    if (!multiLayerEnabled) {
+      return adapt()
+    }
+
+    // When no layer context is available, still render popups using raw state
+    if (!layerContext) {
+      return adapt()
+    }
+
+    return adapt()
   }, [overlayPopups, multiLayerEnabled, layerContext, layerContext?.activeLayer])
 
   // Track previous popup count to detect when NEW popups are added
@@ -1051,6 +1060,8 @@ const initialWorkspaceSyncRef = useRef(false)
         parentId: popup.parentPopupId || null,
         canvasPosition: { x, y },
         level: popup.level || 0,
+        width: popup.width ?? DEFAULT_POPUP_WIDTH,
+        height: popup.height ?? DEFAULT_POPUP_HEIGHT,
       }
 
       console.log('[Save] Saving popup:', displayName, '- color:', popup.folder?.color, '- descriptor:', JSON.stringify(descriptor))
@@ -2738,6 +2749,8 @@ const handleCenterNote = useCallback(
         },
         position: screenPosition,
         canvasPosition: canvasPosition,
+        width: DEFAULT_POPUP_WIDTH,
+        height: DEFAULT_POPUP_HEIGHT,
         children: [],
         isLoading: true,
         isPersistent: isPersistent,
@@ -2862,6 +2875,74 @@ const handleCenterNote = useCallback(
 
     closeTimeoutRef.current.set(timeoutKey, closeTimeout)
   }, [])
+
+  const handlePopupPositionChange = useCallback(
+    (
+      popupId: string,
+      positions: {
+        screenPosition?: { x: number; y: number }
+        canvasPosition?: { x: number; y: number }
+        size?: { width: number; height: number }
+      }
+    ) => {
+      setOverlayPopups(prev =>
+        prev.map(popup => {
+          if (popup.id !== popupId) return popup
+
+          let next = popup
+          const ensureClone = () => {
+            if (next === popup) {
+              next = { ...popup }
+            }
+          }
+
+          const { screenPosition, canvasPosition, size } = positions
+
+          if (screenPosition) {
+            const prevScreen = popup.position
+            if (
+              !prevScreen ||
+              Math.abs(prevScreen.x - screenPosition.x) > 0.5 ||
+              Math.abs(prevScreen.y - screenPosition.y) > 0.5
+            ) {
+              ensureClone()
+              next.position = screenPosition
+            }
+          }
+
+          if (canvasPosition) {
+            const prevCanvas = popup.canvasPosition
+            if (
+              !prevCanvas ||
+              Math.abs(prevCanvas.x - canvasPosition.x) > 0.1 ||
+              Math.abs(prevCanvas.y - canvasPosition.y) > 0.1
+            ) {
+              ensureClone()
+              next.canvasPosition = canvasPosition
+            }
+          }
+
+          if (size) {
+            const width = size.width
+            const height = size.height
+            const prevWidth = popup.width ?? DEFAULT_POPUP_WIDTH
+            const prevHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
+            const widthChanged = Math.abs(prevWidth - width) > 0.5
+            const heightChanged = Math.abs(prevHeight - height) > 0.5
+
+            if (widthChanged || heightChanged) {
+              ensureClone()
+              if (widthChanged) next.width = width
+              if (heightChanged) next.height = height
+            }
+          }
+
+          return next
+        })
+      )
+    },
+    []
+  )
 
   // Handle delete selected items from popup
   const handleDeleteSelected = useCallback(async (popupId: string, selectedIds: Set<string>) => {
@@ -3412,6 +3493,7 @@ const handleCenterNote = useCallback(
                 onFolderRenamed={handleFolderRenamed}
                 onPopupCardClick={handleCloseNotesWidget}
                 onContextMenu={handleContextMenu}
+                onPopupPositionChange={handlePopupPositionChange}
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
               />

@@ -4,6 +4,9 @@ import {
   type OverlayLayoutPayload,
 } from '@/lib/types/overlay-layout'
 
+const DEFAULT_POPUP_WIDTH = 300
+const DEFAULT_POPUP_HEIGHT = 400
+
 export interface OverlayViewportTransform {
   x: number
   y: number
@@ -28,6 +31,8 @@ export interface HydratedOverlayPopup {
   folder: HydratedOrgItem | null
   position: { x: number; y: number }
   canvasPosition: { x: number; y: number }
+  width: number
+  height: number
   children: HydratedOrgItem[]
   isLoading: boolean
   isPersistent: boolean
@@ -59,6 +64,8 @@ export function buildHydratedOverlayLayout(
   const restoredPopups: HydratedOverlayPopup[] = sanitizedPopups.map(descriptor => {
     const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, transform)
     const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
+    const width = Number.isFinite(descriptor.width) ? (descriptor.width as number) : DEFAULT_POPUP_WIDTH
+    const height = Number.isFinite(descriptor.height) ? (descriptor.height as number) : DEFAULT_POPUP_HEIGHT
 
     console.log('[Restore] Descriptor for', displayName, ':', {
       folderId: descriptor.folderId,
@@ -82,6 +89,8 @@ export function buildHydratedOverlayLayout(
         : null,
       position: screenPosition,
       canvasPosition: descriptor.canvasPosition,
+      width,
+      height,
       children: [],
       isLoading: Boolean(descriptor.folderId),
       isPersistent: true,

@@ -7,6 +7,9 @@
 
 import { Point } from '@/lib/utils/coordinate-bridge';
 
+const DEFAULT_POPUP_WIDTH = 300;
+const DEFAULT_POPUP_HEIGHT = 400;
+
 // Interface for popup state with canvas position
 export interface PopupState {
   id: string;
@@ -15,6 +18,8 @@ export interface PopupState {
   position?: Point; // Legacy screen position
   isDragging?: boolean;
   folder?: any;
+  width?: number;
+  height?: number;
 }
 
 // Path data for SVG rendering
@@ -94,22 +99,56 @@ export class ConnectionLineAdapter {
     return paths;
   }
   
-  /**
-   * Get popup position (canvas or screen)
-   * Returns the CENTER point of the popup for reference
-   */
-  private static getPopupPosition(popup: PopupState): Point | null {
-    if (!popup.canvasPosition) {
-      return null;
-    }
-
-    // Popup dimensions (from popup-overlay.tsx)
-    const POPUP_WIDTH = 300;
-    const POPUP_HEIGHT = 200; // Approximate center point (max is 400, but most are smaller)
-
+  private static getPopupRect(popup: PopupState): { x: number; y: number; width: number; height: number } | null {
+    if (!popup.canvasPosition) return null;
+    const width = Number.isFinite(popup.width) ? (popup.width as number) : DEFAULT_POPUP_WIDTH;
+    const height = Number.isFinite(popup.height) ? (popup.height as number) : DEFAULT_POPUP_HEIGHT;
     return {
       x: popup.canvasPosition.x,
       y: popup.canvasPosition.y,
+      width,
+      height,
+    };
+  }
+
+  private static getRectCenter(rect: { x: number; y: number; width: number; height: number }): Point {
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    };
+  }
+
+  private static getEdgeIntersection(
+    rect: { x: number; y: number; width: number; height: number },
+    target: Point
+  ): Point {
+    const center = this.getRectCenter(rect);
+    const dx = target.x - center.x;
+    const dy = target.y - center.y;
+
+    if (dx === 0 && dy === 0) {
+      return center;
+    }
+
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    const halfWidth = rect.width / 2;
+    const halfHeight = rect.height / 2;
+
+    if (absDx * halfHeight > absDy * halfWidth) {
+      // Intersects left/right edge first
+      const scale = absDx === 0 ? 0 : halfWidth / absDx;
+      return {
+        x: center.x + Math.sign(dx) * halfWidth,
+        y: center.y + dy * scale,
+      };
+    }
+
+    // Intersects top/bottom edge first
+    const scale = absDy === 0 ? 0 : halfHeight / absDy;
+    return {
+      x: center.x + dx * scale,
+      y: center.y + Math.sign(dy) * halfHeight,
     };
   }
 
@@ -122,70 +161,16 @@ export class ConnectionLineAdapter {
     parent: PopupState,
     child: PopupState
   ): { start: Point; end: Point } | null {
-    const parentPos = this.getPopupPosition(parent);
-    const childPos = this.getPopupPosition(child);
+    const parentRect = this.getPopupRect(parent);
+    const childRect = this.getPopupRect(child);
 
-    if (!parentPos || !childPos) return null;
+    if (!parentRect || !childRect) return null;
 
-    const POPUP_WIDTH = 300;
-    const POPUP_HEIGHT = 200;
+    const parentCenter = this.getRectCenter(parentRect);
+    const childCenter = this.getRectCenter(childRect);
 
-    // Calculate relative position
-    const dx = childPos.x - parentPos.x;
-    const dy = childPos.y - parentPos.y;
-
-    let start: Point;
-    let end: Point;
-
-    // Determine which edges to use based on relative position
-    // Prioritize horizontal connections (left/right) over vertical (top/bottom)
-    if (Math.abs(dx) > Math.abs(dy)) {
-      // Horizontal connection (child is mostly to the left or right)
-      if (dx > 0) {
-        // Child is to the RIGHT of parent
-        start = {
-          x: parentPos.x + POPUP_WIDTH,    // Exit from right edge
-          y: parentPos.y + POPUP_HEIGHT / 2
-        };
-        end = {
-          x: childPos.x,                    // Enter from left edge
-          y: childPos.y + POPUP_HEIGHT / 2
-        };
-      } else {
-        // Child is to the LEFT of parent
-        start = {
-          x: parentPos.x,                   // Exit from left edge
-          y: parentPos.y + POPUP_HEIGHT / 2
-        };
-        end = {
-          x: childPos.x + POPUP_WIDTH,      // Enter from right edge
-          y: childPos.y + POPUP_HEIGHT / 2
-        };
-      }
-    } else {
-      // Vertical connection (child is mostly above or below)
-      if (dy > 0) {
-        // Child is BELOW parent
-        start = {
-          x: parentPos.x + POPUP_WIDTH / 2,
-          y: parentPos.y + POPUP_HEIGHT      // Exit from bottom edge
-        };
-        end = {
-          x: childPos.x + POPUP_WIDTH / 2,
-          y: childPos.y                       // Enter from top edge
-        };
-      } else {
-        // Child is ABOVE parent
-        start = {
-          x: parentPos.x + POPUP_WIDTH / 2,
-          y: parentPos.y                      // Exit from top edge
-        };
-        end = {
-          x: childPos.x + POPUP_WIDTH / 2,
-          y: childPos.y + POPUP_HEIGHT        // Enter from bottom edge
-        };
-      }
-    }
+    const start = this.getEdgeIntersection(parentRect, childCenter);
+    const end = this.getEdgeIntersection(childRect, parentCenter);
 
     return { start, end };
   }
@@ -265,8 +250,8 @@ export class ConnectionLineAdapter {
     const pos = popup.canvasPosition || popup.position;
     if (!pos) return null;
     
-    const popupWidth = 300;
-    const popupHeight = 400; // Approximate height
+    const popupWidth = Number.isFinite(popup.width) ? (popup.width as number) : DEFAULT_POPUP_WIDTH;
+    const popupHeight = Number.isFinite(popup.height) ? (popup.height as number) : DEFAULT_POPUP_HEIGHT;
     const headerHeight = 40;
     
     switch (edge) {

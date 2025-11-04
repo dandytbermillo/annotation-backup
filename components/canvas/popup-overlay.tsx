@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
@@ -22,6 +22,8 @@ import {
 } from '@/lib/constants/ui-timings';
 
 const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
+const DEFAULT_POPUP_WIDTH = 300;
+const DEFAULT_POPUP_HEIGHT = 400;
 
 // Folder color themes
 const FOLDER_COLORS = [
@@ -85,6 +87,7 @@ interface PopupData extends PopupState {
   id: string;
   folder: any; // TreeNode from existing implementation
   folderName?: string; // Display name for the folder (set immediately, before folder object loads)
+  position: { x: number; y: number };
   canvasPosition: { x: number; y: number };
   parentId?: string;
   level: number;
@@ -93,6 +96,7 @@ interface PopupData extends PopupState {
   isHighlighted?: boolean; // For golden glow animation when clicking already-open popup
   closeMode?: 'normal' | 'closing'; // NEW: Interactive close mode
   isPinned?: boolean; // NEW: Pin to prevent cascade-close
+  width?: number;
   height?: number;
 }
 
@@ -115,6 +119,14 @@ interface PopupOverlayProps {
   onFolderRenamed?: (folderId: string, newName: string) => void; // Called after folder renamed - parent should sync state
   onPopupCardClick?: () => void; // Called when clicking on popup card - used to close floating toolbar
   onContextMenu?: (event: React.MouseEvent) => void; // Handle right-click to show floating toolbar
+  onPopupPositionChange?: (
+    popupId: string,
+    positions: {
+      screenPosition?: { x: number; y: number };
+      canvasPosition?: { x: number; y: number };
+      size?: { width: number; height: number };
+    }
+  ) => void;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
@@ -206,6 +218,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onFolderRenamed,
   onPopupCardClick,
   onContextMenu,
+  onPopupPositionChange,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
 }) => {
@@ -2467,6 +2480,34 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
   }, [activeTransform.x, activeTransform.y, activeTransform.scale, hasSharedCamera, isPanning]);
 
+  useLayoutEffect(() => {
+    if (!onPopupPositionChange) return;
+    const root = overlayRef.current;
+    const containerRect = root?.getBoundingClientRect() ?? null;
+
+    const elements = root?.querySelectorAll<HTMLElement>('[data-popup-id]') ?? [];
+    elements.forEach(element => {
+      const popupId = element.getAttribute('data-popup-id');
+      if (!popupId) return;
+
+      const rect = element.getBoundingClientRect();
+      const viewportScreenPosition = { x: rect.left, y: rect.top };
+      const localScreenPosition = containerRect
+        ? {
+            x: viewportScreenPosition.x - containerRect.left,
+            y: viewportScreenPosition.y - containerRect.top,
+          }
+        : viewportScreenPosition;
+      const canvasPosition = CoordinateBridge.screenToCanvas(viewportScreenPosition, activeTransform);
+
+      onPopupPositionChange(popupId, {
+        screenPosition: localScreenPosition,
+        canvasPosition,
+        size: { width: rect.width, height: rect.height },
+      });
+    });
+  }, [popups, activeTransform, onPopupPositionChange]);
+
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2557,8 +2598,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       
       // Check if popup is within viewport (with some margin)
       const margin = 100
-      const popupWidth = 300
-      const popupHeight = popup.height || 400
+      const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH
+      const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
       
       return (
         screenPos.x + popupWidth >= -margin &&
@@ -2670,6 +2711,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             true
           );
           const cappedZIndex = Math.min(zIndex, 20000);
+          const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH;
+          const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT;
           return (
             <div
               key={popup.id}
@@ -2684,8 +2727,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               style={{
                 left: `${position.x}px`,
                 top: `${position.y}px`,
-                width: '300px',
-                maxHeight: '400px',
+                width: `${popupWidth}px`,
+                maxHeight: `${popupHeight}px`,
                 zIndex: cappedZIndex,
                 cursor: popup.isDragging ? 'grabbing' : 'default',
                 // Slightly reduce opacity during pan to prevent text rendering issues
@@ -3423,6 +3466,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 true
               );
               const cappedZIndex = Math.min(zIndex, 20000);
+              const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH;
+              const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT;
               return (
                 <div
                   key={popup.id}
@@ -3437,8 +3482,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   style={{
                     left: `${position.x}px`,
                     top: `${position.y}px`,
-                    width: '300px',
-                    maxHeight: '400px',
+                    width: `${popupWidth}px`,
+                    maxHeight: `${popupHeight}px`,
                     zIndex: cappedZIndex,
                     cursor: popup.isDragging ? 'grabbing' : 'default',
                     opacity: isPanning ? 0.99 : 1,

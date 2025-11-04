@@ -126,6 +126,8 @@ export interface OverlayPopup {
   folder: OrgItem | null
   position: { x: number; y: number }
   canvasPosition: { x: number; y: number }
+  width?: number
+  height?: number
   children: OrgItem[]
   isLoading: boolean
   isPersistent: boolean

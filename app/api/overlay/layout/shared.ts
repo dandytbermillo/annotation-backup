@@ -49,6 +49,11 @@ export function normalizePopups(raw: unknown): OverlayPopupDescriptor[] {
       popup.folderColor = candidate.folderColor
     }
 
+    const widthValue = coerceNumber(candidate.width)
+    if (widthValue !== null) {
+      popup.width = widthValue
+    }
+
     const heightValue = coerceNumber(candidate.height)
     if (heightValue !== null) {
       popup.height = heightValue
