@@ -424,3 +424,4 @@
 {"ts":"2025-11-03T21:47:51.506Z","type":"note","text":"Restored floating host pointer-events to none so sidebar remains interactive while overlay covers only canvas area; lint run reports existing warnings."}
 {"ts":"2025-11-04T03:15:07.031Z","type":"commit","sha":"3476ec20dfc58500e4760d5e1ab62220551c805e","files_changed":1,"message":"popups showed up"}
 {"ts":"2025-11-04T21:23:06.202Z","type":"commit","sha":"dc41f8d26b9040fd704d97f9e44cdec322030a97","files_changed":11,"message":"still drifting (popups)"}
+{"ts":"2025-11-04T21:39:35.083Z","type":"commit","sha":"7747e9edbcb01dd8ed152ccb96c2bf91de6142d6","files_changed":4,"message":"fixed the drifting"}

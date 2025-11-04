@@ -1,4 +1,4 @@
-# Popup Drifting Diagnosis & Fix
+# Popup Drifting Diagnosis & Fix (extended)
 
 ## Root Cause
 Every time the overlay canvas pan gesture ends, `components/canvas/popup-overlay.tsx`
