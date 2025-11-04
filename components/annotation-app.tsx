@@ -693,6 +693,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   }, [organizationFolders, overlayPopups])
 
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
+  const canRenderOverlay = !showConstellationPanel && (!multiLayerEnabled || !layerContext || layerContext.activeLayer === 'popups')
   const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
 
   // Persistence state for overlay layout
@@ -3473,7 +3474,7 @@ const handleCenterNote = useCallback(
               </div>
             </div>
 
-            {!showConstellationPanel && multiLayerEnabled && adaptedPopups && (
+            {canRenderOverlay && adaptedPopups && (
               <PopupOverlay
                 popups={adaptedPopups}
                 draggingPopup={draggingPopup}
