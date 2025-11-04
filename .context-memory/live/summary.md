@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Restored floating host pointer-events to none so sidebar remains interactive while overlay covers only canvas area; lint run reports existing warnings.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-04 21:23Z] dc41f8d: still drifting (popups)
 - commit [2025-11-04 03:15Z] 3476ec2: popups showed up
 - note [2025-11-03 21:47Z]: Restored floating host pointer-events to none so sidebar remains interactive while overlay covers only canvas area; lint run reports existing warnings.
 - note [2025-11-03 21:37Z]: Portaled popup overlay into global floating host, ensured fixed positioning with canvas-aligned bounds, minimap now sits visually under opaque overlay; npm run lint (existing warnings only).
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - note [2025-11-03 20:37Z]: Drafted minimap layering implementation plan and saved to [REDACTED]_PLAN.md.
 - commit [2025-11-03 06:14Z] 222a0b0: fixing the chrome bar not interactive
 - commit [2025-11-03 05:19Z] 2674528: success full implemented
-- commit [2025-11-03 04:59Z] db08cf4: polished the gap vs plan
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-04 03:15Z] 3476ec2: popups showed up
+- commit [2025-11-04 21:23Z] dc41f8d: still drifting (popups)

@@ -2506,9 +2506,25 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   >>(new Map());
   const measurementRafIdRef = useRef<number | null>(null);
   const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null;
+  const measurementRestartRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
-    if (!onPopupPositionChange || isMeasurementBlocked) return;
+    if (!onPopupPositionChange) return;
+    if (isMeasurementBlocked) {
+      if (measurementRafIdRef.current !== null) {
+        cancelAnimationFrame(measurementRafIdRef.current);
+        measurementRafIdRef.current = null;
+      }
+      measurementQueueRef.current.clear();
+      if (measurementRestartRef.current !== null) {
+        clearTimeout(measurementRestartRef.current);
+      }
+      measurementRestartRef.current = window.setTimeout(() => {
+        measurementRestartRef.current = null;
+        // Trigger effect by forcing a state update via a dummy ref; handled by dependency below
+      }, 50);
+      return;
+    }
     const root = overlayRef.current;
     if (!root) return;
     const containerRect = root.getBoundingClientRect();
@@ -2537,18 +2553,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         Math.abs(prevScreen.x - viewportScreenPosition.x) > 0.5 ||
         Math.abs(prevScreen.y - viewportScreenPosition.y) > 0.5;
 
-      const canvasChanged =
-        !prevCanvas ||
-        Math.abs(prevCanvas.x - canvasPosition.x) > 0.1 ||
-        Math.abs(prevCanvas.y - canvasPosition.y) > 0.1;
+      const canvasChanged = false; // world position updates handled when popup moves/dragged
 
       const widthChanged = Math.abs(prevWidth - rect.width) > 0.5;
       const heightChanged = Math.abs(prevHeight - rect.height) > 0.5;
 
-      if (screenChanged || canvasChanged || widthChanged || heightChanged) {
+      if (screenChanged || widthChanged || heightChanged) {
         measurementQueueRef.current.set(popupId, {
           screen: viewportScreenPosition,
-          canvas: canvasPosition,
+          canvas: popupState.canvasPosition || canvasPosition,
           size: { width: rect.width, height: rect.height },
         });
       }
