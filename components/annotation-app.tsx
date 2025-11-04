@@ -892,7 +892,8 @@ const initialWorkspaceSyncRef = useRef(false)
         const adaptedPopup = {
           ...popup,
           width: popup.width ?? DEFAULT_POPUP_WIDTH,
-          height: popup.height ?? DEFAULT_POPUP_HEIGHT,
+          height: popup.height,
+          sizeMode: popup.sizeMode ?? 'default',
           folder: popup.folder || {
             id: popup.folderId,
             name: popup.folderName,
@@ -1105,7 +1106,14 @@ const initialWorkspaceSyncRef = useRef(false)
       return
     }
 
-    const restoredPopups = hydratedPopups as OverlayPopup[]
+    const restoredPopups = (hydratedPopups as OverlayPopup[]).map((popup) => ({
+      ...popup,
+      sizeMode: popup.sizeMode ?? (
+        Number.isFinite(popup.width) || Number.isFinite(popup.height)
+          ? 'auto'
+          : 'default'
+      )
+    }))
     setOverlayPopups(restoredPopups)
 
     // Fetch folder data for each popup (needed to get color if not cached)
@@ -2403,12 +2411,24 @@ const handleCenterNote = useCallback(
         // Preserve position when just updating children
         console.log('[handleCreateOverlayPopup] Updating existing popup data, preserving position');
         const updated = [...prev]
+        const incomingSizeMode = popup.sizeMode ?? (popup.isLoading ? (updated[existingIndex].sizeMode ?? 'default') : 'default')
+        const nextSizeMode = updated[existingIndex].sizeMode === 'user' ? 'user' : incomingSizeMode
+        const shouldReleaseHeight = nextSizeMode === 'default' && updated[existingIndex].sizeMode !== 'user'
+        const resolvedHeight = shouldReleaseHeight
+          ? undefined
+          : (popup.height ?? updated[existingIndex].height)
+        const resolvedWidth = popup.width ?? updated[existingIndex].width
+
         updated[existingIndex] = {
+          ...updated[existingIndex],
           ...popup,
           // Preserve existing position - don't move popup when updating children
           position: updated[existingIndex].position,
           canvasPosition: updated[existingIndex].canvasPosition,
-          isHighlighted: updated[existingIndex].isHighlighted
+          isHighlighted: updated[existingIndex].isHighlighted,
+          width: resolvedWidth,
+          height: resolvedHeight,
+          sizeMode: nextSizeMode
         }
         return updated
       }
@@ -2772,7 +2792,7 @@ const handleCenterNote = useCallback(
         position: screenPosition,
         canvasPosition: canvasPosition,
         width: DEFAULT_POPUP_WIDTH,
-        height: DEFAULT_POPUP_HEIGHT,
+        sizeMode: 'default',
         children: [],
         isLoading: true,
         isPersistent: isPersistent,
@@ -2967,13 +2987,22 @@ const handleCenterNote = useCallback(
   )
 
   const handleResizePopup = useCallback(
-    (popupId: string, size: { width: number; height: number }) => {
+    (
+      popupId: string,
+      size: { width: number; height: number },
+      options?: { source?: 'auto' | 'user' }
+    ) => {
+      const source = options?.source ?? 'user'
       const clampedWidth = clamp(size.width, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH)
       const clampedHeight = clamp(size.height, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT)
 
       setOverlayPopups(prev =>
         prev.map(popup => {
           if (popup.id !== popupId) return popup
+
+          if (source === 'auto' && popup.sizeMode === 'user') {
+            return popup
+          }
 
           const prevWidth = popup.width ?? DEFAULT_POPUP_WIDTH
           const prevHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
@@ -2982,13 +3011,20 @@ const handleCenterNote = useCallback(
             Math.abs(prevWidth - clampedWidth) <= 0.5 &&
             Math.abs(prevHeight - clampedHeight) <= 0.5
           ) {
+            if (source === 'auto' && popup.sizeMode !== 'auto') {
+              return {
+                ...popup,
+                sizeMode: 'auto'
+              }
+            }
             return popup
           }
 
           return {
             ...popup,
             width: clampedWidth,
-            height: clampedHeight
+            height: clampedHeight,
+            sizeMode: source === 'user' ? 'user' : 'auto'
           }
         })
       )
@@ -3044,6 +3080,7 @@ const handleCenterNote = useCallback(
             if (p.id === popupId && p.folder && p.children) {
               // Filter out ONLY successfully deleted items (safety: failed deletes remain visible)
               const updatedChildren = p.children.filter(child => !successfullyDeletedIds.has(child.id))
+              const nextSizeMode = p.sizeMode === 'user' ? 'user' : 'default'
 
               return {
                 ...p,
@@ -3051,7 +3088,9 @@ const handleCenterNote = useCallback(
                 folder: {
                   ...p.folder,
                   children: updatedChildren
-                }
+                },
+                sizeMode: nextSizeMode,
+                height: nextSizeMode === 'default' ? undefined : p.height
               }
             }
             return p
@@ -3082,10 +3121,13 @@ const handleCenterNote = useCallback(
         if (popup.id === popupId && popup.folder) {
           // Add new folder to the beginning of children array (folders typically shown first)
           const updatedChildren = [newFolder, ...popup.children]
+          const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
           return {
             ...popup,
             children: updatedChildren,
-            folder: { ...popup.folder, children: updatedChildren }
+            folder: { ...popup.folder, children: updatedChildren },
+            sizeMode: nextSizeMode,
+            height: nextSizeMode === 'default' ? undefined : popup.height
           }
         }
         return popup
@@ -3134,10 +3176,13 @@ const handleCenterNote = useCallback(
               const updatedChildren = popup.children.filter(
                 child => !successfullyMovedIds.has(child.id)
               )
+              const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
               return {
                 ...popup,
                 children: updatedChildren,
-                folder: { ...popup.folder, children: updatedChildren }
+                folder: { ...popup.folder, children: updatedChildren },
+                sizeMode: nextSizeMode,
+                height: nextSizeMode === 'default' ? undefined : popup.height
               }
             }
 
@@ -3153,11 +3198,14 @@ const handleCenterNote = useCallback(
 
               // Append only new items
               const updatedChildren = [...popup.children, ...newItems]
+              const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
 
               return {
                 ...popup,
                 children: updatedChildren,
-                folder: { ...popup.folder, children: updatedChildren }
+                folder: { ...popup.folder, children: updatedChildren },
+                sizeMode: nextSizeMode,
+                height: nextSizeMode === 'default' ? undefined : popup.height
               }
             }
 

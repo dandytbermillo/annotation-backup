@@ -11,8 +11,8 @@ Automatically size newly created overlay popups to fit their initial content (wi
    - Document the clamps (`MIN/MAX_POPUP_*`) so UI + persistence share the same expectations.
 2. **Auto-Size on First Render**
    - Extend the popup overlay measurement effect to detect “fresh” popups (no manual override, not yet auto-sized).
-   - After the initial child data load, read the rendered height via DOM, clamp it, and call `onResizePopup`.
-   - Persist a `autoSizedAt` or flag in popup state so we do not re-run creation sizing.
+   - After the initial child data load, measure the intrinsic height of the scroll container (`data-popup-content`) plus chrome, clamp it, and call `onResizePopup`.
+   - Persist a `sizeMode` flag (`default` → `auto`/`user`) so we do not re-run creation sizing or fight manual overrides.
 3. **Content Growth Hooks**
    - When `handleBulkMove` or `handleFolderCreated` adds items, mark the affected popup(s) for a one-time remeasure and let the overlay’s measurement pass adjust height.
    - Ensure drag/drop only queues remeasure after the mutation settles (post state update) to avoid flashing.
@@ -33,3 +33,8 @@ Automatically size newly created overlay popups to fit their initial content (wi
 - **DOM measurement jank** → Batch via existing RAF queue; keep measurement suspended during pan/drag.
 - **User override conflicts** → `userSized` guard prevents auto-resize from fighting manual edits.
 - **Persistence drift** → Schema review upfront keeps future DB storage aligned with the same clamps and flags.
+- **Flex layout disguises intrinsic height** → Measure the inner scrollable region instead of the outer card to avoid reading the default `maxHeight` again.
+
+## Fix Summary
+- Cause: Initial implementation sampled the entire popup card, whose flex layout and default 400 px `maxHeight` masked the true content height, so auto-resize never fired.
+- Fix: Query the scroll region (`data-popup-content`), compute its `scrollHeight` plus chrome, and feed that value through the auto-resize guardrails.

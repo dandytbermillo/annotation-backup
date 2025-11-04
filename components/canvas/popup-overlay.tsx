@@ -104,6 +104,7 @@ interface PopupData extends PopupState {
   isPinned?: boolean; // NEW: Pin to prevent cascade-close
   width?: number;
   height?: number;
+  sizeMode?: 'default' | 'auto' | 'user';
 }
 
 interface PopupOverlayProps {
@@ -133,7 +134,11 @@ interface PopupOverlayProps {
       size?: { width: number; height: number };
     }
   ) => void;
-  onResizePopup?: (popupId: string, size: { width: number; height: number }) => void;
+  onResizePopup?: (
+    popupId: string,
+    size: { width: number; height: number },
+    options?: { source: 'auto' | 'user' }
+  ) => void;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
@@ -2511,7 +2516,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   const measurementQueueRef = useRef<Map<
     string,
-    { screen: { x: number; y: number }; canvas: { x: number; y: number }; size: { width: number; height: number } }
+    {
+      screen: { x: number; y: number };
+      canvas: { x: number; y: number };
+      size?: { width: number; height: number };
+    }
   >>(new Map());
   const measurementRafIdRef = useRef<number | null>(null);
   const resizingStateRef = useRef<{
@@ -2584,7 +2593,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
       state.lastWidth = nextWidth;
       state.lastHeight = nextHeight;
-      onResizePopup(state.popupId, { width: nextWidth, height: nextHeight });
+      onResizePopup(state.popupId, { width: nextWidth, height: nextHeight }, { source: 'user' });
     },
     [onResizePopup]
   );
@@ -2630,6 +2639,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     const root = overlayRef.current;
     if (!root) return;
     const containerRect = root.getBoundingClientRect();
+    const autoResizePayload: Array<{ id: string; width: number; height: number }> = [];
 
     popups.forEach((popupState, popupId) => {
       const element = root.querySelector<HTMLElement>(`[data-popup-id="${popupId}"]`);
@@ -2664,8 +2674,46 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         measurementQueueRef.current.set(popupId, {
           screen: viewportScreenPosition,
           canvas: popupState.canvasPosition || canvasPosition,
-          size: { width: rect.width, height: rect.height },
+          size: widthChanged || heightChanged ? { width: rect.width, height: rect.height } : undefined,
         });
+      }
+
+      const shouldAutoResize =
+        !!onResizePopup &&
+        !popupState.isLoading &&
+        popupState.sizeMode !== 'user';
+
+      if (shouldAutoResize) {
+        let intrinsicHeight = rect.height;
+        const contentElement = element.querySelector<HTMLElement>('[data-popup-content]');
+        if (contentElement) {
+          const contentRect = contentElement.getBoundingClientRect();
+          const chromeHeight = Math.max(0, rect.height - contentRect.height);
+          const contentScrollHeight = contentElement.scrollHeight;
+          intrinsicHeight = chromeHeight + contentScrollHeight;
+        } else {
+          intrinsicHeight = element.scrollHeight || rect.height;
+        }
+        const desiredHeight = clamp(intrinsicHeight, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT);
+        const previousHeight = popupState.height ?? DEFAULT_POPUP_HEIGHT;
+        const heightDelta = Math.abs(previousHeight - desiredHeight);
+        if (popupState.sizeMode !== 'auto' || heightDelta > 1) {
+          const currentWidth = popupState.width ?? rect.width ?? DEFAULT_POPUP_WIDTH;
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[PopupOverlay] auto_resize_request', {
+              popupId,
+              previousHeight,
+              desiredHeight,
+              sizeMode: popupState.sizeMode,
+              heightDelta
+            });
+          }
+          autoResizePayload.push({
+            id: popupId,
+            width: clamp(currentWidth, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH),
+            height: desiredHeight,
+          });
+        }
       }
     });
 
@@ -2677,14 +2725,30 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (measurementQueueRef.current.size > 0) {
       measurementRafIdRef.current = requestAnimationFrame(() => {
         measurementQueueRef.current.forEach((payload, popupId) => {
-          onPopupPositionChange(popupId, {
+          const updatePayload: {
+            screenPosition: { x: number; y: number };
+            canvasPosition: { x: number; y: number };
+            size?: { width: number; height: number };
+          } = {
             screenPosition: payload.screen,
             canvasPosition: payload.canvas,
-            size: payload.size,
-          });
+          };
+          if (payload.size) {
+            updatePayload.size = payload.size;
+          }
+          onPopupPositionChange(popupId, updatePayload);
         });
         measurementQueueRef.current.clear();
         measurementRafIdRef.current = null;
+      });
+    }
+
+    if (autoResizePayload.length > 0 && onResizePopup) {
+      autoResizePayload.forEach(({ id, width, height }) => {
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('[PopupOverlay] auto_resize_commit', { id, width, height });
+        }
+        onResizePopup(id, { width, height }, { source: 'auto' });
       });
     }
 
@@ -2695,7 +2759,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       }
       measurementQueueRef.current.clear();
     };
-  }, [popups, activeTransform, onPopupPositionChange, isMeasurementBlocked]);
+  }, [popups, activeTransform, onPopupPositionChange, isMeasurementBlocked, onResizePopup]);
 
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
@@ -2902,6 +2966,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           const cappedZIndex = Math.min(zIndex, 20000);
           const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH;
           const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT;
+          const hasExplicitHeight = typeof popup.height === 'number';
           return (
             <div
               key={popup.id}
@@ -2918,6 +2983,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 top: `${position.y}px`,
                 width: `${popupWidth}px`,
                 maxHeight: `${popupHeight}px`,
+                height: hasExplicitHeight ? `${popupHeight}px` : 'auto',
                 zIndex: cappedZIndex,
                 cursor: popup.isDragging ? 'grabbing' : 'default',
                 // Slightly reduce opacity during pan to prevent text rendering issues
@@ -3268,12 +3334,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 </div>
               </div>
               {/* Popup Content with virtualization for large lists */}
-              <div className="overflow-y-auto flex-1" style={{
-                contain: 'content',
-                contentVisibility: 'auto' as const,
-                paddingBottom: '40px',
-                minHeight: 0  // Required for flex child to scroll properly
-              }}>
+              <div
+                className="overflow-y-auto flex-1"
+                data-popup-content
+                style={{
+                  contain: 'content',
+                  contentVisibility: 'auto' as const,
+                  paddingBottom: '40px',
+                  minHeight: 0  // Required for flex child to scroll properly
+                }}
+              >
                 {popup.isLoading ? (
                   <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                 ) : popup.folder?.children && popup.folder.children.length > 0 ? (

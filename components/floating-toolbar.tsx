@@ -128,6 +128,7 @@ export interface OverlayPopup {
   canvasPosition: { x: number; y: number }
   width?: number
   height?: number
+  sizeMode?: 'default' | 'auto' | 'user'
   children: OrgItem[]
   isLoading: boolean
   isPersistent: boolean
@@ -1232,7 +1233,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       children: [],
       isLoading: true,
       isPersistent: true,
-      level: 0
+      level: 0,
+      sizeMode: 'default'
     }
 
     console.log('[handleEyeClick] Calling onCreateOverlayPopup with shouldHighlight=true')
@@ -1275,7 +1277,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           ...folder,
           name: displayName,
           children: formattedChildren
-        }
+        },
+        sizeMode: 'default'
       }
 
       // Pass false for shouldHighlight when just updating children data
