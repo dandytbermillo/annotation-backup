@@ -1164,10 +1164,8 @@ export default function ConstellationVisualization({
       const isGroupable = isFolder || (item.isCenter && item.type === 'constellation');
 
       // Log click to database
-      fetch('/api/debug/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (isDebugEnabled()) {
+        debugLog({
           component: 'ConstellationVisualization',
           action: 'item_clicked',
           content_preview: `Clicked: ${item.title}`,
@@ -1180,8 +1178,8 @@ export default function ConstellationVisualization({
             isOverflowNode: item.isOverflowNode,
             hasAllChildren: !!item.allChildren
           }
-        })
-      });
+        });
+      }
 
       // Handle shift+click for groupable items (folders and constellation centers)
       if (e.shiftKey && isGroupable) {
@@ -1192,10 +1190,8 @@ export default function ConstellationVisualization({
       }
 
       // Regular click - log before calling handler
-      fetch('/api/debug/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (isDebugEnabled()) {
+        debugLog({
           component: 'ConstellationVisualization',
           action: 'calling_onItemClick',
           content_preview: `Calling handler for: ${item.title}`,
@@ -1203,8 +1199,8 @@ export default function ConstellationVisualization({
             itemId: item.id,
             isOverflowNode: item.isOverflowNode
           }
-        })
-      });
+        });
+      }
 
       onItemClick(item, e as any);
     };

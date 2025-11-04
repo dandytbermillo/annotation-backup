@@ -10,7 +10,7 @@ import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil } from 'lucide-rea
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
-import { debugLog } from '@/lib/utils/debug-logger';
+import { debugLog as baseDebugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
 import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from '@/lib/utils/overlay-host';
@@ -223,6 +223,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
 }) => {
   const multiLayerEnabled = true;
+  const debugLoggingEnabled = isDebugEnabled();
+  const debugLog = useCallback<typeof baseDebugLog>(
+    (...args) => {
+      if (!debugLoggingEnabled) {
+        return Promise.resolve();
+      }
+      return baseDebugLog(...args);
+    },
+    [debugLoggingEnabled]
+  );
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
   const previewStateRef = useRef(previewState);
   const previewControllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -411,6 +421,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const contentText = data?.item?.contentText ?? '';
       const previewText = buildMultilinePreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
 
+    if (debugLoggingEnabled) {
       getUIResourceManager().enqueueLowPriority(() => {
         debugLog('PopupOverlay', 'preview_fetch_success', {
           popupId,
@@ -421,6 +432,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           previewLength: previewText.length,
         });
       });
+    }
 
       setPreviewState(prev => {
         const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
@@ -444,13 +456,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       if (error?.name === 'AbortError') {
         return;
       }
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'preview_fetch_error', {
-          popupId,
-          childId,
-          message: error?.message ?? 'Unknown error',
+      if (debugLoggingEnabled) {
+        getUIResourceManager().enqueueLowPriority(() => {
+          debugLog('PopupOverlay', 'preview_fetch_error', {
+            popupId,
+            childId,
+            message: error?.message ?? 'Unknown error',
+          });
         });
-      });
+      }
       setPreviewState(prev => {
         const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
         return {
@@ -520,15 +534,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       || latestChildEntry.status === 'idle'
       || loadingTooLong;
 
-    getUIResourceManager().enqueueLowPriority(() => {
-      debugLog('PopupOverlay', 'preview_request', {
-        popupId,
-        childId: child.id,
-        shouldFetch,
-        existingStatus: latestChildEntry?.status ?? 'none',
-        loadingTooLong,
+    if (debugLoggingEnabled) {
+      getUIResourceManager().enqueueLowPriority(() => {
+        debugLog('PopupOverlay', 'preview_request', {
+          popupId,
+          childId: child.id,
+          shouldFetch,
+          existingStatus: latestChildEntry?.status ?? 'none',
+          loadingTooLong,
+        });
       });
-    });
+    }
 
     setPreviewState(prev => {
       const previousEntry: PreviewEntry =
@@ -560,13 +576,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (shouldFetch) {
       fetchPreview(popupId, child.id);
     } else if (latestChildEntry?.previewText) {
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'preview_cache_hit', {
-          popupId,
-          childId: child.id,
-          status: latestChildEntry.status,
+      if (debugLoggingEnabled) {
+        getUIResourceManager().enqueueLowPriority(() => {
+          debugLog('PopupOverlay', 'preview_cache_hit', {
+            popupId,
+            childId: child.id,
+            status: latestChildEntry.status,
+          });
         });
-      });
+      }
     }
   }, [fetchPreview]);
 
@@ -1996,6 +2014,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Debug log initialization and state tracking
   useEffect(() => {
+    if (!debugLoggingEnabled) return;
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'initialized', {
         popupCount: popups.size,
@@ -2005,7 +2024,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         layerCtx: layerCtx?.activeLayer || 'none'
       });
     });
-  }, [popups.size, activeTransform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
+  }, [debugLoggingEnabled, popups.size, activeTransform, multiLayerEnabled, isActiveLayer, layerCtx?.activeLayer]);
   
   // Avoid per-frame logging during pan to prevent jank/flicker
   // (transform updates every pointer move)
@@ -2020,15 +2039,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Debug log layer changes
   useEffect(() => {
+    if (!debugLoggingEnabled) return;
     getUIResourceManager().enqueueLowPriority(() => {
       debugLog('PopupOverlay', 'layer_state', {
-        isActiveLayer,
-        activeLayer: layerCtx?.activeLayer || 'none',
-        popupCount: popups.size,
-        canInteract: isActiveLayer && popups.size > 0
-      });
+          isActiveLayer,
+          activeLayer: layerCtx?.activeLayer || 'none',
+          popupCount: popups.size,
+          canInteract: isActiveLayer && popups.size > 0
+        });
     });
-  }, [isActiveLayer, layerCtx?.activeLayer, popups.size]);
+  }, [debugLoggingEnabled, isActiveLayer, layerCtx?.activeLayer, popups.size]);
   
   // Check if the pointer event is on empty space (not on interactive elements)
   const isOverlayEmptySpace = useCallback((e: React.PointerEvent) => {
@@ -2480,8 +2500,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
   }, [activeTransform.x, activeTransform.y, activeTransform.scale, hasSharedCamera, isPanning]);
 
+  const measurementQueueRef = useRef<Map<
+    string,
+    { screen: { x: number; y: number }; canvas: { x: number; y: number }; size: { width: number; height: number } }
+  >>(new Map());
+  const measurementRafIdRef = useRef<number | null>(null);
+  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null;
+
   useLayoutEffect(() => {
-    if (!onPopupPositionChange) return;
+    if (!onPopupPositionChange || isMeasurementBlocked) return;
     const root = overlayRef.current;
     if (!root) return;
     const containerRect = root.getBoundingClientRect();
@@ -2507,8 +2534,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
       const screenChanged =
         !prevScreen ||
-        Math.abs(prevScreen.x - localScreenPosition.x) > 0.5 ||
-        Math.abs(prevScreen.y - localScreenPosition.y) > 0.5;
+        Math.abs(prevScreen.x - viewportScreenPosition.x) > 0.5 ||
+        Math.abs(prevScreen.y - viewportScreenPosition.y) > 0.5;
 
       const canvasChanged =
         !prevCanvas ||
@@ -2519,14 +2546,41 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const heightChanged = Math.abs(prevHeight - rect.height) > 0.5;
 
       if (screenChanged || canvasChanged || widthChanged || heightChanged) {
-        onPopupPositionChange(popupId, {
-          screenPosition: localScreenPosition,
-          canvasPosition,
+        measurementQueueRef.current.set(popupId, {
+          screen: viewportScreenPosition,
+          canvas: canvasPosition,
           size: { width: rect.width, height: rect.height },
         });
       }
     });
-  }, [popups, activeTransform, onPopupPositionChange]);
+
+    if (measurementRafIdRef.current !== null) {
+      cancelAnimationFrame(measurementRafIdRef.current);
+      measurementRafIdRef.current = null;
+    }
+
+    if (measurementQueueRef.current.size > 0) {
+      measurementRafIdRef.current = requestAnimationFrame(() => {
+        measurementQueueRef.current.forEach((payload, popupId) => {
+          onPopupPositionChange(popupId, {
+            screenPosition: payload.screen,
+            canvasPosition: payload.canvas,
+            size: payload.size,
+          });
+        });
+        measurementQueueRef.current.clear();
+        measurementRafIdRef.current = null;
+      });
+    }
+
+    return () => {
+      if (measurementRafIdRef.current !== null) {
+        cancelAnimationFrame(measurementRafIdRef.current);
+        measurementRafIdRef.current = null;
+      }
+      measurementQueueRef.current.clear();
+    };
+  }, [popups, activeTransform, onPopupPositionChange, isMeasurementBlocked]);
 
   // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {

@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { Transform } from '@/lib/utils/coordinate-bridge';
 import { UILayerState, LayerId, LayerState as UILayerState_Type } from '@/lib/state/ui-layer-state';
 import { PopupStateAdapter } from '@/lib/adapters/popup-state-adapter';
-import { debugLog } from '@/lib/utils/debug-logger';
+import { debugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 
 // Types
 type LayerTransforms = Record<LayerId, Transform>;
@@ -187,22 +187,26 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     // Check if this gesture is allowed based on current gesture state
     if (currentGesture && opts?.txId && currentGesture.txId !== opts.txId) {
       // Different gesture is in progress, ignore this update
-      debugLog('LayerProvider', 'delta_ignored_wrong_gesture', {
-        layer,
-        currentTxId: currentGesture.txId,
-        requestedTxId: opts?.txId
-      });
+      if (isDebugEnabled()) {
+        debugLog('LayerProvider', 'delta_ignored_wrong_gesture', {
+          layer,
+          currentTxId: currentGesture.txId,
+          requestedTxId: opts?.txId
+        });
+      }
       return;
     }
     
     // Log the delta update
-    debugLog('LayerProvider', 'delta_update', {
-      layer,
-      delta,
-      currentTransform: transforms[layer],
-      txId: opts?.txId,
-      syncPan
-    });
+    if (isDebugEnabled()) {
+      debugLog('LayerProvider', 'delta_update', {
+        layer,
+        delta,
+        currentTransform: transforms[layer],
+        txId: opts?.txId,
+        syncPan
+      });
+    }
     
     // Use provided sync override or default to current setting
     const shouldSync = opts?.syncPan !== undefined ? opts.syncPan : syncPan;

@@ -97,11 +97,8 @@ export function ConstellationPanel() {
   const handleOverflowNodeClick = async (item: ConstellationItem) => {
     console.log('📋 handleOverflowNodeClick called for:', item.title);
 
-    // Log the click attempt
-    await fetch('/api/debug/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (isDebugEnabled()) {
+      await debugLog({
         component: 'OverflowNodeClick',
         action: 'click_detected',
         content_preview: `Clicked: ${item.title}`,
@@ -113,17 +110,15 @@ export function ConstellationPanel() {
           allChildrenCount: item.allChildren?.length,
           overflowParentId: item.overflowParentId
         }
-      })
-    });
+      });
+    }
 
     if (item.isOverflowNode && item.allChildren && item.overflowParentId) {
       // Find the parent constellation (folder) by ID
       const parentConstellation = constellations.find(c => c.id === item.overflowParentId);
 
-      await fetch('/api/debug/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (isDebugEnabled()) {
+        await debugLog({
           component: 'OverflowNodeClick',
           action: 'opening_modal',
           content_preview: `Opening modal for: ${parentConstellation?.name || 'unknown'}`,
@@ -132,18 +127,16 @@ export function ConstellationPanel() {
             parentFolderName: parentConstellation?.name,
             itemsCount: item.allChildren.length
           }
-        })
-      });
+        });
+      }
 
       if (parentConstellation) {
         setModalFolderName(parentConstellation.name);
         setModalFolderItems(item.allChildren);
         setShowFolderModal(true);
 
-        await fetch('/api/debug/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        if (isDebugEnabled()) {
+          await debugLog({
             component: 'OverflowNodeClick',
             action: 'modal_opened',
             content_preview: `Modal opened successfully`,
@@ -152,14 +145,12 @@ export function ConstellationPanel() {
               itemsCount: item.allChildren.length,
               showModal: true
             }
-          })
-        });
+          });
+        }
       }
     } else {
-      await fetch('/api/debug/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (isDebugEnabled()) {
+        await debugLog({
           component: 'OverflowNodeClick',
           action: 'normal_item_click',
           content_preview: `Not an overflow node: ${item.title}`,
@@ -167,8 +158,8 @@ export function ConstellationPanel() {
             itemType: item.type,
             isFolder: item.isFolder
           }
-        })
-      });
+        });
+      }
 
       // Normal item click - pass to original handler
       handleItemClickWithDepth(item);

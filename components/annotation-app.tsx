@@ -1217,14 +1217,16 @@ const initialWorkspaceSyncRef = useRef(false)
           return updated
         })
       } catch (error) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'folder_load_failed',
-          metadata: {
-            folderId: popup.folderId,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          }
-        })
+        if (isDebugEnabled()) {
+          debugLog({
+            component: 'AnnotationApp',
+            action: 'folder_load_failed',
+            metadata: {
+              folderId: popup.folderId,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            }
+          })
+        }
       }
     })
   }, [layerContext?.transforms.popups])
@@ -1282,11 +1284,13 @@ const initialWorkspaceSyncRef = useRef(false)
         applyOverlayLayout(envelope.layout)
         console.log('[AnnotationApp] Resolved layout conflict from database')
       } else {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'overlay_layout_save_failed',
-          metadata: { error: error instanceof Error ? error.message : 'Unknown error' }
-        })
+        if (isDebugEnabled()) {
+          debugLog({
+            component: 'AnnotationApp',
+            action: 'overlay_layout_save_failed',
+            metadata: { error: error instanceof Error ? error.message : 'Unknown error' }
+          })
+        }
         pendingLayoutRef.current = pending
       }
     } finally {
@@ -1301,6 +1305,10 @@ const initialWorkspaceSyncRef = useRef(false)
   const scheduleLayoutSave = useCallback((immediate = false) => {
     if (!overlayPersistenceEnabled) return
     if (!overlayAdapterRef.current) return
+    if (draggingPopupRef.current) {
+      console.log('[AnnotationApp] Save skipped: popup dragging in progress')
+      return
+    }
 
     const snapshot = buildLayoutPayload()
 
@@ -1423,6 +1431,13 @@ const initialWorkspaceSyncRef = useRef(false)
     }
 
     // Check if popups actually changed (not just re-render)
+    const anyDragging = overlayPopups.some(popup => popup.isDragging)
+    if (anyDragging) {
+      console.log('[AnnotationApp] Save skipped: popups currently dragging')
+      prevPopupsRef.current = overlayPopups
+      return
+    }
+
     const changed = JSON.stringify(overlayPopups) !== JSON.stringify(prevPopupsRef.current)
     if (!changed) {
       console.log('[AnnotationApp] Save skipped: no changes detected')

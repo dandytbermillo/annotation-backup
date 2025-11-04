@@ -2642,10 +2642,8 @@ const mainPanelSeededRef = useRef(false)
 
     console.log('[AnnotationCanvas] Creating panel:', panelId, 'for note:', targetNoteId, 'with parent:', parentPanelId, 'at position:', parentPosition)
 
-    fetch('/api/debug/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    if (isDebugEnabled()) {
+      debugLog({
         component: 'AnnotationCanvas',
         action: 'handle_create_panel',
         metadata: {
@@ -2657,26 +2655,28 @@ const mainPanelSeededRef = useRef(false)
         },
         content_preview: `Creating panel ${panelId} at x=${parentPosition?.x}, y=${parentPosition?.y}`,
         note_id: targetNoteId
-      })
-    }).catch(console.error)
+      }).catch(console.error)
+    }
 
     const isPlainMode = isPlainModeActive()
 
     setCanvasItems(prev => {
       const newPanelStoreKey = ensurePanelKey(targetNoteId, panelId)
 
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'create_panel_check_existing',
-        metadata: {
-          panelId,
-          targetNoteId,
-          newPanelStoreKey,
-          currentCanvasItemsCount: prev.length,
-          panelIdsInItems: prev.filter(isPanel).map(p => ({ panelId: p.panelId, noteId: getItemNoteId(p) }))
-        },
-        content_preview: `Checking if panel ${panelId} already exists in ${prev.length} items`
-      })
+      if (isDebugEnabled()) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'create_panel_check_existing',
+          metadata: {
+            panelId,
+            targetNoteId,
+            newPanelStoreKey,
+            currentCanvasItemsCount: prev.length,
+            panelIdsInItems: prev.filter(isPanel).map(p => ({ panelId: p.panelId, noteId: getItemNoteId(p) }))
+          },
+          content_preview: `Checking if panel ${panelId} already exists in ${prev.length} items`
+        })
+      }
 
       const existingPanelCheck = prev.some(item => isPanel(item) && item.panelId === panelId && getItemNoteId(item) === targetNoteId)
 

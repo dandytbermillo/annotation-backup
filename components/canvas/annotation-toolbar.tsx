@@ -126,22 +126,18 @@ export function AnnotationToolbar() {
 
       // Debug: Check if panel was found
       if (!currentPanel) {
-        fetch('/api/debug/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            component: 'AnnotationToolbar',
-            action: 'panel_not_found',
-            metadata: {
-              parentPanel: panel,
-              parentNoteId: panelNoteId,
-              parentStoreKey,
-              selector: `[data-store-key="${parentStoreKey}"]`,
-              availableStoreKeys: Array.from(document.querySelectorAll('[data-store-key]')).map(el => el.getAttribute('data-store-key'))
-            },
-            content_preview: `Parent panel ${parentStoreKey} not found in DOM`,
-            note_id: panelNoteId
-          })
+        debugLog({
+          component: 'AnnotationToolbar',
+          action: 'panel_not_found',
+          metadata: {
+            parentPanel: panel,
+            parentNoteId: panelNoteId,
+            parentStoreKey,
+            selector: `[data-store-key="${parentStoreKey}"]`,
+            availableStoreKeys: Array.from(document.querySelectorAll('[data-store-key]')).map(el => el.getAttribute('data-store-key'))
+          },
+          content_preview: `Parent panel ${parentStoreKey} not found in DOM`,
+          note_id: panelNoteId
         }).catch(console.error)
       }
       
@@ -159,25 +155,21 @@ export function AnnotationToolbar() {
         const currentY = parseFloat(topStr) || 0
         
         // Debug: Log position
-        fetch('/api/debug/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            component: 'AnnotationToolbar',
-            action: 'panel_position',
-            metadata: {
-              parentPanel: panel,
-              parentNoteId: panelNoteId,
-              parentStoreKey,
-              left: leftStr,
-              top: topStr,
-              currentX: currentX,
-              currentY: currentY,
-              rect: { width: rect.width, height: rect.height }
-            },
-            content_preview: `Panel ${parentStoreKey} at x=${currentX}, y=${currentY}`,
-            note_id: panelNoteId
-          })
+        debugLog({
+          component: 'AnnotationToolbar',
+          action: 'panel_position',
+          metadata: {
+            parentPanel: panel,
+            parentNoteId: panelNoteId,
+            parentStoreKey,
+            left: leftStr,
+            top: topStr,
+            currentX: currentX,
+            currentY: currentY,
+            rect: { width: rect.width, height: rect.height }
+          },
+          content_preview: `Panel ${parentStoreKey} at x=${currentX}, y=${currentY}`,
+          note_id: panelNoteId
         }).catch(console.error)
         
         if (currentX || currentY) {
@@ -195,21 +187,17 @@ export function AnnotationToolbar() {
     const smartPosition = calculateSmartPosition()
     
     // Log to debug_logs table
-    fetch('/api/debug/log', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        component: 'AnnotationToolbar',
-        action: 'calculate_smart_position',
-        metadata: {
-          parentPanel: panel,
-          calculatedPosition: smartPosition,
-          branchId: branchId,
-          annotationType: type
-        },
-        content_preview: `Position for ${type} annotation: x=${smartPosition.x}, y=${smartPosition.y}`,
-        note_id: panelNoteId
-      })
+    debugLog({
+      component: 'AnnotationToolbar',
+      action: 'calculate_smart_position',
+      metadata: {
+        parentPanel: panel,
+        calculatedPosition: smartPosition,
+        branchId: branchId,
+        annotationType: type
+      },
+      content_preview: `Position for ${type} annotation: x=${smartPosition.x}, y=${smartPosition.y}`,
+      note_id: panelNoteId
     }).catch(console.error)
 
     // Create the branch data with proper quoted content AND position

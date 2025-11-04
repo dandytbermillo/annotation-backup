@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Restored floating host pointer-events to none so sidebar remains interactive while overlay covers only canvas area; lint run reports existing warnings.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-04 03:15Z] 3476ec2: popups showed up
 - note [2025-11-03 21:47Z]: Restored floating host pointer-events to none so sidebar remains interactive while overlay covers only canvas area; lint run reports existing warnings.
 - note [2025-11-03 21:37Z]: Portaled popup overlay into global floating host, ensured fixed positioning with canvas-aligned bounds, minimap now sits visually under opaque overlay; npm run lint (existing warnings only).
 - commit [2025-11-03 21:29Z] d857cd2: bring the anotation minimap below overlay canvas
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-03 06:14Z] 222a0b0: fixing the chrome bar not interactive
 - commit [2025-11-03 05:19Z] 2674528: success full implemented
 - commit [2025-11-03 04:59Z] db08cf4: polished the gap vs plan
-- note [2025-11-03 05:15Z]: Completed workspace CRUD polish: added delete endpoint/UI with toasts, custom naming prompt, canvas mode hook, and seeded Workspace 1 migration; integration + unit suites pass.
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-03 21:29Z] d857cd2: bring the anotation minimap below overlay canvas
+- commit [2025-11-04 03:15Z] 3476ec2: popups showed up

@@ -3,7 +3,11 @@
  */
 
 // Feature flag to disable debug logging
-const DEBUG_LOGGING_ENABLED = true; // Set to true to enable debug logging
+const DEBUG_LOGGING_ENABLED = ['true', '1', 'on', 'yes'].includes(
+  (process.env.NEXT_PUBLIC_DEBUG_LOGGING ?? '').toLowerCase()
+);
+
+export const isDebugEnabled = () => DEBUG_LOGGING_ENABLED;
 
 let sessionId: string | null = null;
 

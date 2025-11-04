@@ -2974,18 +2974,14 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
             editor.chain().focus().clearNodes().unsetAllMarks().run()
             break
           case 'collapsibleBlock':
-            fetch('/api/debug/log', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                component: 'TiptapEditorPlain',
-                action: 'executeCommand:collapsibleBlock',
-                metadata: {
-                  noteId,
-                  panelId,
-                  command,
-                },
-              }),
+            debugLog({
+              component: 'TiptapEditorPlain',
+              action: 'executeCommand:collapsibleBlock',
+              metadata: {
+                noteId,
+                panelId,
+                command,
+              },
             }).catch(() => {})
             editor.chain().focus().insertCollapsibleBlock().run()
             break
