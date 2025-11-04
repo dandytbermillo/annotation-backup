@@ -1,48 +1,40 @@
-# Popup Resize Implementation Notes (Refined)
+# Popup Resize Implementation Notes (Validated)
 
 ## Scope & Goals
 - Allow intentional width/height adjustments on overlay popups without touching their stored `canvasPosition`.
 - Preserve layout persistence and connection-line accuracy while keeping the overlay interactive (no sidebar/pointer regressions).
-- Limit the change surface to schema plumbing, popup state management, and opt‑in resize affordances; no auto‑reflow of children.
+- Limit the change surface to schema plumbing, popup state management, and opt-in resize affordances; no auto-reflow of children.
 
 ## Guardrails
-- **Single source of truth**: `AnnotationApp` owns `canvasPosition`, `width`, and `height`. `PopupOverlay` reads these values but never writes back.
-- **No continuous DOM measurement**: We only update coordinates after explicit drag/resize events. DOM observers are informational, not stateful, to avoid feedback loops that previously pushed popups off-screen.
-- **Parent resize ≠ child move**: Resizing a parent never manipulates descendant coordinates. Users must drag children explicitly if overlap occurs.
-- **Easy rollback**: The feature can be disabled by ripping out the resize handle + adapter while leaving schema fields inert.
+- **Single source of truth**: `AnnotationApp` owns `canvasPosition`, `width`, and `height`. `PopupOverlay` renders using those props and only emits resize events.
+- **No continuous DOM measurement**: Layout measurement is informational only; we sync size after explicit user actions (drag/resize) to avoid feedback loops that previously pushed popups off-screen.
+- **Parent resize ≠ child move**: Resizing a parent never manipulates descendant coordinates. Users drag children explicitly if overlap occurs.
+- **Easy rollback**: Resize affordances (handle + adapter) are opt-in. Removing them leaves schema fields inert.
 
-## Data Model Updates
-1. **Schema & Types**
-   - Keep `width`/`height` on `OverlayPopupDescriptor` (`lib/types/overlay-layout.ts`). Sanitize via `app/api/overlay/layout/shared.ts`.
-   - `lib/workspaces/overlay-hydration.ts` applies defaults (300×400) when missing.
-2. **Client State Adapter**
-   - Introduce `usePopupResizeAdapter` (or equivalent reducer) inside `components/annotation-app.tsx`. Responsibilities:
-     - Clamp `width`/`height` within `[200, 900]` (configurable).
-     - Update the targeted popup entry immutably and flag `layoutDirty`.
-     - Persist via `buildLayoutPayload` on the existing save cadence.
-   - Resize actions never mutate `position`/`canvasPosition`.
+## Current Code Validation
+- Schema, API normalization, and hydration already carry `width`/`height` with defaults (300×400).
+- `AnnotationApp`’s popup reducer tracks `width`/`height` and updates them via `handlePopupPositionChange`; plumbing to persist sizes is already in place.
+- `PopupOverlay` renders cards using `popup.width/height`, so a resize handle can simply call back with new values.
+- `ConnectionLineAdapter` derives edge intersections from each popup’s actual dimensions; lines already honor resize changes.
 
-## PopupOverlay Rendering
-- Render popups using provided `width`/`height` with a single resize affordance anchored in the lower-right corner (↘). The overlay layer:
-  1. Captures initial pointer + dimensions.
-  2. Computes deltas in screen space.
-  3. Calls `onResizePopup(popupId, { width, height })`.
-- Pointer capture + cursor changes live inside the overlay component, but measurement logic does **not** call `CoordinateBridge`.
+## Implementation Steps
+1. **Add Resize Handle**
+   - In `PopupOverlay`, render a lower-right affordance on each popup (↘). Pointer down captures the initial pointer position + dimensions.
+   - During pointer move, compute deltas, clamp within `[200, 900]` (configurable), and call `onResizePopup(popupId, { width, height })`.
 
-## Connection Lines
-- `lib/rendering/connection-line-adapter.ts` reads `popup.width`/`popup.height` (fallback to defaults). Anchor math remains derived-only; no writes to popup state.
-- Add regression coverage to ensure anchors honor resized rectangles (left/right/top/bottom cases).
+2. **State Adapter**
+   - Wire `onResizePopup` in `components/annotation-app.tsx` to immutably update the targeted popup, clamp values, and mark the layout dirty so existing save logic persists the change.
+   - No changes to `canvasPosition` during resize; only `width`/`height` mutate.
 
-## Verification Strategy
-1. **Unit tests**
-   - Reducer/adapter: resizing clamps values, does not touch coordinates, persists dirty flag.
-   - Hydration: missing `width`/`height` default correctly.
-2. **Integration / manual**
-   - Resize a parent, ensure child positions + connection lines stay stable.
-   - Save workspace, reload, confirm dimensions persist.
-   - Toggle layers (notes vs popups) and verify overlay interactivity remains intact.
+3. **Persistence**
+   - `buildLayoutPayload` already serializes `width`/`height`, so saving/reloading will keep resized dimensions unchanged.
 
-## Open Follow-ups
-- Optional keyboard nudging for fine-grained width/height changes.
-- Visual indicator when a popup exceeds recommended dimensions (accessibility).
-- E2E smoke test covering resize + persistence once infrastructure is ready.
+4. **Verification**
+   - Resize a popup, ensure connection lines stay anchored to the adjusted edges.
+   - Reload the workspace to confirm persistence.
+   - Confirm overlay interactivity (layer toggling, pointer capture) still behaves.
+
+## Optional Enhancements
+- Keyboard nudging for finer-grained width/height adjustments.
+- Visual indicators when a popup exceeds recommended dimensions.
+- E2E smoke test covering resize + persistence.
