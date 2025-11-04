@@ -2483,12 +2483,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   useLayoutEffect(() => {
     if (!onPopupPositionChange) return;
     const root = overlayRef.current;
-    const containerRect = root?.getBoundingClientRect() ?? null;
+    if (!root) return;
+    const containerRect = root.getBoundingClientRect();
 
-    const elements = root?.querySelectorAll<HTMLElement>('[data-popup-id]') ?? [];
-    elements.forEach(element => {
-      const popupId = element.getAttribute('data-popup-id');
-      if (!popupId) return;
+    popups.forEach((popupState, popupId) => {
+      const element = root.querySelector<HTMLElement>(`[data-popup-id="${popupId}"]`);
+      if (!element) return;
 
       const rect = element.getBoundingClientRect();
       const viewportScreenPosition = { x: rect.left, y: rect.top };
@@ -2498,13 +2498,33 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             y: viewportScreenPosition.y - containerRect.top,
           }
         : viewportScreenPosition;
-      const canvasPosition = CoordinateBridge.screenToCanvas(viewportScreenPosition, activeTransform);
+      const canvasPosition = CoordinateBridge.screenToCanvas(localScreenPosition, activeTransform);
 
-      onPopupPositionChange(popupId, {
-        screenPosition: localScreenPosition,
-        canvasPosition,
-        size: { width: rect.width, height: rect.height },
-      });
+      const prevScreen = popupState.position;
+      const prevCanvas = popupState.canvasPosition;
+      const prevWidth = popupState.width ?? DEFAULT_POPUP_WIDTH;
+      const prevHeight = popupState.height ?? DEFAULT_POPUP_HEIGHT;
+
+      const screenChanged =
+        !prevScreen ||
+        Math.abs(prevScreen.x - localScreenPosition.x) > 0.5 ||
+        Math.abs(prevScreen.y - localScreenPosition.y) > 0.5;
+
+      const canvasChanged =
+        !prevCanvas ||
+        Math.abs(prevCanvas.x - canvasPosition.x) > 0.1 ||
+        Math.abs(prevCanvas.y - canvasPosition.y) > 0.1;
+
+      const widthChanged = Math.abs(prevWidth - rect.width) > 0.5;
+      const heightChanged = Math.abs(prevHeight - rect.height) > 0.5;
+
+      if (screenChanged || canvasChanged || widthChanged || heightChanged) {
+        onPopupPositionChange(popupId, {
+          screenPosition: localScreenPosition,
+          canvasPosition,
+          size: { width: rect.width, height: rect.height },
+        });
+      }
     });
   }, [popups, activeTransform, onPopupPositionChange]);
 
