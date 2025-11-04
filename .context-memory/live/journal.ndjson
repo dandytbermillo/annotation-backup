@@ -426,3 +426,6 @@
 {"ts":"2025-11-04T21:23:06.202Z","type":"commit","sha":"dc41f8d26b9040fd704d97f9e44cdec322030a97","files_changed":11,"message":"still drifting (popups)"}
 {"ts":"2025-11-04T21:39:35.083Z","type":"commit","sha":"7747e9edbcb01dd8ed152ccb96c2bf91de6142d6","files_changed":4,"message":"fixed the drifting"}
 {"ts":"2025-11-04T21:45:56.831Z","type":"commit","sha":"b4c4bb4cb5d276d96f153862cafbd519c5dce71e","files_changed":3,"message":"testing"}
+{"ts":"2025-11-04T22:11:05.253Z","type":"commit","sha":"f34432b77a630f9739022f73d5b9a43cc6a6c7c3","files_changed":3,"message":"implement the resize popup"}
+{"ts":"2025-11-04T22:16:08Z","type":"note","text":"Resumed session: reviewed codex/previous-sessions/RESUME.md and re-read isolation reactivity anti-patterns guardrails per startup policy."}
+{"ts":"2025-11-04T22:23:35Z","type":"note","text":"Implemented popup resize affordance: added corner handle with pointer-based resizing in components/canvas/popup-overlay.tsx, clamped state updates in components/annotation-app.tsx, and supporting styles in styles/popup-overlay.css."}

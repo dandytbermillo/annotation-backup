@@ -24,6 +24,12 @@ import {
 const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
 const DEFAULT_POPUP_WIDTH = 300;
 const DEFAULT_POPUP_HEIGHT = 400;
+const MIN_POPUP_WIDTH = 200;
+const MIN_POPUP_HEIGHT = 200;
+const MAX_POPUP_WIDTH = 900;
+const MAX_POPUP_HEIGHT = 900;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 // Folder color themes
 const FOLDER_COLORS = [
@@ -127,6 +133,7 @@ interface PopupOverlayProps {
       size?: { width: number; height: number };
     }
   ) => void;
+  onResizePopup?: (popupId: string, size: { width: number; height: number }) => void;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
@@ -219,6 +226,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onPopupCardClick,
   onContextMenu,
   onPopupPositionChange,
+  onResizePopup,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
 }) => {
@@ -1912,6 +1920,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Self-contained transform state (committed when pan ends)
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
   const isPanningRef = useRef(false);
   // RAF-driven pan refs: avoid React renders on every move
   const transformRef = useRef({ x: 0, y: 0, scale: 1 });
@@ -2505,8 +2514,101 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     { screen: { x: number; y: number }; canvas: { x: number; y: number }; size: { width: number; height: number } }
   >>(new Map());
   const measurementRafIdRef = useRef<number | null>(null);
-  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null;
+  const resizingStateRef = useRef<{
+    popupId: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startWidth: number;
+    startHeight: number;
+    lastWidth: number;
+    lastHeight: number;
+  } | null>(null);
+  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null || isResizing;
   const measurementRestartRef = useRef<number | null>(null);
+
+  const handleResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, popup: PopupData) => {
+      if (!onResizePopup) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startWidth = popup.width ?? DEFAULT_POPUP_WIDTH;
+      const startHeight = popup.height ?? DEFAULT_POPUP_HEIGHT;
+
+      resizingStateRef.current = {
+        popupId: popup.id,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth,
+        startHeight,
+        lastWidth: startWidth,
+        lastHeight: startHeight,
+      };
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch (err) {
+        // Pointer capture can fail in some browsers; best-effort only.
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('[PopupOverlay] Pointer capture unavailable for resize handle', err);
+        }
+      }
+
+      setIsResizing(true);
+    },
+    [onResizePopup]
+  );
+
+  const handleResizePointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = resizingStateRef.current;
+      if (!state || state.pointerId !== event.pointerId || !onResizePopup) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const deltaX = event.clientX - state.startX;
+      const deltaY = event.clientY - state.startY;
+      const nextWidth = clamp(state.startWidth + deltaX, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH);
+      const nextHeight = clamp(state.startHeight + deltaY, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT);
+
+      if (nextWidth === state.lastWidth && nextHeight === state.lastHeight) {
+        return;
+      }
+
+      state.lastWidth = nextWidth;
+      state.lastHeight = nextHeight;
+      onResizePopup(state.popupId, { width: nextWidth, height: nextHeight });
+    },
+    [onResizePopup]
+  );
+
+  const handleResizePointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const state = resizingStateRef.current;
+    if (state && state.pointerId === event.pointerId) {
+      const target = event.currentTarget as HTMLElement;
+      if (typeof target.releasePointerCapture === 'function') {
+        try {
+          target.releasePointerCapture(event.pointerId);
+        } catch (err) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.debug('[PopupOverlay] releasePointerCapture failed during resize cleanup', err);
+          }
+        }
+      }
+    }
+
+    resizingStateRef.current = null;
+    if (isResizing) {
+      setIsResizing(false);
+    }
+  }, [isResizing]);
 
   useLayoutEffect(() => {
     if (!onPopupPositionChange) return;
@@ -3348,6 +3450,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               >
                 Level {popup.level} • {popup.folder?.children?.length || 0} items
               </div>
+              <div
+                className="popup-resize-handle"
+                aria-hidden="true"
+                onPointerDown={(event) => handleResizePointerDown(event, popup)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerEnd}
+                onPointerCancel={handleResizePointerEnd}
+              />
             </div>
           );
         })}

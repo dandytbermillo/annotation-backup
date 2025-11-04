@@ -88,6 +88,12 @@ const POST_LOAD_PENDING_CLEAR_DELAY_MS = 2200
 const CENTER_EXISTING_NOTES_ENABLED = process.env.NEXT_PUBLIC_CANVAS_CENTER_EXISTING_NOTES !== "disabled"
 const DEFAULT_POPUP_WIDTH = 300
 const DEFAULT_POPUP_HEIGHT = 400
+const MIN_POPUP_WIDTH = 200
+const MIN_POPUP_HEIGHT = 200
+const MAX_POPUP_WIDTH = 900
+const MAX_POPUP_HEIGHT = 900
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 function AnnotationAppContent() {
   const {
@@ -2960,6 +2966,36 @@ const handleCenterNote = useCallback(
     []
   )
 
+  const handleResizePopup = useCallback(
+    (popupId: string, size: { width: number; height: number }) => {
+      const clampedWidth = clamp(size.width, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH)
+      const clampedHeight = clamp(size.height, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT)
+
+      setOverlayPopups(prev =>
+        prev.map(popup => {
+          if (popup.id !== popupId) return popup
+
+          const prevWidth = popup.width ?? DEFAULT_POPUP_WIDTH
+          const prevHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
+
+          if (
+            Math.abs(prevWidth - clampedWidth) <= 0.5 &&
+            Math.abs(prevHeight - clampedHeight) <= 0.5
+          ) {
+            return popup
+          }
+
+          return {
+            ...popup,
+            width: clampedWidth,
+            height: clampedHeight
+          }
+        })
+      )
+    },
+    []
+  )
+
   // Handle delete selected items from popup
   const handleDeleteSelected = useCallback(async (popupId: string, selectedIds: Set<string>) => {
     console.log('[handleDeleteSelected]', { popupId, selectedIds: Array.from(selectedIds) })
@@ -3510,6 +3546,7 @@ const handleCenterNote = useCallback(
                 onPopupCardClick={handleCloseNotesWidget}
                 onContextMenu={handleContextMenu}
                 onPopupPositionChange={handlePopupPositionChange}
+                onResizePopup={handleResizePopup}
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
               />
