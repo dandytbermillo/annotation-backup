@@ -560,6 +560,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
   const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
+  const [overlayPanning, setOverlayPanning] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const draggingPopupRef = useRef<string | null>(null)
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -1431,6 +1432,7 @@ const initialWorkspaceSyncRef = useRef(false)
   // Save layout when overlayPopups changes
   // Use a ref to track if we need to save, to avoid infinite loops
   const prevPopupsRef = useRef<OverlayPopup[]>([])
+  const needsSaveAfterInteractionRef = useRef(false)
 
   useEffect(() => {
     console.log('[AnnotationApp] Save effect triggered. overlayPersistenceEnabled =', overlayPersistenceEnabled, 'overlayPopups.length =', overlayPopups.length, 'layoutLoaded =', layoutLoadedRef.current)
@@ -1440,14 +1442,6 @@ const initialWorkspaceSyncRef = useRef(false)
     }
     if (!layoutLoadedRef.current) {
       console.log('[AnnotationApp] Save skipped: layout not loaded yet')
-      prevPopupsRef.current = overlayPopups
-      return
-    }
-
-    // Check if popups actually changed (not just re-render)
-    const anyDragging = overlayPopups.some(popup => popup.isDragging)
-    if (anyDragging) {
-      console.log('[AnnotationApp] Save skipped: popups currently dragging')
       prevPopupsRef.current = overlayPopups
       return
     }
@@ -1464,9 +1458,29 @@ const initialWorkspaceSyncRef = useRef(false)
         childrenCount: p.children?.length ?? 0,
       }))
 
-    const changed = JSON.stringify(serializeForChangeDetection(overlayPopups)) !== JSON.stringify(serializeForChangeDetection(prevPopupsRef.current))
+    const currentSnapshot = serializeForChangeDetection(overlayPopups)
+    const prevSnapshot = serializeForChangeDetection(prevPopupsRef.current)
+    const changed = JSON.stringify(currentSnapshot) !== JSON.stringify(prevSnapshot)
+
+    const anyDragging = overlayPopups.some(popup => popup.isDragging)
+    if (anyDragging || overlayPanning) {
+      if (changed) {
+        console.log('[AnnotationApp] Save deferred: canvas interaction in progress', { anyDragging, overlayPanning })
+        needsSaveAfterInteractionRef.current = true
+      } else {
+        console.log('[AnnotationApp] Save skipped: interaction in progress (no layout delta)')
+      }
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      return
+    }
+
     if (!changed) {
       console.log('[AnnotationApp] Save skipped: no changes detected')
+      prevPopupsRef.current = overlayPopups
+      needsSaveAfterInteractionRef.current = false
       return
     }
 
@@ -1484,9 +1498,28 @@ const initialWorkspaceSyncRef = useRef(false)
     }
 
     prevPopupsRef.current = overlayPopups
+    needsSaveAfterInteractionRef.current = false
     scheduleLayoutSave(isExistenceChange) // Immediate save for creation/deletion, debounced for moves/resizes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayPopups, overlayPersistenceEnabled])
+  }, [overlayPopups, overlayPersistenceEnabled, overlayPanning, draggingPopup])
+
+  useEffect(() => {
+    if (!overlayPanning) return
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+      pendingLayoutRef.current = null
+      console.log('[AnnotationApp] Cleared pending layout save due to overlay panning')
+    }
+  }, [overlayPanning])
+
+  useEffect(() => {
+    if (!overlayPanning && needsSaveAfterInteractionRef.current) {
+      console.log('[AnnotationApp] Resuming deferred overlay save after interaction')
+      needsSaveAfterInteractionRef.current = false
+      scheduleLayoutSave(false)
+    }
+  }, [overlayPanning, scheduleLayoutSave])
 
   // Handle note selection with force re-center support
   const formatNoteLabel = useCallback((noteId: string) => {
@@ -2257,12 +2290,31 @@ const handleCenterNote = useCallback(
   )
 
   const handleWorkspaceSelect = useCallback(
-    (workspaceId: string) => {
+    async (workspaceId: string) => {
+      if (overlayPersistenceEnabled) {
+        // Force any pending layout changes to flush so the next workspace loads a clean snapshot.
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current)
+          saveTimeoutRef.current = null
+        }
+
+        const snapshot = buildLayoutPayload()
+        const hasUnsavedChanges = snapshot.hash !== lastSavedLayoutHashRef.current
+        if (hasUnsavedChanges) {
+          pendingLayoutRef.current = snapshot
+          try {
+            await flushLayoutSave()
+          } catch (error) {
+            console.error('[AnnotationApp] Failed to flush layout before workspace switch:', error)
+          }
+        }
+      }
+
       setWorkspaceMenuOpen(false)
       setCanvasMode('overlay')
       setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
     },
-    [setCanvasMode]
+    [overlayPersistenceEnabled, buildLayoutPayload, flushLayoutSave, setCanvasMode]
   )
 
   const handleCreateWorkspace = useCallback(async () => {

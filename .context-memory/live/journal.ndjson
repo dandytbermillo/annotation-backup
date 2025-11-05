@@ -438,3 +438,9 @@
 {"ts":"2025-11-04T23:24:41.182Z","type":"commit","sha":"c5b07e8b595532326417760d6f45467ec904d0c5","files_changed":6,"message":"Yes, but today’s flow snapshots whatever popups are on screen into the new workspace before we clear them. In"}
 {"ts":"2025-11-04T23:28:05Z","type":"note","text":"Updated workspace creation to persist an empty overlay layout so newly created workspaces start with no popups."}
 {"ts":"2025-11-05T00:00:21Z","type":"note","text":"Refined layout change detection so popup resizes trigger persistence: compare only persisted fields (dimensions, positions, hierarchy) before scheduling saves."}
+{"ts":"2025-11-05T00:25:28.281Z","type":"commit","sha":"48e79b1b7e1278ed867ae82be738e6ab1f0c90cb","files_changed":3,"message":"prevent hydrating on overlay canvas pannning"}
+{"ts":"2025-11-05T00:31:54Z","type":"note","text":"Wired overlay pan state back to AnnotationApp so layout persistence ignores drag-time mutations; fixed prop wiring after runtime error."}
+{"ts":"2025-11-05T01:13:59Z","type":"note","text":"Cancelling any in-flight layout save while overlay is panning prevents mid-drag hydrations; PopupOverlay now reports pan start/end to the parent."}
+{"ts":"2025-11-05T01:16:29Z","type":"note","text":"Fix follow-up: relocated overlay panning guard inside AnnotationAppContent to avoid top-level return and ensure pending saves cancel when panning toggles."}
+{"ts":"2025-11-05T01:18:45Z","type":"note","text":"Moved overlay panning save-cancel hook inside AnnotationAppContent to fix build error; ensures debounced saves clear immediately when panning starts."}
+{"ts":"2025-11-05T01:20:49Z","type":"note","text":"Fixed stray useEffect after export function; pan-state save cancellation now scoped inside AnnotationAppContent without breaking build."}
