@@ -20,65 +20,18 @@ import {
   FOLDER_PREVIEW_DELAY_MS,
   HOVER_HIGHLIGHT_DURATION_MS,
 } from '@/lib/constants/ui-timings';
+import {
+  AUTO_SCROLL_CONFIG,
+  DEFAULT_POPUP_HEIGHT,
+  DEFAULT_POPUP_WIDTH,
+  IDENTITY_TRANSFORM,
+  MAX_POPUP_HEIGHT,
+  MAX_POPUP_WIDTH,
+  MIN_POPUP_HEIGHT,
+  MIN_POPUP_WIDTH,
+} from './popupOverlay/constants';
+import { clamp, formatRelativeTime, getFolderColorTheme, parseBreadcrumb } from './popupOverlay/helpers';
 
-const IDENTITY_TRANSFORM = { x: 0, y: 0, scale: 1 } as const;
-const DEFAULT_POPUP_WIDTH = 300;
-const DEFAULT_POPUP_HEIGHT = 400;
-const MIN_POPUP_WIDTH = 200;
-const MIN_POPUP_HEIGHT = 200;
-const MAX_POPUP_WIDTH = 900;
-const MAX_POPUP_HEIGHT = 900;
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-// Folder color themes
-const FOLDER_COLORS = [
-  { name: 'red', bg: '#ef4444', text: '#fff', border: '#dc2626' },
-  { name: 'orange', bg: '#f97316', text: '#fff', border: '#ea580c' },
-  { name: 'yellow', bg: '#eab308', text: '#000', border: '#ca8a04' },
-  { name: 'amber', bg: '#f59e0b', text: '#000', border: '#d97706' },
-  { name: 'green', bg: '#22c55e', text: '#fff', border: '#16a34a' },
-  { name: 'emerald', bg: '#10b981', text: '#fff', border: '#059669' },
-  { name: 'blue', bg: '#3b82f6', text: '#fff', border: '#2563eb' },
-  { name: 'indigo', bg: '#6366f1', text: '#fff', border: '#4f46e5' },
-  { name: 'purple', bg: '#a855f7', text: '#fff', border: '#9333ea' },
-  { name: 'pink', bg: '#ec4899', text: '#fff', border: '#db2777' }
-]
-
-const getFolderColorTheme = (colorName: string | null | undefined) => {
-  if (!colorName) return null
-  return FOLDER_COLORS.find(c => c.name === colorName) || null
-}
-
-// Parse breadcrumb from folder path (e.g., "/knowledge-base/documents/drafts" → ["Documents", "Drafts"])
-const parseBreadcrumb = (path: string | undefined | null, currentName: string): string[] => {
-  if (!path) return [currentName]
-
-  const parts = path.split('/').filter(p => p.trim())
-  if (parts.length === 0) return [currentName]
-
-  // Convert kebab-case to Title Case for display, skip "knowledge-base" (represented by home icon)
-  const breadcrumbs = parts
-    .filter(part => part !== 'knowledge-base')
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-
-  // Replace last segment with current name if provided (handles renames without path update)
-  if (currentName?.trim() && breadcrumbs.length > 0) {
-    breadcrumbs[breadcrumbs.length - 1] = currentName.trim()
-  }
-
-  return breadcrumbs
-}
-
-// Auto-scroll configuration - all values are configurable, not hardcoded
-const AUTO_SCROLL_CONFIG = {
-  ENABLED: process.env.NEXT_PUBLIC_DISABLE_AUTOSCROLL !== 'true', // Feature flag
-  THRESHOLD: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_THRESHOLD || '80'), // Distance from edge (px)
-  MIN_SPEED: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_MIN_SPEED || '5'), // Min scroll speed (px/frame)
-  MAX_SPEED: parseInt(process.env.NEXT_PUBLIC_AUTOSCROLL_MAX_SPEED || '15'), // Max scroll speed (px/frame)
-  ACCELERATION: 'ease-out' as const, // Speed curve type
-  DEBUG: process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_DEBUG_AUTOSCROLL === 'true'
-} as const;
 
 // Auto-scroll state interface
 interface AutoScrollState {
