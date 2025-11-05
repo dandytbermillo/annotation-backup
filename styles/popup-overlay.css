@@ -238,6 +238,54 @@
 }
 
 /* IMPORTANT: Duration must match HOVER_HIGHLIGHT_DURATION_MS in popup-overlay.tsx */
+
+.popup-overlay-lock-banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: none;
+  padding-top: 1.5rem;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.45) 0%, rgba(15, 23, 42, 0) 45%);
+}
+
+.popup-overlay-lock-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.popup-overlay-lock-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.95);
+  animation: popup-overlay-lock-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes popup-overlay-lock-pulse {
+  0% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
 .popup-card.highlighted {
   animation: popup-highlight-glow 2s ease-in-out;
 }

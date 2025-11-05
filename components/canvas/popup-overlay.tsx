@@ -139,6 +139,7 @@ interface PopupOverlayProps {
     size: { width: number; height: number },
     options?: { source: 'auto' | 'user' }
   ) => void;
+  isLocked?: boolean;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
@@ -232,6 +233,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   onContextMenu,
   onPopupPositionChange,
   onResizePopup,
+  isLocked = false,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
 }) => {
@@ -2091,6 +2093,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       }
     }
 
+    if (isLocked) {
+      debugLog('PopupOverlay', 'pan_blocked_locked_state', {
+        popupCount: popups.size,
+        activeLayer: layerCtx?.activeLayer || 'none',
+      });
+      return;
+    }
+
     // Always log that pointer down was received
     console.log('[PopupOverlay] pointerDown:', {
       target: (e.target as HTMLElement).className,
@@ -2216,7 +2226,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     hasSharedCamera,
     isActiveLayer,
     popups.size,
-    layerCtx
+    layerCtx,
+    isLocked
   ]);
   
   // Handle pan move (simplified like notes canvas)
@@ -2533,12 +2544,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     lastWidth: number;
     lastHeight: number;
   } | null>(null);
-  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null || isResizing;
+  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null || isResizing || isLocked;
   const measurementRestartRef = useRef<number | null>(null);
 
   const handleResizePointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>, popup: PopupData) => {
-      if (!onResizePopup) {
+      if (!onResizePopup || isLocked) {
         return;
       }
 
@@ -2570,11 +2581,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
       setIsResizing(true);
     },
-    [onResizePopup]
+    [onResizePopup, isLocked]
   );
 
   const handleResizePointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      if (isLocked) {
+        return;
+      }
+
       const state = resizingStateRef.current;
       if (!state || state.pointerId !== event.pointerId || !onResizePopup) {
         return;
@@ -2595,7 +2610,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       state.lastHeight = nextHeight;
       onResizePopup(state.popupId, { width: nextWidth, height: nextHeight }, { source: 'user' });
     },
-    [onResizePopup]
+    [onResizePopup, isLocked]
   );
 
   const handleResizePointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -2618,6 +2633,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       setIsResizing(false);
     }
   }, [isResizing]);
+
+  const handlePopupHeaderMouseDown = useCallback(
+    (popupId: string, event: React.MouseEvent) => {
+      if (isLocked) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      onDragStart?.(popupId, event);
+    },
+    [isLocked, onDragStart]
+  );
 
   useLayoutEffect(() => {
     if (!onPopupPositionChange) return;
@@ -2865,6 +2892,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Build overlay contents (absolute inside canvas container)
   const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
+  const hasPopups = popups.size > 0;
+  const overlayInteractive = hasPopups && !isLocked;
 
   const overlayInner = (
     <div
@@ -2872,6 +2901,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       id="popup-overlay"
       className={`${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
+      data-locked={isLocked ? 'true' : 'false'}
+      aria-busy={isLocked}
       style={{
         position: 'fixed',
         top: overlayBox.top,
@@ -2880,11 +2911,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         height: overlayBox.height,
         zIndex: Z_INDEX.POPUP_OVERLAY,
         overflow: 'hidden',
-        pointerEvents: (popups.size > 0) ? 'auto' : 'none',
-        touchAction: (popups.size > 0) ? 'none' : 'auto',
-        cursor: isPanning ? 'grabbing' : ((popups.size > 0) ? 'grab' : 'default'),
-        opacity: (popups.size > 0) ? 1 : 0,
-        visibility: (popups.size > 0) ? 'visible' : 'hidden',
+        pointerEvents: overlayInteractive ? 'auto' : 'none',
+        touchAction: overlayInteractive ? 'none' : 'auto',
+        cursor: isLocked ? 'wait' : isPanning ? 'grabbing' : (hasPopups ? 'grab' : 'default'),
+        opacity: hasPopups ? 1 : 0,
+        visibility: hasPopups ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
         clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
         ...getBackdropStyle(backdropStyle),
@@ -2903,6 +2934,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       }}
       onContextMenu={onContextMenu}
     >
+      {isLocked && (
+        <div className="popup-overlay-lock-banner">
+          <div className="popup-overlay-lock-pill">
+            <span className="popup-overlay-lock-dot" />
+            Workspace hydrating…
+          </div>
+        </div>
+      )}
       {/* Transform container - applies pan/zoom to all children */}
       <div ref={containerRef} className="absolute inset-0" style={containerStyle}>
         {/* Removed full-viewport background inside transform to prevent repaint flicker */}
@@ -3021,7 +3060,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                     ? 'border-blue-600 bg-blue-600/20'
                     : 'border-gray-700'
                 }`}
-                onMouseDown={(e) => onDragStart?.(popup.id, e)}
+                onMouseDown={(e) => handlePopupHeaderMouseDown(popup.id, e)}
                 style={{
                   backgroundColor: popup.isDragging
                     ? '#374151'
@@ -3780,7 +3819,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                         ? 'border-blue-600 bg-blue-600/20'
                         : 'border-gray-700'
                     }`}
-                    onMouseDown={(e) => onDragStart?.(popup.id, e)}
+                    onMouseDown={(e) => handlePopupHeaderMouseDown(popup.id, e)}
                     style={{
                       backgroundColor: popup.isDragging
                         ? '#374151'

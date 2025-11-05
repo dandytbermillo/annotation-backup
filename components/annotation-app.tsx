@@ -3659,6 +3659,7 @@ const handleCenterNote = useCallback(
                 onContextMenu={handleContextMenu}
                 onPopupPositionChange={handlePopupPositionChange}
                 onResizePopup={handleResizePopup}
+                isLocked={isWorkspaceLayoutLoading}
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
               />
