@@ -3,12 +3,11 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
-import { ConnectionLineAdapter, PopupState } from '@/lib/rendering/connection-line-adapter';
+import { ConnectionLineAdapter } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
-import { Tooltip, TooltipContent, TooltipPortal, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
 import { debugLog as baseDebugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
@@ -30,7 +29,10 @@ import {
   MIN_POPUP_HEIGHT,
   MIN_POPUP_WIDTH,
 } from './popupOverlay/constants';
-import { clamp, formatRelativeTime, getFolderColorTheme, parseBreadcrumb } from './popupOverlay/helpers';
+import { clamp, getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popupOverlay/helpers';
+import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popupOverlay/renderPopupChildRow';
+import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popupOverlay/types';
+export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
 
 // Auto-scroll state interface
@@ -40,24 +42,6 @@ interface AutoScrollState {
   threshold: number;
   minSpeed: number;
   maxSpeed: number;
-}
-
-interface PopupData extends PopupState {
-  id: string;
-  folder: any; // TreeNode from existing implementation
-  folderName?: string; // Display name for the folder (set immediately, before folder object loads)
-  position: { x: number; y: number };
-  canvasPosition: { x: number; y: number };
-  parentId?: string;
-  level: number;
-  isDragging?: boolean;
-  isLoading?: boolean;
-  isHighlighted?: boolean; // For golden glow animation when clicking already-open popup
-  closeMode?: 'normal' | 'closing'; // NEW: Interactive close mode
-  isPinned?: boolean; // NEW: Pin to prevent cascade-close
-  width?: number;
-  height?: number;
-  sizeMode?: 'default' | 'auto' | 'user';
 }
 
 interface PopupOverlayProps {
@@ -97,68 +81,7 @@ interface PopupOverlayProps {
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
 }
 
-type PopupChildNode = {
-  id: string;
-  type?: string;
-  name?: string;
-  title?: string;
-  parentId?: string;
-  icon?: string | null;
-  color?: string | null;
-  hasChildren?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
-  path?: string; // Full path for breadcrumb ancestors
-  level?: number; // Depth level in tree
-  children?: PopupChildNode[]; // Child nodes
-};
-
 // Format relative time (e.g., "2h ago", "3d ago")
-function formatRelativeTime(timestamp?: string): string {
-  if (!timestamp) return '';
-
-  const now = new Date();
-  const date = new Date(timestamp);
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / (1000 * 60));
-  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const diffMonths = Math.floor(diffDays / 30);
-  const diffYears = Math.floor(diffDays / 365);
-
-  if (diffMins < 1) return 'now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 30) return `${diffDays}d ago`;
-  if (diffMonths < 12) return `${diffMonths}mo ago`;
-  return `${diffYears}y ago`;
-}
-
-function isFolderNode(node: PopupChildNode | null | undefined): boolean {
-  if (!node || !node.type) return false;
-  return node.type.toLowerCase() === 'folder';
-}
-
-function isNoteLikeNode(node: PopupChildNode | null | undefined): boolean {
-  if (!node) return false;
-  return !isFolderNode(node);
-}
-
-type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error';
-
-interface PreviewEntry {
-  activeChildId: string | null;
-  entries: Record<string, {
-    status: PreviewStatus;
-    content?: unknown;
-    previewText?: string;
-    error?: string;
-    requestedAt?: number;
-  }>;
-}
-
-type PreviewChildEntry = PreviewEntry['entries'][string];
-
 const TOOLTIP_PREVIEW_MAX_LENGTH = Number.MAX_SAFE_INTEGER; // allow full content inside scrollable tooltip
 
 /**
@@ -227,13 +150,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           return;
         }
 
-        console.log('[PopupOverlay] Note renamed event received:', noteId, newTitle);
+        void debugLog('[PopupOverlay] Note renamed event received', { noteId, newTitle });
 
         // Delegate to parent - parent owns the state, parent updates it
         // This follows React's unidirectional data flow principle
         if (onFolderRenamedRef.current) {
           onFolderRenamedRef.current(noteId, newTitle);
-          console.log('[PopupOverlay] Delegated rename to parent callback');
+          void debugLog('[PopupOverlay] Delegated rename to parent callback', { noteId });
         } else {
           console.warn('[PopupOverlay] No parent callback available for rename');
         }
@@ -1005,7 +928,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           window.dispatchEvent(new CustomEvent('note-renamed', {
             detail: { noteId: renamingListFolder.folderId, newTitle: trimmedName }
           }));
-          console.log('[PopupOverlay] Emitted note-renamed event:', renamingListFolder.folderId, trimmedName);
+          void debugLog('[PopupOverlay] Emitted note-renamed event', {
+            noteId: renamingListFolder.folderId,
+            newTitle: trimmedName,
+          });
         } catch (dispatchError) {
           // Non-critical: Event dispatch failed, but database update succeeded
           // Canvas panels will get the correct title on next load/reload
@@ -1034,11 +960,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Check cache first
     const cached = ancestorCache.get(folderId);
     if (cached) {
-      console.log('[fetchAncestors] Using cached ancestors for', folderId);
+      void debugLog('[PopupOverlay] Using cached ancestors', { folderId });
       return cached;
     }
 
-    console.log('[fetchAncestors] Fetching ancestors for folder:', folderId);
+    void debugLog('[PopupOverlay] Fetching ancestors for folder', { folderId });
     setLoadingAncestors(prev => new Set(prev).add(popupId));
 
     try {
@@ -1073,11 +999,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           parentId: folder.parentId
         });
 
-        console.log('[fetchAncestors] Added ancestor:', folder.name, 'path:', folder.path);
+        void debugLog('[PopupOverlay] Added ancestor', {
+          folderName: folder.name,
+          path: folder.path,
+          depth,
+        });
 
         // Stop at Knowledge Base root
         if (!folder.parentId || folder.path === '/knowledge-base') {
-          console.log('[fetchAncestors] Reached root');
+          void debugLog('[PopupOverlay] Reached root ancestor', { folderId });
           break;
         }
 
@@ -1085,7 +1015,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         depth++;
       }
 
-      console.log('[fetchAncestors] Fetched', ancestors.length, 'ancestors');
+      void debugLog('[PopupOverlay] Fetched ancestors', {
+        folderId,
+        ancestorCount: ancestors.length,
+      });
 
       // Cache the result
       setAncestorCache(prev => new Map(prev).set(folderId, ancestors));
@@ -1109,11 +1042,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
     if (isOpen) {
       // Close dropdown
-      console.log('[BreadcrumbDropdown] Closing dropdown for', popup.folderName);
+      void debugLog('[PopupOverlay] Closing breadcrumb dropdown', { popupId: popup.id, folderName: popup.folderName });
       setBreadcrumbDropdownOpen(null);
     } else {
       // Open dropdown and fetch ancestors
-      console.log('[BreadcrumbDropdown] Opening dropdown for', popup.folderName);
+      void debugLog('[PopupOverlay] Opening breadcrumb dropdown', { popupId: popup.id, folderName: popup.folderName });
       setBreadcrumbDropdownOpen(popup.id);
 
       if (popup.folder?.id) {
@@ -1487,284 +1420,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     handleDragEnd();
   }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd]);
 
-  const renderPopupChildRow = (
-    popupId: string,
-    {
-      previewEntry,
-      activePreview,
-      isPanning: rowIsPanning,
-      onHoverFolder: rowHoverFolder,
-      onLeaveFolder: rowLeaveFolder,
-    }: {
-      previewEntry?: PreviewEntry;
-      activePreview?: { status: PreviewStatus; content?: unknown; error?: string };
-      isPanning: boolean;
-      onHoverFolder?: (folder: any, event: React.MouseEvent, parentPopupId: string, isPersistent?: boolean) => void;
-      onLeaveFolder?: (folderId?: string, parentPopoverId?: string) => void;
-    }
-  ) => (child: PopupChildNode, children: PopupChildNode[]) => {
-    const noteLike = isNoteLikeNode(child);
-    const folderLike = isFolderNode(child);
-    const isActivePreview = noteLike && previewEntry?.activeChildId === child.id;
-    const isSelected = popupSelections.get(popupId)?.has(child.id) ?? false;
-
-    // Drag and drop states
-    const isDragging = draggedItems.has(child.id);
-    const isDropTarget = dropTargetId === child.id && folderLike;
-    const isInvalidDropTarget = invalidDropTargetId === child.id && folderLike;
-
-    const triggerPreview = () => {
-      if (rowIsPanning || !noteLike) return;
-      requestPreview(popupId, child);
-    };
-
-    const handleFolderHover = (
-      event: React.MouseEvent | React.FocusEvent,
-      persistent = false
-    ) => {
-      if (rowIsPanning || !folderLike) {
-        return;
-      }
-
-      // Trigger folder popup preview
-      rowHoverFolder?.(child, event as React.MouseEvent, popupId, persistent);
-
-      // ENHANCEMENT: If child popup is already open, highlight it temporarily
-      // This provides visual feedback showing which popup belongs to the hovered folder
-      // Works on BOTH hover (persistent=false) AND click (persistent=true)
-      const allPopups = Array.from(popups.values());
-      const childPopup = allPopups.find(p =>
-        p.folder?.id === child.id || (p as any).folderId === child.id
-      );
-
-      if (childPopup) {
-        // Clear any existing highlight timeout to prevent race conditions
-        if (hoverHighlightTimeoutRef.current) {
-          clearTimeout(hoverHighlightTimeoutRef.current);
-        }
-
-        // Temporarily set hover-highlight state
-        setHoverHighlightedPopup(childPopup.id);
-
-        // Auto-remove highlight after animation completes
-        hoverHighlightTimeoutRef.current = setTimeout(() => {
-          setHoverHighlightedPopup(null);
-          hoverHighlightTimeoutRef.current = null;
-        }, HOVER_HIGHLIGHT_DURATION_MS);
-      }
-    };
-
-    // Note: Preview is now handled by plain div tooltip, no longer using previewEntry state
-
-    // Selection takes precedence over preview for icon visibility
-    const iconVisibilityClass = isSelected || isActivePreview
-      ? 'opacity-100'
-      : 'opacity-0 group-hover:opacity-100';
-
-    // Build classes and log for debugging
-    const conditionalClasses = isInvalidDropTarget ? 'bg-red-600 bg-opacity-50 ring-2 ring-red-500 text-white cursor-not-allowed' :
-      isDropTarget ? 'bg-green-600 bg-opacity-50 ring-2 ring-green-500 text-white' :
-      isDragging ? 'opacity-50' :
-      isSelected ? 'bg-indigo-500 bg-opacity-50 text-white' :
-      isActivePreview ? 'bg-gray-700/70 text-white' :
-      'text-gray-200 hover:bg-gray-700/30';
-
-    const rowClasses = `group px-3 py-2 cursor-pointer flex items-center justify-between text-sm transition-colors ${conditionalClasses}`;
-
-    console.log(`[PopupRow] ${child.name}:`, {
-      folderLike,
-      noteLike,
-      type: child.type,
-      isSelected,
-      isActivePreview,
-      isDragging,
-      conditionalClasses,
-      hasBlueHover: conditionalClasses.includes('hover:bg-blue-900'),
-      hasGrayHover: conditionalClasses.includes('hover:bg-gray-700')
-    });
-
-    return (
-      <div
-        key={child.id}
-        draggable={true}
-        className={rowClasses}
-        style={{ transition: rowIsPanning ? 'none' : 'background-color 0.2s' }}
-        data-drop-zone={folderLike ? 'true' : undefined}
-        onDragStart={(e) => handleDragStart(popupId, child.id, e)}
-        onDragEnd={handleDragEnd}
-        onDragOver={(e) => {
-          if (folderLike) {
-            handleDragOver(child.id, folderLike, e);
-            e.stopPropagation(); // Prevent popup container handler from firing
-          }
-        }}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => folderLike && handleDrop(child.id, e)}
-        onMouseEnter={(event) => {
-          if (noteLike) {
-            triggerPreview();
-          } else if (folderLike) {
-            // Clear preview when hovering over folder
-            requestPreview(popupId, null);
-          }
-        }}
-        onMouseLeave={() => {
-          // Removed folder row leave handler - only eye icon controls this
-        }}
-        onFocus={() => {
-          if (noteLike) {
-            triggerPreview();
-          }
-        }}
-        onClick={(event) => {
-          // Handle selection with keyboard modifiers
-          console.log('[PopupOverlay] onClick', {
-            ctrlKey: event.ctrlKey,
-            metaKey: event.metaKey,
-            shiftKey: event.shiftKey,
-            button: event.button
-          });
-          event.stopPropagation();
-
-          // Prevent context menu when using Ctrl+Click for multi-select (macOS treats Ctrl+Click as right-click)
-          if (event.ctrlKey || event.metaKey || event.shiftKey) {
-            event.preventDefault();
-          }
-
-          handleItemSelect(popupId, child.id, children, event);
-        }}
-        onDoubleClick={() => {
-          // In edit mode, double-click triggers rename for both folders and notes
-          if (popupEditMode.get(popupId)) {
-            if (folderLike || noteLike) {
-              handleStartRenameListFolder(popupId, child.id, child.name || '');
-              return;
-            }
-          }
-          // In view mode, double-click on note opens it on canvas
-          if (noteLike && onSelectNote) {
-            // Auto-switch to note canvas if currently on popups layer
-            if (layerCtx && layerCtx.activeLayer === 'popups') {
-              layerCtx.setActiveLayer('notes');
-            }
-            onSelectNote(child.id);
-          }
-        }}
-        onContextMenu={(event) => {
-          // Prevent context menu from interfering with multi-select
-          console.log('[PopupOverlay] onContextMenu', {
-            ctrlKey: event.ctrlKey,
-            metaKey: event.metaKey,
-            shiftKey: event.shiftKey,
-            button: event.button
-          });
-          event.preventDefault();
-          event.stopPropagation();
-
-          // On macOS, Ctrl+Click fires contextMenu instead of click
-          // Handle multi-select here as well
-          if (event.ctrlKey) {
-            handleItemSelect(popupId, child.id, children, event);
-          }
-        }}
-      >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          {folderLike ? (
-            <Folder className="w-4 h-4 text-blue-400 flex-shrink-0 fill-blue-400" />
-          ) : (
-            <FileText className="w-4 h-4 text-gray-400 flex-shrink-0" />
-          )}
-          {/* Conditional render: inline input when renaming, span otherwise */}
-          {renamingListFolder?.popupId === popupId && renamingListFolder?.folderId === child.id ? (
-            <div className="flex-1 min-w-0 flex flex-col gap-1">
-              <input
-                ref={renameListInputRef}
-                type="text"
-                value={renamingListFolderName}
-                onChange={(e) => setRenamingListFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    handleSaveRenameListFolder()
-                  } else if (e.key === 'Escape') {
-                    e.preventDefault()
-                    handleCancelRenameListFolder()
-                  }
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                disabled={renameLoading}
-              />
-              {renameError && (
-                <span className="text-xs text-red-400">{renameError}</span>
-              )}
-            </div>
-          ) : (
-            <span className={`truncate ${folderLike ? 'font-semibold text-blue-100' : ''}`}>{child.name}</span>
-          )}
-        </div>
-        {/* Timestamp: visible by default, hidden on hover */}
-        {(child.updatedAt || child.createdAt) && (
-          <div className="flex items-center gap-1 text-xs text-gray-500 flex-shrink-0 transition-opacity opacity-100 group-hover:opacity-0">
-            <span>·</span>
-            <span>{formatRelativeTime(child.updatedAt || child.createdAt)}</span>
-          </div>
-        )}
-        {/* Eye icon: hidden by default, visible on hover */}
-        <div className={`flex items-center gap-1 transition-opacity ${iconVisibilityClass}`}>
-          {noteLike && (
-            <button
-              type="button"
-              aria-label="Preview note"
-              className="p-1 rounded hover:bg-gray-700 text-gray-300"
-              onMouseEnter={(e) => handlePreviewTooltipHover(child.id, e)}
-              onMouseLeave={handlePreviewTooltipLeave}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onSelectNote) {
-                  onSelectNote(child.id);
-                }
-              }}
-            >
-              <Eye className="w-4 h-4 text-white" />
-            </button>
-          )}
-          {folderLike && (
-                    <div
-                      onMouseEnter={(event) => handleFolderHover(event, false)}
-                      onMouseLeave={() => rowLeaveFolder?.(child.id, popupId)}
-                      className="inline-block"
-                    >
-                      <TooltipProvider delayDuration={150}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label="Open folder"
-                              className="p-1 rounded hover:bg-gray-700 text-gray-300"
-                              onFocus={(event) => handleFolderHover(event, false)}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleFolderHover(event, true);
-                              }}
-                              onBlur={() => rowLeaveFolder?.(child.id, popupId)}
-                            >
-                              <Eye className="w-4 h-4 text-blue-400" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipPortal>
-                            <TooltipContent side="right">Open folder</TooltipContent>
-                          </TooltipPortal>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                  )}
-                </div>
-              </div>
-    );
-  };
-
   useEffect(() => {
     const activeIds = new Set<string>();
     popups.forEach((_, id) => activeIds.add(id));
@@ -1894,7 +1549,71 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const sharedTransform = hasSharedCamera ? (layerCtx.transforms.popups || IDENTITY_TRANSFORM) : null;
   const activeTransform = sharedTransform ?? transform;
   const isActiveLayer = !!layerCtx && layerCtx.activeLayer === 'popups';
-  
+  const popupChildRowRenderer = useMemo(
+    () =>
+      createPopupChildRowRenderer({
+        popupSelections,
+        draggedItems,
+        dropTargetId,
+        invalidDropTargetId,
+        requestPreview,
+        popups,
+        hoverHighlightTimeoutRef,
+        setHoverHighlightedPopup,
+        handleDragStart,
+        handleDragEnd,
+        handleDragOver,
+        handleDragLeave,
+        handleDrop,
+        handlePreviewTooltipHover,
+        handlePreviewTooltipLeave,
+        handleItemSelect,
+        popupEditMode,
+        handleStartRenameListFolder,
+        handleSaveRenameListFolder,
+        handleCancelRenameListFolder,
+        renamingListFolder,
+        renamingListFolderName,
+        setRenamingListFolderName,
+        renameLoading,
+        renameError,
+        renameListInputRef,
+        onSelectNote,
+        layerCtx,
+      }),
+    [
+      popupSelections,
+      draggedItems,
+      dropTargetId,
+      invalidDropTargetId,
+      requestPreview,
+      popups,
+      handleDragStart,
+      handleDragEnd,
+      handleDragOver,
+      handleDragLeave,
+      handleDrop,
+      handlePreviewTooltipHover,
+      handlePreviewTooltipLeave,
+      handleItemSelect,
+      popupEditMode,
+      handleStartRenameListFolder,
+      handleSaveRenameListFolder,
+      handleCancelRenameListFolder,
+      renamingListFolder,
+      renamingListFolderName,
+      renameLoading,
+      renameError,
+      onSelectNote,
+      layerCtx,
+    ]
+  );
+
+  const renderPopupChildRow = useCallback(
+    (popupId: string, options: PopupChildRowOptions) => popupChildRowRenderer(popupId, options),
+    [popupChildRowRenderer]
+  );
+
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // Track the on-screen bounds of the canvas container to scope the overlay
@@ -2054,15 +1773,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
 
-    // Always log that pointer down was received
-    console.log('[PopupOverlay] pointerDown:', {
+    // Always log that pointer down was received (debug only)
+    void debugLog('[PopupOverlay] pointer_down_event', {
       target: (e.target as HTMLElement).className,
       isEmptySpace: isOverlayEmptySpace(e),
       isActiveLayer,
       popupCount: popups.size,
       layerCtx: layerCtx?.activeLayer || 'none',
       clientX: e.clientX,
-      clientY: e.clientY
+      clientY: e.clientY,
     });
     
     getUIResourceManager().enqueueLowPriority(() => {
@@ -2110,11 +1829,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
     
-    console.log('[PopupOverlay] PAN START!', {
+    void debugLog('[PopupOverlay] pan_start_event', {
       clientX: e.clientX,
       clientY: e.clientY,
       transform: activeTransform,
-      pointerId: e.pointerId
+      pointerId: e.pointerId,
     });
     
     getUIResourceManager().enqueueLowPriority(() => {
@@ -2935,14 +2654,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         {/* Popups (canvas coords) - only render visible ones */}
         {visiblePopups.map((popup) => {
           const previewEntry = previewState[popup.id];
-          const activeChildId = previewEntry?.activeChildId ?? null;
-          const activePreview = activeChildId && previewEntry?.entries
-            ? previewEntry.entries[activeChildId]
-            : undefined;
-
           const renderChildRow = renderPopupChildRow(popup.id, {
             previewEntry,
-            activePreview,
             isPanning,
             onHoverFolder,
             onLeaveFolder,
@@ -3032,7 +2745,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
                     // Debug: log color info for child popups
                     if (isChildPopup && folderName === 'sample') {
-                      console.log('[PopupHeader] sample popup - folder.color:', folderColor, 'colorTheme:', colorTheme, 'popup.folder:', popup.folder)
+                      void debugLog('[PopupOverlay] sample popup color debug', {
+                        folderColor,
+                        colorTheme,
+                        folderData: popup.folder,
+                      });
                     }
 
                     // Child popups: show just badge + name (parent relationship shown by connecting line)
@@ -3345,11 +3062,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       itemHeight={36}
                       height={300}
                       overscan={8}
-                      renderItem={(child: PopupChildNode) => renderChildRow(child, popup.folder.children)}
+                      renderItem={(child: PopupChildNode) =>
+                        renderChildRow(child, popup.folder?.children ?? [])
+                      }
                     />
                   ) : (
                     <div className="py-1">
-                      {popup.folder.children.map((child: PopupChildNode) => renderChildRow(child, popup.folder.children))}
+                      {(popup.folder.children ?? []).map((child: PopupChildNode) =>
+                        renderChildRow(child, popup.folder?.children ?? [])
+                      )}
                     </div>
                   )
                 ) : (
@@ -3704,14 +3425,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             {/* Popups (canvas coords) - only render visible ones */}
             {visiblePopups.map((popup) => {
               const previewEntry = previewState[popup.id];
-              const activeChildId = previewEntry?.activeChildId ?? null;
-              const activePreview = activeChildId && previewEntry?.entries
-                ? previewEntry.entries[activeChildId]
-                : undefined;
-
               const renderChildRow = renderPopupChildRow(popup.id, {
                 previewEntry,
-                activePreview,
                 isPanning,
                 onHoverFolder,
                 onLeaveFolder,
@@ -4006,18 +3721,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
                     ) : popup.folder?.children && popup.folder.children.length > 0 ? (
                       popup.folder.children.length > 200 ? (
-                        <VirtualList
-                          items={popup.folder.children}
-                          itemHeight={36}
-                          height={300}
-                          overscan={8}
-                          renderItem={(child: PopupChildNode) => renderChildRow(child, popup.folder.children)}
-                        />
-                      ) : (
-                        <div className="py-1">
-                          {popup.folder.children.map((child: PopupChildNode) => renderChildRow(child, popup.folder.children))}
-                        </div>
-                      )
+                    <VirtualList
+                      items={popup.folder.children}
+                      itemHeight={36}
+                      height={300}
+                      overscan={8}
+                      renderItem={(child: PopupChildNode) =>
+                        renderChildRow(child, popup.folder?.children ?? [])
+                      }
+                    />
+                  ) : (
+                    <div className="py-1">
+                      {(popup.folder.children ?? []).map((child: PopupChildNode) =>
+                        renderChildRow(child, popup.folder?.children ?? [])
+                      )}
+                    </div>
+                  )
                     ) : (
                       <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                     )}

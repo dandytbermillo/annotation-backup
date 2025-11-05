@@ -1,0 +1,39 @@
+# Popup Overlay Refactor Status (2025-11-05)
+
+## Overview
+- Extracted shared popup row renderer, type definitions, and constants into `components/canvas/popupOverlay/` to shrink `popup-overlay.tsx` and concentrate list-row logic in reusable helpers.
+- Rewired both primary render paths (canvas container and fallback overlay) to consume the shared renderer so folder/note rows behave identically regardless of mount target.
+- Replaced duplicate inline types (`PopupData`, `PopupChildNode`, preview entries) and utility functions with the exported module surface; the overlay now imports `PopupData` and helper functions from `./popupOverlay/types` and `helpers`.
+- Removed direct `console.log` instrumentation in favor of gated `debugLog` calls so verbose logging only emits when debug mode is explicitly enabled.
+- Fixed hook ordering to avoid temporal-dead-zone access to `layerCtx` by instantiating `useLayer()` before constructing the memoized row renderer.
+
+## Key Code Changes
+- `components/canvas/popup-overlay.tsx`
+  - Imports `createPopupChildRowRenderer`, shared helper utilities, and exported types from `popupOverlay/`.
+  - Memoizes the child row renderer via `useMemo`/`useCallback` right after `useLayer()` is called, ensuring `layerCtx` is initialized before use.
+  - Both overlay render loops (primary and fallback) call `renderPopupChildRow(...)`, and list rendering guards against undefined child arrays.
+  - Debug logging now funnels through `debugLog` instead of raw `console.log` calls.
+- `components/canvas/popupOverlay/renderPopupChildRow.tsx`
+  - Houses the row rendering function with the shared interaction handlers (preview hover, selection, drag/drop, rename, folder hover highlighting).
+  - Drops development-only logging and trims the options interface to what the overlay actually passes.
+- `components/canvas/popupOverlay/helpers.ts`
+  - Supplies common helpers (`clamp`, breadcrumb parsing, color theme lookup, relative-time formatting, node type guards) for the overlay and renderer.
+- `components/canvas/popupOverlay/types.ts`
+  - Exports `PopupData`, `PopupChildNode`, and preview-related types for consistent typing between overlay and renderer modules.
+
+## Manual Verification Performed
+- `npm run lint` (warnings limited to pre-existing API files; no new issues from refactor).
+- Manual smoke test (developer-provided) confirmed overlay renders and interactions work post-refactor.
+
+## Recommended Manual Tests
+1. Open a populated workspace and verify popup rows (hover preview, rename, multi-select, drag/drop) in the main overlay render path.
+2. Trigger the fallback overlay (no canvas container) and confirm the same interactions behave identically.
+3. Toggle overlay layer focus and perform a canvas pan to ensure debug telemetry only emits when debug logging is enabled.
+4. Resize popups, then persist workspace to confirm size persistence remains unaffected.
+
+## Next Steps / TODO
+- [ ] Wire unit coverage for `popupOverlay/helpers.ts` (breadcrumb parsing, relative-time) and the row renderer to prevent regressions.
+- [ ] Audit remaining `console.log` usage across overlay modules for potential conversion to `debugLog`.
+- [ ] Evaluate further component decomposition (e.g., header/footer subcomponents) to continue shrinking `popup-overlay.tsx`.
+- [ ] Confirm persistence logic (server PUT/save) still captures user-driven resizes after the shared renderer changes; add integration test if possible.
+- [ ] Coordinate with backend team on eliminating layout conflict 409 spam to reduce “hydrating” overlays during panning.

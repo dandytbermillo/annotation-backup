@@ -1,4 +1,5 @@
 import { FOLDER_COLORS } from './constants'
+import type { PopupChildNode } from './types'
 
 type NullableString = string | null | undefined
 
@@ -44,4 +45,14 @@ export const formatRelativeTime = (timestamp?: string) => {
   if (diffDays < 30) return `${diffDays}d ago`
   if (diffMonths < 12) return `${diffMonths}mo ago`
   return `${diffYears}y ago`
+}
+
+export const isFolderNode = (node: PopupChildNode | null | undefined): boolean => {
+  if (!node || !node.type) return false
+  return node.type.toLowerCase() === 'folder'
+}
+
+export const isNoteLikeNode = (node: PopupChildNode | null | undefined): boolean => {
+  if (!node) return false
+  return !isFolderNode(node)
 }
