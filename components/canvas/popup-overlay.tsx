@@ -34,8 +34,488 @@ import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popupO
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popupOverlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
+interface PopupCardHeaderProps {
+  popup: PopupData;
+  isEditMode: boolean;
+  renamingTitleId: string | null;
+  renameTitleInputRef: React.RefObject<HTMLInputElement>;
+  renamingTitleName: string;
+  onRenameTitleNameChange: (value: string) => void;
+  onSaveRenameTitle: () => void;
+  onCancelRenameTitle: () => void;
+  renameLoading: boolean;
+  renameError: string | null;
+  onStartRenameTitle: (popupId: string, currentName: string) => void;
+  onHeaderMouseDown: (popupId: string, event: React.MouseEvent<HTMLDivElement>) => void;
+  debugLog: typeof baseDebugLog;
+  breadcrumbDropdownOpen: string | null;
+  onToggleBreadcrumbDropdown: (popup: PopupData) => void;
+  ancestorCache: Map<string, PopupChildNode[]>;
+  loadingAncestors: Set<string>;
+  onBreadcrumbFolderHover: (ancestor: PopupChildNode, event: React.MouseEvent) => void;
+  onBreadcrumbFolderHoverLeave: () => void;
+  onToggleEditMode: (popupId: string) => void;
+  onConfirmClose?: (popupId: string) => void;
+  onCancelClose?: (popupId: string) => void;
+  onInitiateClose?: (popupId: string) => void;
+}
 
-// Auto-scroll state interface
+const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
+  popup,
+  isEditMode,
+  renamingTitleId,
+  renameTitleInputRef,
+  renamingTitleName,
+  onRenameTitleNameChange,
+  onSaveRenameTitle,
+  onCancelRenameTitle,
+  renameLoading,
+  renameError,
+  onStartRenameTitle,
+  onHeaderMouseDown,
+  debugLog,
+  breadcrumbDropdownOpen,
+  onToggleBreadcrumbDropdown,
+  ancestorCache,
+  loadingAncestors,
+  onBreadcrumbFolderHover,
+  onBreadcrumbFolderHoverLeave,
+  onToggleEditMode,
+  onConfirmClose,
+  onCancelClose,
+  onInitiateClose,
+}) => {
+  const isEditActive = isEditMode;
+  const isRenaming = renamingTitleId === popup.id;
+  const isDropdownOpen = breadcrumbDropdownOpen === popup.id;
+  const colorTheme = getFolderColorTheme(popup.folder?.color);
+  const folderPath = (popup.folder as any)?.path || (popup as any).folder?.path;
+  const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...';
+  const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId;
+
+  if (isChildPopup && folderName === 'sample') {
+    void debugLog('[PopupOverlay] sample popup color debug', {
+      folderColor: popup.folder?.color,
+      colorTheme,
+      folderData: popup.folder,
+    });
+  }
+
+  const renderRenameInput = () => (
+    <div className="flex-1 min-w-0 flex flex-col gap-1">
+      <input
+        ref={renameTitleInputRef}
+        type="text"
+        value={renamingTitleName}
+        onChange={(event) => onRenameTitleNameChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onSaveRenameTitle();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            onCancelRenameTitle();
+          }
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+        className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        disabled={renameLoading}
+      />
+      {renameError && <span className="text-xs text-red-400">{renameError}</span>}
+    </div>
+  );
+
+  const renderRenameableLabel = (label: string) => (
+    <>
+      <span className="text-sm font-medium text-white truncate">{label}</span>
+      <button
+        onClick={(event) => {
+          event.stopPropagation();
+          onStartRenameTitle(popup.id, label);
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
+        aria-label="Rename folder"
+      >
+        <Pencil className="w-3 h-3 text-gray-400" />
+      </button>
+    </>
+  );
+
+  const renderBreadcrumbDropdown = () => {
+    if (!isDropdownOpen || !popup.folder?.id) {
+      return null;
+    }
+
+    const ancestors = ancestorCache.get(popup.folder.id) || [];
+    const isLoadingAncestors = loadingAncestors.has(popup.id);
+
+    return (
+      <div
+        className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-2 px-3 min-w-[200px]"
+        style={{ zIndex: 9999 }}
+        data-breadcrumb-dropdown
+      >
+        <div className="text-xs text-gray-400 mb-2">Full path:</div>
+        {isLoadingAncestors ? (
+          <div className="text-sm text-gray-500">Loading...</div>
+        ) : ancestors.length === 0 ? (
+          <div className="text-sm text-gray-500">No path available</div>
+        ) : (
+          <div className="space-y-1">
+            {ancestors.map((ancestor, index) => {
+              const isLast = index === ancestors.length - 1;
+              return (
+                <div
+                  key={ancestor.id}
+                  className={`group flex items-center justify-between gap-2 text-sm ${
+                    isLast ? 'text-white font-medium' : 'text-gray-300 hover:bg-gray-700/50'
+                  } rounded px-1 py-0.5 transition-colors`}
+                  style={{ paddingLeft: `${index * 12}px` }}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {isLast && colorTheme ? (
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
+                    ) : (
+                      <span className="flex-shrink-0">{ancestor.icon || '📁'}</span>
+                    )}
+                    <span className="truncate">{ancestor.name}</span>
+                    {isLast && <span className="text-gray-500 ml-1 flex-shrink-0">✓</span>}
+                  </div>
+                  {!isLast && ancestor.type === 'folder' && ancestor.name !== 'Knowledge Base' && (
+                    <button
+                      className="flex-shrink-0 p-0.5 opacity-0 group-hover:opacity-100 hover:bg-gray-600 rounded transition-all"
+                      onMouseEnter={(event) => {
+                        let inheritedColor = ancestor.color;
+                        if (!inheritedColor) {
+                          for (let i = index - 1; i >= 0; i -= 1) {
+                            if (ancestors[i].color) {
+                              inheritedColor = ancestors[i].color;
+                              break;
+                            }
+                          }
+                        }
+                        const ancestorWithColor = { ...ancestor, color: inheritedColor };
+                        onBreadcrumbFolderHover(ancestorWithColor, event);
+                      }}
+                      onMouseLeave={onBreadcrumbFolderHoverLeave}
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <Eye className="w-3.5 h-3.5 text-blue-400" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderChildHeader = () => (
+    <div className="flex items-center gap-1.5 min-w-0 group">
+      {colorTheme ? (
+        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
+      ) : (
+        <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+      )}
+      {isRenaming ? renderRenameInput() : renderRenameableLabel(folderName)}
+    </div>
+  );
+
+  const renderRootHeader = () => {
+    const breadcrumbs = parseBreadcrumb(folderPath, folderName);
+    return (
+      <div className="relative flex items-center gap-1.5 flex-1 min-w-0">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleBreadcrumbDropdown(popup);
+          }}
+          className="flex items-center gap-0.5 hover:bg-gray-700 rounded px-1 py-0.5 transition-colors"
+          title="Show full path"
+          data-breadcrumb-toggle
+        >
+          <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+          <ChevronRight className={`w-3 h-3 text-gray-500 transition-transform ${isDropdownOpen ? 'rotate-90' : ''}`} />
+        </button>
+        {breadcrumbs.map((crumb, index) => (
+          <React.Fragment key={index}>
+            {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+            {index === breadcrumbs.length - 1 ? (
+              <div className="flex items-center gap-1.5 min-w-0 group">
+                {colorTheme ? (
+                  <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
+                ) : (
+                  <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                )}
+                {isRenaming ? renderRenameInput() : renderRenameableLabel(crumb)}
+              </div>
+            ) : breadcrumbs.length > 2 && index === 0 ? (
+              <span className="text-xs text-gray-500 flex-shrink-0">...</span>
+            ) : index >= breadcrumbs.length - 2 ? (
+              <span className="text-xs text-gray-400 flex-shrink-0">{crumb}</span>
+            ) : null}
+          </React.Fragment>
+        ))}
+        {renderBreadcrumbDropdown()}
+      </div>
+    );
+  };
+
+  return (
+    <div
+      className={`px-3 py-2 border-b flex items-center justify-between cursor-grab active:cursor-grabbing ${
+        isEditActive ? 'border-blue-600 bg-blue-600/20' : 'border-gray-700'
+      }`}
+      onMouseDown={(event) => onHeaderMouseDown(popup.id, event)}
+      style={{
+        backgroundColor: popup.isDragging
+          ? '#374151'
+          : isEditActive
+          ? 'rgba(37, 99, 235, 0.15)'
+          : 'transparent',
+      }}
+    >
+      <div className="flex items-center gap-1.5 flex-1 min-w-0">
+        {isChildPopup ? renderChildHeader() : renderRootHeader()}
+      </div>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleEditMode(popup.id);
+          }}
+          onMouseDown={(event) => event.stopPropagation()}
+          className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto"
+          style={{
+            backgroundColor: isEditActive ? '#3b82f6' : 'transparent',
+            color: isEditActive ? '#fff' : '#9ca3af',
+            border: `1px solid ${isEditActive ? '#3b82f6' : '#4b5563'}`,
+          }}
+          aria-label={isEditActive ? 'Exit edit mode' : 'Enter edit mode'}
+        >
+          {isEditActive ? 'Done' : 'Edit'}
+        </button>
+        {popup.closeMode === 'closing' ? (
+          <>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onConfirmClose?.(popup.id);
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto bg-green-600 hover:bg-green-500 text-white"
+              aria-label="Confirm close"
+            >
+              ✓ Done
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onCancelClose?.(popup.id);
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto hover:bg-gray-700 text-gray-400"
+              aria-label="Cancel close"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onInitiateClose?.(popup.id);
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
+            aria-label="Close popup"
+          >
+            <X className="w-4 h-4 text-gray-400" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+interface PopupCardFooterProps {
+  popup: PopupData;
+  isEditMode: boolean;
+  hasClosingAncestor: boolean;
+  popupSelections: Map<string, Set<string>>;
+  onDeleteSelected: (popupId: string) => void;
+  onClearSelection: (popupId: string) => void;
+  creatingFolderInPopup: string | null;
+  newFolderName: string;
+  onChangeNewFolderName: (value: string) => void;
+  onCancelCreateFolder: () => void;
+  onSubmitCreateFolder: (popupId: string, folderId: string) => void;
+  onStartCreateFolder: (popupId: string) => void;
+  folderCreationLoading: string | null;
+  folderCreationError: string | null;
+  onTogglePin?: (popupId: string) => void;
+}
+
+const PopupCardFooter: React.FC<PopupCardFooterProps> = ({
+  popup,
+  isEditMode,
+  hasClosingAncestor,
+  popupSelections,
+  onDeleteSelected,
+  onClearSelection,
+  creatingFolderInPopup,
+  newFolderName,
+  onChangeNewFolderName,
+  onCancelCreateFolder,
+  onSubmitCreateFolder,
+  onStartCreateFolder,
+  folderCreationLoading,
+  folderCreationError,
+  onTogglePin,
+}) => {
+  const selectedIds = popupSelections.get(popup.id);
+  const selectionCount = selectedIds?.size ?? 0;
+  const folderId = (popup as any).folderId;
+  const isCreatingHere = creatingFolderInPopup === popup.id;
+  const isLoading = folderCreationLoading === popup.id;
+
+  return (
+    <>
+      {isEditMode && (
+        <div className="px-3 py-2 bg-blue-900/20 border-t border-blue-600/50 flex items-center justify-center">
+          <div className="px-3 py-1.5 text-sm font-semibold rounded bg-blue-600 text-white flex items-center gap-2 pointer-events-none">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              <path d="m15 5 4 4" />
+            </svg>
+            Edit Mode
+          </div>
+        </div>
+      )}
+      {!isEditMode && popup.isHighlighted && hasClosingAncestor && (
+        <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onTogglePin?.(popup.id);
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
+              popup.isPinned ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+            }`}
+            aria-label={popup.isPinned ? 'Pinned - will stay open' : 'Pin to keep open'}
+          >
+            {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
+          </button>
+        </div>
+      )}
+      {selectionCount > 0 && (
+        <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex items-center justify-between">
+          <span className="text-sm text-gray-300">
+            {selectionCount} {selectionCount === 1 ? 'item' : 'items'} selected
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onDeleteSelected(popup.id);
+              }}
+              className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 rounded transition-colors"
+            >
+              Delete
+            </button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onClearSelection(popup.id);
+              }}
+              className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="border-t border-gray-700">
+        {isCreatingHere ? (
+          <div className="px-3 py-2 bg-gray-800">
+            <div className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(event) => onChangeNewFolderName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (folderId) {
+                      onSubmitCreateFolder(popup.id, folderId);
+                    }
+                  } else if (event.key === 'Escape') {
+                    onCancelCreateFolder();
+                  }
+                }}
+                placeholder="New folder name"
+                className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                autoFocus
+                disabled={isLoading}
+              />
+              {folderCreationError && <p className="text-xs text-red-400">{folderCreationError}</p>}
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCancelCreateFolder();
+                  }}
+                  className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (folderId) {
+                      onSubmitCreateFolder(popup.id, folderId);
+                    }
+                  }}
+                  className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading || !newFolderName.trim()}
+                >
+                  {isLoading ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onStartCreateFolder(popup.id);
+            }}
+            className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white hover:bg-gray-750 transition-colors"
+          >
+            + New Folder
+          </button>
+        )}
+      </div>
+    </>
+  );
+};
+
 interface AutoScrollState {
   isActive: boolean;
   velocity: { x: number; y: number };
@@ -2298,13 +2778,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           }
         }
       }
+
+      if (!isLocked && onResizePopup) {
+        const didChange =
+          state.lastWidth !== state.startWidth ||
+          state.lastHeight !== state.startHeight;
+        if (didChange) {
+          onResizePopup(state.popupId, { width: state.lastWidth, height: state.lastHeight }, { source: 'user' });
+        }
+      }
     }
 
     resizingStateRef.current = null;
     if (isResizing) {
       setIsResizing(false);
     }
-  }, [isResizing]);
+  }, [isLocked, isResizing, onResizePopup]);
 
   const handlePopupHeaderMouseDown = useCallback(
     (popupId: string, event: React.MouseEvent) => {
@@ -2562,6 +3051,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     })
   }, [popups, activeTransform])
   
+  const hasClosingPopup = (() => {
+    for (const popupEntry of popups.values()) {
+      if (popupEntry.closeMode === 'closing') {
+        return true
+      }
+    }
+    return false
+  })()
+  
   // Build overlay contents (absolute inside canvas container)
   const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
   const hasPopups = popups.size > 0;
@@ -2720,328 +3218,31 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               }}
             >
               {/* Popup Header with Breadcrumb */}
-              <div
-                className={`px-3 py-2 border-b flex items-center justify-between cursor-grab active:cursor-grabbing ${
-                  popupEditMode.get(popup.id)
-                    ? 'border-blue-600 bg-blue-600/20'
-                    : 'border-gray-700'
-                }`}
-                onMouseDown={(e) => handlePopupHeaderMouseDown(popup.id, e)}
-                style={{
-                  backgroundColor: popup.isDragging
-                    ? '#374151'
-                    : popupEditMode.get(popup.id)
-                    ? 'rgba(37, 99, 235, 0.15)'
-                    : 'transparent'
-                }}
-              >
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                  {(() => {
-                    const folderColor = popup.folder?.color
-                    const colorTheme = getFolderColorTheme(folderColor)
-                    const folderPath = (popup.folder as any)?.path || (popup as any).folder?.path
-                    const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'
-                    const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId
-
-                    // Debug: log color info for child popups
-                    if (isChildPopup && folderName === 'sample') {
-                      void debugLog('[PopupOverlay] sample popup color debug', {
-                        folderColor,
-                        colorTheme,
-                        folderData: popup.folder,
-                      });
-                    }
-
-                    // Child popups: show just badge + name (parent relationship shown by connecting line)
-                    if (isChildPopup) {
-                      const isRenaming = renamingTitle === popup.id
-                      return (
-                        <div className="flex items-center gap-1.5 min-w-0 group">
-                          {colorTheme ? (
-                            <div
-                              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                              style={{ backgroundColor: colorTheme.bg }}
-                            />
-                          ) : (
-                            <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                          )}
-                          {isRenaming ? (
-                            /* Inline rename input */
-                            <div className="flex-1 min-w-0 flex flex-col gap-1">
-                              <input
-                                ref={renameTitleInputRef}
-                                type="text"
-                                value={renamingTitleName}
-                                onChange={(e) => setRenamingTitleName(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault()
-                                    handleSaveRenameTitle()
-                                  } else if (e.key === 'Escape') {
-                                    e.preventDefault()
-                                    handleCancelRenameTitle()
-                                  }
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => e.stopPropagation()}
-                                className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                disabled={renameLoading}
-                              />
-                              {renameError && (
-                                <span className="text-xs text-red-400">{renameError}</span>
-                              )}
-                            </div>
-                          ) : (
-                            <>
-                              <span className="text-sm font-medium text-white truncate">{folderName}</span>
-                              {/* Hover pencil icon for quick rename */}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleStartRenameTitle(popup.id, folderName)
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                aria-label="Rename folder"
-                              >
-                                <Pencil className="w-3 h-3 text-gray-400" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )
-                    }
-
-                    // Root popups: show full breadcrumb
-                    const breadcrumbs = parseBreadcrumb(folderPath, folderName)
-                    const isDropdownOpen = breadcrumbDropdownOpen === popup.id
-
-                    return (
-                      <div className="relative flex items-center gap-1.5 flex-1 min-w-0">
-                        {/* Home icon with dropdown */}
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleToggleBreadcrumbDropdown(popup)
-                          }}
-                          className="flex items-center gap-0.5 hover:bg-gray-700 rounded px-1 py-0.5 transition-colors"
-                          title="Show full path"
-                          data-breadcrumb-toggle
-                        >
-                          <Home className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                          <ChevronRight className={`w-3 h-3 text-gray-500 transition-transform ${isDropdownOpen ? 'rotate-90' : ''}`} />
-                        </button>
-
-                        {/* Breadcrumb trail */}
-                        {breadcrumbs.map((crumb, index) => (
-                          <React.Fragment key={index}>
-                            {index > 0 && <ChevronRight className="w-3 h-3 text-gray-500 flex-shrink-0" />}
-
-                            {index === breadcrumbs.length - 1 ? (
-                              // Last item: show color badge + name (or inline rename input)
-                              (() => {
-                                const isRenaming = renamingTitle === popup.id
-                                return (
-                                  <div className="flex items-center gap-1.5 min-w-0 group">
-                                    {colorTheme ? (
-                                      <div
-                                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                        style={{ backgroundColor: colorTheme.bg }}
-                                      />
-                                    ) : (
-                                      <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                                    )}
-                                    {isRenaming ? (
-                                      /* Inline rename input */
-                                      <div className="flex-1 min-w-0 flex flex-col gap-1">
-                                        <input
-                                          ref={renameTitleInputRef}
-                                          type="text"
-                                          value={renamingTitleName}
-                                          onChange={(e) => setRenamingTitleName(e.target.value)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              e.preventDefault()
-                                              handleSaveRenameTitle()
-                                            } else if (e.key === 'Escape') {
-                                              e.preventDefault()
-                                              handleCancelRenameTitle()
-                                            }
-                                          }}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="px-1.5 py-0.5 text-sm bg-gray-700 border border-blue-500 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                          disabled={renameLoading}
-                                        />
-                                        {renameError && (
-                                          <span className="text-xs text-red-400">{renameError}</span>
-                                        )}
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <span className="text-sm font-medium text-white truncate">{crumb}</span>
-                                        {/* Hover pencil icon for quick rename */}
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation()
-                                            handleStartRenameTitle(popup.id, crumb)
-                                          }}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-gray-700 rounded pointer-events-auto flex-shrink-0"
-                                          aria-label="Rename folder"
-                                        >
-                                          <Pencil className="w-3 h-3 text-gray-400" />
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
-                                )
-                              })()
-                            ) : breadcrumbs.length > 2 && index === 0 ? (
-                              // Collapse earlier levels only if more than 2 levels
-                              <span className="text-xs text-gray-500 flex-shrink-0">...</span>
-                            ) : index >= breadcrumbs.length - 2 ? (
-                              // Show parent level(s)
-                              <span className="text-xs text-gray-400 flex-shrink-0">{crumb}</span>
-                            ) : null}
-                          </React.Fragment>
-                        ))}
-
-                        {/* Breadcrumb Dropdown */}
-                        {isDropdownOpen && popup.folder?.id && (
-                          <div
-                            className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-2 px-3 min-w-[200px]"
-                            style={{ zIndex: 9999 }}
-                            data-breadcrumb-dropdown
-                          >
-                            <div className="text-xs text-gray-400 mb-2">Full path:</div>
-                            {(() => {
-                              const ancestors = ancestorCache.get(popup.folder.id) || []
-                              const isLoading = loadingAncestors.has(popup.id)
-
-                              if (isLoading) {
-                                return <div className="text-sm text-gray-500">Loading...</div>
-                              }
-
-                              if (ancestors.length === 0) {
-                                return <div className="text-sm text-gray-500">No path available</div>
-                              }
-
-                              return (
-                                <div className="space-y-1">
-                                  {ancestors.map((ancestor, idx) => {
-                                    const isLast = idx === ancestors.length - 1;
-                                    return (
-                                      <div
-                                        key={ancestor.id}
-                                        className={`group flex items-center justify-between gap-2 text-sm ${isLast ? 'text-white font-medium' : 'text-gray-300 hover:bg-gray-700/50'} rounded px-1 py-0.5 transition-colors`}
-                                        style={{ paddingLeft: `${idx * 12}px` }}
-                                      >
-                                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                                          {isLast && colorTheme ? (
-                                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: colorTheme.bg }} />
-                                          ) : (
-                                            <span className="flex-shrink-0">{ancestor.icon || '📁'}</span>
-                                          )}
-                                          <span className="truncate">{ancestor.name}</span>
-                                          {isLast && <span className="text-gray-500 ml-1 flex-shrink-0">✓</span>}
-                                        </div>
-                                        {!isLast && ancestor.type === 'folder' && ancestor.name !== 'Knowledge Base' && (
-                                          <button
-                                            className="flex-shrink-0 p-0.5 opacity-0 group-hover:opacity-100 hover:bg-gray-600 rounded transition-all"
-                                            onMouseEnter={(e) => {
-                                              // Find inherited color from closest ancestor with color
-                                              let inheritedColor = ancestor.color;
-                                              if (!inheritedColor) {
-                                                for (let i = idx - 1; i >= 0; i--) {
-                                                  if (ancestors[i].color) {
-                                                    inheritedColor = ancestors[i].color;
-                                                    break;
-                                                  }
-                                                }
-                                              }
-                                              const ancestorWithColor = { ...ancestor, color: inheritedColor };
-                                              handleBreadcrumbFolderHover(ancestorWithColor, e);
-                                            }}
-                                            onMouseLeave={handleBreadcrumbFolderHoverLeave}
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            <Eye className="w-3.5 h-3.5 text-blue-400" />
-                                          </button>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )
-                            })()}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })()}
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {/* Edit/Done toggle button */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleToggleEditMode(popup.id)
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto"
-                    style={{
-                      backgroundColor: popupEditMode.get(popup.id) ? '#3b82f6' : 'transparent',
-                      color: popupEditMode.get(popup.id) ? '#fff' : '#9ca3af',
-                      border: `1px solid ${popupEditMode.get(popup.id) ? '#3b82f6' : '#4b5563'}`
-                    }}
-                    aria-label={popupEditMode.get(popup.id) ? "Exit edit mode" : "Enter edit mode"}
-                  >
-                    {popupEditMode.get(popup.id) ? 'Done' : 'Edit'}
-                  </button>
-                  {/* Close button or Close mode controls */}
-                  {popup.closeMode === 'closing' ? (
-                    <>
-                      {/* Done button (confirm close) */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onConfirmClose?.(popup.id)
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto bg-green-600 hover:bg-green-500 text-white"
-                        aria-label="Confirm close"
-                      >
-                        ✓ Done
-                      </button>
-                      {/* Cancel button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onCancelClose?.(popup.id)
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto hover:bg-gray-700 text-gray-400"
-                        aria-label="Cancel close"
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onInitiateClose?.(popup.id)
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="p-0.5 hover:bg-gray-700 rounded pointer-events-auto"
-                      aria-label="Close popup"
-                    >
-                      <X className="w-4 h-4 text-gray-400" />
-                    </button>
-                  )}
-                </div>
-              </div>
+              <PopupCardHeader
+                popup={popup}
+                isEditMode={Boolean(popupEditMode.get(popup.id))}
+                renamingTitleId={renamingTitle}
+                renameTitleInputRef={renameTitleInputRef}
+                renamingTitleName={renamingTitleName}
+                onRenameTitleNameChange={setRenamingTitleName}
+                onSaveRenameTitle={handleSaveRenameTitle}
+                onCancelRenameTitle={handleCancelRenameTitle}
+                renameLoading={renameLoading}
+                renameError={renameError}
+                onStartRenameTitle={handleStartRenameTitle}
+                onHeaderMouseDown={handlePopupHeaderMouseDown}
+                debugLog={debugLog}
+                breadcrumbDropdownOpen={breadcrumbDropdownOpen}
+                onToggleBreadcrumbDropdown={handleToggleBreadcrumbDropdown}
+                ancestorCache={ancestorCache}
+                loadingAncestors={loadingAncestors}
+                onBreadcrumbFolderHover={handleBreadcrumbFolderHover}
+                onBreadcrumbFolderHoverLeave={handleBreadcrumbFolderHoverLeave}
+                onToggleEditMode={handleToggleEditMode}
+                onConfirmClose={onConfirmClose}
+                onCancelClose={onCancelClose}
+                onInitiateClose={onInitiateClose}
+              />
               {/* Popup Content with virtualization for large lists */}
               <div
                 className="overflow-y-auto flex-1"
@@ -3077,145 +3278,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                   <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                 )}
               </div>
-              {/* Edit Mode Badge Bar - Shows when in edit mode (replaces pin location) */}
-              {popupEditMode.get(popup.id) && (
-                <div className="px-3 py-2 bg-blue-900/20 border-t border-blue-600/50 flex items-center justify-center">
-                  <div className="px-3 py-1.5 text-sm font-semibold rounded bg-blue-600 text-white flex items-center gap-2 pointer-events-none">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
-                      <path d="m15 5 4 4"/>
-                    </svg>
-                    Edit Mode
-                  </div>
-                </div>
-              )}
-              {/* Pin Button Bar (shown when highlighted during close mode) */}
-              {/* Only show pin button if highlighted AND there's a parent in closing mode */}
-              {!popupEditMode.get(popup.id) && popup.isHighlighted && (() => {
-                // Check if any popup (likely a parent) is in closing mode
-                const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
-                return hasParentClosing
-              })() && (
-                <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onTogglePin?.(popup.id)
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
-                      popup.isPinned
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                        : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                    }`}
-                    aria-label={popup.isPinned ? "Pinned - will stay open" : "Pin to keep open"}
-                  >
-                    {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
-                  </button>
-                </div>
-              )}
-              {/* Multi-select Actions Bar */}
-              {(() => {
-                const selectedIds = popupSelections.get(popup.id);
-                const selectionCount = selectedIds?.size || 0;
-                if (selectionCount === 0) return null;
-
-                return (
-                  <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex items-center justify-between">
-                    <span className="text-sm text-gray-300">
-                      {selectionCount} {selectionCount === 1 ? 'item' : 'items'} selected
-                    </span>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSelected(popup.id);
-                        }}
-                        className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 rounded transition-colors"
-                      >
-                        Delete
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleClearSelection(popup.id);
-                        }}
-                        className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors"
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                );
-              })()}
-              {/* Create Folder Section */}
-              <div className="border-t border-gray-700">
-                {creatingFolderInPopup === popup.id ? (
-                  <div className="px-3 py-2 bg-gray-800">
-                    <div className="flex flex-col gap-2">
-                      <input
-                        type="text"
-                        value={newFolderName}
-                        onChange={(e) => setNewFolderName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            const folderId = (popup as any).folderId;
-                            if (folderId) {
-                              handleCreateFolder(popup.id, folderId);
-                            }
-                          } else if (e.key === 'Escape') {
-                            handleCancelCreateFolder();
-                          }
-                        }}
-                        placeholder="New folder name"
-                        className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        autoFocus
-                        disabled={folderCreationLoading === popup.id}
-                      />
-                      {folderCreationError && (
-                        <p className="text-xs text-red-400">{folderCreationError}</p>
-                      )}
-                      <div className="flex gap-2 justify-end">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCancelCreateFolder();
-                          }}
-                          className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={folderCreationLoading === popup.id}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const folderId = (popup as any).folderId;
-                            if (folderId) {
-                              handleCreateFolder(popup.id, folderId);
-                            }
-                          }}
-                          className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={folderCreationLoading === popup.id || !newFolderName.trim()}
-                        >
-                          {folderCreationLoading === popup.id ? 'Creating...' : 'Create'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStartCreateFolder(popup.id);
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white hover:bg-gray-750 transition-colors"
-                  >
-                    + New Folder
-                  </button>
-                )}
-              </div>
-              {/* Popup Footer - also droppable for easy access */}
+              <PopupCardFooter
+                popup={popup}
+                isEditMode={Boolean(popupEditMode.get(popup.id))}
+                hasClosingAncestor={hasClosingPopup}
+                popupSelections={popupSelections}
+                onDeleteSelected={handleDeleteSelected}
+                onClearSelection={handleClearSelection}
+                creatingFolderInPopup={creatingFolderInPopup}
+                newFolderName={newFolderName}
+                onChangeNewFolderName={setNewFolderName}
+                onCancelCreateFolder={handleCancelCreateFolder}
+                onSubmitCreateFolder={handleCreateFolder}
+                onStartCreateFolder={handleStartCreateFolder}
+                folderCreationLoading={folderCreationLoading}
+                folderCreationError={folderCreationError}
+                onTogglePin={onTogglePin}
+              />
               <div
                 className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
                 onDragOver={(e) => {
@@ -3741,145 +3820,24 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                     )}
                   </div>
-                  {/* Edit Mode Badge Bar - Shows when in edit mode (replaces pin location) */}
-                  {popupEditMode.get(popup.id) && (
-                    <div className="px-3 py-2 bg-blue-900/20 border-t border-blue-600/50 flex items-center justify-center">
-                      <div className="px-3 py-1.5 text-sm font-semibold rounded bg-blue-600 text-white flex items-center gap-2 pointer-events-none">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>
-                          <path d="m15 5 4 4"/>
-                        </svg>
-                        Edit Mode
-                      </div>
-                    </div>
-                  )}
-                  {/* Pin Button Bar (shown when highlighted during close mode) */}
-                  {/* Only show pin button if highlighted AND there's a parent in closing mode */}
-                  {!popupEditMode.get(popup.id) && popup.isHighlighted && (() => {
-                    // Check if any popup (likely a parent) is in closing mode
-                    const hasParentClosing = Array.from(popups.values()).some(p => p.closeMode === 'closing')
-                    return hasParentClosing
-                  })() && (
-                    <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onTogglePin?.(popup.id)
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
-                          popup.isPinned
-                            ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                            : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-                        }`}
-                        aria-label={popup.isPinned ? "Pinned - will stay open" : "Pin to keep open"}
-                      >
-                        {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
-                      </button>
-                    </div>
-                  )}
-                  {/* Multi-select Actions Bar */}
-                  {(() => {
-                    const selectedIds = popupSelections.get(popup.id);
-                    const selectionCount = selectedIds?.size || 0;
-                    if (selectionCount === 0) return null;
-
-                    return (
-                      <div className="px-3 py-2 bg-gray-800 border-t border-gray-700 flex items-center justify-between">
-                        <span className="text-sm text-gray-300">
-                          {selectionCount} {selectionCount === 1 ? 'item' : 'items'} selected
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteSelected(popup.id);
-                            }}
-                            className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 rounded transition-colors"
-                          >
-                            Delete
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleClearSelection(popup.id);
-                            }}
-                            className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors"
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  {/* Create Folder Section */}
-                  <div className="border-t border-gray-700">
-                    {creatingFolderInPopup === popup.id ? (
-                      <div className="px-3 py-2 bg-gray-800">
-                        <div className="flex flex-col gap-2">
-                          <input
-                            type="text"
-                            value={newFolderName}
-                            onChange={(e) => setNewFolderName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                const folderId = (popup as any).folderId;
-                                if (folderId) {
-                                  handleCreateFolder(popup.id, folderId);
-                                }
-                              } else if (e.key === 'Escape') {
-                                handleCancelCreateFolder();
-                              }
-                            }}
-                            placeholder="New folder name"
-                            className="w-full px-2 py-1.5 text-sm bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            autoFocus
-                            disabled={folderCreationLoading === popup.id}
-                          />
-                          {folderCreationError && (
-                            <p className="text-xs text-red-400">{folderCreationError}</p>
-                          )}
-                          <div className="flex gap-2 justify-end">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleCancelCreateFolder();
-                              }}
-                              className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={folderCreationLoading === popup.id}
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const folderId = (popup as any).folderId;
-                                if (folderId) {
-                                  handleCreateFolder(popup.id, folderId);
-                                }
-                              }}
-                              className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={folderCreationLoading === popup.id || !newFolderName.trim()}
-                            >
-                              {folderCreationLoading === popup.id ? 'Creating...' : 'Create'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleStartCreateFolder(popup.id);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white hover:bg-gray-750 transition-colors"
-                      >
-                        + New Folder
-                      </button>
-                    )}
-                  </div>
-                  {/* Popup Footer - also droppable for easy access */}
+                  <PopupCardFooter
+                    popup={popup}
+                    isEditMode={Boolean(popupEditMode.get(popup.id))}
+                    hasClosingAncestor={hasClosingPopup}
+                    popupSelections={popupSelections}
+                    onDeleteSelected={handleDeleteSelected}
+                    onClearSelection={handleClearSelection}
+                    creatingFolderInPopup={creatingFolderInPopup}
+                    newFolderName={newFolderName}
+                    onChangeNewFolderName={setNewFolderName}
+                    onCancelCreateFolder={handleCancelCreateFolder}
+                    onSubmitCreateFolder={handleCreateFolder}
+                    onStartCreateFolder={handleStartCreateFolder}
+                    folderCreationLoading={folderCreationLoading}
+                    folderCreationError={folderCreationError}
+                    onTogglePin={onTogglePin}
+                  />
+              {/* Popup Footer - also droppable for easy access */}
                   <div
                     className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
                     onDragOver={(e) => {

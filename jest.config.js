@@ -8,7 +8,7 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/$1'
   },
   transform: {
-    '^.+\\.tsx?$': 'ts-jest'
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }]
   },
   collectCoverageFrom: [
     'lib/**/*.{ts,tsx}',
