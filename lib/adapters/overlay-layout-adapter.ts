@@ -1,4 +1,5 @@
 import { isPlainModeActive } from '@/lib/collab-mode'
+import { debugLog } from '@/lib/utils/debug-logger'
 import {
   OVERLAY_LAYOUT_SCHEMA_VERSION,
   OverlayLayoutEnvelope,
@@ -59,6 +60,7 @@ export class OverlayLayoutAdapter {
   private readonly workspaceKey: string
   private readonly baseUrl: string
   private readonly workspacesBaseUrl: string
+  private readonly debugConflictsEnabled: boolean
 
   constructor({
     workspaceKey = DEFAULT_WORKSPACE_KEY,
@@ -72,6 +74,7 @@ export class OverlayLayoutAdapter {
     this.workspaceKey = workspaceKey
     this.baseUrl = baseUrl
     this.workspacesBaseUrl = workspacesBaseUrl
+    this.debugConflictsEnabled = process.env.NEXT_PUBLIC_DEBUG_POPUP_CONFLICTS === 'true'
   }
 
   private buildUrl(userId?: string): string {
@@ -122,6 +125,22 @@ export class OverlayLayoutAdapter {
 
     if (response.status === 409) {
       const payload = (await response.json()) as OverlayLayoutEnvelope
+      if (this.debugConflictsEnabled) {
+        await debugLog({
+          component: 'PopupOverlay',
+          action: 'overlay_layout_conflict',
+          metadata: {
+            workspaceKey: this.workspaceKey,
+            requestVersion: version,
+            requestRevision: revision ?? null,
+            popupCount: enrichedLayout.popups.length,
+            serverVersion: payload.version,
+            serverRevision: payload.revision ?? null,
+            serverPopups: payload.layout?.popups?.length ?? null,
+            mode: isPlainModeActive() ? 'plain' : 'collab'
+          }
+        })
+      }
       throw new OverlayLayoutConflictError(payload)
     }
 

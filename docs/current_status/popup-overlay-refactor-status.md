@@ -46,6 +46,7 @@
 
 ### Backend Coordination (layout conflict 409s)
 - Status: pending handoff — 409 spam persists and needs backend attention.
+- Instrumentation: enable `NEXT_PUBLIC_DEBUG_POPUP_CONFLICTS=true` to emit structured conflict telemetry via `debug_logs` (see `OverlayLayoutAdapter.saveLayout`).
 - Action items:
   1. Capture a short repro (logs + steps) showing repeated `409 Conflict` responses when panning/hydrating popups.
   2. File/attach to the backend issue tracker and tag the persistence service owners.
