@@ -448,3 +448,4 @@
 {"ts":"2025-11-05T05:55:35.253Z","type":"commit","sha":"a67c2c18297d5983ff6003453e2c65ced3b72530","files_changed":5,"message":"refactored phase 1"}
 {"ts":"2025-11-04T23:29:12-07:00","type":"note","text":"Continued popup overlay refactor: eliminated local type duplicates, wired extracted row renderer across both render paths, and replaced debug console.logs with gated debug logging."}
 {"ts":"2025-11-04T23:33:30-07:00","type":"note","text":"Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init)."}
+{"ts":"2025-11-05T06:41:52.716Z","type":"commit","sha":"2e4646f28adf2f1c5f75b857f61607ae2cc128d5","files_changed":7,"message":"phase 2 refactored done successfully"}
