@@ -435,3 +435,6 @@
 {"ts":"2025-11-04T22:58:59Z","type":"note","text":"Implemented popup auto-resize workflow: added sizeMode tracking, auto-measurement in components/canvas/popup-overlay.tsx, state updates in components/annotation-app.tsx, and default flags in components/floating-toolbar.tsx."}
 {"ts":"2025-11-04T23:07:39Z","type":"note","text":"Fixed auto-resize reset: measurement queue no longer overwrites height when only position changed, allowing first-run popups to adopt intrinsic height."}
 {"ts":"2025-11-04T23:13:58Z","type":"note","text":"Adjusted auto-resize measurement to read intrinsic content height using data-popup-content scrollHeight so new popups grow beyond default 400px."}
+{"ts":"2025-11-04T23:24:41.182Z","type":"commit","sha":"c5b07e8b595532326417760d6f45467ec904d0c5","files_changed":6,"message":"Yes, but today’s flow snapshots whatever popups are on screen into the new workspace before we clear them. In"}
+{"ts":"2025-11-04T23:28:05Z","type":"note","text":"Updated workspace creation to persist an empty overlay layout so newly created workspaces start with no popups."}
+{"ts":"2025-11-05T00:00:21Z","type":"note","text":"Refined layout change detection so popup resizes trigger persistence: compare only persisted fields (dimensions, positions, hierarchy) before scheduling saves."}

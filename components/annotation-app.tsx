@@ -1452,7 +1452,19 @@ const initialWorkspaceSyncRef = useRef(false)
       return
     }
 
-    const changed = JSON.stringify(overlayPopups) !== JSON.stringify(prevPopupsRef.current)
+    const serializeForChangeDetection = (popups: OverlayPopup[]) =>
+      popups.map(p => ({
+        id: p.id,
+        width: p.width,
+        height: p.height,
+        canvasPosition: p.canvasPosition,
+        position: p.position,
+        level: p.level,
+        parentPopupId: p.parentPopupId,
+        childrenCount: p.children?.length ?? 0,
+      }))
+
+    const changed = JSON.stringify(serializeForChangeDetection(overlayPopups)) !== JSON.stringify(serializeForChangeDetection(prevPopupsRef.current))
     if (!changed) {
       console.log('[AnnotationApp] Save skipped: no changes detected')
       return
@@ -2256,7 +2268,13 @@ const handleCenterNote = useCallback(
   const handleCreateWorkspace = useCallback(async () => {
     if (!overlayPersistenceEnabled) return
 
-    const snapshot = buildLayoutPayload()
+    const emptyLayout: OverlayLayoutPayload = {
+      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: [],
+      inspectors: [],
+      lastSavedAt: new Date().toISOString(),
+    }
+
     const defaultName = computeNextWorkspaceName(workspaces)
     let nameHint = defaultName
 
@@ -2275,8 +2293,8 @@ const handleCenterNote = useCallback(
 
     try {
       const result = await OverlayLayoutAdapter.createWorkspace({
-        layout: snapshot.payload,
-        version: snapshot.payload.schemaVersion,
+        layout: emptyLayout,
+        version: emptyLayout.schemaVersion,
         nameHint,
       })
 
@@ -2315,13 +2333,7 @@ const handleCenterNote = useCallback(
     } finally {
       setIsWorkspaceSaving(false)
     }
-  }, [
-    overlayPersistenceEnabled,
-    buildLayoutPayload,
-    applyOverlayLayout,
-    setCanvasMode,
-    workspaces,
-  ])
+  }, [overlayPersistenceEnabled, setCanvasMode, workspaces])
 
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string) => {
