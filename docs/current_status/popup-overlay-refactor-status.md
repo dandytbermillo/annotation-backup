@@ -39,7 +39,14 @@
 
 ## Next Steps / TODO
 - [x] Wire unit coverage for `popupOverlay/helpers.ts` (breadcrumb parsing, relative-time) and the row renderer to prevent regressions. — See `__tests__/unit/popup-overlay.test.ts`.
-- [ ] Audit remaining `console.log` usage across overlay modules for potential conversion to `debugLog`.
+- [x] Audit remaining `console.log` usage across overlay modules for potential conversion to `debugLog` (no active `console.log` calls remain; `console.warn`/`console.error` retained for user-facing failures).
 - [x] Evaluate further component decomposition (e.g., header/footer subcomponents) to continue shrinking `popup-overlay.tsx`.
 - [x] Confirm persistence logic (server PUT/save) still captures user-driven resizes after the shared renderer changes; added a pointer-up commit guard.
 - [ ] Coordinate with backend team on eliminating layout conflict 409 spam to reduce “hydrating” overlays during panning.
+
+### Backend Coordination (layout conflict 409s)
+- Status: pending handoff — 409 spam persists and needs backend attention.
+- Action items:
+  1. Capture a short repro (logs + steps) showing repeated `409 Conflict` responses when panning/hydrating popups.
+  2. File/attach to the backend issue tracker and tag the persistence service owners.
+  3. Once backend mitigation lands, retest popup hydration to confirm overlays remain stable without suppressing useful telemetry.
