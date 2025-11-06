@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init).
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-05 21:00Z] 1123d8c: fixing the 409
 - commit [2025-11-05 20:34Z] 17a310f: wire up the actual conflict instrumentation and package it for the backend team
 - commit [2025-11-05 20:26Z] 41fc1a0: phase 2 completed
 - commit [2025-11-05 19:29Z] 32c378d: about finish phase 2
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-05 05:55Z] a67c2c1: refactored phase 1
 - commit [2025-11-05 02:23Z] 5e25b20: workspace issue
 - note [2025-11-05 01:20Z]: Fixed stray useEffect after export function; pan-state save cancellation now scoped inside AnnotationAppContent without breaking build.
-- note [2025-11-05 01:18Z]: Moved overlay panning save-cancel hook inside AnnotationAppContent to fix build error; ensures debounced saves clear immediately when panning starts.
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-05 20:34Z] 17a310f: wire up the actual conflict instrumentation and package it for the backend team
+- commit [2025-11-05 21:00Z] 1123d8c: fixing the 409

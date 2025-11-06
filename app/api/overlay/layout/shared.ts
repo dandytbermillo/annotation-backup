@@ -1,9 +1,13 @@
+import type { Pool } from 'pg'
+
 import {
   OVERLAY_LAYOUT_SCHEMA_VERSION,
   OverlayInspectorState,
   OverlayLayoutEnvelope,
   OverlayLayoutPayload,
   OverlayPopupDescriptor,
+  type OverlayResolvedChild,
+  type OverlayResolvedFolder,
 } from '@/lib/types/overlay-layout'
 
 export const MAX_LAYOUT_BYTES = 128 * 1024 // 128 KB cap to avoid runaway payloads
@@ -159,4 +163,231 @@ export type ParsedUserId = string | null | 'invalid'
 export function parseUserId(searchValue: string | null): ParsedUserId {
   if (!searchValue || searchValue.length === 0) return null
   return UUID_REGEX.test(searchValue) ? searchValue : 'invalid'
+}
+
+type FolderRow = {
+  id: string
+  name: string | null
+  path: string | null
+  color: string | null
+  parent_id: string | null
+}
+
+type AncestorRow = {
+  id: string
+  parent_id: string | null
+  color: string | null
+  name: string | null
+  path: string | null
+  origin_id: string
+  depth: number
+}
+
+type ChildRow = {
+  id: string
+  parent_id: string | null
+  name: string | null
+  type: string
+  path: string | null
+  color: string | null
+  created_at: Date | string | null
+  updated_at: Date | string | null
+}
+
+const MAX_COLOR_LOOKUP_DEPTH = 10
+
+function coerceTimestamp(value: Date | string | null): string | null {
+  if (!value) return null
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function toResolvedChild(row: ChildRow): OverlayResolvedChild {
+  const createdAt = coerceTimestamp(row.created_at)
+  const updatedAt = coerceTimestamp(row.updated_at)
+  const normalizedType = row.type === 'folder' ? 'folder' : 'note'
+
+  return {
+    id: row.id,
+    name: row.name ?? 'Untitled',
+    type: normalizedType,
+    color: row.color,
+    path: row.path,
+    parentId: row.parent_id,
+    createdAt,
+    updatedAt,
+  }
+}
+
+function buildResolvedFolder(
+  popupId: string,
+  descriptor: OverlayPopupDescriptor,
+  folderRow: FolderRow | undefined,
+  ancestorRows: AncestorRow[],
+  childRows: ChildRow[]
+): [string, OverlayResolvedFolder] | null {
+  if (!folderRow) {
+    return null
+  }
+
+  const sortedAncestors = ancestorRows
+    .filter(row => row.origin_id === folderRow.id)
+    .sort((a, b) => a.depth - b.depth)
+
+  const resolvedColor =
+    folderRow.color ??
+    (sortedAncestors.find(row => row.color)?.color ?? null)
+
+  const resolvedChildren = childRows
+    .filter(child => child.parent_id === folderRow.id)
+    .map(toResolvedChild)
+
+  const resolvedFolder: OverlayResolvedFolder = {
+    id: folderRow.id,
+    name: folderRow.name ?? descriptor.folderName ?? 'Untitled Folder',
+    level: descriptor.level ?? 0,
+    path: folderRow.path,
+    color: resolvedColor,
+    parentId: folderRow.parent_id,
+    children: resolvedChildren,
+  }
+
+  return [popupId, resolvedFolder]
+}
+
+async function fetchResolvedFolders(
+  layout: OverlayLayoutPayload,
+  pool: Pool
+): Promise<Record<string, OverlayResolvedFolder>> {
+  const folderIds = Array.from(
+    new Set(
+      layout.popups
+        .map(popup => popup.folderId)
+        .filter((id): id is string => Boolean(id))
+    )
+  )
+
+  if (folderIds.length === 0) {
+    return {}
+  }
+
+  const client = await pool.connect()
+  try {
+    const folderQuery = client.query<FolderRow>(
+      `SELECT id, name, path, color, parent_id
+         FROM items
+        WHERE id = ANY($1)
+          AND deleted_at IS NULL`,
+      [folderIds]
+    )
+
+    const ancestorQuery = client.query<AncestorRow>(
+      `WITH RECURSIVE ancestors AS (
+          SELECT id,
+                 parent_id,
+                 color,
+                 name,
+                 path,
+                 id AS origin_id,
+                 0   AS depth
+            FROM items
+           WHERE id = ANY($1)
+             AND deleted_at IS NULL
+          UNION ALL
+          SELECT i.id,
+                 i.parent_id,
+                 i.color,
+                 i.name,
+                 i.path,
+                 ancestors.origin_id,
+                 ancestors.depth + 1
+            FROM items i
+            JOIN ancestors ON ancestors.parent_id = i.id
+           WHERE i.deleted_at IS NULL
+             AND ancestors.depth < $2
+        )
+        SELECT id,
+               parent_id,
+               color,
+               name,
+               path,
+               origin_id,
+               depth
+          FROM ancestors`,
+      [folderIds, MAX_COLOR_LOOKUP_DEPTH]
+    )
+
+    const childrenQuery = client.query<ChildRow>(
+      `SELECT id,
+              parent_id,
+              name,
+              type,
+              path,
+              color,
+              created_at,
+              updated_at
+         FROM items
+        WHERE parent_id = ANY($1)
+          AND deleted_at IS NULL
+        ORDER BY position NULLS LAST, name ASC`,
+      [folderIds]
+    )
+
+    const [folderRows, ancestorRows, childRows] = await Promise.all([
+      folderQuery,
+      ancestorQuery,
+      childrenQuery,
+    ])
+
+    const folderMap = new Map<string, FolderRow>()
+    folderRows.rows.forEach(row => {
+      folderMap.set(row.id, row)
+    })
+
+    const resolvedEntries = layout.popups
+      .map(popup =>
+        buildResolvedFolder(
+          popup.id,
+          popup,
+          popup.folderId ? folderMap.get(popup.folderId) : undefined,
+          ancestorRows.rows,
+          childRows.rows
+        )
+      )
+      .filter((entry): entry is [string, OverlayResolvedFolder] => Boolean(entry))
+
+    return Object.fromEntries(resolvedEntries)
+  } catch (error) {
+    console.error('[overlay-layout] Failed to resolve folder metadata', error)
+    return {}
+  } finally {
+    client.release()
+  }
+}
+
+export async function buildEnvelopeWithMetadata(
+  row: OverlayLayoutRow,
+  pool: Pool
+): Promise<OverlayLayoutEnvelope> {
+  const baseEnvelope = buildEnvelope(row)
+
+  if (baseEnvelope.layout.popups.length === 0) {
+    return baseEnvelope
+  }
+
+  const resolvedFolders = await fetchResolvedFolders(baseEnvelope.layout, pool)
+  if (!resolvedFolders || Object.keys(resolvedFolders).length === 0) {
+    return baseEnvelope
+  }
+
+  return {
+    ...baseEnvelope,
+    layout: {
+      ...baseEnvelope.layout,
+      resolvedFolders,
+    },
+  }
 }

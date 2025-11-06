@@ -16,7 +16,7 @@ import {
   FOLDER_PREVIEW_DELAY_MS,
   TOOLBAR_HOVER_DELAY_MS,
 } from "@/lib/constants/ui-timings"
-import { debugLog } from "@/lib/utils/debug-logger"
+import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 
 
@@ -995,15 +995,38 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     return []
   }
 
+  const logEyeEvent = useCallback(
+    (action: string, metadata: Record<string, unknown>) => {
+      if (!isDebugEnabled()) return
+      void debugLog({
+        component: 'ToolbarEye',
+        action,
+        metadata,
+      })
+    },
+    []
+  )
+
   // Handle folder eye icon hover to show popup
   const handleEyeHover = async (folder: OrgItem, event: React.MouseEvent, parentFolderId?: string) => {
     event.stopPropagation()
     console.log('[handleEyeHover] Called for folder:', folder.name, folder.id, 'parent:', parentFolderId)
+    logEyeEvent('hover_start', {
+      folderId: folder.id,
+      folderName: folder.name,
+      parentFolderId: parentFolderId ?? null,
+      color: folder.color ?? null,
+      level: folder.level,
+    })
 
     // Check if popup already exists for this folder
     const existingPopup = folderPopups.find(p => p.folderId === folder.id)
     if (existingPopup) {
       // Already showing, don't create another
+      logEyeEvent('hover_existing_popup', {
+        folderId: folder.id,
+        popupId: existingPopup.id,
+      })
       return
     }
 
@@ -1039,6 +1062,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     setFolderPopups(prev => [...prev, newPopup])
     console.log('[handleEyeClick] Created popup:', popupId, 'at position:', popupPosition)
+    logEyeEvent('hover_popup_created', {
+      folderId: folder.id,
+      popupId,
+      position: popupPosition,
+    })
 
     // Fetch folder children
     try {
@@ -1070,10 +1098,20 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
             : p
         )
       )
+      logEyeEvent('hover_children_loaded', {
+        folderId: folder.id,
+        popupId,
+        childCount: formattedChildren.length,
+      })
     } catch (error) {
       console.error('Error fetching folder contents:', error)
       // Remove popup on error
       setFolderPopups(prev => prev.filter(p => p.id !== popupId))
+      logEyeEvent('hover_children_error', {
+        folderId: folder.id,
+        popupId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -1238,9 +1276,20 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
 
     console.log('[handleEyeClick] Calling onCreateOverlayPopup with shouldHighlight=true')
+    logEyeEvent('click_popup_created', {
+      folderId: folder.id,
+      popupId,
+      hasEffectiveColor: Boolean(effectiveColor),
+      canvasPosition,
+      screenPosition,
+    })
     // Call callback to create popup in parent (annotation-app)
     // Always pass shouldHighlight=true to trigger glow if already exists
     onCreateOverlayPopup(newPopup, true)
+    logEyeEvent('click_popup_dispatched', {
+      folderId: folder.id,
+      popupId,
+    })
 
     // Close toolbar after creating popup (same pattern as selecting a note)
     onClose()
@@ -1252,6 +1301,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
       const data = await response.json()
       const children = data.items || []
+      logEyeEvent('click_children_fetched', {
+        folderId: folder.id,
+        popupId,
+        childCount: Array.isArray(children) ? children.length : 0,
+      })
 
       const formattedChildren: OrgItem[] = children.map((item: any) => ({
         id: item.id,
@@ -1266,6 +1320,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         children: [],
         parentId: item.parentId
       }))
+      logEyeEvent('click_children_formatted', {
+        folderId: folder.id,
+        popupId,
+        childCount: formattedChildren.length,
+      })
 
       // Update popup with loaded children (preserve displayName)
       const updatedPopup: OverlayPopup = {
@@ -1283,9 +1342,18 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
       // Pass false for shouldHighlight when just updating children data
       onCreateOverlayPopup(updatedPopup, false)
+      logEyeEvent('click_children_applied', {
+        folderId: folder.id,
+        popupId,
+      })
     } catch (error) {
       console.error('Error fetching overlay popup contents:', error)
       // Could add error handling callback here if needed
+      logEyeEvent('click_children_error', {
+        folderId: folder.id,
+        popupId,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 

@@ -2,8 +2,6 @@ import { CoordinateBridge } from '@/lib/utils/coordinate-bridge'
 import {
   OVERLAY_LAYOUT_SCHEMA_VERSION,
   type OverlayLayoutPayload,
-  type OverlayResolvedChild,
-  type OverlayResolvedFolder,
 } from '@/lib/types/overlay-layout'
 
 const DEFAULT_POPUP_WIDTH = 300
@@ -63,8 +61,6 @@ export function buildHydratedOverlayLayout(
     return { popups: [], hash }
   }
 
-  const resolvedFolders = layout.resolvedFolders ?? {}
-
   const restoredPopups: HydratedOverlayPopup[] = sanitizedPopups.map(descriptor => {
     const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, transform)
     const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
@@ -103,38 +99,6 @@ export function buildHydratedOverlayLayout(
     }
 
     console.log('[Restore] Initial popup.folder.color for', displayName, ':', restoredPopup.folder?.color)
-
-    const resolved = resolvedFolders?.[descriptor.id]
-    if (resolved) {
-      const toHydratedChild = (child: OverlayResolvedChild, level: number): HydratedOrgItem => ({
-        id: child.id,
-        name: child.name,
-        type: child.type,
-        level,
-        color: child.color ?? undefined,
-        path: child.path ?? undefined,
-        parentId: child.parentId ?? undefined,
-        children: child.type === 'folder' ? [] : undefined,
-      })
-
-      const baseLevel = Number.isFinite(resolved.level) ? resolved.level : descriptor.level || 0
-      const folderChildren =
-        resolved.children?.map(child => toHydratedChild(child, baseLevel + 1)) ?? []
-
-      restoredPopup.folderName = resolved.name || restoredPopup.folderName
-      restoredPopup.folder = {
-        id: resolved.id,
-        name: resolved.name || restoredPopup.folderName,
-        type: 'folder',
-        level: baseLevel,
-        color: resolved.color ?? undefined,
-        path: resolved.path ?? undefined,
-        parentId: resolved.parentId ?? undefined,
-        children: folderChildren,
-      }
-      restoredPopup.children = folderChildren
-      restoredPopup.isLoading = false
-    }
 
     return restoredPopup
   })

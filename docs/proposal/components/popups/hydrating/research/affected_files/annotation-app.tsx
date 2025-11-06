@@ -19,7 +19,7 @@ import {
   type OverlayWorkspaceSummary,
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
-import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
+import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasMode, type CanvasMode } from "@/lib/canvas/use-canvas-mode"
 import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
@@ -1117,13 +1117,8 @@ const initialWorkspaceSyncRef = useRef(false)
     }))
     setOverlayPopups(restoredPopups)
 
-    const popupsNeedingFetch = restoredPopups.filter(p => p.isLoading && p.folderId)
-    if (popupsNeedingFetch.length === 0) {
-      return
-    }
-
-    // Fallback: fetch folder data when metadata was not prefetched
-    popupsNeedingFetch.forEach(async (popup) => {
+    // Fetch folder data for each popup (needed to get color if not cached)
+    restoredPopups.forEach(async (popup) => {
       if (!popup.folderId) return
 
       try {

@@ -5,7 +5,7 @@ import { WorkspaceStore } from '@/lib/workspace/workspace-store'
 
 import {
   MAX_LAYOUT_BYTES,
-  buildEnvelope,
+  buildEnvelopeWithMetadata,
   normalizeLayout,
   parseUserId,
 } from '../shared'
@@ -53,7 +53,7 @@ export async function GET(
       return NextResponse.json({ error: 'Layout not found' }, { status: 404 })
     }
 
-    const payload = buildEnvelope(result.rows[0])
+    const payload = await buildEnvelopeWithMetadata(result.rows[0], pool)
     return NextResponse.json(payload)
   } catch (error) {
     console.error('Overlay layout fetch failed', error)
@@ -133,7 +133,7 @@ export async function PUT(
         const row = existing.rows[0]
         if (!bodyRevision || bodyRevision !== row.revision) {
           await client.query('ROLLBACK')
-          const payload = buildEnvelope(row)
+          const payload = await buildEnvelopeWithMetadata(row, pool)
           return NextResponse.json(payload, { status: 409 })
         }
 
@@ -155,7 +155,7 @@ export async function PUT(
         )
 
         await client.query('COMMIT')
-        const payload = buildEnvelope(updated.rows[0])
+        const payload = await buildEnvelopeWithMetadata(updated.rows[0], pool)
         return NextResponse.json(payload)
       }
 
@@ -172,7 +172,7 @@ export async function PUT(
       )
 
       await client.query('COMMIT')
-      const payload = buildEnvelope(inserted.rows[0])
+      const payload = await buildEnvelopeWithMetadata(inserted.rows[0], pool)
       return NextResponse.json(payload)
     } catch (error) {
       await client.query('ROLLBACK')

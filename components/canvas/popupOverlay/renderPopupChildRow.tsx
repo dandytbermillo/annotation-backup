@@ -13,6 +13,7 @@ import { HOVER_HIGHLIGHT_DURATION_MS } from '@/lib/constants/ui-timings'
 import type { LayerContextValue } from '@/components/canvas/layer-provider'
 import type { PopupChildNode, PopupData, PreviewEntry } from './types'
 import { formatRelativeTime, isFolderNode, isNoteLikeNode } from './helpers'
+import { debugLog, isDebugEnabled } from '@/lib/utils/debug-logger'
 
 export interface PopupChildRowOptions {
   previewEntry?: PreviewEntry
@@ -112,6 +113,19 @@ export const createPopupChildRowRenderer = (
     requestPreview(popupId, child)
   }
 
+  const logEyeEvent = (action: string, metadata: Record<string, unknown>) => {
+    if (!isDebugEnabled()) return
+    void debugLog({
+      component: 'PopupOverlayEye',
+      action,
+      metadata: {
+        popupId,
+        childId: child.id,
+        ...metadata,
+      },
+    })
+  }
+
   const handleFolderHover = (
     event: React.MouseEvent | React.FocusEvent,
     persistent = false
@@ -119,6 +133,12 @@ export const createPopupChildRowRenderer = (
     if (rowIsPanning || !folderLike) {
       return
     }
+
+    logEyeEvent('hover_start', {
+      persistent,
+      source: event.type,
+      popupCount: popups.size,
+    })
 
     onHoverFolder?.(child, event as React.MouseEvent, popupId, persistent)
 
@@ -128,6 +148,9 @@ export const createPopupChildRowRenderer = (
     )
 
     if (childPopup) {
+      logEyeEvent('hover_existing_popup', {
+        matchedPopupId: childPopup.id,
+      })
       if (hoverHighlightTimeoutRef.current) {
         clearTimeout(hoverHighlightTimeoutRef.current)
       }
@@ -138,6 +161,11 @@ export const createPopupChildRowRenderer = (
         setHoverHighlightedPopup(null)
         hoverHighlightTimeoutRef.current = null
       }, HOVER_HIGHLIGHT_DURATION_MS)
+    } else {
+      logEyeEvent('hover_no_popup_found', {
+        persistent,
+        trackedPopups: popups.size,
+      })
     }
   }
 
@@ -267,20 +295,24 @@ export const createPopupChildRowRenderer = (
             type="button"
             aria-label="Preview note"
             className="p-1 rounded hover:bg-gray-700 text-gray-300"
-            onMouseEnter={(event) => handlePreviewTooltipHover(child.id, event)}
-            onMouseLeave={handlePreviewTooltipLeave}
-            onClick={(event) => {
-              event.stopPropagation()
-              onSelectNote?.(child.id)
-            }}
-          >
-            <Eye className="w-4 h-4 text-white" />
-          </button>
+      onMouseEnter={(event) => handlePreviewTooltipHover(child.id, event)}
+      onMouseLeave={handlePreviewTooltipLeave}
+      onClick={(event) => {
+        event.stopPropagation()
+        logEyeEvent('note_eye_click', { hasModifier: event.metaKey || event.ctrlKey || event.shiftKey })
+        onSelectNote?.(child.id)
+      }}
+    >
+      <Eye className="w-4 h-4 text-white" />
+    </button>
         )}
         {folderLike && (
           <div
             onMouseEnter={(event) => handleFolderHover(event, false)}
-            onMouseLeave={() => onLeaveFolder?.(child.id, popupId)}
+            onMouseLeave={() => {
+              logEyeEvent('hover_leave', {})
+              onLeaveFolder?.(child.id, popupId)
+            }}
             className="inline-block"
           >
             <TooltipProvider delayDuration={150}>
@@ -293,9 +325,15 @@ export const createPopupChildRowRenderer = (
                     onFocus={(event) => handleFolderHover(event, false)}
                     onClick={(event) => {
                       event.stopPropagation()
+                      logEyeEvent('click_open_folder', {
+                        hasModifier: event.ctrlKey || event.metaKey || event.shiftKey,
+                      })
                       handleFolderHover(event, true)
                     }}
-                    onBlur={() => onLeaveFolder?.(child.id, popupId)}
+                    onBlur={() => {
+                      logEyeEvent('hover_blur', {})
+                      onLeaveFolder?.(child.id, popupId)
+                    }}
                   >
                     <Eye className="w-4 h-4 text-blue-400" />
                   </button>
