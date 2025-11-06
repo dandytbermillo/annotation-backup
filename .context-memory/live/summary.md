@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init).
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-06 21:49Z] 0374813: popup is opened with empty contents
 - commit [2025-11-06 05:39Z] e28d720: after implementing new workspace architecture
 - commit [2025-11-06 02:38Z] 4bf405b: refine architecture
 - commit [2025-11-05 21:00Z] 1123d8c: fixing the 409
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-05 06:41Z] 2e4646f: phase 2 refactored done successfully
 - note [2025-11-05 06:33Z]: Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init).
 - note [2025-11-05 06:29Z]: Continued popup overlay refactor: eliminated local type duplicates, wired extracted row renderer across both render paths, and replaced debug console.logs with gated debug logging.
-- commit [2025-11-05 05:55Z] a67c2c1: refactored phase 1
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-06 05:39Z] e28d720: after implementing new workspace architecture
+- commit [2025-11-06 21:49Z] 0374813: popup is opened with empty contents

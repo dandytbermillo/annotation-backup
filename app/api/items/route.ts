@@ -138,7 +138,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     return await withWorkspaceClient(serverPool, async (client, workspaceId) => {
-      const body = await request.json()
+      const isOverlayRequest = request.headers.has('x-overlay-workspace-id')
+      let body: any
+      try {
+        body = await request.json()
+      } catch {
+        return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+      }
       const {
         type,
         parentId,
@@ -149,13 +155,19 @@ export async function POST(request: NextRequest) {
         color,
         position = 0,
       } = body
-      const bodyWorkspaceId =
-        typeof body?.workspaceId === 'string' && body.workspaceId.length > 0
-          ? body.workspaceId
-          : undefined
+      const rawBodyWorkspaceId = typeof body?.workspaceId === 'string' && body.workspaceId.length > 0
+        ? body.workspaceId
+        : undefined
       const headerWorkspaceId = request.headers.get('x-overlay-workspace-id') ?? undefined
       const requestedWorkspaceId =
-        bodyWorkspaceId ?? headerWorkspaceId ?? undefined
+        rawBodyWorkspaceId ?? headerWorkspaceId ?? undefined
+
+      if (isOverlayRequest && !requestedWorkspaceId) {
+        return NextResponse.json(
+          { error: 'workspaceId is required for overlay operations' },
+          { status: 400 },
+        )
+      }
 
       let activeWorkspaceId = workspaceId
       if (requestedWorkspaceId && requestedWorkspaceId !== workspaceId) {

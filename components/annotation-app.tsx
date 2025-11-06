@@ -597,6 +597,57 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     },
     [currentWorkspaceId]
   )
+
+  const fetchFolderWithFallback = useCallback(
+    async (folderId: string): Promise<{ payload: any; usedFallback: boolean } | null> => {
+      try {
+        const scopedResponse = await fetchWithWorkspace(`/api/items/${folderId}`)
+        if (scopedResponse.ok) {
+          return { payload: await scopedResponse.json(), usedFallback: false }
+        }
+        if (scopedResponse.status === 404 && currentWorkspaceId) {
+          const fallbackResponse = await fetch(`/api/items/${folderId}`)
+          if (fallbackResponse.ok) {
+            return { payload: await fallbackResponse.json(), usedFallback: true }
+          }
+        }
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'popup_restore_fetch_failed',
+          metadata: { folderId, status: scopedResponse.status }
+        })
+        return null
+      } catch (error) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'popup_restore_fetch_failed',
+          metadata: {
+            folderId,
+            status: 'network_error',
+            error: error instanceof Error ? error.message : 'Unknown error'
+          }
+        })
+        return null
+      }
+    },
+    [fetchWithWorkspace, currentWorkspaceId]
+  )
+
+  const fetchChildrenWithFallback = useCallback(
+    async (folderId: string, useFallback: boolean): Promise<any[] | null> => {
+      if (useFallback) {
+        const fallbackResponse = await fetch(`/api/items?parentId=${folderId}`)
+        if (!fallbackResponse.ok) return null
+        const fallbackData = await fallbackResponse.json().catch(() => ({ items: [] }))
+        return Array.isArray(fallbackData.items) ? fallbackData.items : []
+      }
+      const response = await fetchWithWorkspace(`/api/items?parentId=${folderId}`)
+      if (!response.ok) return null
+      const data = await response.json().catch(() => ({ items: [] }))
+      return Array.isArray(data.items) ? data.items : []
+    },
+    [fetchWithWorkspace]
+  )
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
     ? 'Deleting...'
@@ -634,7 +685,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
 
     const loadOrganizationSidebar = async () => {
       try {
-        const rootResponse = await fetchWithWorkspace('/api/items?parentId=null')
+        const rootResponse = await fetch('/api/items?parentId=null')
         if (!rootResponse.ok) return
         const rootData = await rootResponse.json().catch(() => ({ items: [] }))
         const rootItems: any[] = Array.isArray(rootData?.items) ? rootData.items : []
@@ -648,7 +699,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
         if (knowledgeBase) {
           let children: any[] = []
           try {
-            const childResponse = await fetchWithWorkspace(`/api/items?parentId=${knowledgeBase.id}`)
+            const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
             if (childResponse.ok) {
               const childData = await childResponse.json().catch(() => ({ items: [] }))
               if (Array.isArray(childData?.items)) {
@@ -1260,17 +1311,11 @@ const initialWorkspaceSyncRef = useRef(false)
       if (!popup.folderId) return
 
       try {
-        const response = await fetchWithWorkspace(`/api/items/${popup.folderId}`)
-        if (!response.ok) {
-          debugLog({
-            component: 'AnnotationApp',
-            action: 'popup_restore_fetch_failed',
-            metadata: { folderId: popup.folderId, status: response.status }
-          })
+        const result = await fetchFolderWithFallback(popup.folderId)
+        if (!result) {
           return
         }
-
-        const responseData = await response.json()
+        const responseData = result.payload
         const folderData = responseData.item || responseData
 
         // Get the cached color from the descriptor
@@ -1321,11 +1366,9 @@ const initialWorkspaceSyncRef = useRef(false)
         console.log('[Restore] Final effectiveColor for', folderData.name, ':', effectiveColor)
 
         // Fetch children
-        const childrenResponse = await fetchWithWorkspace(`/api/items?parentId=${popup.folderId}`)
-        if (!childrenResponse.ok) return
-
-        const childrenData = await childrenResponse.json()
-        const children = (childrenData.items || []).map((item: any) => ({
+        const childItems = await fetchChildrenWithFallback(popup.folderId, result.usedFallback)
+        if (!childItems) return
+        const children = childItems.map((item: any) => ({
           id: item.id,
           name: item.name,
           type: item.type,
@@ -1337,7 +1380,7 @@ const initialWorkspaceSyncRef = useRef(false)
           hasChildren: item.type === 'folder',
           level: popup.level + 1,
           children: [],
-          parentId: item.parentId,
+          parentId: item.parentId ?? item.parent_id,
         }))
 
         setOverlayPopups(prev => {

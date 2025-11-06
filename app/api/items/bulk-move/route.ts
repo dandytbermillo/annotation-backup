@@ -11,7 +11,13 @@ export async function POST(request: NextRequest) {
   const client = await serverPool.connect()
 
   try {
-    const body = await request.json()
+    const isOverlayRequest = request.headers.has('x-overlay-workspace-id')
+    let body: any
+    try {
+      body = await request.json()
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+    }
     const { itemIds, targetFolderId } = body
     const bodyWorkspaceId = typeof body.workspaceId === 'string' && body.workspaceId.length > 0 ? body.workspaceId : undefined
     const headerWorkspaceId = request.headers.get('x-overlay-workspace-id') ?? undefined
@@ -33,15 +39,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Get workspace ID for validation
-    let workspaceId: string
+    let workspaceId: string | null = null
     if (requestedWorkspaceId) {
-      const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
-      if (exists.rowCount === 0) {
-        client.release()
-        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
-      }
       workspaceId = requestedWorkspaceId
     } else {
+      if (isOverlayRequest) {
+        client.release()
+        return NextResponse.json(
+          { error: 'workspaceId is required for overlay operations' },
+          { status: 400 }
+        )
+      }
       try {
         workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
       } catch (e) {
@@ -52,6 +60,14 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
+    }
+
+    if (!workspaceId) {
+      client.release()
+      return NextResponse.json(
+        { error: 'Workspace resolution failed' },
+        { status: 500 }
+      )
     }
 
     await client.query('SELECT set_config($1, $2, false)', [
