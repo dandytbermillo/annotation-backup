@@ -43,6 +43,24 @@ export async function DELETE(
       )
     }
 
+    const deleteWorkspaceDependencies = [
+      'overlay_layouts',
+      'connections',
+      'snapshots',
+      'document_saves',
+      'debug_logs',
+      'offline_queue',
+      'search_history',
+      'panels',
+      'branches',
+      'notes',
+      'items',
+    ] as const
+
+    for (const table of deleteWorkspaceDependencies) {
+      await client.query(`DELETE FROM ${table} WHERE workspace_id = $1`, [workspaceId])
+    }
+
     await client.query('DELETE FROM workspaces WHERE id = $1', [workspaceId])
     await client.query('COMMIT')
 

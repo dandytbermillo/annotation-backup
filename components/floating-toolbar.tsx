@@ -1437,7 +1437,9 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     setIsCreatingNote(true)
     try {
-      const result = await createNote({})
+      const result = await createNote({
+        workspaceId: workspaceId ?? undefined
+      })
 
       if (result.success && result.noteId) {
         // Open the newly created note

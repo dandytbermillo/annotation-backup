@@ -3508,7 +3508,9 @@ const handleCenterNote = useCallback(
 
     setIsCreatingNoteFromToolbar(true)
     try {
-      const result = await createNote({})
+      const result = await createNote({
+        workspaceId: currentWorkspaceId ?? undefined
+      })
 
       if (result.success && result.noteId) {
         // Open the newly created note
@@ -3523,7 +3525,7 @@ const handleCenterNote = useCallback(
     } finally {
       setIsCreatingNoteFromToolbar(false)
     }
-  }, [isCreatingNoteFromToolbar, handleNoteSelect])
+  }, [isCreatingNoteFromToolbar, handleNoteSelect, currentWorkspaceId])
 
   // Handler for opening settings from workspace toolbar
   const handleSettingsFromToolbar = useCallback(() => {

@@ -8,6 +8,7 @@ interface CreateNoteOptions {
   parentId?: string | null
   metadata?: Record<string, any>
   initialPosition?: { x: number; y: number } | null
+  workspaceId?: string | null
 }
 
 interface CreateNoteResult {
@@ -61,7 +62,14 @@ export async function fetchRecentNotes(limit: number = 5): Promise<any[]> {
  */
 export async function createNote(options: CreateNoteOptions = {}): Promise<CreateNoteResult> {
   try {
-    const { name, parentId = null, metadata = {}, initialPosition = null } = options
+    const { name, parentId = null, metadata = {}, initialPosition = null, workspaceId = null } = options
+
+    const applyWorkspaceHeaders = (headers: Record<string, string>) => {
+      if (workspaceId) {
+        headers['X-Overlay-Workspace-ID'] = workspaceId
+      }
+      return headers
+    }
 
     // Generate default name if not provided
     const timestamp = new Date().toLocaleString('en-US', {
@@ -80,7 +88,13 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     if (finalParentId === null || finalParentId === undefined) {
       try {
         // Fetch all folders and search for Uncategorized (it's nested under Knowledge Base)
-        const foldersResponse = await fetch('/api/items?type=folder')
+        const folderParams = new URLSearchParams({ type: 'folder' })
+        if (workspaceId) {
+          folderParams.set('workspaceId', workspaceId)
+        }
+        const foldersResponse = await fetch(`/api/items?${folderParams.toString()}`, {
+          headers: applyWorkspaceHeaders({ Accept: 'application/json' })
+        })
         if (foldersResponse.ok) {
           const data = await foldersResponse.json()
           // Search by path since Uncategorized is at /knowledge-base/uncategorized
@@ -99,13 +113,14 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     // Create the note
     const response = await fetch('/api/items', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: applyWorkspaceHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         type: 'note',
         name: noteName,
         parentId: finalParentId,
         metadata,
-        initialPosition
+        initialPosition,
+        workspaceId: workspaceId ?? undefined
       })
     })
 

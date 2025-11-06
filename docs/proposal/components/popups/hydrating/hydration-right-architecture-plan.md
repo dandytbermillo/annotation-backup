@@ -1,12 +1,13 @@
 # Overlay Hydration Architecture Fix – Implementation Plan
 
 ## Objective
-Guarantee that overlay layouts and the underlying folder records always belong to the same workspace so hydration never relies on cross-workspace data or slow fallback fetches.
+Guarantee that overlay layouts and the underlying folder records always belong to the same workspace so hydration never relies on cross-workspace data or slow fallback fetches. This plan exists because we repeatedly saw “Workspace hydrating…” lock the popup canvas whenever a layout contained stale folder IDs (for example, Workspace 1 referencing `folder 3`, which actually lives in the default workspace). Each time hydration hit that mismatch it retried, froze the overlay, and made dragging feel impossibly heavy—fixing that data drift removes the spinner and the sluggish drag behaviour.
 
 ## Guiding Principles
 - A popup rendered in overlay workspace **W** must reference folders/items that also live in workspace **W**.
 - Folder creation and movement must respect the active overlay workspace selection.
 - Hydration should surface (not silently drop) any remaining mismatches so users can repair them.
+- The Workspace Organization sidebar must expose the canonical starter folders (`Knowledge Base`, `my documents`, `personal info`, `projectsx`, `todo`, `Uncategorized`) in every workspace—existing and newly created—so users see the same entry set regardless of which workspace is active.
 
 ## Work Breakdown
 
@@ -36,7 +37,13 @@ Guarantee that overlay layouts and the underlying folder records always belong t
 2. For each mismatch, either clone the folder into the correct workspace or flag it for manual repair.
 3. Document the findings (workspaces affected, folder IDs) and store them in `docs/proposal/components/popups/hydrating/` for future reference.
 
-### 5. UI Feedback & Repairs (Optional)
+### 5. Workspace Organization Parity
+1. Introduce a server-side guard (e.g., `WorkspaceStore.ensureBaselineFolders(workspaceId)`) that seeds the canonical sidebar folders when a workspace is created or activated.
+2. On client boot (toolbar/sidebar load), call a lightweight “ensure parity” endpoint that verifies the baseline folders exist and rehydrates the sidebar once seeding finishes.
+3. Add a backfill job that iterates through existing workspaces, creating any missing baseline folders so legacy data matches the enforced structure.
+4. Extend telemetry to log whenever seeding occurs so QA can confirm parity in all environments.
+
+### 6. UI Feedback & Repairs (Optional)
 - Provide a modal listing mismatched folders with options:
   1. Clone into current workspace (creates new items with matching workspace IDs).
   2. Remove popup from workspace layout.
