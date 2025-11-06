@@ -10,9 +10,23 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const client = await pool.connect()
+
   try {
     const { id } = await params
-    
+    const headerWorkspaceId = request.headers.get('x-overlay-workspace-id')
+    if (headerWorkspaceId) {
+      const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [headerWorkspaceId])
+      if (exists.rowCount === 0) {
+        await client.release()
+        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+      }
+      await client.query('SELECT set_config($1, $2, false)', [
+        'app.current_workspace_id',
+        headerWorkspaceId,
+      ])
+    }
+
     const query = `
       SELECT 
         id, type, parent_id, path, name, slug, position,
@@ -21,8 +35,7 @@ export async function GET(
       FROM items 
       WHERE id = $1 AND deleted_at IS NULL
     `
-    
-    const result = await pool.query(query, [id])
+    const result = await client.query(query, [id])
     
     if (result.rows.length === 0) {
       return NextResponse.json(
@@ -37,7 +50,7 @@ export async function GET(
     let contentText: string | null = null
 
     if (!content || (typeof content === 'object' && Object.keys(content).length === 0)) {
-      const docResult = await pool.query(
+      const docResult = await client.query(
         `SELECT content, document_text 
            FROM document_saves 
           WHERE note_id = $1 
@@ -53,7 +66,7 @@ export async function GET(
     }
 
     if (!contentText) {
-      const noteTextResult = await pool.query(
+      const noteTextResult = await client.query(
         `SELECT content_text 
            FROM notes 
           WHERE id = $1`,
@@ -81,9 +94,10 @@ export async function GET(
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }
-    
+    await client.release()
     return NextResponse.json({ item })
   } catch (error) {
+    await client.release()
     console.error('Error fetching item:', error)
     return NextResponse.json(
       { error: 'Failed to fetch item' },
@@ -105,6 +119,21 @@ export async function PUT(
     const { id } = await params
     const body = await request.json()
     const { name, content, metadata, icon, color, position } = body
+    const bodyWorkspaceId = typeof body.workspaceId === 'string' && body.workspaceId.length > 0 ? body.workspaceId : undefined
+    const headerWorkspaceId = request.headers.get('x-overlay-workspace-id') ?? undefined
+    const requestedWorkspaceId = bodyWorkspaceId ?? headerWorkspaceId
+
+    if (requestedWorkspaceId) {
+      const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
+      if (exists.rowCount === 0) {
+        client.release()
+        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+      }
+      await client.query('SELECT set_config($1, $2, false)', [
+        'app.current_workspace_id',
+        requestedWorkspaceId,
+      ])
+    }
 
     const updates = []
     const values = []

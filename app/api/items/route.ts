@@ -11,6 +11,21 @@ export async function GET(request: NextRequest) {
       const type = searchParams.get('type')
       const parentId = searchParams.get('parentId')
       const limit = parseInt(searchParams.get('limit') || '100')
+      const requestedWorkspaceId =
+        searchParams.get('workspaceId') ?? request.headers.get('x-overlay-workspace-id') ?? undefined
+
+      let activeWorkspaceId = workspaceId
+      if (requestedWorkspaceId && requestedWorkspaceId !== workspaceId) {
+        const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
+        if (exists.rowCount === 0) {
+          return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+        }
+        await client.query('SELECT set_config($1, $2, false)', [
+          'app.current_workspace_id',
+          requestedWorkspaceId,
+        ])
+        activeWorkspaceId = requestedWorkspaceId
+      }
 
       let query = ''
       let values: any[] = []
@@ -31,7 +46,7 @@ export async function GET(request: NextRequest) {
             length(path)
           LIMIT $${type ? 4 : 3}
         `
-        values = [workspaceId, `%${search}%`]
+        values = [activeWorkspaceId, `%${search}%`]
         if (type) values.push(type)
         values.push(limit)
       } else if (type && !parentId) {
@@ -47,7 +62,7 @@ export async function GET(request: NextRequest) {
           ORDER BY path
           LIMIT $3
         `
-        values = [workspaceId, type, limit]
+        values = [activeWorkspaceId, type, limit]
       } else if (parentId !== undefined) {
         query = `
           SELECT 
@@ -60,7 +75,7 @@ export async function GET(request: NextRequest) {
             AND deleted_at IS NULL
           ORDER BY type DESC, position, name
         `
-        values = parentId === 'null' ? [workspaceId] : [workspaceId, parentId]
+        values = parentId === 'null' ? [activeWorkspaceId] : [activeWorkspaceId, parentId]
       } else {
         query = `
           WITH RECURSIVE tree AS (
@@ -86,7 +101,7 @@ export async function GET(request: NextRequest) {
           )
           SELECT * FROM tree ORDER BY path
         `
-        values = [workspaceId]
+        values = [activeWorkspaceId]
       }
 
       const result = await client.query(query, values)
@@ -124,7 +139,39 @@ export async function POST(request: NextRequest) {
   try {
     return await withWorkspaceClient(serverPool, async (client, workspaceId) => {
       const body = await request.json()
-      const { type, parentId, name, content, metadata = {}, icon, color, position = 0 } = body
+      const {
+        type,
+        parentId,
+        name,
+        content,
+        metadata = {},
+        icon,
+        color,
+        position = 0,
+      } = body
+      const bodyWorkspaceId =
+        typeof body?.workspaceId === 'string' && body.workspaceId.length > 0
+          ? body.workspaceId
+          : undefined
+      const headerWorkspaceId = request.headers.get('x-overlay-workspace-id') ?? undefined
+      const requestedWorkspaceId =
+        bodyWorkspaceId ?? headerWorkspaceId ?? undefined
+
+      let activeWorkspaceId = workspaceId
+      if (requestedWorkspaceId && requestedWorkspaceId !== workspaceId) {
+        const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [
+          requestedWorkspaceId,
+        ])
+        if (exists.rowCount === 0) {
+          return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+        }
+
+        await client.query('SELECT set_config($1, $2, false)', [
+          'app.current_workspace_id',
+          requestedWorkspaceId,
+        ])
+        activeWorkspaceId = requestedWorkspaceId
+      }
 
       if (!type || !name) {
         return NextResponse.json(
@@ -152,7 +199,7 @@ export async function POST(request: NextRequest) {
            AND ${parentId ? 'parent_id = $2' : 'parent_id IS NULL'}
            AND LOWER(name) = LOWER($${parentId ? '3' : '2'})
            AND deleted_at IS NULL`,
-        parentId ? [workspaceId, parentId, name] : [workspaceId, name],
+        parentId ? [activeWorkspaceId, parentId, name] : [activeWorkspaceId, name],
       )
 
       if (duplicateCheck.rows.length > 0) {
@@ -170,7 +217,7 @@ export async function POST(request: NextRequest) {
              WHERE workspace_id = $1
                AND ${parentId ? 'parent_id = $2' : 'parent_id IS NULL'}
                AND LOWER(name) = LOWER($${parentId ? '3' : '2'})`,
-            parentId ? [workspaceId, parentId, candidateName] : [workspaceId, candidateName],
+            parentId ? [activeWorkspaceId, parentId, candidateName] : [activeWorkspaceId, candidateName],
           )
 
           if (existingCheck.rows.length === 0) {
@@ -208,7 +255,7 @@ export async function POST(request: NextRequest) {
         icon || null,
         color || null,
         position,
-        workspaceId,
+        activeWorkspaceId,
       ]
 
       try {
@@ -241,7 +288,7 @@ export async function POST(request: NextRequest) {
                 metadata = EXCLUDED.metadata,
                 updated_at = EXCLUDED.updated_at
             `,
-            [row.id, row.name, metadata, workspaceId, row.created_at, row.updated_at],
+            [row.id, row.name, metadata, activeWorkspaceId, row.created_at, row.updated_at],
           )
         }
 
@@ -259,7 +306,7 @@ export async function POST(request: NextRequest) {
                 AND deleted_at IS NULL
               LIMIT 1
             `,
-            [workspaceId, path],
+            [activeWorkspaceId, path],
           )
 
           const existingRow = existingResult.rows[0]

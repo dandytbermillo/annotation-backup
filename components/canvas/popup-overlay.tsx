@@ -559,6 +559,7 @@ interface PopupOverlayProps {
   isLocked?: boolean;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
+  workspaceId?: string | null;
 }
 
 // Format relative time (e.g., "2h ago", "3d ago")
@@ -592,6 +593,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   isLocked = false,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
+  workspaceId = null,
 }) => {
   const multiLayerEnabled = true;
   const debugLoggingEnabled = isDebugEnabled();
@@ -603,6 +605,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return baseDebugLog(...args);
     },
     [debugLoggingEnabled]
+  );
+
+  const fetchWithWorkspace = useCallback(
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? {});
+      if (workspaceId) {
+        headers.set('X-Overlay-Workspace-ID', workspaceId);
+      }
+      return fetch(input, { ...init, headers });
+    },
+    [workspaceId]
   );
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
   const previewStateRef = useRef(previewState);
@@ -775,7 +788,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     previewControllersRef.current.set(controllerKey, controller);
 
     try {
-      const response = await fetch(`/api/items/${childId}`, {
+      const response = await fetchWithWorkspace(`/api/items/${childId}`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -1114,7 +1127,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setFolderCreationError(null);
 
     try {
-      const response = await fetch('/api/items', {
+      const response = await fetchWithWorkspace('/api/items', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1124,6 +1137,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           type: 'folder',
           name: trimmedName,
           parentId: parentFolderId,
+          ...(workspaceId ? { workspaceId } : {}),
         }),
       });
 
@@ -1287,10 +1301,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setRenameError(null);
 
     try {
-      const response = await fetch(`/api/items/${popup.folder.id}`, {
+      const response = await fetchWithWorkspace(`/api/items/${popup.folder.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmedName })
+        body: JSON.stringify({
+          name: trimmedName,
+          ...(workspaceId ? { workspaceId } : {}),
+        })
       });
 
       if (!response.ok) {
@@ -1377,10 +1394,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setRenameError(null);
 
     try {
-      const response = await fetch(`/api/items/${renamingListFolder.folderId}`, {
+      const response = await fetchWithWorkspace(`/api/items/${renamingListFolder.folderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: trimmedName })
+        body: JSON.stringify({
+          name: trimmedName,
+          ...(workspaceId ? { workspaceId } : {}),
+        })
       });
 
       if (!response.ok) {
@@ -1454,7 +1474,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       const maxDepth = 10;
 
       while (currentId && depth < maxDepth) {
-        const response = await fetch(`/api/items/${currentId}`);
+        const response = await fetchWithWorkspace(`/api/items/${currentId}`);
         if (!response.ok) {
           console.error('[fetchAncestors] Failed to fetch folder:', currentId, response.status);
           break;
@@ -1588,7 +1608,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
     // Fetch folder children
     try {
-      const response = await fetch(`/api/items?parentId=${ancestor.id}`);
+      const response = await fetchWithWorkspace(`/api/items?parentId=${ancestor.id}`);
       if (!response.ok) throw new Error('Failed to fetch folder contents');
 
       const data = await response.json();
@@ -1654,7 +1674,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
 
       try {
-        const response = await fetch(`/api/items/${noteId}`);
+        const response = await fetchWithWorkspace(`/api/items/${noteId}`);
         if (!response.ok) throw new Error('Failed to fetch note');
 
         const data = await response.json();

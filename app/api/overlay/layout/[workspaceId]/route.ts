@@ -40,8 +40,9 @@ export async function GET(
       version: string
       revision: string
       updated_at: string
+      workspace_id: string | null
     }>(
-      `SELECT layout, version, revision::text AS revision, updated_at
+      `SELECT layout, version, revision::text AS revision, updated_at, workspace_id::text AS workspace_id
          FROM overlay_layouts
         WHERE workspace_id = $1
           AND user_id IS NOT DISTINCT FROM $2
@@ -120,8 +121,9 @@ export async function PUT(
         version: string
         revision: string
         updated_at: string
+        workspace_id: string | null
       }>(
-        `SELECT id, layout, version, revision::text AS revision, updated_at
+        `SELECT id, layout, version, revision::text AS revision, updated_at, workspace_id::text AS workspace_id
            FROM overlay_layouts
           WHERE workspace_id = $1
             AND user_id IS NOT DISTINCT FROM $2
@@ -142,6 +144,7 @@ export async function PUT(
           version: string
           revision: string
           updated_at: string
+          workspace_id: string | null
         }>(
           `UPDATE overlay_layouts
               SET layout = $1,
@@ -150,7 +153,7 @@ export async function PUT(
                   updated_at = NOW(),
                   user_id = $3
             WHERE id = $4
-        RETURNING layout, version, revision::text AS revision, updated_at`,
+        RETURNING layout, version, revision::text AS revision, updated_at, workspace_id::text AS workspace_id`,
           [normalizedLayout, version, userId, row.id]
         )
 
@@ -164,10 +167,11 @@ export async function PUT(
         version: string
         revision: string
         updated_at: string
+        workspace_id: string | null
       }>(
         `INSERT INTO overlay_layouts (workspace_id, user_id, layout, version)
          VALUES ($1, $2, $3, $4)
-      RETURNING layout, version, revision::text AS revision, updated_at`,
+      RETURNING layout, version, revision::text AS revision, updated_at, workspace_id::text AS workspace_id`,
         [workspaceId, userId, normalizedLayout, version]
       )
 

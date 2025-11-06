@@ -37,6 +37,7 @@ export interface OverlayResolvedFolder {
   color?: string | null
   parentId?: string | null
   children: OverlayResolvedChild[]
+  workspaceId?: string | null
 }
 
 export interface OverlayInspectorState {
@@ -51,6 +52,20 @@ export interface OverlayLayoutPayload {
   inspectors: OverlayInspectorState[]
   lastSavedAt: string
   resolvedFolders?: Record<string, OverlayResolvedFolder>
+  diagnostics?: OverlayLayoutDiagnostics
+}
+
+export interface OverlayLayoutDiagnostics {
+  missingFolders: Array<{
+    popupId: string
+    folderId: string | null
+  }>
+  workspaceMismatches: Array<{
+    popupId: string
+    folderId: string | null
+    expectedWorkspaceId: string | null
+    actualWorkspaceId: string | null
+  }>
 }
 
 export interface OverlayLayoutEnvelope {

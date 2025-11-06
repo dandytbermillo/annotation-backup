@@ -22,6 +22,7 @@ import {
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { useCanvasMode, type CanvasMode } from "@/lib/canvas/use-canvas-mode"
 import { toast } from "@/hooks/use-toast"
+import { ToastAction } from "@/components/ui/toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -38,6 +39,7 @@ import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canva
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
+import type { OverlayLayoutDiagnostics } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 
 // Helper to derive display name from path when folder.name is empty
@@ -186,6 +188,7 @@ function AnnotationAppContent() {
   const [, forceNoteTitleUpdate] = useReducer((count: number) => count + 1, 0)
   const pendingTitleFetchesRef = useRef<Map<string, Promise<string | null>>>(new Map())
 
+
   const setTitleForNote = useCallback(
     (noteId: string, title: string | null) => {
       if (!noteId) return
@@ -217,7 +220,7 @@ function AnnotationAppContent() {
 
       const fetchPromise = (async () => {
         try {
-          const response = await fetch(`/api/items/${encodeURIComponent(noteId)}`)
+          const response = await fetchWithWorkspace(`/api/items/${encodeURIComponent(noteId)}`)
           if (!response.ok) {
             console.warn('[AnnotationApp] Failed to fetch note metadata for title', {
               noteId,
@@ -575,11 +578,24 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false)
   const [workspaceDeletionId, setWorkspaceDeletionId] = useState<string | null>(null)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [pendingDiagnostics, setPendingDiagnostics] = useState<OverlayLayoutDiagnostics | null>(null)
   const workspacesLoadedRef = useRef(false)
   const workspaceToggleRef = useRef<HTMLDivElement | null>(null)
+  const diagnosticsRef = useRef<OverlayLayoutDiagnostics | null>(null)
+  const lastDiagnosticsHashRef = useRef<string | null>(null)
   const currentWorkspace = useMemo(
     () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
+  )
+  const fetchWithWorkspace = useCallback(
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? {})
+      if (currentWorkspaceId) {
+        headers.set('X-Overlay-Workspace-ID', currentWorkspaceId)
+      }
+      return fetch(input, { ...init, headers })
+    },
+    [currentWorkspaceId]
   )
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
@@ -591,6 +607,10 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     : isWorkspaceListLoading
     ? 'Loading...'
     : currentWorkspaceName
+
+  useEffect(() => {
+    diagnosticsRef.current = pendingDiagnostics
+  }, [pendingDiagnostics])
 
   useEffect(() => {
     let cancelled = false
@@ -614,7 +634,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
 
     const loadOrganizationSidebar = async () => {
       try {
-        const rootResponse = await fetch('/api/items?parentId=null')
+        const rootResponse = await fetchWithWorkspace('/api/items?parentId=null')
         if (!rootResponse.ok) return
         const rootData = await rootResponse.json().catch(() => ({ items: [] }))
         const rootItems: any[] = Array.isArray(rootData?.items) ? rootData.items : []
@@ -628,7 +648,7 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
         if (knowledgeBase) {
           let children: any[] = []
           try {
-            const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
+            const childResponse = await fetchWithWorkspace(`/api/items?parentId=${knowledgeBase.id}`)
             if (childResponse.ok) {
               const childData = await childResponse.json().catch(() => ({ items: [] }))
               if (Array.isArray(childData?.items)) {
@@ -1093,8 +1113,121 @@ const initialWorkspaceSyncRef = useRef(false)
     return { payload, hash }
   }, [overlayPopups, layerContext?.transforms.popups])
 
+  const handleRepairMismatchedPopups = useCallback(() => {
+    const diagnostics = diagnosticsRef.current
+    if (!diagnostics) {
+      return
+    }
+
+    const flaggedPopupIds = new Set<string>()
+    diagnostics.workspaceMismatches.forEach(entry => {
+      if (entry.popupId) flaggedPopupIds.add(entry.popupId)
+    })
+    diagnostics.missingFolders.forEach(entry => {
+      if (entry.popupId) flaggedPopupIds.add(entry.popupId)
+    })
+
+    if (flaggedPopupIds.size === 0) {
+      setPendingDiagnostics(null)
+      lastDiagnosticsHashRef.current = null
+      return
+    }
+
+    setOverlayPopups(prev => prev.filter(popup => !flaggedPopupIds.has(popup.id)))
+    needsSaveAfterInteractionRef.current = true
+    pendingLayoutRef.current = null
+
+    debugLog({
+      component: 'PopupOverlay',
+      action: 'overlay_workspace_repair_applied',
+      metadata: {
+        removedPopupIds: Array.from(flaggedPopupIds),
+        mismatchCount: diagnostics.workspaceMismatches.length,
+        missingCount: diagnostics.missingFolders.length,
+      },
+    })
+
+    toast({
+      title: flaggedPopupIds.size === 1 ? 'Removed 1 popup' : `Removed ${flaggedPopupIds.size} popups`,
+      description:
+        diagnostics.workspaceMismatches.length > 0
+          ? 'Popups referencing another workspace were removed from this layout.'
+          : 'Popups without matching folders were removed from this layout.',
+    })
+
+    setPendingDiagnostics(null)
+    lastDiagnosticsHashRef.current = null
+  }, [setOverlayPopups])
+
   // Apply layout from database
   const applyOverlayLayout = useCallback((layout: OverlayLayoutPayload) => {
+    const diagnostics = layout.diagnostics ?? null
+    const mismatchCount = diagnostics?.workspaceMismatches?.length ?? 0
+    const missingCount = diagnostics?.missingFolders?.length ?? 0
+    const hasDiagnostics = Boolean(diagnostics) && (mismatchCount > 0 || missingCount > 0)
+
+    if (hasDiagnostics && diagnostics) {
+      const digest = JSON.stringify({
+        mismatches: diagnostics.workspaceMismatches.map(entry => ({
+          popupId: entry.popupId,
+          actualWorkspaceId: entry.actualWorkspaceId ?? null,
+        })),
+        missing: diagnostics.missingFolders.map(entry => ({
+          popupId: entry.popupId,
+          folderId: entry.folderId ?? null,
+        })),
+      })
+
+      if (lastDiagnosticsHashRef.current !== digest) {
+        lastDiagnosticsHashRef.current = digest
+        setPendingDiagnostics(diagnostics)
+
+        debugLog({
+          component: 'PopupOverlay',
+          action: 'overlay_workspace_mismatch_detected',
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            mismatchCount,
+            missingCount,
+            mismatches: diagnostics.workspaceMismatches.slice(0, 10),
+            missingFolders: diagnostics.missingFolders.slice(0, 10),
+          },
+        })
+
+        const summaryParts: string[] = []
+        if (mismatchCount > 0) {
+          summaryParts.push(
+            mismatchCount === 1
+              ? '1 popup belongs to a different workspace.'
+              : `${mismatchCount} popups belong to a different workspace.`
+          )
+        }
+        if (missingCount > 0) {
+          summaryParts.push(
+            missingCount === 1
+              ? '1 popup references a folder that no longer exists.'
+              : `${missingCount} popups reference folders that no longer exist.`
+          )
+        }
+
+        toast({
+          variant: 'destructive',
+          title: 'Overlay layout needs repair',
+          description: summaryParts.join(' '),
+          action: (
+            <ToastAction altText="Repair popups" onClick={handleRepairMismatchedPopups}>
+              Repair
+            </ToastAction>
+          ),
+        })
+      }
+    } else {
+      if (pendingDiagnostics) {
+        setPendingDiagnostics(null)
+      }
+      lastDiagnosticsHashRef.current = null
+    }
+
     const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
     const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, sharedTransform)
     lastSavedLayoutHashRef.current = coreHash
@@ -1127,7 +1260,7 @@ const initialWorkspaceSyncRef = useRef(false)
       if (!popup.folderId) return
 
       try {
-        const response = await fetch(`/api/items/${popup.folderId}`)
+        const response = await fetchWithWorkspace(`/api/items/${popup.folderId}`)
         if (!response.ok) {
           debugLog({
             component: 'AnnotationApp',
@@ -1159,7 +1292,7 @@ const initialWorkspaceSyncRef = useRef(false)
               const maxDepth = 10 // Prevent infinite loops
 
               while (currentParentId && !effectiveColor && depth < maxDepth) {
-                const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
                 if (!parentResponse.ok) break
 
                 const parentData = await parentResponse.json()
@@ -1188,7 +1321,7 @@ const initialWorkspaceSyncRef = useRef(false)
         console.log('[Restore] Final effectiveColor for', folderData.name, ':', effectiveColor)
 
         // Fetch children
-        const childrenResponse = await fetch(`/api/items?parentId=${popup.folderId}`)
+        const childrenResponse = await fetchWithWorkspace(`/api/items?parentId=${popup.folderId}`)
         if (!childrenResponse.ok) return
 
         const childrenData = await childrenResponse.json()
@@ -1249,7 +1382,7 @@ const initialWorkspaceSyncRef = useRef(false)
         }
       }
     })
-  }, [layerContext?.transforms.popups])
+  }, [layerContext?.transforms.popups, handleRepairMismatchedPopups, currentWorkspaceId, pendingDiagnostics])
 
   // Flush pending save to database
   const flushLayoutSave = useCallback(async () => {
@@ -2197,7 +2330,7 @@ const handleCenterNote = useCallback(
       }
 
       try {
-        const detailResponse = await fetch(`/api/items/${folderId}`)
+        const detailResponse = await fetchWithWorkspace(`/api/items/${folderId}`)
         if (!detailResponse.ok) throw new Error('Failed to load folder metadata')
         const detailData = await detailResponse.json()
         const detail = detailData.item || detailData
@@ -2251,7 +2384,7 @@ const handleCenterNote = useCallback(
         ])
 
         try {
-          const childResponse = await fetch(`/api/items?parentId=${folderId}`)
+          const childResponse = await fetchWithWorkspace(`/api/items?parentId=${folderId}`)
           if (!childResponse.ok) throw new Error('Failed to load folder contents')
 
           const childData = await childResponse.json()
@@ -2811,7 +2944,7 @@ const handleCenterNote = useCallback(
               const maxDepth = 10
 
               while (currentParentId && !inheritedColor && depth < maxDepth) {
-                const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
                 if (!parentResponse.ok) break
 
                 const parentData = await parentResponse.json()
@@ -2875,7 +3008,7 @@ const handleCenterNote = useCallback(
 
       // Fetch children
       try {
-        const response = await fetch(`/api/items?parentId=${folder.id}`)
+        const response = await fetchWithWorkspace(`/api/items?parentId=${folder.id}`)
         if (!response.ok) throw new Error('Failed to fetch folder contents')
 
         const data = await response.json()
@@ -3110,7 +3243,7 @@ const handleCenterNote = useCallback(
       const deleteResults = await Promise.all(
         Array.from(selectedIds).map(async (itemId) => {
           try {
-            const response = await fetch(`/api/items/${itemId}`, {
+            const response = await fetchWithWorkspace(`/api/items/${itemId}`, {
               method: 'DELETE',
               headers: {
                 'Content-Type': 'application/json'
@@ -3215,10 +3348,14 @@ const handleCenterNote = useCallback(
 
     try {
       // Call bulk-move API
-      const response = await fetch('/api/items/bulk-move', {
+      const response = await fetchWithWorkspace('/api/items/bulk-move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIds, targetFolderId })
+        body: JSON.stringify({
+          itemIds,
+          targetFolderId,
+          ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
+        })
       })
 
       if (!response.ok) {
@@ -3667,6 +3804,7 @@ const handleCenterNote = useCallback(
                 isLocked={isWorkspaceLayoutLoading}
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
+                workspaceId={currentWorkspaceId}
               />
             )}
 
@@ -3687,6 +3825,7 @@ const handleCenterNote = useCallback(
                 refreshRecentNotes={recentNotesRefreshTrigger}
                 onToggleConstellationPanel={toggleConstellationView}
                 showConstellationPanel={showConstellationPanel}
+                workspaceId={currentWorkspaceId}
               />
             )}
 

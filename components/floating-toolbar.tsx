@@ -84,6 +84,7 @@ type FloatingToolbarProps = {
   canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
   canvasDataStore?: any // DataStore from useCanvas()
   canvasNoteId?: string // noteId from useCanvas()
+  workspaceId?: string | null // Active overlay workspace id
 }
 
 interface RecentNote {
@@ -191,7 +192,7 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, workspaceId }: FloatingToolbarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
@@ -255,6 +256,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [newOrgFolderName, setNewOrgFolderName] = useState('')
   const [orgFolderCreationError, setOrgFolderCreationError] = useState<string | null>(null)
   const [orgFolderCreationLoading, setOrgFolderCreationLoading] = useState(false)
+  const fetchWithWorkspace = useCallback(
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? {})
+      if (workspaceId) {
+        headers.set('X-Overlay-Workspace-ID', workspaceId)
+      }
+      return fetch(input, { ...init, headers })
+    },
+    [workspaceId]
+  )
 
   // Edit mode state for Knowledge Base panel
   const [isEditMode, setIsEditMode] = useState(false)
@@ -544,7 +555,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const fetchOrgTree = async () => {
       setIsLoadingOrg(true)
       try {
-        const response = await fetch('/api/items?parentId=null')
+        const response = await fetchWithWorkspace('/api/items?parentId=null')
         if (!response.ok) throw new Error('Failed to fetch organization tree')
 
         const data = await response.json()
@@ -571,7 +582,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         )
         if (knowledgeBase) {
           try {
-            const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
+            const childResponse = await fetchWithWorkspace(`/api/items?parentId=${knowledgeBase.id}`)
             if (childResponse.ok) {
               const childData = await childResponse.json()
               const children = childData.items || []
@@ -650,7 +661,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Update database
     try {
-      const response = await fetch(`/api/items/${folderId}`, {
+      const response = await fetchWithWorkspace(`/api/items/${folderId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -658,6 +669,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         credentials: 'same-origin',
         body: JSON.stringify({
           color: newColorName,
+          ...(workspaceId ? { workspaceId } : {}),
         }),
       })
 
@@ -718,7 +730,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       // Find Knowledge Base folder ID
       const knowledgeBase = orgItems.find(item => item.name === 'Knowledge Base')
 
-      const response = await fetch('/api/items', {
+      const response = await fetchWithWorkspace('/api/items', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -728,6 +740,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           type: 'folder',
           name: trimmedName,
           parentId: knowledgeBase?.id || null,
+          ...(workspaceId ? { workspaceId } : {}),
         }),
       })
 
@@ -743,7 +756,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
       // Refresh the org items to show the new folder
       // Re-fetch the organization tree
-      const treeResponse = await fetch('/api/items?parentId=null')
+      const treeParams = new URLSearchParams({ parentId: 'null' })
+      if (workspaceId) {
+        treeParams.set('workspaceId', workspaceId)
+      }
+      const treeResponse = await fetchWithWorkspace(`/api/items?${treeParams.toString()}`)
       if (treeResponse.ok) {
         const treeData = await treeResponse.json()
         const items = treeData.items || []
@@ -767,7 +784,11 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           item.name.toLowerCase() === 'knowledge base' && item.type === 'folder'
         )
         if (knowledgeBase) {
-          const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
+          const childParams = new URLSearchParams({ parentId: knowledgeBase.id })
+          if (workspaceId) {
+            childParams.set('workspaceId', workspaceId)
+          }
+          const childResponse = await fetchWithWorkspace(`/api/items?${childParams.toString()}`)
           if (childResponse.ok) {
             const childData = await childResponse.json()
             const children = childData.items || []
@@ -868,13 +889,16 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     try {
       // Update folder name via API
-      const response = await fetch(`/api/items/${renamingFolderId}`, {
+      const response = await fetchWithWorkspace(`/api/items/${renamingFolderId}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'same-origin',
-        body: JSON.stringify({ name: trimmedName }),
+        body: JSON.stringify({
+          name: trimmedName,
+          ...(workspaceId ? { workspaceId } : {}),
+        }),
       })
 
       if (!response.ok) {
@@ -928,7 +952,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     if (!confirm(confirmMsg)) return
 
     try {
-      const response = await fetch(`/api/items/${selectedFolderId}`, {
+      const response = await fetchWithWorkspace(`/api/items/${selectedFolderId}`, {
         method: 'DELETE'
       })
 
@@ -1070,7 +1094,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Fetch folder children
     try {
-      const response = await fetch(`/api/items?parentId=${folder.id}`)
+      const response = await fetchWithWorkspace(`/api/items?parentId=${folder.id}`)
       if (!response.ok) throw new Error('Failed to fetch folder contents')
 
       const data = await response.json()
@@ -1227,7 +1251,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         const maxDepth = 10 // Prevent infinite loops
 
         while (currentParentId && !effectiveColor && depth < maxDepth) {
-          const parentResponse = await fetch(`/api/items/${currentParentId}`)
+          const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
           if (!parentResponse.ok) break
 
           const parentData = await parentResponse.json()
@@ -1296,7 +1320,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Fetch children in background and update via callback
     try {
-      const response = await fetch(`/api/items?parentId=${folder.id}`)
+      const response = await fetchWithWorkspace(`/api/items?parentId=${folder.id}`)
       if (!response.ok) throw new Error('Failed to fetch folder contents')
 
       const data = await response.json()
@@ -1457,7 +1481,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     previewTimeoutRef.current = setTimeout(async () => {
       setIsLoadingPreview(true)
       try {
-        const response = await fetch(`/api/items/${noteId}`)
+        const response = await fetchWithWorkspace(`/api/items/${noteId}`)
         if (!response.ok) throw new Error('Failed to fetch note')
 
         const data = await response.json()

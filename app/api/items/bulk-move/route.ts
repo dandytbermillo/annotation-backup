@@ -13,6 +13,9 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { itemIds, targetFolderId } = body
+    const bodyWorkspaceId = typeof body.workspaceId === 'string' && body.workspaceId.length > 0 ? body.workspaceId : undefined
+    const headerWorkspaceId = request.headers.get('x-overlay-workspace-id') ?? undefined
+    const requestedWorkspaceId = bodyWorkspaceId ?? headerWorkspaceId ?? null
 
     // Validate request
     if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
@@ -31,15 +34,30 @@ export async function POST(request: NextRequest) {
 
     // Get workspace ID for validation
     let workspaceId: string
-    try {
-      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
-    } catch (e) {
-      console.error('Failed to get workspace ID:', e)
-      return NextResponse.json(
-        { error: 'Failed to get workspace' },
-        { status: 500 }
-      )
+    if (requestedWorkspaceId) {
+      const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
+      if (exists.rowCount === 0) {
+        client.release()
+        return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+      }
+      workspaceId = requestedWorkspaceId
+    } else {
+      try {
+        workspaceId = await WorkspaceStore.getDefaultWorkspaceId(serverPool)
+      } catch (e) {
+        console.error('Failed to get workspace ID:', e)
+        client.release()
+        return NextResponse.json(
+          { error: 'Failed to get workspace' },
+          { status: 500 }
+        )
+      }
     }
+
+    await client.query('SELECT set_config($1, $2, false)', [
+      'app.current_workspace_id',
+      workspaceId,
+    ])
 
     // BEGIN TRANSACTION
     await client.query('BEGIN')

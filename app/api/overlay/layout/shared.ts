@@ -5,6 +5,7 @@ import {
   OverlayInspectorState,
   OverlayLayoutEnvelope,
   OverlayLayoutPayload,
+  OverlayLayoutDiagnostics,
   OverlayPopupDescriptor,
   type OverlayResolvedChild,
   type OverlayResolvedFolder,
@@ -143,6 +144,7 @@ export interface OverlayLayoutRow {
   version: string
   revision: string
   updated_at: string | Date
+  workspace_id: string | null
 }
 
 export function buildEnvelope(row: OverlayLayoutRow): OverlayLayoutEnvelope {
@@ -171,6 +173,7 @@ type FolderRow = {
   path: string | null
   color: string | null
   parent_id: string | null
+  workspace_id: string | null
 }
 
 type AncestorRow = {
@@ -253,6 +256,7 @@ function buildResolvedFolder(
     color: resolvedColor,
     parentId: folderRow.parent_id,
     children: resolvedChildren,
+    workspaceId: folderRow.workspace_id,
   }
 
   return [popupId, resolvedFolder]
@@ -260,24 +264,39 @@ function buildResolvedFolder(
 
 async function fetchResolvedFolders(
   layout: OverlayLayoutPayload,
-  pool: Pool
-): Promise<Record<string, OverlayResolvedFolder>> {
-  const folderIds = Array.from(
-    new Set(
-      layout.popups
-        .map(popup => popup.folderId)
-        .filter((id): id is string => Boolean(id))
-    )
-  )
+  pool: Pool,
+  targetWorkspaceId: string | null
+): Promise<{
+  resolvedFolders: Record<string, OverlayResolvedFolder>
+  diagnostics: OverlayLayoutDiagnostics
+}> {
+  const missingFolders: OverlayLayoutDiagnostics['missingFolders'] = []
+  const workspaceMismatches: OverlayLayoutDiagnostics['workspaceMismatches'] = []
+
+  const popupsWithFolderId = layout.popups.filter(popup => {
+    if (!popup.folderId) {
+      missingFolders.push({ popupId: popup.id, folderId: null })
+      return false
+    }
+    return true
+  })
+
+  const folderIds = Array.from(new Set(popupsWithFolderId.map(popup => popup.folderId!)))
 
   if (folderIds.length === 0) {
-    return {}
+    return {
+      resolvedFolders: {},
+      diagnostics: {
+        missingFolders,
+        workspaceMismatches,
+      },
+    }
   }
 
   const client = await pool.connect()
   try {
     const folderQuery = client.query<FolderRow>(
-      `SELECT id, name, path, color, parent_id
+      `SELECT id, name, path, color, parent_id, workspace_id
          FROM items
         WHERE id = ANY($1)
           AND deleted_at IS NULL`,
@@ -347,22 +366,61 @@ async function fetchResolvedFolders(
       folderMap.set(row.id, row)
     })
 
-    const resolvedEntries = layout.popups
-      .map(popup =>
-        buildResolvedFolder(
-          popup.id,
-          popup,
-          popup.folderId ? folderMap.get(popup.folderId) : undefined,
-          ancestorRows.rows,
-          childRows.rows
-        )
-      )
-      .filter((entry): entry is [string, OverlayResolvedFolder] => Boolean(entry))
+    const resolvedEntries: Array<[string, OverlayResolvedFolder]> = []
 
-    return Object.fromEntries(resolvedEntries)
+    for (const popup of layout.popups) {
+      if (!popup.folderId) {
+        // Already tracked as missing earlier
+        continue
+      }
+
+      const folderRow = folderMap.get(popup.folderId)
+      if (!folderRow) {
+        missingFolders.push({ popupId: popup.id, folderId: popup.folderId })
+        continue
+      }
+
+      if (
+        targetWorkspaceId &&
+        folderRow.workspace_id &&
+        folderRow.workspace_id !== targetWorkspaceId
+      ) {
+        workspaceMismatches.push({
+          popupId: popup.id,
+          folderId: popup.folderId,
+          expectedWorkspaceId: targetWorkspaceId,
+          actualWorkspaceId: folderRow.workspace_id,
+        })
+      }
+
+      const resolved = buildResolvedFolder(
+        popup.id,
+        popup,
+        folderRow,
+        ancestorRows.rows,
+        childRows.rows
+      )
+      if (resolved) {
+        resolvedEntries.push(resolved)
+      }
+    }
+
+    return {
+      resolvedFolders: Object.fromEntries(resolvedEntries),
+      diagnostics: {
+        missingFolders,
+        workspaceMismatches,
+      },
+    }
   } catch (error) {
     console.error('[overlay-layout] Failed to resolve folder metadata', error)
-    return {}
+    return {
+      resolvedFolders: {},
+      diagnostics: {
+        missingFolders,
+        workspaceMismatches,
+      },
+    }
   } finally {
     client.release()
   }
@@ -378,8 +436,17 @@ export async function buildEnvelopeWithMetadata(
     return baseEnvelope
   }
 
-  const resolvedFolders = await fetchResolvedFolders(baseEnvelope.layout, pool)
-  if (!resolvedFolders || Object.keys(resolvedFolders).length === 0) {
+  const { resolvedFolders, diagnostics } = await fetchResolvedFolders(
+    baseEnvelope.layout,
+    pool,
+    row.workspace_id ?? null
+  )
+
+  const hasResolvedFolders = Object.keys(resolvedFolders).length > 0
+  const hasDiagnostics =
+    diagnostics.missingFolders.length > 0 || diagnostics.workspaceMismatches.length > 0
+
+  if (!hasResolvedFolders && !hasDiagnostics) {
     return baseEnvelope
   }
 
@@ -387,7 +454,8 @@ export async function buildEnvelopeWithMetadata(
     ...baseEnvelope,
     layout: {
       ...baseEnvelope.layout,
-      resolvedFolders,
+      ...(hasResolvedFolders ? { resolvedFolders } : {}),
+      ...(hasDiagnostics ? { diagnostics } : {}),
     },
   }
 }
