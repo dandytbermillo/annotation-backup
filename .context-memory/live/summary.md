@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-07 06:07Z] 48767d4: minimap appeared
 - note [2025-11-07 05:57Z]: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 - note [2025-11-07 05:24Z]: Implemented overlay workspace minimap (feature-flagged) by adding OverlayMinimap component, wiring it into PopupOverlay with viewport transforms, and styling the fixed HUD.
 - commit [2025-11-07 05:17Z] 40380af: implement overlay minimap
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-07 02:42Z] 6d3abe7: fix missing connection lines when go beyond visible viewport
 - commit [2025-11-07 02:27Z] 16cff20: implement fix for missing connection lines in overlay
 - commit [2025-11-07 00:30Z] d117041: fixing empty popups
-- commit [2025-11-06 23:59Z] 819f6b8: fixing empty popups after creatiion
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-07 05:17Z] 40380af: implement overlay minimap
+- commit [2025-11-07 06:07Z] 48767d4: minimap appeared

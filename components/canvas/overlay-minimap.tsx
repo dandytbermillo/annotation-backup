@@ -163,7 +163,7 @@ export const OverlayMinimap: React.FC<OverlayMinimapProps> = ({
     pointerActiveRef.current = false;
   }, []);
 
-  const circleRadius = 4;
+  const circleRadius = 7;
 
   const hasNodes = nodes.length > 0;
 
