@@ -2557,8 +2557,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Generate connection lines (LOD: use visible popup ids if available)
   const connectionPaths = ConnectionLineAdapter.adaptConnectionLines(
     popups,
-    draggingPopup !== null,
-    visibleIdSetRef.current.size ? visibleIdSetRef.current : undefined
+    draggingPopup !== null
   );
   
   // Container transform style with translate3d for GPU acceleration

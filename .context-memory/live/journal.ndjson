@@ -459,3 +459,4 @@
 {"ts":"2025-11-06T23:59:46.630Z","type":"commit","sha":"819f6b83a90bdd10ca5353c87900526ea7e1b5e0","files_changed":6,"message":"fixing empty popups after creatiion"}
 {"ts":"2025-11-07T00:30:50.269Z","type":"commit","sha":"d11704193a9f9f3f5224ca641af2d2e24c299c52","files_changed":4,"message":"fixing empty popups"}
 {"ts":"2025-11-07T02:27:05.076Z","type":"commit","sha":"16cff20af3ce04330fe865e246894de6bb2852aa","files_changed":5,"message":"implement fix for missing connection lines in overlay"}
+{"ts":"2025-11-07T02:42:57.280Z","type":"commit","sha":"6d3abe73750dc29581b25bb5c7738f29c4fc6408","files_changed":3,"message":"fix missing connection lines when go beyond visible viewport"}
