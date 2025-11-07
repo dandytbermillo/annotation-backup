@@ -33,7 +33,7 @@ const FOLDER_COLORS = [
 ]
 
 // Helper to get color theme by name (from database color field)
-function getFolderColorTheme(colorName: string | undefined | null) {
+export function getFolderColorTheme(colorName: string | undefined | null) {
   if (!colorName) return null
   const color = FOLDER_COLORS.find(c => c.name === colorName.toLowerCase())
   return color || null

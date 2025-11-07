@@ -1,5 +1,6 @@
 "use client"
 
+import type { MouseEvent } from "react"
 import { Eye } from "lucide-react"
 
 export interface OrganizationSidebarItem {
@@ -9,6 +10,12 @@ export interface OrganizationSidebarItem {
   icon?: string
   pinned?: boolean
   interactive?: boolean
+  color?: string | null
+  path?: string | null
+  level?: number
+  type?: "folder" | "note"
+  parentId?: string | null
+  hasChildren?: boolean
 }
 
 export interface OrganizationSidebarStats {
@@ -21,12 +28,16 @@ interface OrganizationSidebarContentProps {
   items: OrganizationSidebarItem[]
   stats: OrganizationSidebarStats
   onSelect?: (id: string, rect: DOMRect) => void
+  onEyeHover?: (item: OrganizationSidebarItem, event: MouseEvent<HTMLButtonElement>) => void
+  onEyeLeave?: (id: string) => void
 }
 
 export function OrganizationSidebarContent({
   items,
   stats,
   onSelect,
+  onEyeHover,
+  onEyeLeave,
 }: OrganizationSidebarContentProps) {
   return (
     <div className="flex h-full flex-col bg-slate-900/95">
@@ -88,6 +99,8 @@ export function OrganizationSidebarContent({
                         const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
                         onSelect?.(item.id, rect)
                       }}
+                      onMouseEnter={(event) => onEyeHover?.(item, event)}
+                      onMouseLeave={() => onEyeLeave?.(item.id)}
                     >
                       <Eye className="h-4 w-4" />
                     </button>

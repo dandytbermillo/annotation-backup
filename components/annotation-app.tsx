@@ -3,13 +3,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "react"
 import dynamic from 'next/dynamic'
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
-import { FloatingToolbar } from "./floating-toolbar"
-import { type OverlayPopup, type OrgItem } from "./floating-toolbar"
+import { FloatingToolbar, getFolderColorTheme, type OverlayPopup, type OrgItem } from "./floating-toolbar"
 import { PopupOverlay } from "@/components/canvas/popup-overlay"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
-import { Trash2 } from 'lucide-react'
+import { Trash2, Eye } from 'lucide-react'
 import {
   OverlayLayoutAdapter,
   OverlayLayoutConflictError,
@@ -56,6 +55,21 @@ function deriveFromPath(path: string | undefined | null): string | null {
   const segments = normalized.split('/')
   const lastSegment = segments[segments.length - 1]
   return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
+function sidebarItemToOrgItem(item: OrganizationSidebarItem): OrgItem {
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type === 'note' ? 'note' : 'folder',
+    icon: item.icon,
+    color: item.color ?? undefined,
+    path: item.path ?? undefined,
+    hasChildren: item.hasChildren ?? (item.count ?? 0) > 0,
+    level: typeof item.level === 'number' ? item.level : 0,
+    children: [],
+    parentId: item.parentId ?? undefined,
+  }
 }
 
 function computeNextWorkspaceName(workspaceSummaries: OverlayWorkspaceSummary[]): string {
@@ -561,7 +575,21 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
 
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
-  const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
+const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
+type SidebarFolderPopup = {
+  id: string
+  folderId: string
+  folderName: string
+  position: { x: number; y: number }
+  children: OrgItem[]
+  isLoading: boolean
+  parentFolderId?: string
+  folderColor?: string
+}
+const [sidebarFolderPopups, setSidebarFolderPopups] = useState<SidebarFolderPopup[]>([])
+const sidebarFolderPopupsRef = useRef<SidebarFolderPopup[]>([])
+const sidebarHoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+const sidebarPopupIdCounter = useRef(0)
   const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
   const [overlayPanning, setOverlayPanning] = useState(false)
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -667,6 +695,10 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   }, [pendingDiagnostics])
 
   useEffect(() => {
+    sidebarFolderPopupsRef.current = sidebarFolderPopups
+  }, [sidebarFolderPopups])
+
+  useEffect(() => {
     let cancelled = false
 
     const mapCount = (item: any): number => {
@@ -684,6 +716,12 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
       name: item.name ?? deriveFromPath(item.path) ?? 'Untitled',
       icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
       count: mapCount(item),
+      color: item.color ?? null,
+      path: item.path ?? null,
+      level: typeof item.level === 'number' ? item.level : 0,
+      type: item.type === 'note' ? 'note' : 'folder',
+      parentId: item.parentId ?? null,
+      hasChildren: item.hasChildren ?? Boolean(item.children?.length || mapCount(item)),
     })
 
     const loadOrganizationSidebar = async () => {
@@ -2480,6 +2518,153 @@ const handleCenterNote = useCallback(
     [knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
   )
 
+  const closeSidebarFolderPopups = useCallback(() => {
+    sidebarHoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
+    sidebarHoverTimeoutRef.current.clear()
+    setSidebarFolderPopups([])
+  }, [])
+
+  const handleSidebarPopupHover = useCallback((folderId: string) => {
+    const timeout = sidebarHoverTimeoutRef.current.get(folderId)
+    if (timeout) {
+      clearTimeout(timeout)
+      sidebarHoverTimeoutRef.current.delete(folderId)
+    }
+
+    const currentPopup = sidebarFolderPopupsRef.current.find(p => p.folderId === folderId)
+    if (currentPopup?.parentFolderId) {
+      let parentId: string | undefined = currentPopup.parentFolderId
+      while (parentId) {
+        const parentTimeout = sidebarHoverTimeoutRef.current.get(parentId)
+        if (parentTimeout) {
+          clearTimeout(parentTimeout)
+          sidebarHoverTimeoutRef.current.delete(parentId)
+        }
+        parentId = sidebarFolderPopupsRef.current.find(p => p.folderId === parentId)?.parentFolderId
+      }
+    }
+  }, [])
+
+  const handleSidebarEyeHoverLeave = useCallback((folderId: string) => {
+    const timeout = setTimeout(() => {
+      setSidebarFolderPopups(prev =>
+        prev.filter(p => p.folderId !== folderId && p.parentFolderId !== folderId)
+      )
+      sidebarHoverTimeoutRef.current.delete(folderId)
+    }, 200)
+    const existingTimeout = sidebarHoverTimeoutRef.current.get(folderId)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+    sidebarHoverTimeoutRef.current.set(folderId, timeout)
+  }, [])
+
+  const handleSidebarOrgEyeHover = useCallback(
+    async (folder: OrgItem, event: React.MouseEvent<HTMLElement>, parentFolderId?: string) => {
+      event.stopPropagation()
+
+      if (sidebarFolderPopupsRef.current.some(popup => popup.folderId === folder.id)) {
+        return
+      }
+
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const spaceRight = window.innerWidth - rect.right
+      const popupPosition =
+        spaceRight > 320
+          ? { x: rect.right + 10, y: Math.max(16, rect.top) }
+          : { x: Math.max(16, rect.left), y: Math.min(rect.bottom + 10, window.innerHeight - 320) }
+
+      const popupId = `sidebar-folder-popup-${++sidebarPopupIdCounter.current}`
+      const newPopup: SidebarFolderPopup = {
+        id: popupId,
+        folderId: folder.id,
+        folderName: folder.name,
+        position: popupPosition,
+        children: [],
+        isLoading: true,
+        parentFolderId,
+        folderColor: folder.color,
+      }
+
+      setSidebarFolderPopups(prev => [...prev, newPopup])
+
+      try {
+        const children = await fetchGlobalChildren(folder.id)
+        if (!children) {
+          setSidebarFolderPopups(prev =>
+            prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p))
+          )
+          return
+        }
+
+        const formattedChildren: OrgItem[] = children.map((item: any) => ({
+          id: item.id,
+          name: item.name ?? deriveFromPath(item.path) ?? 'Untitled',
+          type: item.type === 'note' ? 'note' : 'folder',
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color || (item.type === 'folder' ? folder.color : undefined),
+          path: item.path,
+          hasChildren: item.type === 'folder',
+          level: (folder.level ?? 0) + 1,
+          children: [],
+          parentId: item.parentId,
+        }))
+
+        setSidebarFolderPopups(prev =>
+          prev.map(p =>
+            p.id === popupId
+              ? {
+                  ...p,
+                  children: formattedChildren,
+                  isLoading: false,
+                }
+              : p
+          )
+        )
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to load sidebar hover children:', error)
+        setSidebarFolderPopups(prev =>
+          prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p))
+        )
+      }
+    },
+    [fetchGlobalChildren]
+  )
+
+  const handleOrganizationSidebarEyeHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      if (item.interactive === false) return
+      const folder = sidebarItemToOrgItem(item)
+      handleSidebarOrgEyeHover(folder, event)
+    },
+    [handleSidebarOrgEyeHover]
+  )
+
+  const handleOrganizationSidebarEyeLeave = useCallback(
+    (id: string) => {
+      handleSidebarEyeHoverLeave(id)
+    },
+    [handleSidebarEyeHoverLeave]
+  )
+
+  const handleSidebarPopupFolderClick = useCallback(
+    (folder: OrgItem, event: React.MouseEvent<HTMLElement>) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      handleOrganizationSidebarSelect(folder.id, rect)
+      closeSidebarFolderPopups()
+    },
+    [handleOrganizationSidebarSelect, closeSidebarFolderPopups]
+  )
+
+  const handleSidebarNoteOpen = useCallback(
+    (noteId: string) => {
+      layerContext?.setActiveLayer('notes')
+      handleNoteSelect(noteId, { source: 'popup' })
+      closeSidebarFolderPopups()
+    },
+    [handleNoteSelect, layerContext, closeSidebarFolderPopups]
+  )
+
   const handleWorkspaceSelect = useCallback(
     async (workspaceId: string) => {
       if (overlayPersistenceEnabled) {
@@ -3609,6 +3794,8 @@ const handleCenterNote = useCallback(
                     items={organizationSidebarData.items}
                     stats={organizationSidebarData.stats}
                     onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
+                    onEyeHover={handleOrganizationSidebarEyeHover}
+                    onEyeLeave={handleOrganizationSidebarEyeLeave}
                   />
                 }
               />
@@ -3865,6 +4052,98 @@ const handleCenterNote = useCallback(
                 workspaceId={currentWorkspaceId}
               />
             )}
+
+            {sidebarFolderPopups.map((popup) => {
+              const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
+              return (
+                <div
+                  key={popup.id}
+                  className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+                  style={{
+                    backgroundColor: 'rgba(17, 24, 39, 0.98)',
+                    left: `${popup.position.x}px`,
+                    top: `${popup.position.y}px`,
+                    zIndex: Z_INDEX.DROPDOWN + 20,
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseEnter={() => handleSidebarPopupHover(popup.folderId)}
+                  onMouseLeave={() => handleSidebarEyeHoverLeave(popup.folderId)}
+                >
+                  <div
+                    className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'rgba(255, 255, 255, 0.8)',
+                      borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      {popupColorTheme && (
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: popupColorTheme.bg }}
+                        />
+                      )}
+                      <span>{popup.folderName}</span>
+                    </div>
+                    <button
+                      className="text-white/60 hover:text-white"
+                      onClick={() =>
+                        setSidebarFolderPopups((prev) => prev.filter((p) => p.id !== popup.id))
+                      }
+                      aria-label="Close preview popup"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-3 space-y-1">
+                    {popup.isLoading ? (
+                      <div className="py-4 text-center text-sm text-white/60">Loading...</div>
+                    ) : popup.children.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-white/60">Empty folder</div>
+                    ) : (
+                      popup.children.map((child) => (
+                        <div key={child.id} className="group relative">
+                          <button
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/90 transition hover:border-blue-400/40 hover:bg-blue-500/20"
+                            onDoubleClick={() => {
+                              if (child.type === 'note') {
+                                handleSidebarNoteOpen(child.id)
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <span>{child.icon ?? (child.type === 'folder' ? '📁' : '📄')}</span>
+                                <span className="truncate">{child.name}</span>
+                              </div>
+                              {child.type === 'folder' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarOrgEyeHover(child, event, popup.folderId)
+                                  }
+                                  onMouseLeave={() => handleSidebarEyeHoverLeave(child.id)}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handleSidebarPopupFolderClick(child, event)
+                                  }}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-xs text-white/60">
+                              {child.type === 'folder' ? 'Folder' : 'Note'}
+                            </div>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )
+            })}
 
             {showNotesWidget && !activeNoteId && !showConstellationPanel && (
               <FloatingToolbar

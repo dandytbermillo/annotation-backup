@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-07 20:33Z] 76efa4f: add hover on folder eye icon
 - commit [2025-11-07 20:26Z] b641cb4: add folder eye icon in sidebar
 - commit [2025-11-07 06:07Z] 48767d4: minimap appeared
 - note [2025-11-07 05:57Z]: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-07 04:57Z] b103f0a: make overlay infinite canvas
 - commit [2025-11-07 02:48Z] fbf8185: it works
 - commit [2025-11-07 02:42Z] 6d3abe7: fix missing connection lines when go beyond visible viewport
-- commit [2025-11-07 02:27Z] 16cff20: implement fix for missing connection lines in overlay
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-07 20:26Z] b641cb4: add folder eye icon in sidebar
+- commit [2025-11-07 20:33Z] 76efa4f: add hover on folder eye icon

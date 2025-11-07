@@ -468,3 +468,4 @@
 {"ts":"2025-11-07T05:57:22Z","type":"note","text":"Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification."}
 {"ts":"2025-11-07T06:07:52.751Z","type":"commit","sha":"48767d45ae75e48cd2ef954c29126d15cded1b66","files_changed":5,"message":"minimap appeared"}
 {"ts":"2025-11-07T20:26:30.598Z","type":"commit","sha":"b641cb46bbe53544fbd9f706069df50a86507caa","files_changed":5,"message":"add folder eye icon in sidebar"}
+{"ts":"2025-11-07T20:33:04.284Z","type":"commit","sha":"76efa4f3ea0e1666ed97a5075d86a0e5a57f1605","files_changed":3,"message":"add hover on folder eye icon"}
