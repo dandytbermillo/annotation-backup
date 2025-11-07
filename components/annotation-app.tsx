@@ -3027,7 +3027,7 @@ const handleCenterNote = useCallback(
         popupPosition = { x: rect.left - 320, y: rect.top }
       }
 
-      const popupId = `overlay-popup-${Date.now()}-${folder.id}`
+        const popupId = `overlay-popup-${Date.now()}-${folder.id}`
       const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedTransform)
       const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedTransform)
 
@@ -3053,6 +3053,7 @@ const handleCenterNote = useCallback(
         isPersistent: isPersistent,
         isHighlighted: false, // Never glow on first creation
         level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
+        parentId: parentPopupId || null,
         parentPopupId: parentPopupId || undefined
       }
 
