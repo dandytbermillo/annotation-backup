@@ -1,5 +1,7 @@
 "use client"
 
+import { Eye } from "lucide-react"
+
 export interface OrganizationSidebarItem {
   id: string
   name: string
@@ -49,17 +51,11 @@ export function OrganizationSidebarContent({
           items.map(item => {
             const disabled = item.interactive === false
             return (
-              <button
+              <div
                 key={item.id}
-                disabled={disabled}
-                onClick={(event) => {
-                  if (disabled) return
-                  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-                  onSelect?.(item.id, rect)
-                }}
-                className={`w-full text-left px-4 py-3 border-b border-white/5 transition-colors ${
-                  disabled ? 'cursor-default opacity-70' : 'hover:bg-white/10'
-                }`}
+                className={`flex items-center justify-between px-4 py-3 border-b border-white/5 ${
+                  disabled ? 'opacity-70' : 'hover:bg-white/5'
+                } transition-colors`}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -73,11 +69,31 @@ export function OrganizationSidebarContent({
                       )}
                     </div>
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-white/60 px-2 py-1 rounded-full bg-white/10">
                     {item.count}
                   </span>
+                  {disabled ? (
+                    <span className="text-white/30" aria-hidden="true">
+                      <Eye className="h-4 w-4" />
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="rounded-full border border-white/20 bg-white/5 p-2 text-white/70 transition hover:bg-white/15 hover:text-white"
+                      aria-label={`Open ${item.name} in overlay`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+                        onSelect?.(item.id, rect)
+                      }}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
-              </button>
+              </div>
             )
           })
         )}
