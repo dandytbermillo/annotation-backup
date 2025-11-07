@@ -6,6 +6,7 @@ import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
+import { OverlayMinimap } from '@/components/canvas/overlay-minimap';
 import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
@@ -599,6 +600,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const debugLoggingEnabled = isDebugEnabled();
   const overlayFullSpanEnabled =
     (process.env.NEXT_PUBLIC_POPUP_OVERLAY_FULLSPAN ?? 'true').toLowerCase() !== 'false';
+  const overlayMinimapEnabled =
+    (process.env.NEXT_PUBLIC_OVERLAY_MINIMAP ?? 'false').toLowerCase() === 'true';
   const debugDragTracingEnabled =
     debugLoggingEnabled &&
     ['true', '1', 'on', 'yes'].includes(
@@ -3068,6 +3071,37 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     })
   }, [popups, activeTransform])
   
+  const viewportSize = useMemo(() => {
+    if (overlayBounds) {
+      return { width: overlayBounds.width, height: overlayBounds.height };
+    }
+    if (typeof window !== 'undefined') {
+      return { width: window.innerWidth, height: window.innerHeight };
+    }
+    return { width: 1920, height: 1080 };
+  }, [overlayBounds]);
+  
+  const handleMinimapNavigate = useCallback(
+    ({ x, y }: { x: number; y: number }) => {
+      const scale = activeTransform.scale || 1;
+      const nextTransform = {
+        scale,
+        x: viewportSize.width / 2 - x * scale,
+        y: viewportSize.height / 2 - y * scale,
+      };
+      if (hasSharedCamera && layerCtx) {
+        layerCtx.updateTransform('popups', {
+          x: nextTransform.x - activeTransform.x,
+          y: nextTransform.y - activeTransform.y,
+        });
+      } else {
+        transformRef.current = nextTransform;
+        setTransform(nextTransform);
+      }
+    },
+    [activeTransform, hasSharedCamera, layerCtx, setTransform, viewportSize]
+  );
+  
   const hasClosingPopup = (() => {
     for (const popupEntry of popups.values()) {
       if (popupEntry.closeMode === 'closing') {
@@ -3081,6 +3115,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
   const hasPopups = popups.size > 0;
   const overlayInteractive = hasPopups && !isLocked;
+
+  const renderOverlayMinimap = () =>
+    overlayMinimapEnabled ? (
+      <OverlayMinimap
+        key="overlay-minimap"
+        popups={popups}
+        transform={activeTransform}
+        viewport={viewportSize}
+        onNavigate={handleMinimapNavigate}
+      />
+    ) : null;
 
   const overlayInner = (
     <div
@@ -3347,6 +3392,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     </div>
   );
 
+  const overlayMinimapPortal =
+    overlayMinimapEnabled && typeof document !== 'undefined'
+      ? createPortal(renderOverlayMinimap(), document.body)
+      : null;
+
   useEffect(() => {
     if (!overlayContainer) {
       return;
@@ -3447,6 +3497,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return (
         <>
           {createPortal(overlayInner, overlayContainer)}
+          {overlayMinimapPortal}
           {tooltipPortal}
           {breadcrumbFolderPopupPortal}
         </>
@@ -3884,6 +3935,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return (
         <>
           {createPortal(fallbackOverlay, document.body)}
+          {overlayMinimapPortal}
           {tooltipPortal}
           {breadcrumbFolderPopupPortal}
         </>
@@ -3894,6 +3946,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Even if overlay is not rendered, show tooltip if active
   return (
     <>
+      {overlayMinimapPortal}
       {tooltipPortal}
       {breadcrumbFolderPopupPortal}
     </>

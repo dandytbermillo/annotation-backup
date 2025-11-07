@@ -289,3 +289,56 @@
 .popup-card.highlighted {
   animation: popup-highlight-glow 2s ease-in-out;
 }
+
+/* Overlay minimap */
+.overlay-minimap {
+  position: absolute;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  width: 240px;
+  height: 160px;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.88);
+  box-shadow: 0 20px 35px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  pointer-events: auto;
+  user-select: none;
+  z-index: 25000;
+}
+
+.overlay-minimap__label {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.75rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.8);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.overlay-minimap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+
+.overlay-minimap__background {
+  fill: rgba(15, 23, 42, 0.92);
+}
+
+.overlay-minimap__viewport {
+  fill: rgba(59, 130, 246, 0.2);
+  stroke: rgba(59, 130, 246, 0.85);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.overlay-minimap__node {
+  stroke: rgba(15, 23, 42, 0.85);
+  stroke-width: 1.5;
+}

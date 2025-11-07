@@ -463,3 +463,6 @@
 {"ts":"2025-11-07T02:48:23.867Z","type":"commit","sha":"fbf8185097caa011119daa2a0342ceb0a20b80f0","files_changed":3,"message":"it works"}
 {"ts":"2025-11-07T04:57:36.809Z","type":"commit","sha":"b103f0a4c5d573423a754e50c3482d58fea6ce97","files_changed":4,"message":"make overlay infinite canvas"}
 {"ts":"2025-11-07T05:03:07Z","type":"note","text":"Started implementing overlay infinite-canvas plan: enabling full-span bounds, pointer hit-testing guard, and debug log throttling prep."}
+{"ts":"2025-11-07T05:17:38.747Z","type":"commit","sha":"40380aff533897c52612b12d1029eff9ce909a84","files_changed":4,"message":"implement overlay minimap"}
+{"ts":"2025-11-07T05:24:26Z","type":"note","text":"Implemented overlay workspace minimap (feature-flagged) by adding OverlayMinimap component, wiring it into PopupOverlay with viewport transforms, and styling the fixed HUD."}
+{"ts":"2025-11-07T05:57:22Z","type":"note","text":"Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification."}
