@@ -9,7 +9,6 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { BranchesSection } from "@/components/canvas/branches-section"
 import { createNote, fetchRecentNotes } from "@/lib/utils/note-creator"
-import { buildMultilinePreview } from "@/lib/utils/branch-preview"
 import { PreviewPopover } from "@/components/shared/preview-popover"
 import {
   PREVIEW_HOVER_DELAY_MS,
@@ -18,6 +17,7 @@ import {
 } from "@/lib/constants/ui-timings"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 
 
 // Folder color palette - similar to sticky notes pattern
@@ -85,6 +85,10 @@ type FloatingToolbarProps = {
   canvasDataStore?: any // DataStore from useCanvas()
   canvasNoteId?: string // noteId from useCanvas()
   workspaceId?: string | null // Active overlay workspace id
+}
+
+type NotePreviewContext = {
+  sourceFolderId?: string
 }
 
 interface RecentNote {
@@ -240,16 +244,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
 
   // Note preview state
-  const [notePreview, setNotePreview] = useState<{
-    noteId: string
-    content: string
-    position: { x: number; y: number }
-    sourceFolderId?: string // Track which folder popup triggered this preview
-  } | null>(null)
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
-  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const previewCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const isHoveringPreviewRef = useRef(false)
 
   // Folder creation state for Organization panel
   const [creatingFolderInOrg, setCreatingFolderInOrg] = useState(false)
@@ -266,6 +260,31 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     },
     [workspaceId]
   )
+
+  const fetchNotePreview = useCallback(
+    async (noteId: string) => {
+      const response = await fetchWithWorkspace(`/api/items/${noteId}`)
+      if (!response.ok) throw new Error('Failed to fetch note')
+      const data = await response.json()
+      return {
+        content: data?.item?.content,
+        contentText: data?.item?.contentText,
+      }
+    },
+    [fetchWithWorkspace]
+  )
+
+  const {
+    preview: notePreview,
+    isLoading: isLoadingPreview,
+    handleHover: triggerNotePreviewHover,
+    handleLeave: triggerNotePreviewLeave,
+    handleTooltipEnter: triggerNotePreviewTooltipEnter,
+    handleTooltipLeave: triggerNotePreviewTooltipLeave,
+    cancelPreview: cancelNotePreview,
+  } = useNotePreviewHover<NotePreviewContext>({
+    fetchNote: fetchNotePreview,
+  })
 
   // Edit mode state for Knowledge Base panel
   const [isEditMode, setIsEditMode] = useState(false)
@@ -1384,6 +1403,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Close all folder popups
   const closeAllPopups = () => {
     setFolderPopups([])
+    cancelNotePreview()
   }
 
   // Handle button hover
@@ -1460,102 +1480,42 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   }
 
   // Handle note preview hover
-  const handleNotePreviewHover = async (noteId: string, event: React.MouseEvent, sourceFolderId?: string) => {
-    // Clear existing timeouts
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
-    if (previewCloseTimeoutRef.current) {
-      clearTimeout(previewCloseTimeoutRef.current)
-    }
-
-    // Reset hover state
-    isHoveringPreviewRef.current = false
-
-    // Capture position immediately before async operation
-    const rect = event.currentTarget.getBoundingClientRect()
-    const position = {
-      x: rect.right + 10,
-      y: rect.top
-    }
-
-    // Set timeout to show preview after 500ms
-    previewTimeoutRef.current = setTimeout(async () => {
-      setIsLoadingPreview(true)
-      try {
-        const response = await fetchWithWorkspace(`/api/items/${noteId}`)
-        if (!response.ok) throw new Error('Failed to fetch note')
-
-        const data = await response.json()
-        const content = data?.item?.content
-        const contentText = data?.item?.contentText
-
-        // Pass full content to PreviewPopover - no hardcoded limit
-        // Component will handle truncation (initial 300 chars, expand to show all content)
-        // Component's internal safety cap of 5000 chars applies when not using lazy loading
-        const previewText = buildMultilinePreview(content, contentText || '', Number.MAX_SAFE_INTEGER)
-
-        setNotePreview({
-          noteId,
-          content: previewText || 'No content yet',
-          position,
-          sourceFolderId
-        })
-      } catch (error) {
-        console.error('[FloatingToolbar] Failed to fetch note preview:', error)
-      } finally {
-        setIsLoadingPreview(false)
+  const handleNotePreviewHover = useCallback(
+    (noteId: string, event: React.MouseEvent, sourceFolderId?: string) => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const position = {
+        x: rect.right + 10,
+        y: rect.top,
       }
-    }, 500)
-  }
+      triggerNotePreviewHover(noteId, () => position, { sourceFolderId })
+    },
+    [triggerNotePreviewHover]
+  )
 
-  // Handle note preview hover leave
-  const handleNotePreviewHoverLeave = () => {
-    if (previewTimeoutRef.current) {
-      clearTimeout(previewTimeoutRef.current)
-    }
+  const handleNotePreviewHoverLeave = useCallback(() => {
+    triggerNotePreviewLeave()
+  }, [triggerNotePreviewLeave])
 
-    // Delay closing to allow moving mouse to preview tooltip
-    previewCloseTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPreviewRef.current) {
-        setNotePreview(null)
-      }
-    }, PREVIEW_HOVER_DELAY_MS)
-  }
-
-  // Handle preview tooltip hover
-  const handlePreviewTooltipEnter = () => {
-    isHoveringPreviewRef.current = true
-    if (previewCloseTimeoutRef.current) {
-      clearTimeout(previewCloseTimeoutRef.current)
-    }
-    // Also cancel panel close timeout to keep Organization panel open
+  const handlePreviewTooltipEnter = useCallback(() => {
+    triggerNotePreviewTooltipEnter()
     if (panelHoverTimeoutRef.current) {
       clearTimeout(panelHoverTimeoutRef.current)
       panelHoverTimeoutRef.current = null
     }
-    // Set isHoveringPanel to true to prevent panel from closing
     setIsHoveringPanel(true)
-    // Cancel folder popup close timeout if preview came from a folder popup
-    if (notePreview?.sourceFolderId) {
-      const timeout = hoverTimeoutRef.current.get(notePreview.sourceFolderId)
+    const sourceFolderId = notePreview?.context?.sourceFolderId
+    if (sourceFolderId) {
+      const timeout = hoverTimeoutRef.current.get(sourceFolderId)
       if (timeout) {
         clearTimeout(timeout)
-        hoverTimeoutRef.current.delete(notePreview.sourceFolderId)
+        hoverTimeoutRef.current.delete(sourceFolderId)
       }
     }
-  }
+  }, [notePreview, triggerNotePreviewTooltipEnter])
 
-  // Handle preview tooltip leave
-  const handlePreviewTooltipLeave = () => {
-    isHoveringPreviewRef.current = false
-
-    // Delay closing to allow moving mouse back to preview
-    previewCloseTimeoutRef.current = setTimeout(() => {
-      setNotePreview(null)
-    }, PREVIEW_HOVER_DELAY_MS)
-    // Panels now stay open - no auto-close on hover leave
-  }
+  const handlePreviewTooltipLeave = useCallback(() => {
+    triggerNotePreviewTooltipLeave()
+  }, [triggerNotePreviewTooltipLeave])
 
 
   useEffect(() => {
@@ -2488,6 +2448,23 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           {/* Org - Dock style */}
           <button
             className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
+              activePanel === "org"
+                ? "bg-white/20 border-2 border-white/30 shadow-lg"
+                : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
+            }`}
+            style={{ backdropFilter: 'blur(10px)' }}
+            onClick={() => setActivePanel("org")}
+            onMouseEnter={() => handleButtonHover("org")}
+            onMouseLeave={handleButtonHoverLeave}
+            data-tooltip="Organization Panel"
+          >
+            <span className="text-xl">🗂️</span>
+            <span className="text-[10px] text-white/90 font-medium">Org</span>
+          </button>
+
+          {/* Canvas / Constellation toggle */}
+          <button
+            className={`dock-button flex flex-col items-center gap-1 px-3 py-2 rounded-xl transition-all ${
               showConstellationPanel
                 ? "bg-white/20 border-2 border-white/30 shadow-lg"
                 : "bg-white/5 border-2 border-white/20 hover:bg-white/15 hover:border-white/30 hover:shadow-md"
@@ -2500,7 +2477,6 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
               })
               onToggleConstellationPanel?.()
             }}
-            onMouseEnter={() => handleButtonHover("org")}
             data-tooltip="Constellation View"
           >
             <span className="text-xl">🌌</span>
@@ -2560,6 +2536,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       {/* Panels - Absolutely positioned below toolbar */}
       <div className="absolute left-1/2 -translate-x-1/2" style={{ top: 'calc(100% + 8px)' }}>
         {activePanel === "recents" && renderRecentNotes()}
+        {activePanel === "org" && renderOrg()}
         {(activePanel === "tools" || activePanel === "layer" || activePanel === "format" || activePanel === "resize" || activePanel === "branches" || activePanel === "actions") && renderToolCategories()}
         {activePanel === "layer" && renderLayerPanel()}
         {activePanel === "format" && renderFormatPanel()}
@@ -2694,7 +2671,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           onOpenNote={(noteId) => {
             switchToNoteCanvasIfNeeded(); // Auto-switch to note canvas if on popups layer
             onSelectNote?.(noteId);
-            setNotePreview(null);
+            cancelNotePreview();
             closeAllPopups(); // Close folder popups
             onClose(); // Close toolbar after opening note
           }}

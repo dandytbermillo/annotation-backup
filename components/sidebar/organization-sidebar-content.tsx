@@ -30,6 +30,8 @@ interface OrganizationSidebarContentProps {
   onSelect?: (id: string, rect: DOMRect) => void
   onEyeHover?: (item: OrganizationSidebarItem, event: MouseEvent<HTMLButtonElement>) => void
   onEyeLeave?: (id: string) => void
+  onNoteHover?: (item: OrganizationSidebarItem, event: MouseEvent<HTMLButtonElement>) => void
+  onNoteLeave?: () => void
 }
 
 export function OrganizationSidebarContent({
@@ -38,6 +40,8 @@ export function OrganizationSidebarContent({
   onSelect,
   onEyeHover,
   onEyeLeave,
+  onNoteHover,
+  onNoteLeave,
 }: OrganizationSidebarContentProps) {
   return (
     <div className="flex h-full flex-col bg-slate-900/95">
@@ -61,6 +65,7 @@ export function OrganizationSidebarContent({
         ) : (
           items.map(item => {
             const disabled = item.interactive === false
+            const isNote = item.type === "note"
             return (
               <div
                 key={item.id}
@@ -89,6 +94,16 @@ export function OrganizationSidebarContent({
                     <span className="text-white/30" aria-hidden="true">
                       <Eye className="h-4 w-4" />
                     </span>
+                  ) : isNote ? (
+                    <button
+                      type="button"
+                      className="rounded-full border border-white/20 bg-white/5 p-2 text-white/70 transition hover:bg-white/15 hover:text-white"
+                      aria-label={`Preview ${item.name}`}
+                      onMouseEnter={(event) => onNoteHover?.(item, event)}
+                      onMouseLeave={() => onNoteLeave?.()}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
                   ) : (
                     <button
                       type="button"

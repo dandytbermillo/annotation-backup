@@ -25,6 +25,9 @@ lets users reorient or jump via a miniature camera overlay.
 - **Overlay Minimap**: A lightweight, always-on (but flag-gated) minimap mirrors popup positions and the viewport
   rectangle using existing camera transforms. It reuses constellation minimap rendering primitives so it stays performant
   on large layouts and can recenter the workspace when users drag inside the miniature.
+- **Shared Hover/Preview Channel**: Both the floating toolbar and the sidebar use a single note-preview hover hook
+  (`useNotePreviewHover`) so debounce timing, `/api/items` fetching, and tooltip lifecycle stay synchronized. Sidebar hover
+  popups and top-level rows can show the same note previews without spawning duplicate logic.
 
 ## Architecture Rules
 1. **Popup folder IDs must be valid**: Each popup descriptor must point to an existing Knowledge Base folder. Hydration
@@ -42,6 +45,9 @@ lets users reorient or jump via a miniature camera overlay.
    no longer floods `/api/debug/log`. Pointer-level logs stay opt-in.
 7. **Minimap remains observational**: The minimap reads existing popup maps and camera transforms without changing
    persistence formats. Gesture-to-camera updates route through the same `setTransform` helpers the overlay already uses.
+8. **Unified preview timers**: All note preview entry points (floating toolbar org list, sidebar top-level rows, hover
+   popups) rely on the shared hook so debounce/timing stays consistent and preview tooltips automatically cancel folder
+   popup close timers when appropriate.
 
 ## Infinite Canvas Behavior Details
 - **Container bounds**: `recomputeOverlayBounds` uses the full `canvasRect` (plus generous margins) instead of subtracting
@@ -70,6 +76,9 @@ lets users reorient or jump via a miniature camera overlay.
   calls.
 - **Feature flag / rollback**: `NEXT_PUBLIC_OVERLAY_MINIMAP` (default `false` until the rollout completes) enables the UI.
   Turning it off hides the minimap without altering workspace layouts or transforms.
+- **Hover preview parity**: The shared hover hook powers both floating-toolbar popover previews and sidebar hover previews
+  (top-level and nested). It handles the 500 ms hover delay, preview fetches, tooltip enter/leave, and cancelling folder
+  close timers so hover popups stay open while users read a preview.
 
 ## Workflow Summary
 1. User selects a workspace via the toggle (Workspace 1, Workspace 2, etc.).
@@ -77,9 +86,10 @@ lets users reorient or jump via a miniature camera overlay.
    `NEXT_PUBLIC_POPUP_OVERLAY_FULLSPAN=true`.
 3. The Knowledge Base sidebar remains unchanged—it still shows the global tree and captures pointer events inside its
    bounding box.
-4. Users can either click a sidebar folder or use the floating toolbar’s `Org` button to open the Organization panel,
-   hover a folder’s “eye” icon to preview its popups, and click the icon to restore those popups inside the current
-   workspace layout. Panning can then move them anywhere on the virtual canvas without clipping.
+4. Users can click a sidebar folder eye icon, hover a top-level sidebar note eye, or use the floating toolbar’s `Org`
+   button to open the Organization panel. Hovering a folder eye shows cascading folder popups; hovering a note eye shows
+   the shared preview tooltip; clicking either restores the popup in the current workspace. Panning can then move popups
+   anywhere on the virtual canvas without clipping.
 
 ## Feature Flags & Compliance
 - `NEXT_PUBLIC_POPUP_OVERLAY_FULLSPAN` controls whether the full-span overlay is active. Set to `false` during incidents

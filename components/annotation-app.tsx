@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "react"
+import { createPortal } from "react-dom"
 import dynamic from 'next/dynamic'
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
 import { FloatingToolbar, getFolderColorTheme, type OverlayPopup, type OrgItem } from "./floating-toolbar"
@@ -37,9 +38,12 @@ import { ConstellationProvider } from "@/components/constellation/constellation-
 import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
+import { PreviewPopover } from "@/components/shared/preview-popover"
 import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
 import type { OverlayLayoutDiagnostics } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
+import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
+import { PREVIEW_HOVER_DELAY_MS } from "@/lib/constants/ui-timings"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -81,6 +85,10 @@ function computeNextWorkspaceName(workspaceSummaries: OverlayWorkspaceSummary[])
     return Number.isNaN(value) ? max : Math.max(max, value)
   }, 0)
   return `Workspace ${highest + 1}`
+}
+
+type NotePreviewContext = {
+  sourceFolderId?: string
 }
 
 const ModernAnnotationCanvas = dynamic(
@@ -625,6 +633,31 @@ const sidebarPopupIdCounter = useRef(0)
     },
     [currentWorkspaceId]
   )
+
+  const fetchNotePreview = useCallback(
+    async (noteId: string) => {
+      const response = await fetchWithWorkspace(`/api/items/${noteId}`)
+      if (!response.ok) throw new Error('Failed to fetch note')
+      const data = await response.json()
+      return {
+        content: data?.item?.content,
+        contentText: data?.item?.contentText,
+      }
+    },
+    [fetchWithWorkspace]
+  )
+
+  const {
+    preview: notePreview,
+    isLoading: isLoadingNotePreview,
+    handleHover: triggerNotePreviewHover,
+    handleLeave: triggerNotePreviewLeave,
+    handleTooltipEnter: triggerNotePreviewTooltipEnter,
+    handleTooltipLeave: triggerNotePreviewTooltipLeave,
+    cancelPreview: cancelNotePreview,
+  } = useNotePreviewHover<NotePreviewContext>({
+    fetchNote: fetchNotePreview,
+  })
 
   const folderCacheRef = useRef<Map<string, { folder?: any | null; children?: any[] | null }>>(new Map())
 
@@ -2522,7 +2555,8 @@ const handleCenterNote = useCallback(
     sidebarHoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
     sidebarHoverTimeoutRef.current.clear()
     setSidebarFolderPopups([])
-  }, [])
+    cancelNotePreview()
+  }, [cancelNotePreview])
 
   const handleSidebarPopupHover = useCallback((folderId: string) => {
     const timeout = sidebarHoverTimeoutRef.current.get(folderId)
@@ -2646,6 +2680,44 @@ const handleCenterNote = useCallback(
     },
     [handleSidebarEyeHoverLeave]
   )
+
+  const handleSidebarNotePreviewHover = useCallback(
+    (noteId: string, event: React.MouseEvent<HTMLElement>, sourceFolderId?: string) => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const position = {
+        x: rect.right + 10,
+        y: Math.max(16, rect.top),
+      }
+      triggerNotePreviewHover(noteId, () => position, { sourceFolderId })
+    },
+    [triggerNotePreviewHover]
+  )
+
+  const handleSidebarNotePreviewLeave = useCallback(() => {
+    triggerNotePreviewLeave()
+  }, [triggerNotePreviewLeave])
+
+  const handleSidebarPreviewTooltipEnter = useCallback(() => {
+    triggerNotePreviewTooltipEnter()
+    if (notePreview?.context?.sourceFolderId) {
+      handleSidebarPopupHover(notePreview.context.sourceFolderId)
+    }
+  }, [handleSidebarPopupHover, notePreview, triggerNotePreviewTooltipEnter])
+
+  const handleSidebarPreviewTooltipLeave = useCallback(() => {
+    triggerNotePreviewTooltipLeave()
+  }, [triggerNotePreviewTooltipLeave])
+
+  const handleOrganizationSidebarNoteHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      handleSidebarNotePreviewHover(item.id, event)
+    },
+    [handleSidebarNotePreviewHover]
+  )
+
+  const handleOrganizationSidebarNoteLeave = useCallback(() => {
+    handleSidebarNotePreviewLeave()
+  }, [handleSidebarNotePreviewLeave])
 
   const handleSidebarPopupFolderClick = useCallback(
     (folder: OrgItem, event: React.MouseEvent<HTMLElement>) => {
@@ -3796,6 +3868,8 @@ const handleCenterNote = useCallback(
                     onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
                     onEyeHover={handleOrganizationSidebarEyeHover}
                     onEyeLeave={handleOrganizationSidebarEyeLeave}
+                    onNoteHover={handleOrganizationSidebarNoteHover}
+                    onNoteLeave={handleOrganizationSidebarNoteLeave}
                   />
                 }
               />
@@ -4131,6 +4205,16 @@ const handleCenterNote = useCallback(
                                 >
                                   <Eye className="h-3.5 w-3.5 text-blue-400" />
                                 </div>
+                              ) : child.type === 'note' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarNotePreviewHover(child.id, event, popup.folderId)
+                                  }
+                                  onMouseLeave={handleSidebarNotePreviewLeave}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
                               ) : null}
                             </div>
                             <div className="mt-1 text-xs text-white/60">
@@ -4144,6 +4228,24 @@ const handleCenterNote = useCallback(
                 </div>
               )
             })}
+
+            {notePreview &&
+              typeof document !== 'undefined' &&
+              createPortal(
+                <PreviewPopover
+                  content={notePreview.content}
+                  status={isLoadingNotePreview ? 'loading' : 'ready'}
+                  position={notePreview.position}
+                  noteId={notePreview.noteId}
+                  onOpenNote={(noteId) => {
+                    handleSidebarNoteOpen(noteId)
+                    cancelNotePreview()
+                  }}
+                  onMouseEnter={handleSidebarPreviewTooltipEnter}
+                  onMouseLeave={handleSidebarPreviewTooltipLeave}
+                />,
+                document.body
+              )}
 
             {showNotesWidget && !activeNoteId && !showConstellationPanel && (
               <FloatingToolbar
