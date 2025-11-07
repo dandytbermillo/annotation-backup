@@ -20,8 +20,9 @@ loads both the layout and the folder data when a workspace is activated.
 2. **Sidebar is global**: The sidebar should never be cleared just because the user switches workspaces. It is a
    Knowledge Base navigator, not a workspace-specific tree.
 3. **Workspace layouts are independent**: Dragging or saving popups affects only the current workspace layout.
-4. **Overlay routes require workspace awareness**: `POST /api/items` and `POST /api/items/bulk-move` enforce that overlay
-   callers send a `workspaceId`, preventing new folders from defaulting into the wrong workspace.
+4. **Workspace context matters only when opening popups**: The active workspace ID is applied only when a popup is created
+   (either from a sidebar entry or via the eye icon inside another popup). Ordinary Knowledge Base actions (creating folders,
+   moving notes, etc.) continue to use the global Knowledge Base.
 
 ## Workflow Summary
 1. User selects a workspace via the toggle (Workspace 1, Workspace 2, etc.).
@@ -33,4 +34,3 @@ loads both the layout and the folder data when a workspace is activated.
 - **Parity Seeding**: Optionally clone the baseline Knowledge Base folders into each workspace to keep layouts and data
   perfectly aligned.
 - **Click-time Repair**: Offer users a “Clone into current workspace” action if a popup references an out-of-scope folder.
-
