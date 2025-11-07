@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init).
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-07 00:30Z] d117041: fixing empty popups
 - commit [2025-11-06 23:59Z] 819f6b8: fixing empty popups after creatiion
 - commit [2025-11-06 21:49Z] 0374813: popup is opened with empty contents
 - commit [2025-11-06 05:39Z] e28d720: after implementing new workspace architecture
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-05 20:26Z] 41fc1a0: phase 2 completed
 - commit [2025-11-05 19:29Z] 32c378d: about finish phase 2
 - commit [2025-11-05 06:41Z] 2e4646f: phase 2 refactored done successfully
-- note [2025-11-05 06:33Z]: Patched popup overlay hook order: moved child-row renderer useMemo after useLayer to fix temporal dead zone (layerCtx before init).
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-06 23:59Z] 819f6b8: fixing empty popups after creatiion
+- commit [2025-11-07 00:30Z] d117041: fixing empty popups

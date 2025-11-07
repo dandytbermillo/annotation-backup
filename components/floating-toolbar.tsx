@@ -1094,7 +1094,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     // Fetch folder children
     try {
-      const response = await fetchWithWorkspace(`/api/items?parentId=${folder.id}`)
+      const response = await fetch(`/api/items?parentId=${folder.id}`)
       if (!response.ok) throw new Error('Failed to fetch folder contents')
 
       const data = await response.json()
@@ -1251,7 +1251,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         const maxDepth = 10 // Prevent infinite loops
 
         while (currentParentId && !effectiveColor && depth < maxDepth) {
-          const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
+          const parentResponse = await fetch(`/api/items/${currentParentId}`)
           if (!parentResponse.ok) break
 
           const parentData = await parentResponse.json()

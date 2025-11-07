@@ -598,8 +598,14 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
     [currentWorkspaceId]
   )
 
+  const folderCacheRef = useRef<Map<string, { folder?: any | null; children?: any[] | null }>>(new Map())
+
   const fetchGlobalFolder = useCallback(
     async (folderId: string): Promise<any | null> => {
+      const cached = folderCacheRef.current.get(folderId)
+      if (cached?.folder) {
+        return cached.folder
+      }
       try {
         const response = await fetch(`/api/items/${folderId}`)
         if (!response.ok) {
@@ -610,7 +616,9 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
           })
           return null
         }
-        return await response.json()
+        const payload = await response.json()
+        folderCacheRef.current.set(folderId, { ...(cached ?? {}), folder: payload })
+        return payload
       } catch (error) {
         debugLog({
           component: 'AnnotationApp',
@@ -628,11 +636,17 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   )
 
   const fetchGlobalChildren = useCallback(async (folderId: string): Promise<any[] | null> => {
+    const cached = folderCacheRef.current.get(folderId)
+    if (cached?.children) {
+      return cached.children
+    }
     try {
       const response = await fetch(`/api/items?parentId=${folderId}`)
       if (!response.ok) return null
       const data = await response.json().catch(() => ({ items: [] }))
-      return Array.isArray(data.items) ? data.items : []
+      const childItems = Array.isArray(data.items) ? data.items : []
+      folderCacheRef.current.set(folderId, { ...(cached ?? {}), children: childItems })
+      return childItems
     } catch {
       return null
     }
@@ -700,6 +714,11 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
           }
 
           const formattedChildren = children.map(toSidebarItem)
+          folderCacheRef.current.set(knowledgeBase.id, {
+            ...(folderCacheRef.current.get(knowledgeBase.id) ?? {}),
+            folder: knowledgeBase,
+            children,
+          })
           const knowledgeBaseCount = mapCount(knowledgeBase)
 
           sidebarItems = [
@@ -2359,7 +2378,7 @@ const handleCenterNote = useCallback(
       }
 
       try {
-        const detailResponse = await fetchWithWorkspace(`/api/items/${folderId}`)
+        const detailResponse = await fetch(`/api/items/${folderId}`)
         if (!detailResponse.ok) throw new Error('Failed to load folder metadata')
         const detailData = await detailResponse.json()
         const detail = detailData.item || detailData
@@ -2413,7 +2432,7 @@ const handleCenterNote = useCallback(
         ])
 
         try {
-          const childResponse = await fetchWithWorkspace(`/api/items?parentId=${folderId}`)
+          const childResponse = await fetch(`/api/items?parentId=${folderId}`)
           if (!childResponse.ok) throw new Error('Failed to load folder contents')
 
           const childData = await childResponse.json()
@@ -2445,6 +2464,11 @@ const handleCenterNote = useCallback(
                 : p
             )
           )
+          folderCacheRef.current.set(folderId, {
+            ...(folderCacheRef.current.get(folderId) ?? {}),
+            folder: detail,
+            children: childItems,
+          })
         } catch (childError) {
           console.error('[AnnotationApp] Failed to load folder children:', childError)
           setOverlayPopups(prev => prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p)))
@@ -2963,21 +2987,21 @@ const handleCenterNote = useCallback(
           console.log('[createPopup] ⚡ Using folder own color (parent still loading):', inheritedColor)
         }
         // Last resort: walk up ancestor chain via API
-        else if (!parentPopup?.isLoading) {
-          console.log('[createPopup] Parent popup has no color and not loading, checking ancestors via API')
-          const initialParentId = folder.parentId ?? (folder as any).parent_id
-          if (initialParentId) {
-            try {
-              let currentParentId = initialParentId
-              let depth = 0
-              const maxDepth = 10
+          else if (!parentPopup?.isLoading) {
+            console.log('[createPopup] Parent popup has no color and not loading, checking ancestors via API')
+            const initialParentId = folder.parentId ?? (folder as any).parent_id
+            if (initialParentId) {
+              try {
+                let currentParentId = initialParentId
+                let depth = 0
+                const maxDepth = 10
 
-              while (currentParentId && !inheritedColor && depth < maxDepth) {
-                const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
-                if (!parentResponse.ok) break
+                while (currentParentId && !inheritedColor && depth < maxDepth) {
+                  const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                  if (!parentResponse.ok) break
 
-                const parentData = await parentResponse.json()
-                const parent = parentData.item || parentData
+                  const parentData = await parentResponse.json()
+                  const parent = parentData.item || parentData
 
                 if (parent.color) {
                   inheritedColor = parent.color
@@ -3037,11 +3061,8 @@ const handleCenterNote = useCallback(
 
       // Fetch children
       try {
-        const response = await fetchWithWorkspace(`/api/items?parentId=${folder.id}`)
-        if (!response.ok) throw new Error('Failed to fetch folder contents')
-
-        const data = await response.json()
-        const children = data.items || []
+        const children = await fetchGlobalChildren(folder.id)
+        if (!children) throw new Error('Failed to fetch folder contents')
 
         const formattedChildren: OrgItem[] = children.map((item: any) => ({
           id: item.id,
@@ -3074,12 +3095,17 @@ const handleCenterNote = useCallback(
             }
           })
         )
+        folderCacheRef.current.set(folder.id, {
+          ...(folderCacheRef.current.get(folder.id) ?? {}),
+          folder,
+          children,
+        })
       } catch (error) {
         console.error('Error fetching child popup contents:', error)
         setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
       }
     }
-  }, [overlayPopups, layerContext])
+  }, [overlayPopups, layerContext, fetchGlobalChildren])
 
   // Cancel close timeout when hovering the popup itself (keeps it alive)
   const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {

@@ -457,3 +457,4 @@
 {"ts":"2025-11-06T05:39:13.359Z","type":"commit","sha":"e28d7201a484d51a95b1b9d466bfed62c7a205d7","files_changed":13,"message":"after implementing new workspace architecture"}
 {"ts":"2025-11-06T21:49:30.918Z","type":"commit","sha":"03748135ff7b3798df351ef1a53a3539decb9ae6","files_changed":5,"message":"popup is opened with empty contents"}
 {"ts":"2025-11-06T23:59:46.630Z","type":"commit","sha":"819f6b83a90bdd10ca5353c87900526ea7e1b5e0","files_changed":6,"message":"fixing empty popups after creatiion"}
+{"ts":"2025-11-07T00:30:50.269Z","type":"commit","sha":"d11704193a9f9f3f5224ca641af2d2e24c299c52","files_changed":4,"message":"fixing empty popups"}
