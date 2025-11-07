@@ -2968,76 +2968,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [popups, activeTransform, onPopupPositionChange, isMeasurementBlocked, onResizePopup]);
 
-  // Setup IntersectionObserver to track which popups are visible (for LOD)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const rootEl = overlayRef.current || undefined;
-    if (!rootEl) return;
-
-    // Clear any previous observers
-    visibilityObserversRef.current.forEach((obs) => obs.disconnect());
-    visibilityObserversRef.current.clear();
     visibleIdSetRef.current.clear();
+    popups.forEach((_, id) => visibleIdSetRef.current.add(id));
+    visibilityObserversRef.current.forEach(obs => obs.disconnect());
+    visibilityObserversRef.current.clear();
+  }, [popups, overlayBounds]);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const el = entry.target as HTMLElement;
-          const id = el.getAttribute('data-popup-id');
-          if (!id) return;
-          if (entry.isIntersecting) {
-            visibleIdSetRef.current.add(id);
-          } else {
-            visibleIdSetRef.current.delete(id);
-          }
-        });
-      },
-      { root: rootEl, threshold: 0 }
-    );
-
-    // Observe current rendered popups on next frame
-    requestAnimationFrame(() => {
-      const nodes = (rootEl as HTMLElement).querySelectorAll('[data-popup-id]');
-      nodes.forEach((n) => observer.observe(n));
-      visibilityObserversRef.current.set('main', observer);
-    });
-
-    // Near-viewport prewarm observer (wider rootMargin)
-    const nearObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-          const el = entry.target as HTMLElement;
-          // Cheap prewarm: read offsetHeight to materialize layout for this node
-          // (content-visibility: auto may lazy-layout; this nudges it ahead of time)
-          void el.offsetHeight;
-        });
-      },
-      { root: rootEl, rootMargin: '400px', threshold: 0 }
-    );
-
-    requestAnimationFrame(() => {
-      const nodes = (rootEl as HTMLElement).querySelectorAll('[data-popup-id]');
-      nodes.forEach((n) => nearObserver.observe(n));
-      visibilityObserversRef.current.set('near', nearObserver);
-    });
-
-    return () => {
-      observer.disconnect();
-      nearObserver.disconnect();
-      visibilityObserversRef.current.delete('main');
-      visibilityObserversRef.current.delete('near');
-    };
-  }, [overlayBounds, popups.size]);
-
-  // Debug log container style
+  // Debug log container style (only when verbose)
   useEffect(() => {
+    if (!debugLoggingEnabled) return;
     debugLog('PopupOverlay', 'container_style', {
       containerStyle,
       hasContainer: !!containerRef.current,
       computedTransform: containerRef.current?.style?.transform || 'none'
     });
-  }, [containerStyle]);
+  }, [containerStyle, debugLoggingEnabled]);
   
   // Viewport culling - only render visible popups
   const visiblePopups = useMemo(() => {
