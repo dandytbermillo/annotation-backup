@@ -40,10 +40,9 @@ import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/comp
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 import { PreviewPopover } from "@/components/shared/preview-popover"
 import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
-import type { OverlayLayoutDiagnostics } from "@/lib/types/overlay-layout"
+import type { OverlayLayoutDiagnostics, OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
-import { PREVIEW_HOVER_DELAY_MS } from "@/lib/constants/ui-timings"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -86,6 +85,11 @@ function computeNextWorkspaceName(workspaceSummaries: OverlayWorkspaceSummary[])
   }, 0)
   return `Workspace ${highest + 1}`
 }
+
+const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
+
+const camerasEqual = (a: OverlayCameraState, b: OverlayCameraState) =>
+  a.x === b.x && a.y === b.y && a.scale === b.scale
 
 type NotePreviewContext = {
   sourceFolderId?: string
@@ -605,6 +609,8 @@ const sidebarPopupIdCounter = useRef(0)
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const latestCameraRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
+  const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
@@ -730,6 +736,15 @@ const sidebarPopupIdCounter = useRef(0)
   useEffect(() => {
     sidebarFolderPopupsRef.current = sidebarFolderPopups
   }, [sidebarFolderPopups])
+
+  useEffect(() => {
+    const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
+    latestCameraRef.current = {
+      x: Number.isFinite(transform.x) ? (transform.x as number) : 0,
+      y: Number.isFinite(transform.y) ? (transform.y as number) : 0,
+      scale: Number.isFinite(transform.scale) ? (transform.scale as number) : 1,
+    }
+  }, [layerContext?.transforms.popups])
 
   useEffect(() => {
     let cancelled = false
@@ -1196,7 +1211,7 @@ const initialWorkspaceSyncRef = useRef(false)
   // Build layout payload from current overlayPopups state
   const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
     const descriptors: OverlayPopupDescriptor[] = []
-    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
+    const sharedTransform = layerContext?.transforms.popups || DEFAULT_CAMERA
 
     overlayPopups.forEach(popup => {
       const canvasPos = popup.canvasPosition
@@ -1227,17 +1242,25 @@ const initialWorkspaceSyncRef = useRef(false)
       descriptors.push(descriptor)
     })
 
+    const camera: OverlayCameraState = {
+      x: Number.isFinite(sharedTransform.x) ? (sharedTransform.x as number) : 0,
+      y: Number.isFinite(sharedTransform.y) ? (sharedTransform.y as number) : 0,
+      scale: Number.isFinite(sharedTransform.scale) ? (sharedTransform.scale as number) : 1,
+    }
+
     const payload: OverlayLayoutPayload = {
       schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
       popups: descriptors,
       inspectors: [],
       lastSavedAt: new Date().toISOString(),
+      camera,
     }
 
     const hash = JSON.stringify({
       schemaVersion: payload.schemaVersion,
       popups: payload.popups,
       inspectors: payload.inspectors,
+      camera,
     })
 
     return { payload, hash }
@@ -1358,8 +1381,16 @@ const initialWorkspaceSyncRef = useRef(false)
       lastDiagnosticsHashRef.current = null
     }
 
-    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
-    const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, sharedTransform)
+    const savedCamera = layout.camera ?? DEFAULT_CAMERA
+    if (layerContext?.setTransform) {
+      const currentTransform = layerContext.transforms.popups || DEFAULT_CAMERA
+      if (!camerasEqual(currentTransform, savedCamera)) {
+        layerContext.setTransform('popups', savedCamera)
+      }
+    }
+    latestCameraRef.current = savedCamera
+    prevCameraForSaveRef.current = savedCamera
+    const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, savedCamera)
     lastSavedLayoutHashRef.current = coreHash
     // NOTE: Do NOT set layoutLoadedRef.current = true here!
     // It must be set AFTER setOverlayPopups completes, to prevent auto-switch during hydration
@@ -1501,7 +1532,7 @@ const initialWorkspaceSyncRef = useRef(false)
         }
       }
     })
-  }, [layerContext?.transforms.popups, handleRepairMismatchedPopups, currentWorkspaceId, pendingDiagnostics])
+  }, [layerContext, handleRepairMismatchedPopups, currentWorkspaceId, pendingDiagnostics])
 
   // Flush pending save to database
   const flushLayoutSave = useCallback(async () => {
@@ -1542,6 +1573,7 @@ const initialWorkspaceSyncRef = useRef(false)
         schemaVersion: envelope.layout.schemaVersion,
         popups: envelope.layout.popups,
         inspectors: envelope.layout.inspectors,
+        camera: envelope.layout.camera ?? DEFAULT_CAMERA,
       })
       console.log('[AnnotationApp] Saved overlay layout to database')
     } catch (error) {
@@ -1552,6 +1584,7 @@ const initialWorkspaceSyncRef = useRef(false)
           schemaVersion: envelope.layout.schemaVersion,
           popups: envelope.layout.popups,
           inspectors: envelope.layout.inspectors,
+          camera: envelope.layout.camera ?? DEFAULT_CAMERA,
         })
         applyOverlayLayout(envelope.layout)
         console.log('[AnnotationApp] Resolved layout conflict from database')
@@ -1612,6 +1645,23 @@ const initialWorkspaceSyncRef = useRef(false)
     }
   }, [buildLayoutPayload, flushLayoutSave, overlayPersistenceEnabled])
 
+  useEffect(() => {
+    if (!overlayPersistenceEnabled) {
+      prevCameraForSaveRef.current = latestCameraRef.current
+      return
+    }
+    if (!layoutLoadedRef.current) {
+      prevCameraForSaveRef.current = latestCameraRef.current
+      return
+    }
+    const prev = prevCameraForSaveRef.current
+    const current = latestCameraRef.current
+    if (!camerasEqual(prev, current)) {
+      prevCameraForSaveRef.current = current
+      scheduleLayoutSave(false)
+    }
+  }, [overlayPersistenceEnabled, scheduleLayoutSave, layerContext?.transforms.popups])
+
   // Load layout from database on mount
   useEffect(() => {
     if (!overlayPersistenceEnabled || layoutLoadedRef.current) return
@@ -1644,6 +1694,7 @@ const initialWorkspaceSyncRef = useRef(false)
           schemaVersion: envelope.layout.schemaVersion,
           popups: envelope.layout.popups,
           inspectors: envelope.layout.inspectors,
+          camera: envelope.layout.camera ?? DEFAULT_CAMERA,
         })
 
         // Set flag to indicate initial load is in progress
@@ -2773,6 +2824,7 @@ const handleCenterNote = useCallback(
       popups: [],
       inspectors: [],
       lastSavedAt: new Date().toISOString(),
+      camera: DEFAULT_CAMERA,
     }
 
     const defaultName = computeNextWorkspaceName(workspaces)
@@ -2813,6 +2865,7 @@ const handleCenterNote = useCallback(
         schemaVersion: result.envelope.layout.schemaVersion,
         popups: result.envelope.layout.popups,
         inspectors: result.envelope.layout.inspectors,
+        camera: result.envelope.layout.camera ?? DEFAULT_CAMERA,
       })
       layoutLoadedRef.current = true
       setCanvasMode('overlay')

@@ -15,6 +15,8 @@ lets users reorient or jump via a miniature camera overlay.
   regardless of the active workspace. Layout hydration never mutates or filters the sidebar tree.
 - **Workspace Scoping**: Overlay API calls send `X-Overlay-Workspace-ID` so server routes know which layout to load or
   persist. Folder fetches for the sidebar remain unscoped so cache keys stay stable per `folderId`.
+- **Per-Workspace Camera**: Each saved layout now stores the popups-layer transform (`x`, `y`, `scale`). Switching
+  workspaces restores both popup geometry and the viewport, matching the “notes canvas” expectation.
 - **Infinite Canvas Overlay**: `PopupOverlay` now spans the full canvas rectangle (no `clipPath` inset). Popups can be
   dragged beneath/behind the sidebar or far off the initial viewport and remain renderable, with pointer guards keeping
   the sidebar interactive.
@@ -45,7 +47,9 @@ lets users reorient or jump via a miniature camera overlay.
    no longer floods `/api/debug/log`. Pointer-level logs stay opt-in.
 7. **Minimap remains observational**: The minimap reads existing popup maps and camera transforms without changing
    persistence formats. Gesture-to-camera updates route through the same `setTransform` helpers the overlay already uses.
-8. **Unified preview timers**: All note preview entry points (floating toolbar org list, sidebar top-level rows, hover
+8. **Camera persistence**: Save/restore the popups-layer camera per workspace; default to identity when missing to remain
+   backward compatible.
+9. **Unified preview timers**: All note preview entry points (floating toolbar org list, sidebar top-level rows, hover
    popups) rely on the shared hook so debounce/timing stays consistent and preview tooltips automatically cancel folder
    popup close timers when appropriate.
 

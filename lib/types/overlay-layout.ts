@@ -46,6 +46,12 @@ export interface OverlayInspectorState {
   pane?: string
 }
 
+export interface OverlayCameraState {
+  x: number
+  y: number
+  scale: number
+}
+
 export interface OverlayLayoutPayload {
   schemaVersion: string
   popups: OverlayPopupDescriptor[]
@@ -53,6 +59,7 @@ export interface OverlayLayoutPayload {
   lastSavedAt: string
   resolvedFolders?: Record<string, OverlayResolvedFolder>
   diagnostics?: OverlayLayoutDiagnostics
+  camera?: OverlayCameraState
 }
 
 export interface OverlayLayoutDiagnostics {

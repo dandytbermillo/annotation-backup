@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-07 22:06Z] e19d8d1: camera-persistence implementation
 - commit [2025-11-07 20:48Z] b7155bc: file eye icon hover
 - commit [2025-11-07 20:33Z] 76efa4f: add hover on folder eye icon
 - commit [2025-11-07 20:26Z] b641cb4: add folder eye icon in sidebar
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-07 05:17Z] 40380af: implement overlay minimap
 - note [2025-11-07 05:03Z]: Started implementing overlay infinite-canvas plan: enabling full-span bounds, pointer hit-testing guard, and debug log throttling prep.
 - commit [2025-11-07 04:57Z] b103f0a: make overlay infinite canvas
-- commit [2025-11-07 02:48Z] fbf8185: it works
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-07 20:48Z] b7155bc: file eye icon hover
+- commit [2025-11-07 22:06Z] e19d8d1: camera-persistence implementation

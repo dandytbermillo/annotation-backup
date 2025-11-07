@@ -26,6 +26,7 @@ export interface LayerContextValue {
   setActiveLayer: (id: 'notes' | 'popups') => void;
   updateTransform: (id: LayerId, transform: Partial<Transform>) => void;
   updateTransformByDelta: (layer: LayerId, delta: { dx: number; dy: number }, opts?: { syncPan?: boolean; txId?: number }) => void;
+  setTransform: (id: LayerId, transform: Transform) => void;
   updateLayerOpacity: (id: LayerId, opacity: number) => void;
   updateLayerVisibility: (id: LayerId, visible: boolean) => void;
   toggleSyncPan: () => void;
@@ -214,6 +215,27 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     // Convert delta to transform format and call existing updateTransform
     updateTransform(layer, { x: delta.dx, y: delta.dy });
   }, [currentGesture, syncPan, updateTransform, transforms]);
+
+  const setTransform = useCallback((id: LayerId, transform: Transform) => {
+    if (id === 'sidebar') return;
+    pendingTransformsRef.current = {};
+    setTransforms(prev => ({
+      ...prev,
+      [id]: transform,
+    }));
+
+    setLayers(prev => {
+      const newLayers = new Map(prev);
+      const layer = newLayers.get(id);
+      if (layer) {
+        newLayers.set(id, {
+          ...layer,
+          transform,
+        });
+      }
+      return newLayers;
+    });
+  }, []);
   
   // Gesture arbiter
   const setGesture = useCallback((type: GestureType) => {
@@ -332,6 +354,7 @@ export const LayerProvider: React.FC<LayerProviderProps> = ({
     setActiveLayer,
     updateTransform,
     updateTransformByDelta,
+    setTransform,
     updateLayerOpacity,
     updateLayerVisibility,
     toggleSyncPan,
@@ -379,6 +402,7 @@ export const useLayer = () => {
       setActiveLayer: () => {},
       updateTransform: () => {},
       updateTransformByDelta: () => {},
+      setTransform: () => {},
       updateLayerOpacity: () => {},
       updateLayerVisibility: () => {},
       toggleSyncPan: () => {},

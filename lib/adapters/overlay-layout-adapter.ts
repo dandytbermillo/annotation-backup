@@ -10,8 +10,11 @@ const DEFAULT_WORKSPACE_KEY = 'default'
 const DEFAULT_LAYOUT_BASE_URL = '/api/overlay/layout'
 const DEFAULT_WORKSPACES_BASE_URL = '/api/overlay/workspaces'
 
+const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 } as const
+
 const ensureOverlayPositions = (layout: OverlayLayoutPayload): OverlayLayoutPayload => ({
   ...layout,
+  camera: layout.camera ?? DEFAULT_CAMERA,
   popups: layout.popups.map(popup => ({
     ...popup,
     overlayPosition: popup.overlayPosition || popup.canvasPosition,

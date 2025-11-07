@@ -4,10 +4,12 @@ import {
   type OverlayLayoutPayload,
   type OverlayResolvedChild,
   type OverlayResolvedFolder,
+  type OverlayCameraState,
 } from '@/lib/types/overlay-layout'
 
 const DEFAULT_POPUP_WIDTH = 300
 const DEFAULT_POPUP_HEIGHT = 400
+const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
 
 export interface OverlayViewportTransform {
   x: number
@@ -52,10 +54,12 @@ export function buildHydratedOverlayLayout(
   transform: OverlayViewportTransform
 ): HydratedOverlayLayout {
   const sanitizedPopups = Array.isArray(layout.popups) ? layout.popups : []
+  const camera = layout.camera ?? DEFAULT_CAMERA
   const hash = JSON.stringify({
     schemaVersion: layout.schemaVersion || OVERLAY_LAYOUT_SCHEMA_VERSION,
     popups: sanitizedPopups,
     inspectors: [],
+    camera,
   })
 
   if (sanitizedPopups.length === 0) {
@@ -64,9 +68,10 @@ export function buildHydratedOverlayLayout(
   }
 
   const resolvedFolders = layout.resolvedFolders ?? {}
+  const transformToUse = transform || camera
 
   const restoredPopups: HydratedOverlayPopup[] = sanitizedPopups.map(descriptor => {
-    const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, transform)
+    const screenPosition = CoordinateBridge.canvasToScreen(descriptor.canvasPosition, transformToUse)
     const displayName = descriptor.folderName?.trim() || 'Untitled Folder'
     const width = Number.isFinite(descriptor.width) ? (descriptor.width as number) : DEFAULT_POPUP_WIDTH
     const height = Number.isFinite(descriptor.height) ? (descriptor.height as number) : DEFAULT_POPUP_HEIGHT
