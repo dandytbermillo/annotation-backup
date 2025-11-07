@@ -597,6 +597,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 }) => {
   const multiLayerEnabled = true;
   const debugLoggingEnabled = isDebugEnabled();
+  const overlayFullSpanEnabled =
+    (process.env.NEXT_PUBLIC_POPUP_OVERLAY_FULLSPAN ?? 'true').toLowerCase() !== 'false';
+  const debugDragTracingEnabled =
+    debugLoggingEnabled &&
+    ['true', '1', 'on', 'yes'].includes(
+      (process.env.NEXT_PUBLIC_DEBUG_POPUP_DRAG_TRACE ?? '').toLowerCase()
+    );
   const debugLog = useCallback<typeof baseDebugLog>(
     (...args) => {
       if (!debugLoggingEnabled) {
@@ -605,6 +612,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return baseDebugLog(...args);
     },
     [debugLoggingEnabled]
+  );
+  const tracePointerLog = useCallback<typeof baseDebugLog>(
+    (...args) => {
+      if (!debugDragTracingEnabled) {
+        return Promise.resolve();
+      }
+      return baseDebugLog(...args);
+    },
+    [debugDragTracingEnabled]
   );
 
   const fetchWithWorkspace = useCallback(
@@ -2119,6 +2135,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // Track the on-screen bounds of the canvas container to scope the overlay
   const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
+  const sidebarRectRef = useRef<DOMRect | null>(null);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
@@ -2249,24 +2266,46 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Empty space = not on popup card and not on button
     return !isOnPopup && !isOnButton;
   }, []);
+
+  const isPointerOverSidebar = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!overlayFullSpanEnabled) {
+        return false;
+      }
+      const rect = sidebarRectRef.current;
+      if (!rect) {
+        return false;
+      }
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    },
+    [overlayFullSpanEnabled]
+  );
   
   // Handle pan start (simplified like notes canvas)
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
-    if (sidebarEl) {
-      const rect = sidebarEl.getBoundingClientRect();
-      if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
-        debugLog('PopupOverlay', 'pointer_blocked_over_sidebar', {
-          clientX: e.clientX,
-          clientY: e.clientY,
-          sidebarRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
-        });
-        return;
-      }
+    if (isPointerOverSidebar(e.clientX, e.clientY)) {
+      tracePointerLog('PopupOverlay', 'pointer_blocked_over_sidebar', {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        sidebarRect: sidebarRectRef.current
+          ? {
+              left: sidebarRectRef.current.left,
+              right: sidebarRectRef.current.right,
+              top: sidebarRectRef.current.top,
+              bottom: sidebarRectRef.current.bottom,
+            }
+          : null,
+      });
+      return;
     }
 
     if (isLocked) {
-      debugLog('PopupOverlay', 'pan_blocked_locked_state', {
+      tracePointerLog('PopupOverlay', 'pan_blocked_locked_state', {
         popupCount: popups.size,
         activeLayer: layerCtx?.activeLayer || 'none',
       });
@@ -2274,7 +2313,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
 
     // Always log that pointer down was received (debug only)
-    void debugLog('[PopupOverlay] pointer_down_event', {
+    void tracePointerLog('[PopupOverlay] pointer_down_event', {
       target: (e.target as HTMLElement).className,
       isEmptySpace: isOverlayEmptySpace(e),
       isActiveLayer,
@@ -2285,7 +2324,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
     
     getUIResourceManager().enqueueLowPriority(() => {
-      debugLog('PopupOverlay', 'pointer_down_received', {
+      tracePointerLog('PopupOverlay', 'pointer_down_received', {
         target: (e.target as HTMLElement).className,
         isEmptySpace: isOverlayEmptySpace(e),
         isActiveLayer,
@@ -2297,7 +2336,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Only start panning if clicking on empty space
     if (!isOverlayEmptySpace(e)) {
       getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'pan_blocked_not_empty_space', {
+        tracePointerLog('PopupOverlay', 'pan_blocked_not_empty_space', {
           target: (e.target as HTMLElement).className
         });
       });
@@ -2308,7 +2347,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     const hasPopups = popups.size > 0;
     if (!hasPopups) {
       getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'pan_blocked', { 
+        tracePointerLog('PopupOverlay', 'pan_blocked', { 
           isActiveLayer,
           hasPopups,
           layerCtx: layerCtx?.activeLayer || 'none',
@@ -2320,7 +2359,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Also require correct active layer to avoid accidental interception
     if (!isActiveLayer) {
       getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'pan_blocked_inactive_layer', {
+        tracePointerLog('PopupOverlay', 'pan_blocked_inactive_layer', {
           isActiveLayer,
           layerCtx: layerCtx?.activeLayer || 'none',
           reason: 'inactive_layer'
@@ -2329,7 +2368,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
     
-    void debugLog('[PopupOverlay] pan_start_event', {
+    void tracePointerLog('[PopupOverlay] pan_start_event', {
       clientX: e.clientX,
       clientY: e.clientY,
       transform: activeTransform,
@@ -2337,7 +2376,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
     
     getUIResourceManager().enqueueLowPriority(() => {
-      debugLog('PopupOverlay', 'pan_start', { 
+      tracePointerLog('PopupOverlay', 'pan_start', { 
         clientX: e.clientX, 
         clientY: e.clientY,
         currentTransform: activeTransform,
@@ -2364,7 +2403,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown error';
       // Fallback: pointer capture not available or synthetic event
-      debugLog('PopupOverlay', 'pointer_capture_failed', { 
+      tracePointerLog('PopupOverlay', 'pointer_capture_failed', { 
         error: message,
         pointerId: e.pointerId 
       });
@@ -2399,13 +2438,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     isActiveLayer,
     popups.size,
     layerCtx,
-    isLocked
+    isLocked,
+    isPointerOverSidebar,
+    tracePointerLog
   ]);
   
   // Handle pan move (simplified like notes canvas)
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isPanningRef.current || pointerIdRef.current === null) {
-      debugLog('PopupOverlay', 'pan_move_blocked', {
+      tracePointerLog('PopupOverlay', 'pan_move_blocked', {
         isPanning: isPanningRef.current,
         pointerIdRef: pointerIdRef.current,
         reason: !isPanningRef.current ? 'not_panning' : 'no_pointer_id'
@@ -2425,7 +2466,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       if (Math.hypot(dx0, dy0) < 1) return; // maintain minimal hysteresis to avoid accidental pans
       setEngaged(true);
       getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
+        tracePointerLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
       });
     }
     
@@ -2455,14 +2496,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
     
     lastMouseRef.current = { x: e.clientX, y: e.clientY };
-  }, [isPanning, engaged, popups.size, hasSharedCamera, layerCtx]);
+  }, [isPanning, engaged, popups.size, hasSharedCamera, layerCtx, tracePointerLog]);
   
   // Handle pan end (simplified)
   const handlePointerEnd = useCallback((e: React.PointerEvent) => {
     if (!isPanningRef.current) return;
     
     getUIResourceManager().enqueueLowPriority(() => {
-      debugLog('PopupOverlay', 'pan_end', { 
+      tracePointerLog('PopupOverlay', 'pan_end', { 
         totalDelta: {
           x: activeTransform.x,
           y: activeTransform.y
@@ -2485,7 +2526,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error';
         // Pointer was never captured or already released
-        debugLog('PopupOverlay', 'pointer_release_failed', { 
+        tracePointerLog('PopupOverlay', 'pointer_release_failed', { 
           error: message,
           pointerId: pointerIdRef.current 
         });
@@ -2514,7 +2555,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     if (hasSharedCamera && layerCtx) {
       layerCtx.setGesture('none');
     }
-  }, [isPanning, hasSharedCamera, layerCtx, engaged, activeTransform]);
+  }, [isPanning, hasSharedCamera, layerCtx, engaged, activeTransform, tracePointerLog]);
   
   // Note: With pointer capture, we don't need document-level listeners
   // The pointer events will continue to fire on the overlay even when
@@ -2587,44 +2628,61 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const recomputeOverlayBounds = useCallback(() => {
     if (typeof window === 'undefined') return;
     const canvasEl = document.getElementById('canvas-container');
+    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
+    const sidebarRect = sidebarEl?.getBoundingClientRect() ?? null;
+    sidebarRectRef.current = sidebarRect;
+
     if (canvasEl) {
       const rect = canvasEl.getBoundingClientRect();
-      const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
-      let effectiveLeft = rect.left;
-      let effectiveWidth = rect.width;
       let guardOffset = 0;
 
-      if (sidebarEl) {
-        const sidebarRect = sidebarEl.getBoundingClientRect();
+      if (sidebarRect) {
         const sidebarWidth = sidebarRect.width;
         const isSidebarVisible = sidebarWidth > 0 && sidebarRect.right > rect.left + 1;
-
         if (isSidebarVisible) {
-          const overlap = Math.max(0, sidebarRect.right - rect.left);
-          if (overlap > 0) {
-            effectiveLeft = rect.left + overlap;
-            effectiveWidth = Math.max(0, rect.right - effectiveLeft);
-            guardOffset = overlap;
+          guardOffset = Math.max(0, sidebarRect.right - rect.left);
+          if (guardOffset > 0) {
             debugLog('PopupOverlay', 'bounds_sidebar_detected', {
               sidebarWidth,
               sidebarRight: sidebarRect.right,
               canvasLeft: rect.left,
-              overlap,
-              effectiveLeft,
-              effectiveWidth,
+              guardOffset,
             });
           }
         }
       }
 
-      setOverlayBounds({
+      const baseBounds = {
         top: Math.max(0, rect.top),
-        left: Math.max(0, effectiveLeft),
-        width: Math.max(0, effectiveWidth),
+        left: Math.max(0, rect.left),
+        width: Math.max(0, rect.width),
         height: Math.max(0, rect.height),
-      });
+      };
+
+      let resolvedBounds = baseBounds;
+      if (!overlayFullSpanEnabled && guardOffset > 0) {
+        const effectiveLeft = rect.left + guardOffset;
+        resolvedBounds = {
+          top: baseBounds.top,
+          left: Math.max(0, effectiveLeft),
+          width: Math.max(0, rect.right - effectiveLeft),
+          height: baseBounds.height,
+        };
+      }
+
+      setOverlayBounds(resolvedBounds);
       setPointerGuardOffset(guardOffset);
-      debugLog('PopupOverlay', 'overlay_bounds_updated', { rect, effectiveLeft, effectiveWidth, guardOffset });
+      debugLog(
+        'PopupOverlay',
+        overlayFullSpanEnabled ? 'overlay_bounds_full_span' : 'overlay_bounds_updated',
+        {
+          rect,
+          guardOffset,
+          sidebarPresent: !!sidebarRect,
+          overlayBounds: resolvedBounds,
+          overlayFullSpanEnabled,
+        }
+      );
     } else {
       const fallbackHost = ensureFloatingOverlayHost();
       if (fallbackHost) {
@@ -2645,7 +2703,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         setPointerGuardOffset(0);
       }
     }
-  }, []);
+  }, [debugLog, overlayFullSpanEnabled]);
 
   useEffect(() => {
     // Initial compute and on resize
@@ -2987,12 +3045,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   
   // Viewport culling - only render visible popups
   const visiblePopups = useMemo(() => {
-    if (typeof window === 'undefined') return Array.from(popups.values())
-    
-    const viewport = {
-      width: window.innerWidth,
-      height: window.innerHeight,
-    }
+    const margin = 200;
+    const viewport = CoordinateBridge.getViewportBounds(margin);
     
     return Array.from(popups.values()).filter((popup) => {
       if (!popup.canvasPosition) return false
@@ -3002,16 +3056,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         activeTransform
       )
       
-      // Check if popup is within viewport (with some margin)
-      const margin = 100
       const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH
       const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
       
       return (
-        screenPos.x + popupWidth >= -margin &&
-        screenPos.x <= viewport.width + margin &&
-        screenPos.y + popupHeight >= -margin &&
-        screenPos.y <= viewport.height + margin
+        screenPos.x + popupWidth >= viewport.x &&
+        screenPos.x <= viewport.x + viewport.width &&
+        screenPos.y + popupHeight >= viewport.y &&
+        screenPos.y <= viewport.y + viewport.height
       )
     })
   }, [popups, activeTransform])
@@ -3052,7 +3104,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         opacity: hasPopups ? 1 : 0,
         visibility: hasPopups ? 'visible' : 'hidden',
         contain: 'layout paint' as const,
-        clipPath: pointerGuardOffset > 0 ? `inset(0 0 0 ${pointerGuardOffset}px)` : 'none',
+        clipPath:
+          !overlayFullSpanEnabled && pointerGuardOffset > 0
+            ? `inset(0 0 0 ${pointerGuardOffset}px)`
+            : 'none',
         ...getBackdropStyle(backdropStyle),
       }}
       data-layer="popups"
