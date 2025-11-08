@@ -31,11 +31,11 @@ export async function trackNoteAccess(noteId: string): Promise<void> {
     })
 
     if (!response.ok) {
-      throw new Error(`Failed to track note access: ${response.status} ${response.statusText}`)
+      console.warn(`Failed to track note access: ${response.status} ${response.statusText}`)
+      return
     }
   } catch (error) {
     console.error('Failed to track note access:', error)
-    throw error // Re-throw so .then() doesn't execute on failure
   }
 }
 
@@ -81,33 +81,71 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     })
     const noteName = name?.trim() || `New Note - ${timestamp}`
 
-    // Determine parent folder
+    // Determine parent folder (must live under /knowledge-base)
     let finalParentId = parentId
 
-    // If no parent specified, try to find "Uncategorized" folder
-    if (finalParentId === null || finalParentId === undefined) {
+    const loadWorkspaceFolders = async () => {
       try {
-        // Fetch all folders and search for Uncategorized (it's nested under Knowledge Base)
         const folderParams = new URLSearchParams({ type: 'folder' })
         if (workspaceId) {
           folderParams.set('workspaceId', workspaceId)
         }
-        const foldersResponse = await fetch(`/api/items?${folderParams.toString()}`, {
+        const response = await fetch(`/api/items?${folderParams.toString()}`, {
           headers: applyWorkspaceHeaders({ Accept: 'application/json' })
         })
-        if (foldersResponse.ok) {
-          const data = await foldersResponse.json()
-          // Search by path since Uncategorized is at /knowledge-base/uncategorized
-          const uncategorized = data.items?.find((item: any) =>
-            item.type === 'folder' &&
-            (item.path === '/knowledge-base/uncategorized' || item.name === 'Uncategorized')
-          )
-          finalParentId = uncategorized?.id || null
-          console.log('[createNote] Found Uncategorized folder:', uncategorized?.id, uncategorized?.path)
-        }
-      } catch (err) {
-        console.warn('[createNote] Could not find Uncategorized folder, creating in root')
+        if (!response.ok) return []
+        const data = await response.json()
+        return Array.isArray(data.items) ? data.items : []
+      } catch (error) {
+        console.warn('[createNote] Failed to load workspace folders:', error)
+        return []
       }
+    }
+
+    const loadKnowledgeBaseRoot = async () => {
+      try {
+        const response = await fetch('/api/items?parentId=null', {
+          headers: { Accept: 'application/json' }
+        })
+        if (!response.ok) return null
+        const data = await response.json()
+        const items: any[] = Array.isArray(data.items) ? data.items : []
+        return items.find(
+          item => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
+        ) ?? null
+      } catch (error) {
+        console.warn('[createNote] Failed to load Knowledge Base root:', error)
+        return null
+      }
+    }
+
+    const findUncategorizedFolder = async () => {
+      const folders = await loadWorkspaceFolders()
+      return folders.find(
+        item =>
+          item.type === 'folder' &&
+          (item.path === '/knowledge-base/uncategorized' || item.name === 'Uncategorized')
+      ) ?? null
+    }
+
+    if (finalParentId === null || finalParentId === undefined) {
+      const uncategorized = await findUncategorizedFolder()
+      if (uncategorized?.id) {
+        finalParentId = uncategorized.id
+        console.log('[createNote] Using Uncategorized folder:', uncategorized.id)
+      }
+    }
+
+    if (finalParentId === null || finalParentId === undefined) {
+      const knowledgeBase = await loadKnowledgeBaseRoot()
+      if (knowledgeBase?.id) {
+        finalParentId = knowledgeBase.id
+        console.log('[createNote] Using Knowledge Base root:', knowledgeBase.id)
+      }
+    }
+
+    if (finalParentId === null || finalParentId === undefined) {
+      throw new Error('Unable to locate Knowledge Base root. Please ensure the Knowledge Base folder exists.')
     }
 
     // Create the note
