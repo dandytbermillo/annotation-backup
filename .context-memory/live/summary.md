@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-08 06:39Z] 63634c6: implement fix for hydrating issue in overlay
 - commit [2025-11-08 06:18Z] 2a100d1: overlay lazy load plan
 - commit [2025-11-08 05:31Z] 8652af0: start here
 - commit [2025-11-07 22:53Z] 26488e7: hydrating persistence disappear
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-07 20:48Z] b7155bc: file eye icon hover
 - commit [2025-11-07 20:33Z] 76efa4f: add hover on folder eye icon
 - commit [2025-11-07 20:26Z] b641cb4: add folder eye icon in sidebar
-- commit [2025-11-07 06:07Z] 48767d4: minimap appeared
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-08 06:18Z] 2a100d1: overlay lazy load plan
+- commit [2025-11-08 06:39Z] 63634c6: implement fix for hydrating issue in overlay
