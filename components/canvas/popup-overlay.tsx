@@ -41,7 +41,7 @@ interface PopupCardHeaderProps {
   isMoveCascadeParent: boolean;
   cascadeChildCount: number;
   renamingTitleId: string | null;
-  renameTitleInputRef: React.RefObject<HTMLInputElement>;
+  renameTitleInputRef: React.MutableRefObject<HTMLInputElement | null>;
   renamingTitleName: string;
   onRenameTitleNameChange: (value: string) => void;
   onSaveRenameTitle: () => void;
@@ -101,10 +101,14 @@ const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
   const isChildPopup = (popup.level && popup.level > 0) || (popup as any).parentPopupId;
 
   if (isChildPopup && folderName === 'sample') {
-    void debugLog('[PopupOverlay] sample popup color debug', {
-      folderColor: popup.folder?.color,
-      colorTheme,
-      folderData: popup.folder,
+    void debugLog({
+      component: 'PopupOverlay',
+      action: 'sample_popup_color_debug',
+      metadata: {
+        folderColor: popup.folder?.color,
+        colorTheme,
+        folderData: popup.folder,
+      },
     });
   }
 
@@ -706,13 +710,21 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           return;
         }
 
-        void debugLog('[PopupOverlay] Note renamed event received', { noteId, newTitle });
+        void debugLog({
+          component: 'PopupOverlay',
+          action: 'note_renamed_event_received',
+          metadata: { noteId, newTitle },
+        });
 
         // Delegate to parent - parent owns the state, parent updates it
         // This follows React's unidirectional data flow principle
         if (onFolderRenamedRef.current) {
           onFolderRenamedRef.current(noteId, newTitle);
-          void debugLog('[PopupOverlay] Delegated rename to parent callback', { noteId });
+          void debugLog({
+            component: 'PopupOverlay',
+            action: 'delegated_rename_to_parent',
+            metadata: { noteId },
+          });
         } else {
           console.warn('[PopupOverlay] No parent callback available for rename');
         }
@@ -812,8 +824,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [renamingListFolderName, setRenamingListFolderName] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [renameLoading, setRenameLoading] = useState(false);
-  const renameTitleInputRef = useRef<HTMLInputElement>(null);
-  const renameListInputRef = useRef<HTMLInputElement>(null);
+  const renameTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const renameListInputRef = useRef<HTMLInputElement | null>(null);
 
   // Breadcrumb dropdown state
   const [breadcrumbDropdownOpen, setBreadcrumbDropdownOpen] = useState<string | null>(null); // popup ID
@@ -1491,9 +1503,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           window.dispatchEvent(new CustomEvent('note-renamed', {
             detail: { noteId: renamingListFolder.folderId, newTitle: trimmedName }
           }));
-          void debugLog('[PopupOverlay] Emitted note-renamed event', {
-            noteId: renamingListFolder.folderId,
-            newTitle: trimmedName,
+          void debugLog({
+            component: 'PopupOverlay',
+            action: 'emitted_note_renamed_event',
+            metadata: {
+              noteId: renamingListFolder.folderId,
+              newTitle: trimmedName,
+            },
           });
         } catch (dispatchError) {
           // Non-critical: Event dispatch failed, but database update succeeded
@@ -1523,11 +1539,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     // Check cache first
     const cached = ancestorCache.get(folderId);
     if (cached) {
-      void debugLog('[PopupOverlay] Using cached ancestors', { folderId });
+      void debugLog({
+        component: 'PopupOverlay',
+        action: 'using_cached_ancestors',
+        metadata: { folderId },
+      });
       return cached;
     }
 
-    void debugLog('[PopupOverlay] Fetching ancestors for folder', { folderId });
+    void debugLog({
+      component: 'PopupOverlay',
+      action: 'fetching_ancestors_for_folder',
+      metadata: { folderId },
+    });
     setLoadingAncestors(prev => new Set(prev).add(popupId));
 
     try {
@@ -1562,15 +1586,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           parentId: folder.parentId
         });
 
-        void debugLog('[PopupOverlay] Added ancestor', {
-          folderName: folder.name,
-          path: folder.path,
-          depth,
+        void debugLog({
+          component: 'PopupOverlay',
+          action: 'added_ancestor',
+          metadata: {
+            folderName: folder.name,
+            path: folder.path,
+            depth,
+          },
         });
 
         // Stop at Knowledge Base root
         if (!folder.parentId || folder.path === '/knowledge-base') {
-          void debugLog('[PopupOverlay] Reached root ancestor', { folderId });
+          void debugLog({
+            component: 'PopupOverlay',
+            action: 'reached_root_ancestor',
+            metadata: { folderId },
+          });
           break;
         }
 
@@ -1578,9 +1610,13 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         depth++;
       }
 
-      void debugLog('[PopupOverlay] Fetched ancestors', {
-        folderId,
-        ancestorCount: ancestors.length,
+      void debugLog({
+        component: 'PopupOverlay',
+        action: 'fetched_ancestors',
+        metadata: {
+          folderId,
+          ancestorCount: ancestors.length,
+        },
       });
 
       // Cache the result
@@ -1605,11 +1641,19 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
     if (isOpen) {
       // Close dropdown
-      void debugLog('[PopupOverlay] Closing breadcrumb dropdown', { popupId: popup.id, folderName: popup.folderName });
+      void debugLog({
+        component: 'PopupOverlay',
+        action: 'closing_breadcrumb_dropdown',
+        metadata: { popupId: popup.id, folderName: popup.folderName },
+      });
       setBreadcrumbDropdownOpen(null);
     } else {
       // Open dropdown and fetch ancestors
-      void debugLog('[PopupOverlay] Opening breadcrumb dropdown', { popupId: popup.id, folderName: popup.folderName });
+      void debugLog({
+        component: 'PopupOverlay',
+        action: 'opening_breadcrumb_dropdown',
+        metadata: { popupId: popup.id, folderName: popup.folderName },
+      });
       setBreadcrumbDropdownOpen(popup.id);
 
       if (popup.folder?.id) {
@@ -2360,14 +2404,18 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
 
     // Always log that pointer down was received (debug only)
-    void tracePointerLog('[PopupOverlay] pointer_down_event', {
-      target: (e.target as HTMLElement).className,
-      isEmptySpace: isOverlayEmptySpace(e),
-      isActiveLayer,
-      popupCount: popups.size,
-      layerCtx: layerCtx?.activeLayer || 'none',
-      clientX: e.clientX,
-      clientY: e.clientY,
+    void tracePointerLog({
+      component: 'PopupOverlay',
+      action: 'pointer_down_event',
+      metadata: {
+        target: (e.target as HTMLElement).className,
+        isEmptySpace: isOverlayEmptySpace(e),
+        isActiveLayer,
+        popupCount: popups.size,
+        layerCtx: layerCtx?.activeLayer || 'none',
+        clientX: e.clientX,
+        clientY: e.clientY,
+      },
     });
     
     getUIResourceManager().enqueueLowPriority(() => {
@@ -2415,11 +2463,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
     
-    void tracePointerLog('[PopupOverlay] pan_start_event', {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      transform: activeTransform,
-      pointerId: e.pointerId,
+    void tracePointerLog({
+      component: 'PopupOverlay',
+      action: 'pan_start_event',
+      metadata: {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        transform: activeTransform,
+        pointerId: e.pointerId,
+      },
     });
     
     getUIResourceManager().enqueueLowPriority(() => {

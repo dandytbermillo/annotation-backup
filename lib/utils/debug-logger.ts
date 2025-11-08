@@ -24,6 +24,7 @@ export interface DebugLogData {
   action: string;
   content_preview?: string;
   metadata?: Record<string, any>;
+  note_id?: string | null;
 }
 
 /**

@@ -111,7 +111,7 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
         const data = await response.json()
         const items: any[] = Array.isArray(data.items) ? data.items : []
         return items.find(
-          item => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
+          (item: any) => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
         ) ?? null
       } catch (error) {
         console.warn('[createNote] Failed to load Knowledge Base root:', error)
@@ -122,7 +122,7 @@ export async function createNote(options: CreateNoteOptions = {}): Promise<Creat
     const findUncategorizedFolder = async () => {
       const folders = await loadWorkspaceFolders()
       return folders.find(
-        item =>
+        (item: any) =>
           item.type === 'folder' &&
           (item.path === '/knowledge-base/uncategorized' || item.name === 'Uncategorized')
       ) ?? null

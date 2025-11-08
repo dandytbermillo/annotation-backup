@@ -58,7 +58,7 @@ export interface PopupChildRowDeps {
   setRenamingListFolderName: React.Dispatch<React.SetStateAction<string>>
   renameLoading: boolean
   renameError: string | null
-  renameListInputRef: React.RefObject<HTMLInputElement>
+  renameListInputRef: React.MutableRefObject<HTMLInputElement | null>
   onSelectNote?: (noteId: string) => void
   layerCtx: LayerContextValue | null
 }

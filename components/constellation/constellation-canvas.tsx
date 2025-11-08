@@ -4,6 +4,7 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { ConstellationItem } from '@/types/constellation';
 import { getItemIcon, getItemColor, getItemSize, transformPoint, getNodePosition } from '@/lib/constellation/constellation-utils';
 import { Z_INDEX } from '@/lib/constants/z-index';
+import { debugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 
 interface ConstellationVisualizationProps {
   allItems: ConstellationItem[];

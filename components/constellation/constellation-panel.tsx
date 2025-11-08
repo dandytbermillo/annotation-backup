@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useConstellationContext } from './constellation-context';
 import { useNotifications } from '@/hooks/useNotifications';
-import { debugLog } from '@/lib/utils/debug-logger';
+import { debugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 import ConstellationVisualization from './constellation-canvas';
 import SearchControls from './SearchControls';
 import StatusPanel from './StatusPanel';

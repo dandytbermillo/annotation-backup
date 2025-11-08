@@ -131,6 +131,7 @@ export interface OverlayPopup {
   folder: OrgItem | null
   position: { x: number; y: number }
   canvasPosition: { x: number; y: number }
+  parentId?: string | null
   width?: number
   height?: number
   sizeMode?: 'default' | 'auto' | 'user'
@@ -143,6 +144,7 @@ export interface OverlayPopup {
   closeMode?: 'normal' | 'closing' // NEW: Interactive close mode
   isPinned?: boolean // NEW: Pin to prevent cascade-close
   moveMode?: 'parent' | 'child'
+  isDragging?: boolean
 }
 
 const TOOL_CATEGORIES = [
