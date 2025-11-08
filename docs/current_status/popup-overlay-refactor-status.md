@@ -43,6 +43,17 @@
 - [x] Evaluate further component decomposition (e.g., header/footer subcomponents) to continue shrinking `popup-overlay.tsx`.
 - [x] Confirm persistence logic (server PUT/save) still captures user-driven resizes after the shared renderer changes; added a pointer-up commit guard.
 - [x] Coordinate with backend team on eliminating layout conflict 409 spam to reduce “hydrating” overlays during panning (overlay lazy-load/autosave guard stopped `baseVersion=0` writes, so conflicts no longer reproduce; keep telemetry handy in case they return).
+- [ ] Snapshot `components/canvas/popup-overlay.tsx` before any future refactors (store at `docs/backup/component/popup-overlay.tsx.YYYY-MM-DD.bak`) so revert cycles don’t lose context.
+- [ ] Track live refactor scope inside this doc before coding (planned extractions, affected modules, manual tests) so the checklist never goes out of sync with reality.
+- [ ] Follow-up extractions:
+  - [ ] Move breadcrumb dropdown / preview plumbing completely into `useBreadcrumbs` (done) **and** document its manual test procedure here.
+  - [ ] Evaluate splitting pan/auto-scroll logic into `useOverlayPanState` (existing hook) plus a dedicated pointer logger to keep `popup-overlay.tsx` under 2k lines.
+
+### Manual Test Notes (current scope)
+1. **Header reusable in both render paths** – open the Organization view (fallback overlay host) and a canvas-backed overlay to confirm badges, rename pencil, cascade “Link” button, and close controls match.
+2. **Cascade button visibility** – ensure the `Link` button only shows for popups with at least one open child (regression guard added in `PopupCardHeader`).
+3. **Breadcrumb dropdown + folder preview** – toggle the dropdown, hover ancestors to show preview, move pointer away to ensure preview hides after the delay.
+4. **Fallback overlay host** – when `#canvas-container` is absent, `floating-overlay-root` renders the same header/footer components; this view doubles as the fallback test (Organization workspace already covers it).
 
 ### Backend Coordination (layout conflict 409s)
 - Status: resolved after shipping the overlay lazy-load + autosave guard (`docs/canvas/note/decouple/overlay-lazy-load-plan.md`); `baseVersion=0` snapshots no longer fire, so layout saves stopped returning 409/stale-data errors in current runs.

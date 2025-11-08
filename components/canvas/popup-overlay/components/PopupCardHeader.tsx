@@ -135,10 +135,20 @@ export const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
 
     return (
       <div
-        className="absolute top-full left-0 mt-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-2 px-3 min-w-[200px]"
+        className="absolute top-0 right-full mr-2 bg-gray-800 border border-gray-700 rounded-md shadow-lg py-2 px-3 min-w-[200px]"
         style={{ zIndex: 9999 }}
         data-breadcrumb-dropdown
       >
+        <button
+          className="absolute -top-2 -right-2 bg-gray-900 text-gray-400 hover:text-white hover:bg-gray-700 rounded-full w-5 h-5 flex items-center justify-center text-xs shadow"
+          onClick={event => {
+            event.stopPropagation()
+            onToggleBreadcrumbDropdown(popup)
+          }}
+          aria-label="Close path dropdown"
+        >
+          ×
+        </button>
         <div className="text-xs text-gray-400 mb-2">Full path:</div>
         {isLoadingAncestors ? (
           <div className="text-sm text-gray-500">Loading...</div>

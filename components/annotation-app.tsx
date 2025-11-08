@@ -3471,6 +3471,30 @@ const handleCenterNote = useCallback(
         popupPosition = { x: rect.left - 320, y: rect.top }
       }
 
+      const cachedEntry = folderCacheRef.current.get(folder.id)
+      const normalizeChild = (item: any): OrgItem => {
+        if (item && typeof item === 'object' && 'hasChildren' in item) {
+          return { ...(item as OrgItem) }
+        }
+        return {
+          id: item.id,
+          name: item.name ?? deriveFromPath(item.path) ?? 'Untitled',
+          type: item.type === 'note' ? 'note' : 'folder',
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color,
+          path: item.path,
+          hasChildren: item.type === 'folder',
+          level: (folder.level ?? 0) + 1,
+          children: [],
+          parentId: item.parentId ?? item.parent_id,
+        }
+      }
+
+      let initialChildren: OrgItem[] | null = null
+      if (Array.isArray(cachedEntry?.children) && cachedEntry.children.length > 0) {
+        initialChildren = (cachedEntry.children as any[]).map(normalizeChild)
+      }
+
         const popupId = `overlay-popup-${Date.now()}-${folder.id}`
       const canvasPosition = CoordinateBridge.screenToCanvas(popupPosition, sharedTransform)
       const screenPosition = CoordinateBridge.canvasToScreen(canvasPosition, sharedTransform)
@@ -3486,14 +3510,14 @@ const handleCenterNote = useCallback(
           level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
           color: inheritedColor,
           path: (folder as any).path,
-          children: []
+          children: initialChildren ?? []
         },
         position: screenPosition,
         canvasPosition: canvasPosition,
         width: DEFAULT_POPUP_WIDTH,
         sizeMode: 'default',
-        children: [],
-        isLoading: true,
+        children: initialChildren ?? [],
+        isLoading: !initialChildren,
         isPersistent: isPersistent,
         isHighlighted: false, // Never glow on first creation
         level: (currentOverlayPopups.find(p => p.id === parentPopupId)?.level || 0) + 1,
@@ -3817,13 +3841,20 @@ const handleCenterNote = useCallback(
   const handleFolderCreated = useCallback((popupId: string, newFolder: any) => {
     console.log('[handleFolderCreated]', { popupId, newFolder })
 
+    let updatedParentFolderId: string | null = null
+    let updatedChildrenSnapshot: OrgItem[] | null = null
+
     // Update the popup's children to include the new folder
     setOverlayPopups(prev =>
       prev.map(popup => {
         if (popup.id === popupId && popup.folder) {
           // Add new folder to the beginning of children array (folders typically shown first)
-          const updatedChildren = [newFolder, ...popup.children]
+          const updatedChildren: OrgItem[] = [newFolder, ...popup.children]
           const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
+
+          updatedParentFolderId = popup.folderId
+          updatedChildrenSnapshot = updatedChildren
+
           return {
             ...popup,
             children: updatedChildren,
@@ -3835,6 +3866,14 @@ const handleCenterNote = useCallback(
         return popup
       })
     )
+
+    if (updatedParentFolderId && updatedChildrenSnapshot) {
+      const existingCache = folderCacheRef.current.get(updatedParentFolderId) ?? {}
+      folderCacheRef.current.set(updatedParentFolderId, {
+        ...existingCache,
+        children: updatedChildrenSnapshot,
+      })
+    }
 
     console.log('[handleFolderCreated] Popup updated with new folder')
   }, [])
