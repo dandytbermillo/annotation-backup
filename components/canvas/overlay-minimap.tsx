@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useCallback, useRef } from 'react';
-import type { PopupData } from './popupOverlay/types';
+import type { PopupData } from './popup-overlay/types';
 import type { Transform } from '@/lib/utils/coordinate-bridge';
 
 interface OverlayMinimapProps {

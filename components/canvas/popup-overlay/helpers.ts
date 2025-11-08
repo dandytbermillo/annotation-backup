@@ -1,4 +1,5 @@
 import { FOLDER_COLORS } from './constants'
+import type { PopupChildNode } from './types'
 
 type NullableString = string | null | undefined
 
@@ -6,13 +7,13 @@ export const clamp = (value: number, min: number, max: number) => Math.min(max, 
 
 export const getFolderColorTheme = (colorName: NullableString) => {
   if (!colorName) return null
-  return FOLDER_COLORS.find(c => c.name === colorName) || null
+  return FOLDER_COLORS.find(color => color.name === colorName) || null
 }
 
 export const parseBreadcrumb = (path: NullableString, currentName: string): string[] => {
   if (!path) return [currentName]
 
-  const parts = path.split('/').filter(p => p.trim())
+  const parts = path.split('/').filter(part => part.trim())
   if (parts.length === 0) return [currentName]
 
   const breadcrumbs = parts
@@ -44,4 +45,14 @@ export const formatRelativeTime = (timestamp?: string) => {
   if (diffDays < 30) return `${diffDays}d ago`
   if (diffMonths < 12) return `${diffMonths}mo ago`
   return `${diffYears}y ago`
+}
+
+export const isFolderNode = (node: PopupChildNode | null | undefined): boolean => {
+  if (!node || !node.type) return false
+  return node.type.toLowerCase() === 'folder'
+}
+
+export const isNoteLikeNode = (node: PopupChildNode | null | undefined): boolean => {
+  if (!node) return false
+  return !isFolderNode(node)
 }

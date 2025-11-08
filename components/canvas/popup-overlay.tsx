@@ -29,10 +29,10 @@ import {
   MAX_POPUP_WIDTH,
   MIN_POPUP_HEIGHT,
   MIN_POPUP_WIDTH,
-} from './popupOverlay/constants';
-import { clamp, getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popupOverlay/helpers';
-import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popupOverlay/renderPopupChildRow';
-import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popupOverlay/types';
+} from './popup-overlay/constants';
+import { clamp, getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popup-overlay/helpers';
+import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-overlay/renderPopupChildRow';
+import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
 interface PopupCardHeaderProps {

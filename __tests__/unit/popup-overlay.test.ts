@@ -1,6 +1,6 @@
 import type { Dispatch, MouseEvent, MutableRefObject, RefObject, SetStateAction } from 'react'
 
-import { FOLDER_COLORS } from '@/components/canvas/popupOverlay/constants'
+import { FOLDER_COLORS } from '@/components/canvas/popup-overlay/constants'
 import {
   clamp,
   getFolderColorTheme,
@@ -8,13 +8,13 @@ import {
   formatRelativeTime,
   isFolderNode,
   isNoteLikeNode
-} from '@/components/canvas/popupOverlay/helpers'
+} from '@/components/canvas/popup-overlay/helpers'
 import {
   createPopupChildRowRenderer,
   type PopupChildRowDeps,
   type PopupChildRowOptions
-} from '@/components/canvas/popupOverlay/renderPopupChildRow'
-import type { PopupChildNode, PopupData, PreviewEntry } from '@/components/canvas/popupOverlay/types'
+} from '@/components/canvas/popup-overlay/renderPopupChildRow'
+import type { PopupChildNode, PopupData, PreviewEntry } from '@/components/canvas/popup-overlay/types'
 
 const createBaseDeps = (): PopupChildRowDeps => {
   const setNameMock = jest.fn()
