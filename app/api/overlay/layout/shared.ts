@@ -120,6 +120,19 @@ export function normalizeLayout(
 
   const popups = normalizePopups(candidate.popups)
   const inspectors = normalizeInspectors(candidate.inspectors)
+  const cameraCandidate = candidate.camera as Record<string, unknown> | undefined
+  const camera =
+    cameraCandidate &&
+    typeof cameraCandidate === 'object' &&
+    typeof cameraCandidate.x === 'number' &&
+    typeof cameraCandidate.y === 'number' &&
+    typeof cameraCandidate.scale === 'number'
+      ? {
+          x: Number.isFinite(cameraCandidate.x) ? cameraCandidate.x : 0,
+          y: Number.isFinite(cameraCandidate.y) ? cameraCandidate.y : 0,
+          scale: Number.isFinite(cameraCandidate.scale) ? cameraCandidate.scale : 1,
+        }
+      : undefined
 
   let lastSavedAt = fallbackTimestamp
   if (!useServerTimestamp && typeof candidate.lastSavedAt === 'string') {
@@ -136,6 +149,7 @@ export function normalizeLayout(
     popups,
     inspectors,
     lastSavedAt,
+    camera,
   }
 }
 

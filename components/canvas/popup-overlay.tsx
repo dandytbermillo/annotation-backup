@@ -7,7 +7,7 @@ import { ConnectionLineAdapter } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { OverlayMinimap } from '@/components/canvas/overlay-minimap';
-import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil } from 'lucide-react';
+import { X, Folder, FileText, Eye, Home, ChevronRight, Pencil, Hand } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
 import { buildMultilinePreview } from '@/lib/utils/branch-preview';
 import { debugLog as baseDebugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
@@ -38,6 +38,8 @@ export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, Po
 interface PopupCardHeaderProps {
   popup: PopupData;
   isEditMode: boolean;
+  isMoveCascadeParent: boolean;
+  cascadeChildCount: number;
   renamingTitleId: string | null;
   renameTitleInputRef: React.RefObject<HTMLInputElement>;
   renamingTitleName: string;
@@ -59,11 +61,14 @@ interface PopupCardHeaderProps {
   onConfirmClose?: (popupId: string) => void;
   onCancelClose?: (popupId: string) => void;
   onInitiateClose?: (popupId: string) => void;
+  onToggleMoveCascade?: (popupId: string) => void;
 }
 
 const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
   popup,
   isEditMode,
+  isMoveCascadeParent,
+  cascadeChildCount,
   renamingTitleId,
   renameTitleInputRef,
   renamingTitleName,
@@ -85,6 +90,7 @@ const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
   onConfirmClose,
   onCancelClose,
   onInitiateClose,
+  onToggleMoveCascade,
 }) => {
   const isEditActive = isEditMode;
   const isRenaming = renamingTitleId === popup.id;
@@ -284,6 +290,36 @@ const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
         {isChildPopup ? renderChildHeader() : renderRootHeader()}
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
+        {onToggleMoveCascade && (cascadeChildCount > 0 || isMoveCascadeParent) && (
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleMoveCascade(popup.id);
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+            className={`px-2 py-0.5 text-xs font-medium rounded transition-colors pointer-events-auto flex items-center gap-1 ${
+              isMoveCascadeParent
+                ? 'bg-amber-500 text-gray-900 hover:bg-amber-400'
+                : 'border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500'
+            }`}
+            aria-label={
+              isMoveCascadeParent
+                ? 'Disable move cascade (stop dragging children with this popup)'
+                : 'Enable move cascade so dragging this popup moves its children'
+            }
+            title={
+              cascadeChildCount > 0
+                ? `Drag parent + ${cascadeChildCount} linked popup${cascadeChildCount === 1 ? '' : 's'}`
+                : 'No open child popups'
+            }
+          >
+            <Hand className="w-3.5 h-3.5" />
+            <span>{isMoveCascadeParent ? 'Linked' : 'Link'}</span>
+            {cascadeChildCount > 0 && (
+              <span className="text-[10px] opacity-80">{cascadeChildCount}</span>
+            )}
+          </button>
+        )}
         <button
           onClick={(event) => {
             event.stopPropagation();
@@ -347,6 +383,7 @@ interface PopupCardFooterProps {
   popup: PopupData;
   isEditMode: boolean;
   hasClosingAncestor: boolean;
+  isMoveCascadeChild: boolean;
   popupSelections: Map<string, Set<string>>;
   onDeleteSelected: (popupId: string) => void;
   onClearSelection: (popupId: string) => void;
@@ -365,6 +402,7 @@ const PopupCardFooter: React.FC<PopupCardFooterProps> = ({
   popup,
   isEditMode,
   hasClosingAncestor,
+  isMoveCascadeChild,
   popupSelections,
   onDeleteSelected,
   onClearSelection,
@@ -407,7 +445,7 @@ const PopupCardFooter: React.FC<PopupCardFooterProps> = ({
           </div>
         </div>
       )}
-      {!isEditMode && popup.isHighlighted && hasClosingAncestor && (
+      {!isEditMode && (popup.isHighlighted && hasClosingAncestor || isMoveCascadeChild) && (
         <div className="px-3 py-2 bg-yellow-900/20 border-t border-yellow-600/50 flex items-center justify-center">
           <button
             onClick={(event) => {
@@ -418,9 +456,9 @@ const PopupCardFooter: React.FC<PopupCardFooterProps> = ({
             className={`px-3 py-1.5 text-sm font-medium rounded transition-all pointer-events-auto ${
               popup.isPinned ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
             }`}
-            aria-label={popup.isPinned ? 'Pinned - will stay open' : 'Pin to keep open'}
+            aria-label={popup.isPinned ? 'Pinned - will stay open' : isMoveCascadeChild ? 'Pin this popup to keep it in place while dragging parent' : 'Pin to keep open'}
           >
-            {popup.isPinned ? '📍 Pinned' : '📌 Pin to Keep Open'}
+            {popup.isPinned ? '📍 Pinned' : isMoveCascadeChild ? '✋ Pin to Stay' : '📌 Pin to Keep Open'}
           </button>
         </div>
       )}
@@ -561,6 +599,9 @@ interface PopupOverlayProps {
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
   workspaceId?: string | null;
+  activeMoveCascadeParentId?: string | null;
+  moveCascadeChildIds?: string[];
+  onToggleMoveCascade?: (popupId: string) => void;
 }
 
 // Format relative time (e.g., "2h ago", "3d ago")
@@ -595,6 +636,9 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
   workspaceId = null,
+  activeMoveCascadeParentId = null,
+  moveCascadeChildIds = [],
+  onToggleMoveCascade,
 }) => {
   const multiLayerEnabled = true;
   const debugLoggingEnabled = isDebugEnabled();
@@ -3071,6 +3115,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     })
   }, [popups, activeTransform])
   
+  const cascadeChildCountMap = useMemo(() => {
+    const counts = new Map<string, number>();
+    popups.forEach((popup) => {
+      const parentId = (popup as any).parentPopupId ?? popup.parentId;
+      if (!parentId) return;
+      counts.set(parentId, (counts.get(parentId) ?? 0) + 1);
+    });
+    return counts;
+  }, [popups]);
+  
   const viewportSize = useMemo(() => {
     if (overlayBounds) {
       return { width: overlayBounds.width, height: overlayBounds.height };
@@ -3223,6 +3277,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             onHoverFolder,
             onLeaveFolder,
           });
+          const cascadeChildCount = cascadeChildCountMap.get(popup.id) ?? 0;
 
           const position = popup.canvasPosition || popup.position;
           if (!position) return null;
@@ -3286,6 +3341,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               <PopupCardHeader
                 popup={popup}
                 isEditMode={Boolean(popupEditMode.get(popup.id))}
+                isMoveCascadeParent={popup.moveMode === 'parent'}
+                cascadeChildCount={cascadeChildCount}
                 renamingTitleId={renamingTitle}
                 renameTitleInputRef={renameTitleInputRef}
                 renamingTitleName={renamingTitleName}
@@ -3307,6 +3364,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 onConfirmClose={onConfirmClose}
                 onCancelClose={onCancelClose}
                 onInitiateClose={onInitiateClose}
+                onToggleMoveCascade={onToggleMoveCascade}
               />
               {/* Popup Content with virtualization for large lists */}
               <div
@@ -3347,6 +3405,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 popup={popup}
                 isEditMode={Boolean(popupEditMode.get(popup.id))}
                 hasClosingAncestor={hasClosingPopup}
+                isMoveCascadeChild={popup.moveMode === 'child'}
                 popupSelections={popupSelections}
                 onDeleteSelected={handleDeleteSelected}
                 onClearSelection={handleClearSelection}
@@ -3602,7 +3661,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       : 'border border-gray-700'
                   } ${
                     isPopupDropTarget === popup.id ? 'drop-target-active ring-4 ring-blue-400 ring-offset-2 ring-offset-gray-900' : ''
-                  } ${popup.isHighlighted || hoverHighlightedPopup === popup.id ? 'highlighted' : ''}`}
+                  } ${(popup.isHighlighted || hoverHighlightedPopup === popup.id || popup.moveMode) ? 'highlighted' : ''}`}
                   style={{
                     left: `${position.x}px`,
                     top: `${position.y}px`,
@@ -3891,11 +3950,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                       <div className="p-4 text-center text-gray-500 text-sm">Empty folder</div>
                     )}
                   </div>
-                  <PopupCardFooter
-                    popup={popup}
-                    isEditMode={Boolean(popupEditMode.get(popup.id))}
-                    hasClosingAncestor={hasClosingPopup}
-                    popupSelections={popupSelections}
+              <PopupCardFooter
+                popup={popup}
+                isEditMode={Boolean(popupEditMode.get(popup.id))}
+                hasClosingAncestor={hasClosingPopup}
+                isMoveCascadeChild={popup.moveMode === 'child'}
+                popupSelections={popupSelections}
                     onDeleteSelected={handleDeleteSelected}
                     onClearSelection={handleClearSelection}
                     creatingFolderInPopup={creatingFolderInPopup}

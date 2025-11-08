@@ -142,6 +142,7 @@ export interface OverlayPopup {
   isHighlighted?: boolean
   closeMode?: 'normal' | 'closing' // NEW: Interactive close mode
   isPinned?: boolean // NEW: Pin to prevent cascade-close
+  moveMode?: 'parent' | 'child'
 }
 
 const TOOL_CATEGORIES = [

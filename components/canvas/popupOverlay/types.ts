@@ -47,4 +47,5 @@ export interface PopupData extends PopupState {
   width?: number
   height?: number
   sizeMode?: 'default' | 'auto' | 'user'
+  moveMode?: 'parent' | 'child'
 }

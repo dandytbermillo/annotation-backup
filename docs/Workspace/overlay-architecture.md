@@ -30,6 +30,9 @@ lets users reorient or jump via a miniature camera overlay.
 - **Shared Hover/Preview Channel**: Both the floating toolbar and the sidebar use a single note-preview hover hook
   (`useNotePreviewHover`) so debounce timing, `/api/items` fetching, and tooltip lifecycle stay synchronized. Sidebar hover
   popups and top-level rows can show the same note previews without spawning duplicate logic.
+- **Move Cascade Toggle**: Each popup header exposes a hand button that links the current popup with any open descendants.
+  When enabled, dragging the parent moves its children in lockstep and highlights the entire subtree; children can opt out
+  by using the “Pin to Stay” control before the drag begins.
 
 ## Architecture Rules
 1. **Popup folder IDs must be valid**: Each popup descriptor must point to an existing Knowledge Base folder. Hydration
@@ -47,8 +50,9 @@ lets users reorient or jump via a miniature camera overlay.
    no longer floods `/api/debug/log`. Pointer-level logs stay opt-in.
 7. **Minimap remains observational**: The minimap reads existing popup maps and camera transforms without changing
    persistence formats. Gesture-to-camera updates route through the same `setTransform` helpers the overlay already uses.
-8. **Camera persistence**: Save/restore the popups-layer camera per workspace; default to identity when missing to remain
-   backward compatible.
+8. **Camera persistence**: Save/restore the popups-layer camera per workspace end-to-end: the payload carries
+   `camera { x, y, scale }`, the server normalizes/persists it, `LayerProvider.setTransform('popups', camera)` reapplies it
+   before popups render, and the layout hash includes it so camera-only changes still trigger saves.
 9. **Unified preview timers**: All note preview entry points (floating toolbar org list, sidebar top-level rows, hover
    popups) rely on the shared hook so debounce/timing stays consistent and preview tooltips automatically cancel folder
    popup close timers when appropriate.
@@ -83,6 +87,20 @@ lets users reorient or jump via a miniature camera overlay.
 - **Hover preview parity**: The shared hover hook powers both floating-toolbar popover previews and sidebar hover previews
   (top-level and nested). It handles the 500 ms hover delay, preview fetches, tooltip enter/leave, and cancelling folder
   close timers so hover popups stay open while users read a preview.
+
+## Move Cascade & Pinning
+- **Hand Toggle Behavior**: Clicking the hand icon within a popup header marks that popup as the cascade parent. The parent
+  badge turns amber, a counter shows how many descendant popups are linked, and all linked popups receive the same
+  highlight treatment so users can see the subtree that will move together.
+- **Dragging & Persistence**: While the cascade toggle is active, dragging the parent applies the same deltas (converted
+  to canvas/world space) to every unpinned descendant. The shared `buildLayoutPayload` path writes the updated world
+  coordinates plus the camera transform back to `overlay_layouts`, so workspace switching/remounting restores the new
+  arrangement exactly.
+- **Pin to Stay**: Cascade-linked children surface a “✋ Pin to Stay” control in their footers. Once pinned, those popups
+  ignore subsequent cascade drags or close confirmations initiated by the parent, matching the existing close-mode pinning
+  semantics.
+- **Reset Rules**: Turning the hand toggle off, closing any popup in the linked chain, or switching workspaces clears the
+  `moveCascadeState`, removes the highlights, and reverts buttons to their default “Pin to Keep Open” wording.
 
 ## Workflow Summary
 1. User selects a workspace via the toggle (Workspace 1, Workspace 2, etc.).

@@ -11,11 +11,12 @@ import {
   OverlayLayoutPayload,
   OverlayCanvasPosition,
 } from '@/lib/types/overlay-layout'
+import { normalizeLayout } from '@/app/api/overlay/layout/shared'
 
 describe('Overlay Layout Schema v2', () => {
   describe('OVERLAY_LAYOUT_SCHEMA_VERSION', () => {
-    it('should be version 2.0.0', () => {
-      expect(OVERLAY_LAYOUT_SCHEMA_VERSION).toBe('2.0.0')
+    it('should be version 2.2.0', () => {
+      expect(OVERLAY_LAYOUT_SCHEMA_VERSION).toBe('2.2.0')
     })
   })
 
@@ -227,6 +228,39 @@ describe('Overlay Layout Schema v2', () => {
       expect(v2Layout.popups[0].overlayPosition).toEqual(
         v2Layout.popups[0].canvasPosition
       )
+    })
+  })
+
+  describe('Camera persistence', () => {
+    const baseLayout = {
+      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: [],
+      inspectors: [],
+      lastSavedAt: new Date().toISOString(),
+    }
+
+    it('should retain numeric camera transforms', () => {
+      const layout = normalizeLayout(
+        {
+          ...baseLayout,
+          camera: { x: 120.5, y: -48.25, scale: 0.75 },
+        },
+        { useServerTimestamp: false }
+      )
+
+      expect(layout.camera).toEqual({ x: 120.5, y: -48.25, scale: 0.75 })
+    })
+
+    it('should drop invalid camera values', () => {
+      const layout = normalizeLayout(
+        {
+          ...baseLayout,
+          camera: { x: 'bad-value', y: 12, scale: 1 } as unknown as { x: number; y: number; scale: number },
+        },
+        { useServerTimestamp: false }
+      )
+
+      expect(layout.camera).toBeUndefined()
     })
   })
 })

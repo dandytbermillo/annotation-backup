@@ -588,6 +588,10 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
 
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
 const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
+const [moveCascadeState, setMoveCascadeState] = useState<{ parentId: string | null; childIds: string[] }>({
+  parentId: null,
+  childIds: [],
+})
 type SidebarFolderPopup = {
   id: string
   folderId: string
@@ -1168,13 +1172,32 @@ const initialWorkspaceSyncRef = useRef(false)
       // Convert to canvas coordinates
       const newCanvasPosition = CoordinateBridge.screenToCanvas(newScreenPosition, sharedTransform)
 
-      // Update popup position
+      const deltaScreen = {
+        x: newScreenPosition.x - dragScreenPosRef.current.x,
+        y: newScreenPosition.y - dragScreenPosRef.current.y,
+      }
+      const scale = sharedTransform.scale || 1
+      const deltaCanvas = {
+        x: deltaScreen.x / scale,
+        y: deltaScreen.y / scale,
+      }
+      const cascadeActive = moveCascadeState.parentId === draggingPopup
+      const cascadeChildSet = cascadeActive ? new Set(moveCascadeState.childIds) : null
+
       setOverlayPopups(prev =>
-        prev.map(p =>
-          p.id === draggingPopup
-            ? { ...p, canvasPosition: newCanvasPosition, position: newScreenPosition, isDragging: true }
-            : p
-        )
+        prev.map(p => {
+          if (p.id === draggingPopup) {
+            return { ...p, canvasPosition: newCanvasPosition, position: newScreenPosition, isDragging: true }
+          }
+          if (cascadeChildSet?.has(p.id) && !p.isPinned) {
+            const prevCanvas = p.canvasPosition || { x: 0, y: 0 }
+            const newChildCanvas = { x: prevCanvas.x + deltaCanvas.x, y: prevCanvas.y + deltaCanvas.y }
+            const prevScreen = p.position || CoordinateBridge.canvasToScreen(prevCanvas, sharedTransform)
+            const newChildScreen = { x: prevScreen.x + deltaScreen.x, y: prevScreen.y + deltaScreen.y }
+            return { ...p, canvasPosition: newChildCanvas, position: newChildScreen }
+          }
+          return p
+        })
       )
 
       dragScreenPosRef.current = newScreenPosition
@@ -1206,7 +1229,7 @@ const initialWorkspaceSyncRef = useRef(false)
       document.removeEventListener('mousemove', handleGlobalMouseMove, true)
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
     }
-  }, [draggingPopup, layerContext]) // Stable during drag - only refs used inside
+  }, [draggingPopup, layerContext, moveCascadeState]) // Stable during drag - only refs used inside
 
   // Build layout payload from current overlayPopups state
   const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
@@ -3041,6 +3064,52 @@ const handleCenterNote = useCallback(
     return descendants
   }, [overlayPopups])
 
+  const applyMoveCascadeState = useCallback((parentId: string | null, childIds: string[]) => {
+    const childSet = new Set(childIds)
+    setOverlayPopups(prev =>
+      prev.map(p => {
+        if (parentId && p.id === parentId) {
+          return p.moveMode === 'parent' ? p : { ...p, moveMode: 'parent' }
+        }
+        if (childSet.has(p.id)) {
+          return p.moveMode === 'child' ? p : { ...p, moveMode: 'child' }
+        }
+        if (!parentId && childSet.size === 0 && !p.moveMode) {
+          return p
+        }
+        if (p.moveMode) {
+          return { ...p, moveMode: undefined }
+        }
+        return p
+      })
+    )
+  }, [])
+
+  const clearMoveCascadeState = useCallback(() => {
+    setMoveCascadeState({ parentId: null, childIds: [] })
+    applyMoveCascadeState(null, [])
+  }, [applyMoveCascadeState])
+
+  useEffect(() => {
+    if (!moveCascadeState.parentId) return
+    const exists = overlayPopups.some(p => p.id === moveCascadeState.parentId)
+    if (!exists) {
+      clearMoveCascadeState()
+    }
+  }, [overlayPopups, moveCascadeState.parentId, clearMoveCascadeState])
+
+  const handleToggleMoveCascade = useCallback((popupId: string) => {
+    setMoveCascadeState(prev => {
+      if (prev.parentId === popupId) {
+        applyMoveCascadeState(null, [])
+        return { parentId: null, childIds: [] }
+      }
+      const descendants = getAllDescendants(popupId)
+      applyMoveCascadeState(popupId, descendants)
+      return { parentId: popupId, childIds: descendants }
+    })
+  }, [applyMoveCascadeState, getAllDescendants])
+
   // Handle closing overlay popup with cascade (closes all children recursively)
   // Used for immediate close without interactive mode
   const handleCloseOverlayPopup = useCallback((popupId: string) => {
@@ -3060,6 +3129,13 @@ const handleCenterNote = useCallback(
     findChildren(popupId)
 
     console.log(`[Cascade Close] Closing popup ${popupId} and ${toClose.size - 1} descendants`)
+
+    if (
+      (moveCascadeState.parentId && toClose.has(moveCascadeState.parentId)) ||
+      moveCascadeState.childIds.some(id => toClose.has(id))
+    ) {
+      clearMoveCascadeState()
+    }
 
     // Clean up timeouts for all popups being closed
     toClose.forEach(id => {
@@ -3086,7 +3162,7 @@ const handleCenterNote = useCallback(
     // Remove all popups in the cascade
     setOverlayPopups(prev => prev.filter(p => !toClose.has(p.id)))
     // Save will be triggered automatically by the save effect with immediate save
-  }, [overlayPopups, getAllDescendants])
+  }, [overlayPopups, getAllDescendants, moveCascadeState, clearMoveCascadeState])
 
   // Handle toggle pin (prevent cascade-close)
   // Cascades pin state to all descendants automatically
@@ -3156,6 +3232,13 @@ const handleCenterNote = useCallback(
 
     console.log(`[Confirm Close] Closing parent and ${toClose.size - 1} unpinned descendants`)
 
+    if (
+      (moveCascadeState.parentId && toClose.has(moveCascadeState.parentId)) ||
+      moveCascadeState.childIds.some(id => toClose.has(id))
+    ) {
+      clearMoveCascadeState()
+    }
+
     // Clean up timeouts for all closing popups
     toClose.forEach(id => {
       const popup = overlayPopups.find(p => p.id === id)
@@ -3184,7 +3267,7 @@ const handleCenterNote = useCallback(
           closeMode: undefined
         }))
     )
-  }, [getAllDescendants, overlayPopups])
+  }, [getAllDescendants, overlayPopups, moveCascadeState, clearMoveCascadeState])
 
   // Handle cancel close (user cancelled - revert to normal mode)
   const handleCancelClose = useCallback((parentId: string) => {
@@ -4177,6 +4260,9 @@ const handleCenterNote = useCallback(
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
                 workspaceId={currentWorkspaceId}
+                activeMoveCascadeParentId={moveCascadeState.parentId}
+                moveCascadeChildIds={moveCascadeState.childIds}
+                onToggleMoveCascade={handleToggleMoveCascade}
               />
             )}
 
