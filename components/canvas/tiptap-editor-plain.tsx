@@ -725,14 +725,32 @@ const TiptapEditorPlain = forwardRef<TiptapEditorPlainHandle, TiptapEditorPlainP
               content: promoted.content,
               version: targetVersion
             })
-            provider.saveDocument(noteId, panelId, promoted.content, false, { skipBatching: true })
-              .then(() => {
+
+            const persistPendingPromotion = async () => {
+              try {
+                await provider.loadDocument(noteId, panelId)
+              } catch (loadError) {
+                console.warn('[TiptapEditorPlain] Skipping pending restore: provider load failed', loadError)
+                return
+              }
+
+              const latestPending = pendingPromotionRef.current
+              if (latestPending && latestPending.key !== promoted.key) {
+                return
+              }
+
+              try {
+                await provider.saveDocument(noteId, panelId, promoted.content, false, { skipBatching: true })
                 localStorage.removeItem(promoted.key)
-                pendingPromotionRef.current = null
-              })
-              .catch(err => {
+                if (pendingPromotionRef.current && pendingPromotionRef.current.key === promoted.key) {
+                  pendingPromotionRef.current = null
+                }
+              } catch (err) {
                 console.error('[TiptapEditorPlain] Failed to persist pending restore:', err)
-              })
+              }
+            }
+
+            void persistPendingPromotion()
           }
           return
         }

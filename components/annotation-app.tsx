@@ -177,6 +177,37 @@ function AnnotationAppContent() {
   })
   const showConstellationPanel = canvasMode === 'constellation'
   const multiLayerEnabled = true
+  const [shouldLoadOverlay, setShouldLoadOverlay] = useState(false)
+  const overlayHydrationTriggerRef = useRef<string | null>(null)
+
+  const ensureOverlayHydrated = useCallback((reason: string) => {
+    setShouldLoadOverlay(prev => {
+      if (prev) return prev
+      overlayHydrationTriggerRef.current = reason
+      return true
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!shouldLoadOverlay) return
+    const trigger = overlayHydrationTriggerRef.current ?? 'unknown'
+    if (isDebugEnabled()) {
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'overlay_hydration_enabled',
+        metadata: { trigger },
+      })
+    } else {
+      console.log(`[AnnotationApp] Overlay hydration enabled (${trigger})`)
+    }
+    overlayHydrationTriggerRef.current = null
+  }, [shouldLoadOverlay])
+
+  useEffect(() => {
+    if (layerContext?.activeLayer === 'popups') {
+      ensureOverlayHydrated('layer-active')
+    }
+  }, [layerContext?.activeLayer, ensureOverlayHydrated])
 
   const handleSidebarTabChange = useCallback(
     (tab: CanvasSidebarTab) => {
@@ -869,12 +900,16 @@ const sidebarPopupIdCounter = useRef(0)
   }, [organizationFolders, overlayPopups])
 
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
-  const canRenderOverlay = !showConstellationPanel && (!multiLayerEnabled || !layerContext || layerContext.activeLayer === 'popups')
+  const canRenderOverlay =
+    shouldLoadOverlay &&
+    !showConstellationPanel &&
+    (!multiLayerEnabled || !layerContext || layerContext.activeLayer === 'popups')
   const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
 
   // Persistence state for overlay layout
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
-  const shouldShowWorkspaceToggle = overlayPersistenceEnabled && shouldShowSidebar
+  const overlayPersistenceActive = overlayPersistenceEnabled && shouldLoadOverlay
+  const shouldShowWorkspaceToggle = overlayPersistenceActive && shouldShowSidebar
   useEffect(() => {
     if (!shouldShowWorkspaceToggle && workspaceMenuOpen) {
       setWorkspaceMenuOpen(false)
@@ -882,7 +917,7 @@ const sidebarPopupIdCounter = useRef(0)
   }, [shouldShowWorkspaceToggle, workspaceMenuOpen])
 
   useEffect(() => {
-    if (!overlayPersistenceEnabled) {
+    if (!overlayPersistenceActive) {
       setIsWorkspaceListLoading(false)
       return
     }
@@ -918,7 +953,7 @@ const sidebarPopupIdCounter = useRef(0)
     return () => {
       cancelled = true
     }
-  }, [overlayPersistenceEnabled, toast, currentWorkspaceId])
+  }, [overlayPersistenceActive, toast, currentWorkspaceId])
 
   useEffect(() => {
     if (!workspaceMenuOpen) return
@@ -1022,7 +1057,10 @@ const sidebarPopupIdCounter = useRef(0)
 
   // Initialize overlay adapter when workspace changes
   useEffect(() => {
-    if (!overlayPersistenceEnabled) return
+    if (!overlayPersistenceActive) {
+      overlayAdapterRef.current = null
+      return
+    }
 
     const workspaceKey = currentWorkspaceId ?? 'default'
     overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey })
@@ -1030,7 +1068,7 @@ const sidebarPopupIdCounter = useRef(0)
     layoutRevisionRef.current = null
     lastSavedLayoutHashRef.current = null
     pendingLayoutRef.current = null
-  }, [overlayPersistenceEnabled, currentWorkspaceId])
+  }, [overlayPersistenceActive, currentWorkspaceId])
 
   // Force re-center trigger - increment to force effect to run
   // Ref to access canvas methods
@@ -1559,7 +1597,7 @@ const initialWorkspaceSyncRef = useRef(false)
 
   // Flush pending save to database
   const flushLayoutSave = useCallback(async () => {
-    if (!overlayPersistenceEnabled) return
+    if (!overlayPersistenceActive) return
 
     const adapter = overlayAdapterRef.current
     if (!adapter) return
@@ -1627,11 +1665,11 @@ const initialWorkspaceSyncRef = useRef(false)
         void flushLayoutSave()
       }
     }
-  }, [applyOverlayLayout, buildLayoutPayload, overlayPersistenceEnabled])
+  }, [applyOverlayLayout, buildLayoutPayload, overlayPersistenceActive])
 
   // Schedule save with debounce (or immediate for creation/deletion)
   const scheduleLayoutSave = useCallback((immediate = false) => {
-    if (!overlayPersistenceEnabled) return
+    if (!overlayPersistenceActive) return
     if (!overlayAdapterRef.current) return
     if (draggingPopupRef.current) {
       console.log('[AnnotationApp] Save skipped: popup dragging in progress')
@@ -1666,10 +1704,10 @@ const initialWorkspaceSyncRef = useRef(false)
         void flushLayoutSave()
       }, 2500) // 2.5 second debounce
     }
-  }, [buildLayoutPayload, flushLayoutSave, overlayPersistenceEnabled])
+  }, [buildLayoutPayload, flushLayoutSave, overlayPersistenceActive])
 
   useEffect(() => {
-    if (!overlayPersistenceEnabled) {
+    if (!overlayPersistenceActive) {
       prevCameraForSaveRef.current = latestCameraRef.current
       return
     }
@@ -1683,11 +1721,11 @@ const initialWorkspaceSyncRef = useRef(false)
       prevCameraForSaveRef.current = current
       scheduleLayoutSave(false)
     }
-  }, [overlayPersistenceEnabled, scheduleLayoutSave, layerContext?.transforms.popups])
+  }, [overlayPersistenceActive, scheduleLayoutSave, layerContext?.transforms.popups])
 
   // Load layout from database on mount
   useEffect(() => {
-    if (!overlayPersistenceEnabled || layoutLoadedRef.current) return
+    if (!overlayPersistenceActive || layoutLoadedRef.current) return
 
     const adapter = overlayAdapterRef.current
     if (!adapter) return
@@ -1747,7 +1785,7 @@ const initialWorkspaceSyncRef = useRef(false)
     return () => {
       cancelled = true
     }
-  }, [applyOverlayLayout, overlayPersistenceEnabled, currentWorkspaceId, setOverlayPopups])
+  }, [applyOverlayLayout, overlayPersistenceActive, currentWorkspaceId, setOverlayPopups])
 
   // Set layoutLoadedRef.current = true AFTER initial popups load completes
   // This ensures auto-switch doesn't trigger during database hydration
@@ -1766,9 +1804,17 @@ const initialWorkspaceSyncRef = useRef(false)
   const needsSaveAfterInteractionRef = useRef(false)
 
   useEffect(() => {
-    console.log('[AnnotationApp] Save effect triggered. overlayPersistenceEnabled =', overlayPersistenceEnabled, 'overlayPopups.length =', overlayPopups.length, 'layoutLoaded =', layoutLoadedRef.current)
-    if (!overlayPersistenceEnabled) {
-      console.log('[AnnotationApp] Save skipped: persistence disabled')
+    console.log(
+      '[AnnotationApp] Save effect triggered.',
+      {
+        overlayPersistenceEnabled,
+        overlayPersistenceActive,
+        overlayCount: overlayPopups.length,
+        layoutLoaded: layoutLoadedRef.current,
+      }
+    )
+    if (!overlayPersistenceActive) {
+      console.log('[AnnotationApp] Save skipped: persistence inactive')
       return
     }
     if (!layoutLoadedRef.current) {
@@ -1832,7 +1878,7 @@ const initialWorkspaceSyncRef = useRef(false)
     needsSaveAfterInteractionRef.current = false
     scheduleLayoutSave(isExistenceChange) // Immediate save for creation/deletion, debounced for moves/resizes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overlayPopups, overlayPersistenceEnabled, overlayPanning, draggingPopup])
+  }, [overlayPopups, overlayPersistenceActive, overlayPanning, draggingPopup])
 
   useEffect(() => {
     if (!overlayPanning) return
@@ -2508,6 +2554,7 @@ const handleCenterNote = useCallback(
   const handleOrganizationSidebarSelect = useCallback(
     async (folderId: string, rect?: DOMRect) => {
       if (knowledgeBaseId && folderId === knowledgeBaseId) return
+      ensureOverlayHydrated('sidebar-select')
 
       const existingIndex = overlayPopups.findIndex(p => p.folderId === folderId)
       if (existingIndex >= 0) {
@@ -2622,7 +2669,7 @@ const handleCenterNote = useCallback(
         console.error('[AnnotationApp] Failed to open folder popup from sidebar:', error)
       }
     },
-    [knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
+    [ensureOverlayHydrated, knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
   )
 
   const closeSidebarFolderPopups = useCallback(() => {
@@ -2670,6 +2717,7 @@ const handleCenterNote = useCallback(
   const handleSidebarOrgEyeHover = useCallback(
     async (folder: OrgItem, event: React.MouseEvent<HTMLElement>, parentFolderId?: string) => {
       event.stopPropagation()
+      ensureOverlayHydrated('sidebar-hover')
 
       if (sidebarFolderPopupsRef.current.some(popup => popup.folderId === folder.id)) {
         return
@@ -2736,7 +2784,7 @@ const handleCenterNote = useCallback(
         )
       }
     },
-    [fetchGlobalChildren]
+    [ensureOverlayHydrated, fetchGlobalChildren]
   )
 
   const handleOrganizationSidebarEyeHover = useCallback(
@@ -2813,7 +2861,8 @@ const handleCenterNote = useCallback(
 
   const handleWorkspaceSelect = useCallback(
     async (workspaceId: string) => {
-      if (overlayPersistenceEnabled) {
+      ensureOverlayHydrated('workspace-select')
+      if (overlayPersistenceActive) {
         // Force any pending layout changes to flush so the next workspace loads a clean snapshot.
         if (saveTimeoutRef.current) {
           clearTimeout(saveTimeoutRef.current)
@@ -2836,11 +2885,12 @@ const handleCenterNote = useCallback(
       setCanvasMode('overlay')
       setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
     },
-    [overlayPersistenceEnabled, buildLayoutPayload, flushLayoutSave, setCanvasMode]
+    [ensureOverlayHydrated, overlayPersistenceActive, buildLayoutPayload, flushLayoutSave, setCanvasMode]
   )
 
   const handleCreateWorkspace = useCallback(async () => {
-    if (!overlayPersistenceEnabled) return
+    ensureOverlayHydrated('workspace-create')
+    if (!overlayPersistenceActive) return
 
     const emptyLayout: OverlayLayoutPayload = {
       schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
@@ -2909,7 +2959,7 @@ const handleCenterNote = useCallback(
     } finally {
       setIsWorkspaceSaving(false)
     }
-  }, [overlayPersistenceEnabled, setCanvasMode, workspaces])
+  }, [ensureOverlayHydrated, overlayPersistenceActive, setCanvasMode, workspaces])
 
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -2975,6 +3025,7 @@ const handleCenterNote = useCallback(
   )
 
   const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
+    ensureOverlayHydrated('floating-toolbar')
     console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
     setOverlayPopups(prev => {
       console.log('[handleCreateOverlayPopup] Current popups:', prev.length, prev.map(p => p.folderName));
@@ -3047,7 +3098,7 @@ const handleCenterNote = useCallback(
         )
       }, 2000)
     }
-  }, [])
+  }, [ensureOverlayHydrated])
 
   // Helper: Get all descendants of a popup (recursive)
   const getAllDescendants = useCallback((popupId: string): string[] => {
@@ -4266,7 +4317,7 @@ const handleCenterNote = useCallback(
               />
             )}
 
-            {sidebarFolderPopups.map((popup) => {
+            {shouldLoadOverlay && sidebarFolderPopups.map((popup) => {
               const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
               return (
                 <div
