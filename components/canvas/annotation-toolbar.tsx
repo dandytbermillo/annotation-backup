@@ -8,6 +8,7 @@ import { getPlainProvider } from "@/lib/provider-switcher"
 import { createAnnotationBranch } from "@/lib/models/annotation"
 import { buildBranchPreview } from "@/lib/utils/branch-preview"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 export function AnnotationToolbar() {
   const { dispatch, state, dataStore, noteId } = useCanvas()

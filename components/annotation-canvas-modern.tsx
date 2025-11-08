@@ -32,7 +32,7 @@ import {
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 import { worldToScreen, screenToWorld } from "@/lib/canvas/coordinate-utils"
-import { debugLog } from "@/lib/utils/debug-logger"
+import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
