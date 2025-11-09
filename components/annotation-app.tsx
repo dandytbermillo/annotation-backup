@@ -44,6 +44,8 @@ import type { OverlayLayoutDiagnostics, OverlayCameraState } from "@/lib/types/o
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 
+const FOLDER_CACHE_MAX_AGE_MS = 30000
+
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
   if (!path || typeof path !== 'string') return null
@@ -700,7 +702,30 @@ const sidebarPopupIdCounter = useRef(0)
     fetchNote: fetchNotePreview,
   })
 
-  const folderCacheRef = useRef<Map<string, { folder?: any | null; children?: any[] | null }>>(new Map())
+  type FolderCacheEntry = { folder?: any | null; children?: any[] | null; fetchedAt?: number }
+  const folderCacheRef = useRef<Map<string, FolderCacheEntry>>(new Map())
+
+  const mergeFolderCacheEntry = useCallback(
+    (folderId: string, partial: Partial<FolderCacheEntry>) => {
+      folderCacheRef.current.set(folderId, {
+        ...(folderCacheRef.current.get(folderId) ?? {}),
+        ...partial,
+      })
+    },
+    []
+  )
+
+  const updateFolderCacheChildren = useCallback(
+    (folderId: string, children: any[] | null) => {
+      mergeFolderCacheEntry(folderId, { children, fetchedAt: Date.now() })
+    },
+    [mergeFolderCacheEntry]
+  )
+
+  const invalidateFolderCache = useCallback((folderId?: string | null) => {
+    if (!folderId) return
+    folderCacheRef.current.delete(folderId)
+  }, [])
 
   const fetchGlobalFolder = useCallback(
     async (folderId: string): Promise<any | null> => {
@@ -719,7 +744,7 @@ const sidebarPopupIdCounter = useRef(0)
           return null
         }
         const payload = await response.json()
-        folderCacheRef.current.set(folderId, { ...(cached ?? {}), folder: payload })
+        mergeFolderCacheEntry(folderId, { folder: payload })
         return payload
       } catch (error) {
         debugLog({
@@ -737,22 +762,34 @@ const sidebarPopupIdCounter = useRef(0)
     []
   )
 
-  const fetchGlobalChildren = useCallback(async (folderId: string): Promise<any[] | null> => {
-    const cached = folderCacheRef.current.get(folderId)
-    if (cached?.children) {
-      return cached.children
-    }
-    try {
-      const response = await fetch(`/api/items?parentId=${folderId}`)
-      if (!response.ok) return null
-      const data = await response.json().catch(() => ({ items: [] }))
-      const childItems = Array.isArray(data.items) ? data.items : []
-      folderCacheRef.current.set(folderId, { ...(cached ?? {}), children: childItems })
-      return childItems
-    } catch {
-      return null
-    }
-  }, [])
+  const fetchGlobalChildren = useCallback(
+    async (folderId: string, options?: { forceRefresh?: boolean }): Promise<any[] | null> => {
+      const cached = folderCacheRef.current.get(folderId)
+      const now = Date.now()
+      const isCacheFresh =
+        Boolean(cached?.children) &&
+        typeof cached?.fetchedAt === 'number' &&
+        now - cached.fetchedAt < FOLDER_CACHE_MAX_AGE_MS
+
+      if (!options?.forceRefresh && cached?.children && isCacheFresh) {
+        return cached.children
+      }
+
+      try {
+        const response = await fetch(`/api/items?parentId=${folderId}`)
+        if (!response.ok) {
+          return cached?.children ?? null
+        }
+        const data = await response.json().catch(() => ({ items: [] }))
+        const childItems = Array.isArray(data.items) ? data.items : []
+        updateFolderCacheChildren(folderId, childItems)
+        return childItems
+      } catch {
+        return cached?.children ?? null
+      }
+    },
+    [updateFolderCacheChildren]
+  )
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
     ? 'Deleting...'
@@ -835,10 +872,10 @@ const sidebarPopupIdCounter = useRef(0)
           }
 
           const formattedChildren = children.map(toSidebarItem)
-          folderCacheRef.current.set(knowledgeBase.id, {
-            ...(folderCacheRef.current.get(knowledgeBase.id) ?? {}),
+          mergeFolderCacheEntry(knowledgeBase.id, {
             folder: knowledgeBase,
             children,
+            fetchedAt: Date.now(),
           })
           const knowledgeBaseCount = mapCount(knowledgeBase)
 
@@ -2656,10 +2693,10 @@ const handleCenterNote = useCallback(
                 : p
             )
           )
-          folderCacheRef.current.set(folderId, {
-            ...(folderCacheRef.current.get(folderId) ?? {}),
+          mergeFolderCacheEntry(folderId, {
             folder: detail,
             children: childItems,
+            fetchedAt: Date.now(),
           })
         } catch (childError) {
           console.error('[AnnotationApp] Failed to load folder children:', childError)
@@ -3530,7 +3567,7 @@ const handleCenterNote = useCallback(
 
       // Fetch children
       try {
-        const children = await fetchGlobalChildren(folder.id)
+        const children = await fetchGlobalChildren(folder.id, { forceRefresh: isPersistent })
         if (!children) throw new Error('Failed to fetch folder contents')
 
         const formattedChildren: OrgItem[] = children.map((item: any) => ({
@@ -3564,17 +3601,17 @@ const handleCenterNote = useCallback(
             }
           })
         )
-        folderCacheRef.current.set(folder.id, {
-          ...(folderCacheRef.current.get(folder.id) ?? {}),
+        mergeFolderCacheEntry(folder.id, {
           folder,
           children,
+          fetchedAt: Date.now(),
         })
       } catch (error) {
         console.error('Error fetching child popup contents:', error)
         setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
       }
     }
-  }, [overlayPopups, layerContext, fetchGlobalChildren])
+  }, [overlayPopups, layerContext, fetchGlobalChildren, mergeFolderCacheEntry])
 
   // Cancel close timeout when hovering the popup itself (keeps it alive)
   const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
@@ -3801,12 +3838,18 @@ const handleCenterNote = useCallback(
       if (successCount > 0) {
         console.log('[handleDeleteSelected] Updating popup to remove successfully deleted items...')
 
+        let updatedChildrenSnapshot: OrgItem[] | null = null
+        let parentFolderId: string | null = null
+
         setOverlayPopups(prev =>
           prev.map(p => {
             if (p.id === popupId && p.folder && p.children) {
               // Filter out ONLY successfully deleted items (safety: failed deletes remain visible)
               const updatedChildren = p.children.filter(child => !successfullyDeletedIds.has(child.id))
               const nextSizeMode = p.sizeMode === 'user' ? 'user' : 'default'
+
+              updatedChildrenSnapshot = updatedChildren
+              parentFolderId = p.folderId
 
               return {
                 ...p,
@@ -3823,6 +3866,10 @@ const handleCenterNote = useCallback(
           })
         )
 
+        if (parentFolderId && updatedChildrenSnapshot) {
+          updateFolderCacheChildren(parentFolderId, updatedChildrenSnapshot)
+        }
+
         console.log('[handleDeleteSelected] Popup updated - removed', successCount, 'successfully deleted items')
       }
 
@@ -3835,7 +3882,7 @@ const handleCenterNote = useCallback(
     } catch (error) {
       console.error('[handleDeleteSelected] Error:', error)
     }
-  }, [overlayPopups])
+  }, [overlayPopups, updateFolderCacheChildren])
 
   // Handle bulk move of items to target folder (drag-drop)
   const handleFolderCreated = useCallback((popupId: string, newFolder: any) => {
@@ -3868,15 +3915,12 @@ const handleCenterNote = useCallback(
     )
 
     if (updatedParentFolderId && updatedChildrenSnapshot) {
-      const existingCache = folderCacheRef.current.get(updatedParentFolderId) ?? {}
-      folderCacheRef.current.set(updatedParentFolderId, {
-        ...existingCache,
-        children: updatedChildrenSnapshot,
-      })
+      updateFolderCacheChildren(updatedParentFolderId, updatedChildrenSnapshot)
     }
+    invalidateFolderCache(newFolder?.id)
 
     console.log('[handleFolderCreated] Popup updated with new folder')
-  }, [])
+  }, [invalidateFolderCache, updateFolderCacheChildren])
 
   const handleBulkMove = useCallback(async (
     itemIds: string[],
@@ -3914,13 +3958,20 @@ const handleCenterNote = useCallback(
 
       // Only update UI for items that actually moved
       if (movedCount > 0) {
+        let sourceFolderId: string | null = null
+        let targetFolderIdForCache: string | null = null
+        let sourceChildrenSnapshot: OrgItem[] | null = null
+        let targetChildrenSnapshot: OrgItem[] | null = null
+
         setOverlayPopups(prev =>
           prev.map(popup => {
             // Update source popup: remove successfully moved items
             if (popup.id === sourcePopupId && popup.folder && popup.children) {
+              sourceFolderId = popup.folderId ?? null
               const updatedChildren = popup.children.filter(
                 child => !successfullyMovedIds.has(child.id)
               )
+              sourceChildrenSnapshot = updatedChildren
               const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
               return {
                 ...popup,
@@ -3933,6 +3984,7 @@ const handleCenterNote = useCallback(
 
             // Update target popup: add successfully moved items (prevent duplicates)
             if (popup.folderId === targetFolderId && popup.folder) {
+              targetFolderIdForCache = popup.folderId
               const movedItems = data.movedItems || []
 
               // Get IDs of existing children to prevent duplicates
@@ -3943,6 +3995,7 @@ const handleCenterNote = useCallback(
 
               // Append only new items
               const updatedChildren = [...popup.children, ...newItems]
+              targetChildrenSnapshot = updatedChildren
               const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
 
               return {
@@ -3957,6 +4010,24 @@ const handleCenterNote = useCallback(
             return popup
           })
         )
+
+        if (sourceFolderId) {
+          if (sourceChildrenSnapshot) {
+            updateFolderCacheChildren(sourceFolderId, sourceChildrenSnapshot)
+          } else {
+            invalidateFolderCache(sourceFolderId)
+          }
+        }
+
+        if (targetFolderIdForCache) {
+          if (targetChildrenSnapshot) {
+            updateFolderCacheChildren(targetFolderIdForCache, targetChildrenSnapshot)
+          } else {
+            invalidateFolderCache(targetFolderIdForCache)
+          }
+        } else {
+          invalidateFolderCache(targetFolderId)
+        }
 
         console.log('[handleBulkMove] Source popup updated - removed', movedCount, 'moved items')
         console.log('[handleBulkMove] Target popup auto-refresh applied if popup is open')
@@ -3973,7 +4044,7 @@ const handleCenterNote = useCallback(
       console.error('[handleBulkMove] Error:', error)
       alert(`Failed to move items: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [])
+  }, [currentWorkspaceId, fetchWithWorkspace, invalidateFolderCache, updateFolderCacheChildren])
 
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {

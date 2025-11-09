@@ -481,3 +481,4 @@
 {"ts":"2025-11-08T19:03:11.637Z","type":"commit","sha":"a4868b760bf971000e3ae4fe2f07a3a55eccdd4d","files_changed":15,"message":"continue fixing(working)"}
 {"ts":"2025-11-08T19:19:30.526Z","type":"commit","sha":"b3d04ab7fdbac89cd5a768aa7460607901583c9c","files_changed":9,"message":"fixing (worked)"}
 {"ts":"2025-11-08T20:28:15.442Z","type":"commit","sha":"c37b36e24b85c25d320db614cf29cac2b15d1fe2","files_changed":6,"message":"refactor 1.1 worked."}
+{"ts":"2025-11-08T23:18:09.128Z","type":"commit","sha":"c4f1418e5e5ed6cd6ec3ef9b3390c5e63a3df2ae","files_changed":5,"message":"the empty popup issue disappered"}

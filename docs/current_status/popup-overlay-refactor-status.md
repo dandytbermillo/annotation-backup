@@ -20,6 +20,10 @@
   - Drops development-only logging and trims the options interface to what the overlay actually passes.
 - `components/canvas/popup-overlay/helpers.ts`
   - Supplies common helpers (`clamp`, breadcrumb parsing, color theme lookup, relative-time formatting, node type guards) for the overlay and renderer.
+- `components/annotation-app.tsx`
+  - Folder cache entries now track fetch timestamps and invalidate automatically when folders mutate (create, delete, move) so popups never reuse stale snapshots.
+  - Explicit folder opens (eye icon click) force a fresh `/api/items?parentId=...` fetch, while hover previews respect a short TTL to avoid spamming the API but still refresh after ~30 s.
+  - Bulk move/delete flows update the shared cache (or flush it when the target popup isn’t open) to keep every workspace’s popups in sync with the global Knowledge Base.
 - `components/canvas/popup-overlay/types.ts`
   - Exports `PopupData`, `PopupChildNode`, and preview-related types for consistent typing between overlay and renderer modules.
 - `jest.config.js` / `tsconfig.jest.json`

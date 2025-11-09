@@ -66,6 +66,7 @@ export const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
   const isEditActive = isEditMode
   const isRenaming = renamingTitleId === popup.id
   const isDropdownOpen = breadcrumbDropdownOpen === popup.id
+  const isClosing = popup.closeMode === 'closing'
   const colorTheme = getFolderColorTheme(popup.folder?.color)
   const folderPath = (popup.folder as any)?.path || (popup as any).folder?.path
   const folderName = popup.folder?.name || (popup.folderName && popup.folderName.trim()) || 'Loading...'
@@ -265,10 +266,12 @@ export const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
               onToggleEditMode(popup.id)
             }}
             className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-              isEditActive ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40' : 'text-gray-300 border border-white/10 hover:border-white/30'
+              isEditActive
+                ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40'
+                : 'text-gray-300 border border-white/10 hover:border-white/30'
             }`}
           >
-            Edit
+            {isEditActive ? 'Done' : 'Edit'}
           </button>
           {canLinkCascade && (
             <button
@@ -283,20 +286,43 @@ export const PopupCardHeader: React.FC<PopupCardHeaderProps> = ({
               }`}
             >
               <Hand className="w-3 h-3" />
-            {isMoveCascadeParent ? `Linked (${cascadeChildCount})` : 'Link'}
-          </button>
+              {isMoveCascadeParent ? `Linked (${cascadeChildCount})` : 'Link'}
+            </button>
           )}
           {onConfirmClose && onCancelClose && onInitiateClose && (
-            <button
-              onClick={event => {
-                event.stopPropagation()
-                onInitiateClose?.(popup.id)
-              }}
-              className="p-1 rounded-full text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
-              aria-label="Close popup"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            isClosing ? (
+              <>
+                <button
+                  onClick={event => {
+                    event.stopPropagation()
+                    onConfirmClose?.(popup.id)
+                  }}
+                  className="px-2 py-1 rounded-full text-xs font-medium bg-green-600/80 text-white hover:bg-green-500 transition-colors"
+                >
+                  ✓ Done
+                </button>
+                <button
+                  onClick={event => {
+                    event.stopPropagation()
+                    onCancelClose?.(popup.id)
+                  }}
+                  className="px-2 py-1 rounded-full text-xs font-medium text-gray-300 border border-white/10 hover:border-white/30 transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={event => {
+                  event.stopPropagation()
+                  onInitiateClose?.(popup.id)
+                }}
+                className="p-1 rounded-full text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
+                aria-label="Close popup"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )
           )}
         </div>
       </div>

@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-08 23:18Z] c4f1418: the empty popup issue disappered
 - commit [2025-11-08 20:28Z] c37b36e: refactor 1.1 worked.
 - commit [2025-11-08 19:19Z] b3d04ab: fixing (worked)
 - commit [2025-11-08 19:03Z] a4868b7: continue fixing(working)
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-08 05:31Z] 8652af0: start here
 - commit [2025-11-07 22:53Z] 26488e7: hydrating persistence disappear
 - commit [2025-11-07 22:47Z] 963e668: snap back issue being fixed
-- commit [2025-11-07 22:34Z] 4642efe: further fix after implementation
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-08 20:28Z] c37b36e: refactor 1.1 worked.
+- commit [2025-11-08 23:18Z] c4f1418: the empty popup issue disappered
