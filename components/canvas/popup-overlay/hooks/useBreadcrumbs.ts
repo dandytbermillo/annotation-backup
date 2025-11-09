@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PopupChildNode, PopupData } from '../types'
 
-type FetchWithWorkspace = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+type FetchWithKnowledgeBase = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 type DebugLogFn = typeof import('@/lib/utils/debug-logger').debugLog
 
 export interface BreadcrumbFolderPreview {
@@ -14,13 +14,13 @@ export interface BreadcrumbFolderPreview {
 }
 
 interface UseBreadcrumbsOptions {
-  fetchWithWorkspace: FetchWithWorkspace
+  fetchWithKnowledgeBase: FetchWithKnowledgeBase
   debugLog: DebugLogFn
   folderPreviewDelayMs: number
 }
 
 export function useBreadcrumbs({
-  fetchWithWorkspace,
+  fetchWithKnowledgeBase,
   debugLog,
   folderPreviewDelayMs,
 }: UseBreadcrumbsOptions) {
@@ -55,7 +55,7 @@ export function useBreadcrumbs({
       const maxDepth = 10
 
       while (currentId && depth < maxDepth) {
-        const response = await fetchWithWorkspace(`/api/items/${currentId}`)
+        const response = await fetchWithKnowledgeBase(`/api/items/${currentId}`)
         if (!response.ok) {
           console.error('[fetchAncestors] Failed to fetch folder:', currentId, response.status)
           break
@@ -120,7 +120,7 @@ export function useBreadcrumbs({
         return next
       })
     }
-  }, [ancestorCache, fetchWithWorkspace, debugLog])
+  }, [ancestorCache, fetchWithKnowledgeBase, debugLog])
 
   const handleToggleBreadcrumbDropdown = useCallback(async (popup: PopupData) => {
     const isOpen = breadcrumbDropdownOpen === popup.id
@@ -186,7 +186,7 @@ export function useBreadcrumbs({
     })
 
     try {
-      const response = await fetchWithWorkspace(`/api/items?parentId=${ancestor.id}`)
+      const response = await fetchWithKnowledgeBase(`/api/items?parentId=${ancestor.id}`)
       if (!response.ok) {
         throw new Error('Failed to fetch folder contents')
       }
@@ -206,7 +206,7 @@ export function useBreadcrumbs({
       console.error('[BreadcrumbPreview] Error fetching folder contents:', error)
       setBreadcrumbFolderPreview(null)
     }
-  }, [fetchWithWorkspace])
+  }, [fetchWithKnowledgeBase])
 
   const clearPreviewTimeout = useCallback(() => {
     if (breadcrumbPreviewTimeoutRef.current) {
