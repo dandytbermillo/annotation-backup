@@ -490,3 +490,4 @@
 {"timestamp":"2025-11-09T18:35:30Z","note":"Snapshot popup-overlay.tsx to docs/backup/component/popup-overlay.tsx.2025-11-09.bak before pan refactor"}
 {"timestamp":"2025-11-09T18:51:35Z","note":"Extracted popup pan logic into useOverlayPanControls hook, updated popup-overlay.tsx, and reran npm test -- __tests__/unit/popup-overlay.test.ts"}
 {"ts":"2025-11-09T18:59:20.227Z","type":"commit","sha":"b07e9ea9d791a5053cbd6b00eadd982ee097f12e","files_changed":8,"message":"refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,"}
+{"ts":"2025-11-09T19:16:00.254Z","type":"commit","sha":"cb94bdc71c9e47821acc3daa1e9e182378a56456","files_changed":2,"message":"refactoring was successful"}

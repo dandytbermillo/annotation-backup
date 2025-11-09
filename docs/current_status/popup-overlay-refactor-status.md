@@ -67,13 +67,13 @@
 4. **Fallback overlay host** – when `#canvas-container` is absent, `floating-overlay-root` renders the same header/footer components; this view doubles as the fallback test (Organization workspace already covers it).
 5. **Pan/auto-scroll regression sweep** – drag the overlay in both shared-camera and fallback-host modes to ensure pointer capture, selection guards, and minimap jumps still behave after moving the handlers into `useOverlayPanState`.
 
-### Live Refactor Scope (2025-11-09)
-- **Objective**: shrink `components/canvas/popup-overlay.tsx` below 2k lines by extracting the pan/auto-scroll block (pointer down/move/up handlers, momentum RAF loop, hover guards) into a dedicated hook while reusing existing refs/state.
-- **Constraints**: no provider contract changes; hook must accept current `applyExternalTransform`, `overlayStateRef`, drag locks, and `debugLog` so behaviors remain identical to the backed-up snapshot.
+### Live Refactor Scope (2025-11-09 – Selection/Drag Extraction)
+- **Objective**: continue shrinking `components/canvas/popup-overlay.tsx` by extracting the selection + drag-and-drop + preview tooltip plumbing (preview state refs, hover fetch lifecycle, drag source tracking, bulk move triggers) into a dedicated hook while preserving current behaviors.
+- **Constraints**: keep `requestPreview`, `popupSelections`, and drag/drop semantics identical; the new hook must expose stable handlers for drag start/over/leave/drop, hover preview enter/leave, selection toggles, and rename interactions without mutating parent state outside the provided setters.
 - **Planned modules**:
-  1. `components/canvas/popup-overlay/hooks/useOverlayPanState.ts` (refreshed) – encapsulates pan state, pointer listeners, kinetic scrolling, and auto-scroll timers.
-  2. `components/canvas/popup-overlay.tsx` – consumes the hook, wiring it to the existing overlay refs and UI handlers.
-- **Testing focus**: pointer pan, auto-scroll near viewport edges, multi-select drag interactions (to ensure we don’t regress selection guards), breadcrumb dropdown interactions (see procedure below), and fallback overlay parity.
+  1. `components/canvas/popup-overlay/hooks/usePopupSelectionAndDrag.ts` (new) — centralizes preview state, tooltip timers, hover highlight management, drag/drop callbacks, and cached refs (`previewStateRef`, `previewControllersRef`).
+  2. `components/canvas/popup-overlay.tsx` — consumes the hook, passing in the necessary callbacks (`onBulkMove`, `onFolderCreated`, `requestPreview`, etc.) so the component focuses on rendering/layout.
+- **Testing focus**: hover preview tooltips (eye icon hover + tooltip hover leave), rename flows, selection multi-select flows, drag/drop (including cascade popup drop targets), hover folder previews, and ensuring fallback overlay + shared-camera modes still hydrate child popups correctly after re-hovering.
 
 ### Manual Test Procedure – Breadcrumb Dropdown
 1. Open any popup with ancestors, click the breadcrumb pill to open the dropdown, and verify the dropdown renders left-aligned with a close (`×`) button.
