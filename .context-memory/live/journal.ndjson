@@ -491,3 +491,5 @@
 {"timestamp":"2025-11-09T18:51:35Z","note":"Extracted popup pan logic into useOverlayPanControls hook, updated popup-overlay.tsx, and reran npm test -- __tests__/unit/popup-overlay.test.ts"}
 {"ts":"2025-11-09T18:59:20.227Z","type":"commit","sha":"b07e9ea9d791a5053cbd6b00eadd982ee097f12e","files_changed":8,"message":"refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,"}
 {"ts":"2025-11-09T19:16:00.254Z","type":"commit","sha":"cb94bdc71c9e47821acc3daa1e9e182378a56456","files_changed":2,"message":"refactoring was successful"}
+{"ts":"2025-11-09T19:34:56.950Z","type":"commit","sha":"665262ca98a1a60b40954f2c7c4ad00d5fcd2519","files_changed":3,"message":"start the code extraction"}
+{"timestamp":"2025-11-09T19:54:39Z","note":"Extracted selection/drag + preview state into usePopupSelectionAndDrag, updated popup-overlay.tsx, and re-ran npm test -- __tests__/unit/popup-overlay.test.ts"}

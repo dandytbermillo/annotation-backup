@@ -9,14 +9,12 @@ import { useLayer } from '@/components/canvas/layer-provider';
 import { OverlayMinimap } from '@/components/canvas/overlay-minimap';
 import { X, Folder, FileText, Eye } from 'lucide-react';
 import { VirtualList } from '@/components/canvas/VirtualList';
-import { buildMultilinePreview } from '@/lib/utils/branch-preview';
 import { debugLog as baseDebugLog, isDebugEnabled } from '@/lib/utils/debug-logger';
 import { getUIResourceManager } from '@/lib/ui/resource-manager';
 import '@/styles/popup-overlay.css';
 import { ensureFloatingOverlayHost, FLOATING_OVERLAY_HOST_ID } from '@/lib/utils/overlay-host';
 import { PreviewPopover } from '@/components/shared/preview-popover';
 import {
-  PREVIEW_HOVER_DELAY_MS,
   FOLDER_PREVIEW_DELAY_MS,
   HOVER_HIGHLIGHT_DURATION_MS,
 } from '@/lib/constants/ui-timings';
@@ -34,8 +32,9 @@ import { withWorkspaceHeaders, withWorkspacePayload } from '@/lib/workspaces/cli
 import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-overlay/renderPopupChildRow';
 import { PopupCardHeader } from './popup-overlay/components/PopupCardHeader';
 import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
-import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
 import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
+import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
+import { usePopupSelectionAndDrag } from './popup-overlay/hooks/usePopupSelectionAndDrag';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
@@ -80,9 +79,6 @@ interface PopupOverlayProps {
   moveCascadeChildIds?: string[];
   onToggleMoveCascade?: (popupId: string) => void;
 }
-
-// Format relative time (e.g., "2h ago", "3d ago")
-const TOOLTIP_PREVIEW_MAX_LENGTH = Number.MAX_SAFE_INTEGER; // allow full content inside scrollable tooltip
 
 /**
  * PopupOverlay - React component for the popup layer
@@ -154,12 +150,44 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     },
     [knowledgeBaseWorkspaceId]
   );
-  const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
-  const previewStateRef = useRef(previewState);
-  const previewControllersRef = useRef<Map<string, AbortController>>(new Map());
-  useEffect(() => {
-    previewStateRef.current = previewState;
-  }, [previewState]);
+  const {
+    previewState,
+    requestPreview,
+    popupSelections,
+    handleItemSelect,
+    handleClearSelection,
+    handleDeleteSelected,
+    setSelectionForPopup,
+    setLastSelectedIdForPopup,
+    hoverHighlightedPopup,
+    setHoverHighlightedPopup,
+    hoverHighlightTimeoutRef,
+    draggedItems,
+    dropTargetId,
+    invalidDropTargetId,
+    isPopupDropTarget,
+    handleDragStart,
+    handleDragOver,
+    handleDragLeave,
+    handleDragEnd,
+    handleDrop,
+    handlePopupDragOver,
+    handlePopupDragLeave,
+    handlePopupDrop,
+    activePreviewTooltip,
+    handlePreviewTooltipHover,
+    handlePreviewTooltipLeave,
+    handlePreviewTooltipEnter,
+    handlePreviewTooltipMouseLeave,
+    dismissPreviewTooltip,
+  } = usePopupSelectionAndDrag({
+    popups,
+    onBulkMove,
+    onDeleteSelected,
+    fetchWithKnowledgeBase,
+    debugLog,
+    debugLoggingEnabled,
+  });
 
   // Listen for note rename events - delegate to parent for state updates
   const onFolderRenamedRef = useRef(onFolderRenamed);
@@ -186,8 +214,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           metadata: { noteId, newTitle },
         });
 
-        // Delegate to parent - parent owns the state, parent updates it
-        // This follows React's unidirectional data flow principle
         if (onFolderRenamedRef.current) {
           onFolderRenamedRef.current(noteId, newTitle);
           void debugLog({
@@ -200,7 +226,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         }
       } catch (error) {
         console.error('[PopupOverlay] Error handling note rename event:', error);
-        // Don't let event handler errors crash the app
       }
     };
 
@@ -208,7 +233,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     return () => {
       window.removeEventListener('note-renamed', handleNoteRenamed);
     };
-  }, []); // Empty deps - listener stays stable, uses ref for callback
+  }, []);
 
   const getBackdropStyle = (style: string) => {
     switch (style) {
@@ -235,33 +260,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
   };
 
-  // Note preview tooltip state (plain div like Recent Notes)
-  const [activePreviewTooltip, setActivePreviewTooltip] = useState<{
-    noteId: string;
-    content: string;
-    position: { x: number; y: number };
-    status: 'loading' | 'ready' | 'error';
-  } | null>(null);
-  const previewTooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const previewTooltipCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isHoveringPreviewTooltipRef = useRef(false);
-
-  // Multi-select state (per popup)
-  const [popupSelections, setPopupSelections] = useState<Map<string, Set<string>>>(new Map());
-
-  // Hover-highlight state - temporarily glow child popup when parent folder eye icon is hovered
-  const [hoverHighlightedPopup, setHoverHighlightedPopup] = useState<string | null>(null);
-  const hoverHighlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Cleanup hover highlight timeout on unmount to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      if (hoverHighlightTimeoutRef.current) {
-        clearTimeout(hoverHighlightTimeoutRef.current);
-      }
-    };
-  }, []);
-
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const host = ensureFloatingOverlayHost();
@@ -270,16 +268,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }
   }, []);
 
-  const [lastSelectedIds, setLastSelectedIds] = useState<Map<string, string>>(new Map());
-
-  // Drag and drop state
-  const [draggedItems, setDraggedItems] = useState<Set<string>>(new Set());
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [invalidDropTargetId, setInvalidDropTargetId] = useState<string | null>(null); // For red visual feedback
-  const [dragSourcePopupId, setDragSourcePopupId] = useState<string | null>(null);
-  const [dragSourceFolderId, setDragSourceFolderId] = useState<string | null>(null); // Track source folder ID
-  const [isPopupDropTarget, setIsPopupDropTarget] = useState<string | null>(null);
-
   // Create folder state
   const [creatingFolderInPopup, setCreatingFolderInPopup] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState<string>('');
@@ -287,10 +275,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
 
   // Inline rename state
-  const [popupEditMode, setPopupEditMode] = useState<Map<string, boolean>>(new Map()); // Edit mode per popup
-  const [renamingTitle, setRenamingTitle] = useState<string | null>(null); // Popup ID being renamed (title)
+  const [popupEditMode, setPopupEditMode] = useState<Map<string, boolean>>(new Map());
+  const [renamingTitle, setRenamingTitle] = useState<string | null>(null);
   const [renamingTitleName, setRenamingTitleName] = useState('');
-  const [renamingListFolder, setRenamingListFolder] = useState<{popupId: string, folderId: string} | null>(null); // Folder in list being renamed
+  const [renamingListFolder, setRenamingListFolder] = useState<{ popupId: string; folderId: string } | null>(null);
   const [renamingListFolderName, setRenamingListFolderName] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [renameLoading, setRenameLoading] = useState(false);
@@ -312,452 +300,95 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     folderPreviewDelayMs: FOLDER_PREVIEW_DELAY_MS,
   });
 
-  useEffect(() => {
-    return () => {
-      previewControllersRef.current.forEach((controller) => {
-        try { controller.abort(); } catch {}
-      });
-      previewControllersRef.current.clear();
-    };
-  }, []);
-
-  const fetchPreview = useCallback(async (popupId: string, childId: string) => {
-    const controllerKey = `${popupId}:${childId}`;
-    const existingController = previewControllersRef.current.get(controllerKey);
-    if (existingController) {
-      try { existingController.abort(); } catch {}
-    }
-
-    const controller = new AbortController();
-    previewControllersRef.current.set(controllerKey, controller);
-
-    try {
-      const response = await fetchWithKnowledgeBase(`/api/items/${childId}`, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-        },
-        credentials: 'same-origin',
-        cache: 'no-store',
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
-      }
-      const data = await response.json();
-      const content = data?.item?.content ?? null;
-      const contentText = data?.item?.contentText ?? '';
-      const previewText = buildMultilinePreview(content, contentText || '', TOOLTIP_PREVIEW_MAX_LENGTH);
-
-    if (debugLoggingEnabled) {
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'preview_fetch_success', {
-          popupId,
-          childId,
-          hasContent: Boolean(content),
-          hasContentText: Boolean(contentText && contentText.trim().length),
-          contentType: typeof content,
-          previewLength: previewText.length,
-        });
-      });
-    }
-
-      setPreviewState(prev => {
-        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
-        return {
-          ...prev,
-          [popupId]: {
-            activeChildId: entry.activeChildId ?? childId,
-            entries: {
-              ...entry.entries,
-              [childId]: {
-                status: 'ready',
-                content: content ?? contentText ?? null,
-                previewText,
-                requestedAt: undefined,
-              },
-            },
-          },
-        };
-      });
-    } catch (error: any) {
-      if (error?.name === 'AbortError') {
-        return;
-      }
-      if (debugLoggingEnabled) {
-        getUIResourceManager().enqueueLowPriority(() => {
-          debugLog('PopupOverlay', 'preview_fetch_error', {
-            popupId,
-            childId,
-            message: error?.message ?? 'Unknown error',
-          });
-        });
-      }
-      setPreviewState(prev => {
-        const entry = prev[popupId] ?? { activeChildId: null, entries: {} };
-        return {
-          ...prev,
-          [popupId]: {
-            activeChildId: entry.activeChildId ?? childId,
-            entries: {
-              ...entry.entries,
-              [childId]: {
-                status: 'error',
-                error: error?.message ?? 'Failed to load preview',
-                previewText: entry.entries[childId]?.previewText,
-                requestedAt: undefined,
-              },
-            },
-          },
-        };
-      });
-    } finally {
-      previewControllersRef.current.delete(controllerKey);
-    }
-  }, []);
-
-  const requestPreview = useCallback((popupId: string, child: PopupChildNode | null) => {
-    if (!child) {
-      setPreviewState(prev => {
-        const entry = prev[popupId];
-        if (!entry || entry.activeChildId === null) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [popupId]: {
-            ...entry,
-            activeChildId: null,
-          },
-        };
-      });
-      return;
-    }
-
-    if (!isNoteLikeNode(child)) {
-      setPreviewState(prev => {
-        const entry = prev[popupId];
-        if (!entry || entry.activeChildId === child.id) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [popupId]: {
-            ...entry,
-            activeChildId: child.id,
-          },
-        };
-      });
-      return;
-    }
-
-    const latestEntry = previewStateRef.current[popupId];
-    const latestChildEntry = latestEntry?.entries?.[child.id];
-    const now = Date.now();
-    const loadingTooLong = latestChildEntry?.status === 'loading'
-      && typeof latestChildEntry.requestedAt === 'number'
-      && now - latestChildEntry.requestedAt > 1500;
-    const shouldFetch = !latestChildEntry
-      || latestChildEntry.status === 'error'
-      || latestChildEntry.status === 'idle'
-      || loadingTooLong;
-
-    if (debugLoggingEnabled) {
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'preview_request', {
-          popupId,
-          childId: child.id,
-          shouldFetch,
-          existingStatus: latestChildEntry?.status ?? 'none',
-          loadingTooLong,
-        });
-      });
-    }
-
-    setPreviewState(prev => {
-      const previousEntry: PreviewEntry =
-        prev[popupId] ?? { activeChildId: null, entries: {} as Record<string, PreviewChildEntry> };
-      const prevChild: PreviewChildEntry | undefined = previousEntry.entries[child.id];
-
-      const nextChildEntry: PreviewChildEntry = shouldFetch
-        ? {
-            status: 'loading',
-            content: prevChild?.content,
-            previewText: prevChild?.previewText,
-            error: undefined,
-            requestedAt: now,
-          }
-        : prevChild ?? { status: 'loading', content: undefined, previewText: undefined };
-
-      return {
-        ...prev,
-        [popupId]: {
-          activeChildId: child.id,
-          entries: {
-            ...previousEntry.entries,
-            [child.id]: nextChildEntry,
-          },
-        },
-      };
-    });
-
-    if (shouldFetch) {
-      fetchPreview(popupId, child.id);
-    } else if (latestChildEntry?.previewText) {
-      if (debugLoggingEnabled) {
-        getUIResourceManager().enqueueLowPriority(() => {
-          debugLog('PopupOverlay', 'preview_cache_hit', {
-            popupId,
-            childId: child.id,
-            status: latestChildEntry.status,
-          });
-        });
-      }
-    }
-  }, [fetchPreview]);
-
-  // Handle item selection (notes/folders) with keyboard modifiers
-  const handleItemSelect = useCallback((
-    popupId: string,
-    childId: string,
-    children: PopupChildNode[],
-    event: React.MouseEvent
-  ) => {
-    const isMultiSelect = event.metaKey || event.ctrlKey;
-    const isShiftSelect = event.shiftKey;
-
-    if (isMultiSelect) {
-      // Ctrl/Cmd+Click: Toggle selection
-      setPopupSelections(prev => {
-        const next = new Map(prev);
-        const currentSelection = new Set(prev.get(popupId) || []);
-
-        if (currentSelection.has(childId)) {
-          currentSelection.delete(childId);
-        } else {
-          currentSelection.add(childId);
-        }
-
-        next.set(popupId, currentSelection);
-        return next;
-      });
-
-      setLastSelectedIds(prev => {
-        const next = new Map(prev);
-        next.set(popupId, childId);
-        return next;
-      });
-    } else if (isShiftSelect) {
-      // Shift+Click: Range selection
-      const lastId = lastSelectedIds.get(popupId);
-      if (!lastId) {
-        // No previous selection, just select this item
-        setPopupSelections(prev => {
-          const next = new Map(prev);
-          next.set(popupId, new Set([childId]));
-          return next;
-        });
-        setLastSelectedIds(prev => {
-          const next = new Map(prev);
-          next.set(popupId, childId);
-          return next;
-        });
+  const handleCreateFolder = useCallback(
+    async (popupId: string, parentFolderId: string) => {
+      if (!newFolderName.trim()) {
+        setFolderCreationError('Folder name is required');
         return;
       }
 
-      // Find indices
-      const startIndex = children.findIndex(c => c.id === lastId);
-      const endIndex = children.findIndex(c => c.id === childId);
+      const trimmedName = newFolderName.trim();
 
-      if (startIndex === -1 || endIndex === -1) {
-        // Fallback to single selection
-        setPopupSelections(prev => {
-          const next = new Map(prev);
-          next.set(popupId, new Set([childId]));
-          return next;
-        });
+      const popup = popups.get(popupId);
+      if (!popup?.folder) {
+        setFolderCreationError('Unable to find folder');
         return;
       }
 
-      // Select range
-      const minIndex = Math.min(startIndex, endIndex);
-      const maxIndex = Math.max(startIndex, endIndex);
-      const rangeIds = children
-        .slice(minIndex, maxIndex + 1)
-        .map(c => c.id);
-
-      setPopupSelections(prev => {
-        const next = new Map(prev);
-        next.set(popupId, new Set(rangeIds));
-        return next;
-      });
-    } else {
-      // Regular click: Single selection
-      setPopupSelections(prev => {
-        const next = new Map(prev);
-        next.set(popupId, new Set([childId]));
-        return next;
-      });
-
-      setLastSelectedIds(prev => {
-        const next = new Map(prev);
-        next.set(popupId, childId);
-        return next;
-      });
-    }
-  }, [lastSelectedIds]);
-
-  // Clear selection for a specific popup
-  const handleClearSelection = useCallback((popupId: string) => {
-    setPopupSelections(prev => {
-      const next = new Map(prev);
-      next.delete(popupId);
-      return next;
-    });
-    setLastSelectedIds(prev => {
-      const next = new Map(prev);
-      next.delete(popupId);
-      return next;
-    });
-  }, []);
-
-  // Delete selected items
-  const handleDeleteSelected = useCallback((popupId: string) => {
-    const selectedIds = popupSelections.get(popupId);
-    if (!selectedIds || selectedIds.size === 0) return;
-
-    const count = selectedIds.size;
-    const confirmMsg = `Delete ${count} ${count === 1 ? 'item' : 'items'}?`;
-
-    if (confirm(confirmMsg)) {
-      // Call parent callback if provided
-      onDeleteSelected?.(popupId, selectedIds);
-
-      // Clear selection after delete
-      handleClearSelection(popupId);
-    }
-  }, [popupSelections, onDeleteSelected, handleClearSelection]);
-
-  // Create new folder
-  const handleCreateFolder = useCallback(async (popupId: string, parentFolderId: string) => {
-    const trimmedName = newFolderName.trim();
-
-    // Validation
-    if (!trimmedName) {
-      setFolderCreationError('Folder name cannot be empty');
-      return;
-    }
-
-    if (trimmedName.length > 255) {
-      setFolderCreationError('Folder name is too long (max 255 characters)');
-      return;
-    }
-
-    // Check for duplicate names in current folder
-    const popup = popups.get(popupId);
-    const children = popup?.folder?.children || [];
-    const duplicateName = children.some(
-      (child: PopupChildNode) =>
-        isFolderNode(child) &&
-        child.name?.toLowerCase() === trimmedName.toLowerCase()
-    );
-
-    if (duplicateName) {
-      setFolderCreationError('A folder with this name already exists');
-      return;
-    }
-
-    setFolderCreationLoading(popupId);
-    setFolderCreationError(null);
-
-    try {
-      const response = await fetchWithKnowledgeBase('/api/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify(
-          withWorkspacePayload(
-            {
-              type: 'folder',
-              name: trimmedName,
-              parentId: parentFolderId,
-            },
-            knowledgeBaseWorkspaceId
-          )
-        ),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to create folder: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      // Success - clear form and close input
-      setNewFolderName('');
-      setCreatingFolderInPopup(null);
+      setFolderCreationLoading(popupId);
       setFolderCreationError(null);
 
-      // Notify parent to update popup children with new folder
-      if (onFolderCreated && data.item) {
-        const newFolder: PopupChildNode = {
-          id: data.item.id,
-          type: data.item.type || 'folder',
-          name: data.item.name || trimmedName,
-          parentId: parentFolderId,
-          hasChildren: false,
-        };
-        onFolderCreated(popupId, newFolder);
-
-        // Highlight the newly created folder
-        setPopupSelections(prev => {
-          const next = new Map(prev);
-          next.set(popupId, new Set([data.item.id]));
-          return next;
+      try {
+        const response = await fetchWithKnowledgeBase('/api/items', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            withWorkspacePayload(
+              {
+                type: 'folder',
+                name: trimmedName,
+                parentId: parentFolderId,
+              },
+              knowledgeBaseWorkspaceId
+            )
+          ),
         });
 
-        // Set as last selected for shift-click range selection
-        setLastSelectedIds(prev => {
-          const next = new Map(prev);
-          next.set(popupId, data.item.id);
-          return next;
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || `Failed to create folder: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        setNewFolderName('');
+        setCreatingFolderInPopup(null);
+        setFolderCreationError(null);
+
+        if (onFolderCreated && data.item) {
+          const newFolder: PopupChildNode = {
+            id: data.item.id,
+            type: data.item.type || 'folder',
+            name: data.item.name || trimmedName,
+            parentId: parentFolderId,
+            hasChildren: false,
+          };
+          onFolderCreated(popupId, newFolder);
+
+          setSelectionForPopup(popupId, [data.item.id]);
+          setLastSelectedIdForPopup(popupId, data.item.id);
+        }
+
+        getUIResourceManager().enqueueLowPriority(() => {
+          debugLog('PopupOverlay', 'folder_created', {
+            popupId,
+            parentFolderId,
+            newFolderId: data.item?.id,
+            name: trimmedName,
+          });
         });
+      } catch (error: any) {
+        getUIResourceManager().enqueueLowPriority(() => {
+          debugLog('PopupOverlay', 'folder_creation_error', {
+            popupId,
+            parentFolderId,
+            error: error?.message || 'Unknown error',
+          });
+        });
+        setFolderCreationError(error?.message || 'Failed to create folder');
+      } finally {
+        setFolderCreationLoading(null);
       }
+    },
+    [debugLog, fetchWithKnowledgeBase, knowledgeBaseWorkspaceId, newFolderName, onFolderCreated, popups, setLastSelectedIdForPopup, setSelectionForPopup]
+  );
 
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'folder_created', {
-          popupId,
-          parentFolderId,
-          newFolderId: data.item?.id,
-          name: trimmedName,
-        });
-      });
-
-    } catch (error: any) {
-      getUIResourceManager().enqueueLowPriority(() => {
-        debugLog('PopupOverlay', 'folder_creation_error', {
-          popupId,
-          parentFolderId,
-          error: error?.message || 'Unknown error',
-        });
-      });
-      setFolderCreationError(error?.message || 'Failed to create folder');
-    } finally {
-      setFolderCreationLoading(null);
-    }
-  }, [newFolderName, popups]);
-
-  // Cancel folder creation
   const handleCancelCreateFolder = useCallback(() => {
     setCreatingFolderInPopup(null);
     setNewFolderName('');
     setFolderCreationError(null);
   }, []);
 
-  // Start folder creation
   const handleStartCreateFolder = useCallback((popupId: string) => {
     setCreatingFolderInPopup(popupId);
     setNewFolderName('');
@@ -766,36 +397,33 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   // === Inline Rename Handlers ===
 
-  // Toggle edit mode for a popup
-  const handleToggleEditMode = useCallback((popupId: string) => {
-    setPopupEditMode(prev => {
-      const newMap = new Map(prev);
-      const wasInEditMode = prev.get(popupId);
-      newMap.set(popupId, !wasInEditMode);
+  const handleToggleEditMode = useCallback(
+    (popupId: string) => {
+      setPopupEditMode((prev) => {
+        const newMap = new Map(prev);
+        const wasInEditMode = prev.get(popupId);
+        newMap.set(popupId, !wasInEditMode);
 
-      // CRITICAL: When exiting edit mode (Done button clicked), cancel any active rename operations
-      // This ensures input fields are unfocused and rename state is cleared
-      if (wasInEditMode) {
-        // Cancel popup title rename if active
-        if (renamingTitle === popupId) {
-          setRenamingTitle(null);
-          setRenamingTitleName('');
-          setRenameError(null);
+        if (wasInEditMode) {
+          if (renamingTitle === popupId) {
+            setRenamingTitle(null);
+            setRenamingTitleName('');
+            setRenameError(null);
+          }
+
+          if (renamingListFolder?.popupId === popupId) {
+            setRenamingListFolder(null);
+            setRenamingListFolderName('');
+            setRenameError(null);
+          }
         }
 
-        // Cancel list folder/file rename if active in this popup
-        if (renamingListFolder?.popupId === popupId) {
-          setRenamingListFolder(null);
-          setRenamingListFolderName('');
-          setRenameError(null);
-        }
-      }
+        return newMap;
+      });
+    },
+    [renamingListFolder, renamingTitle]
+  );
 
-      return newMap;
-    });
-  }, [renamingTitle, renamingListFolder]);
-
-  // Start renaming popup title
   const handleStartRenameTitle = useCallback((popupId: string, currentName: string) => {
     setRenamingTitle(popupId);
     setRenamingTitleName(currentName);
@@ -803,40 +431,33 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setTimeout(() => renameTitleInputRef.current?.select(), 0);
   }, []);
 
-  // Save renamed popup title
   const handleSaveRenameTitle = useCallback(async () => {
     if (!renamingTitle) return;
 
     const trimmedName = renamingTitleName.trim();
-
-    // Empty check
     if (!trimmedName) {
       setRenameError('Folder name cannot be empty');
       return;
     }
 
-    // Find current folder
     const popup = popups.get(renamingTitle);
     if (!popup?.folder) {
       setRenameError('Folder not found');
       return;
     }
 
-    // No-change check
     if (popup.folder.name === trimmedName) {
       handleCancelRenameTitle();
       return;
     }
 
-    // Duplicate check - check siblings
     const parentId = popup.folder.parent_id;
     const siblings = Array.from(popups.values())
-      .map(p => p.folder)
-      .filter(f => f && f.parent_id === parentId);
+      .map((p) => p.folder)
+      .filter((f) => f && f.parent_id === parentId);
 
-    const duplicate = siblings.find(f =>
-      f && f.id !== popup.folder!.id &&
-      f.name.toLowerCase() === trimmedName.toLowerCase()
+    const duplicate = siblings.find(
+      (f) => f && f.id !== popup.folder!.id && f.name.toLowerCase() === trimmedName.toLowerCase()
     );
 
     if (duplicate) {
@@ -844,7 +465,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
 
-    // Save to API
     setRenameLoading(true);
     setRenameError(null);
 
@@ -867,10 +487,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         throw new Error(errorData.error || 'Failed to rename folder');
       }
 
-      // Update local popup folder name immediately (optimistic update)
       popup.folder.name = trimmedName;
 
-      // Notify parent of rename (for syncing with org panel and other popups)
       if (onFolderRenamed) {
         onFolderRenamed(popup.folder.id, trimmedName);
       }
@@ -882,16 +500,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     } finally {
       setRenameLoading(false);
     }
-  }, [renamingTitle, renamingTitleName, popups, onFolderRenamed]);
+  }, [fetchWithKnowledgeBase, knowledgeBaseWorkspaceId, onFolderRenamed, popups, renamingTitle, renamingTitleName]);
 
-  // Cancel renaming popup title
   const handleCancelRenameTitle = useCallback(() => {
     setRenamingTitle(null);
     setRenamingTitleName('');
     setRenameError(null);
   }, []);
 
-  // Start renaming folder in list
   const handleStartRenameListFolder = useCallback((popupId: string, folderId: string, currentName: string) => {
     setRenamingListFolder({ popupId, folderId });
     setRenamingListFolderName(currentName);
@@ -899,19 +515,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setTimeout(() => renameListInputRef.current?.select(), 0);
   }, []);
 
-  // Save renamed list folder
   const handleSaveRenameListFolder = useCallback(async () => {
     if (!renamingListFolder) return;
 
     const trimmedName = renamingListFolderName.trim();
-
-    // Empty check
     if (!trimmedName) {
       setRenameError('Folder name cannot be empty');
       return;
     }
 
-    // Find current folder
     const popup = popups.get(renamingListFolder.popupId);
     if (!popup?.folder?.children) {
       setRenameError('Folder not found');
@@ -924,16 +536,14 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
 
-    // No-change check
     if (currentFolder.name === trimmedName) {
       handleCancelRenameListFolder();
       return;
     }
 
-    // Duplicate check - check siblings in same popup
-    const duplicate = popup.folder.children.find((c: PopupChildNode) =>
-      c.id !== renamingListFolder.folderId &&
-      c.name?.toLowerCase() === trimmedName.toLowerCase()
+    const duplicate = popup.folder.children.find(
+      (c: PopupChildNode) =>
+        c.id !== renamingListFolder.folderId && c.name?.toLowerCase() === trimmedName.toLowerCase()
     );
 
     if (duplicate) {
@@ -941,7 +551,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       return;
     }
 
-    // Save to API
     setRenameLoading(true);
     setRenameError(null);
 
@@ -964,26 +573,21 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         throw new Error(errorData.error || 'Failed to rename folder');
       }
 
-      // Update local popup children immediately (optimistic update)
       popup.folder.children = popup.folder.children.map((child: PopupChildNode) =>
-        child.id === renamingListFolder.folderId
-          ? { ...child, name: trimmedName }
-          : child
+        child.id === renamingListFolder.folderId ? { ...child, name: trimmedName } : child
       );
 
-      // Notify parent of rename (for syncing with org panel and other popups)
       if (onFolderRenamed) {
         onFolderRenamed(renamingListFolder.folderId, trimmedName);
       }
 
-      // Emit event for canvas panels to update in real-time
-      // CRITICAL: Wrapped in try/catch to prevent rare dispatch failures from breaking rename flow
-      // Database is already committed at this point, so event dispatch is non-critical
       if (typeof window !== 'undefined') {
         try {
-          window.dispatchEvent(new CustomEvent('note-renamed', {
-            detail: { noteId: renamingListFolder.folderId, newTitle: trimmedName }
-          }));
+          window.dispatchEvent(
+            new CustomEvent('note-renamed', {
+              detail: { noteId: renamingListFolder.folderId, newTitle: trimmedName },
+            })
+          );
           void debugLog({
             component: 'PopupOverlay',
             action: 'emitted_note_renamed_event',
@@ -993,8 +597,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
             },
           });
         } catch (dispatchError) {
-          // Non-critical: Event dispatch failed, but database update succeeded
-          // Canvas panels will get the correct title on next load/reload
           console.error('[PopupOverlay] Failed to dispatch note-renamed event:', dispatchError);
         }
       }
@@ -1006,382 +608,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     } finally {
       setRenameLoading(false);
     }
-  }, [renamingListFolder, renamingListFolderName, popups, onFolderRenamed]);
+  }, [debugLog, fetchWithKnowledgeBase, knowledgeBaseWorkspaceId, onFolderRenamed, popups, renamingListFolder, renamingListFolderName]);
 
-  // Cancel renaming list folder
   const handleCancelRenameListFolder = useCallback(() => {
     setRenamingListFolder(null);
     setRenamingListFolderName('');
     setRenameError(null);
   }, []);
 
-  // Preview tooltip handlers (plain div like Recent Notes)
-  const handlePreviewTooltipHover = useCallback(async (noteId: string, event: React.MouseEvent) => {
-    // Clear existing timeouts
-    if (previewTooltipTimeoutRef.current) {
-      clearTimeout(previewTooltipTimeoutRef.current);
-    }
-    if (previewTooltipCloseTimeoutRef.current) {
-      clearTimeout(previewTooltipCloseTimeoutRef.current);
-    }
+  // selection, preview, and drag logic managed by usePopupSelectionAndDrag
 
-    isHoveringPreviewTooltipRef.current = false;
-
-    // Capture position immediately
-    const rect = event.currentTarget.getBoundingClientRect();
-    const position = {
-      x: rect.right + 10, // 10px right of eye icon
-      y: rect.top
-    };
-
-    // Show preview after 500ms (same as Recent Notes)
-    previewTooltipTimeoutRef.current = setTimeout(async () => {
-      setActivePreviewTooltip({
-        noteId,
-        content: '',
-        position,
-        status: 'loading'
-      });
-
-      try {
-        const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`);
-        if (!response.ok) throw new Error('Failed to fetch note');
-
-        const data = await response.json();
-        const content = data?.item?.content;
-        const contentText = data?.item?.contentText;
-
-        // Pass full content to PreviewPopover - no hardcoded limit
-        // Component will handle truncation (initial 300 chars, expand to show all content)
-        // Component's internal safety cap of 5000 chars applies when not using lazy loading
-        const previewText = buildMultilinePreview(content, contentText || '', Number.MAX_SAFE_INTEGER);
-
-        setActivePreviewTooltip({
-          noteId,
-          content: previewText || 'No content yet',
-          position,
-          status: 'ready'
-        });
-      } catch (error) {
-        console.error('[PopupOverlay] Failed to fetch preview:', error);
-        setActivePreviewTooltip({
-          noteId,
-          content: 'Failed to load preview',
-          position,
-          status: 'error'
-        });
-      }
-    }, 500);
-  }, []);
-
-  const handlePreviewTooltipLeave = useCallback(() => {
-    if (previewTooltipTimeoutRef.current) {
-      clearTimeout(previewTooltipTimeoutRef.current);
-    }
-
-    // Delay closing to allow moving mouse to tooltip
-    previewTooltipCloseTimeoutRef.current = setTimeout(() => {
-      if (!isHoveringPreviewTooltipRef.current) {
-        setActivePreviewTooltip(null);
-      }
-    }, PREVIEW_HOVER_DELAY_MS);
-  }, []);
-
-  const handlePreviewTooltipEnter = useCallback(() => {
-    isHoveringPreviewTooltipRef.current = true;
-    if (previewTooltipCloseTimeoutRef.current) {
-      clearTimeout(previewTooltipCloseTimeoutRef.current);
-    }
-  }, []);
-
-  const handlePreviewTooltipMouseLeave = useCallback(() => {
-    isHoveringPreviewTooltipRef.current = false;
-
-    // Delay closing to allow moving mouse back to preview
-    previewTooltipCloseTimeoutRef.current = setTimeout(() => {
-      setActivePreviewTooltip(null);
-    }, PREVIEW_HOVER_DELAY_MS);
-  }, []);
-
-  // Drag and drop handlers
-
-  const handleDragStart = useCallback((
-    popupId: string,
-    childId: string,
-    event: React.DragEvent
-  ) => {
-    // Get items to drag (selected items if dragged item is selected, otherwise just this one)
-    const selectedInPopup = popupSelections.get(popupId) || new Set();
-    const itemsToDrag = selectedInPopup.has(childId) ? selectedInPopup : new Set([childId]);
-
-    setDraggedItems(itemsToDrag);
-    setDragSourcePopupId(popupId);
-
-    // Track source folder ID to prevent dropping into same folder
-    const sourcePopup = popups.get(popupId);
-    const sourceFolderId = sourcePopup ? (sourcePopup as any).folderId : null;
-    setDragSourceFolderId(sourceFolderId);
-
-    // Set drag data
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', Array.from(itemsToDrag).join(','));
-
-    // Custom drag preview for multiple items
-    if (itemsToDrag.size > 1) {
-      const dragPreview = document.createElement('div');
-      dragPreview.className = 'bg-indigo-600 text-white px-2 py-1 rounded text-sm';
-      dragPreview.textContent = `${itemsToDrag.size} items`;
-      dragPreview.style.position = 'absolute';
-      dragPreview.style.top = '-1000px';
-      document.body.appendChild(dragPreview);
-      event.dataTransfer.setDragImage(dragPreview, 0, 0);
-      setTimeout(() => document.body.removeChild(dragPreview), 0);
-    }
-  }, [popupSelections, popups]);
-
-  const handleDragOver = useCallback((
-    childId: string,
-    isFolder: boolean,
-    event: React.DragEvent
-  ) => {
-    if (!isFolder) return; // Only folders are drop targets
-
-    event.preventDefault();
-
-    // Check if this is an invalid drop:
-    // 1. Dropping folder into itself (childId in draggedItems)
-    // 2. Dropping items back into their source folder (childId === dragSourceFolderId)
-    const isInvalid = draggedItems.has(childId) || childId === dragSourceFolderId;
-
-    if (isInvalid) {
-      event.dataTransfer.dropEffect = 'none';
-      setInvalidDropTargetId(childId);
-      setDropTargetId(null);
-    } else {
-      event.dataTransfer.dropEffect = 'move';
-      setDropTargetId(childId);
-      setInvalidDropTargetId(null);
-    }
-  }, [draggedItems, dragSourceFolderId]);
-
-  const handleDragLeave = useCallback((event: React.DragEvent) => {
-    const related = event.relatedTarget as HTMLElement;
-    if (!related || !related.closest('[data-drop-zone]')) {
-      setDropTargetId(null);
-      setInvalidDropTargetId(null);
-    }
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    setDraggedItems(new Set());
-    setDropTargetId(null);
-    setInvalidDropTargetId(null);
-    setDragSourcePopupId(null);
-    setDragSourceFolderId(null);
-  }, []);
-
-  const handleDrop = useCallback(async (
-    targetFolderId: string,
-    event: React.DragEvent
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const itemIds = Array.from(draggedItems);
-    if (itemIds.length === 0) return;
-
-    // Don't allow dropping on itself
-    if (itemIds.includes(targetFolderId)) {
-      setDropTargetId(null);
-      return;
-    }
-
-    // Find target popup ID (popup that contains this folder)
-    let targetPopupId: string | null = null;
-    popups.forEach((popup, popupId) => {
-      if ((popup as any).folderId === targetFolderId) {
-        targetPopupId = popupId;
-      }
-    });
-
-    // Call parent callback to handle move
-    if (onBulkMove && dragSourcePopupId) {
-      await onBulkMove(itemIds, targetFolderId, dragSourcePopupId);
-    }
-
-    // Clear selection from source popup and set in target popup
-    setPopupSelections(prev => {
-      const next = new Map(prev);
-      // Clear source popup selection
-      if (dragSourcePopupId) {
-        next.delete(dragSourcePopupId);
-      }
-      // Set moved items as selected in target popup
-      if (targetPopupId) {
-        next.set(targetPopupId, new Set(itemIds));
-      }
-      return next;
-    });
-
-    // Clear drag state
-    handleDragEnd();
-  }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd, popups]);
-
-  // Popup container drop handlers (for dropping on popup background/empty space)
-  const handlePopupDragOver = useCallback((
-    popupId: string,
-    folderId: string,
-    event: React.DragEvent
-  ) => {
-    // Only if dragging is active
-    if (draggedItems.size === 0) return;
-
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-    setIsPopupDropTarget(popupId);
-  }, [draggedItems]);
-
-  const handlePopupDragLeave = useCallback((
-    popupId: string,
-    event: React.DragEvent
-  ) => {
-    // Check if really leaving popup (not just entering child)
-    const related = event.relatedTarget as HTMLElement;
-    if (!related || !related.closest(`[data-popup-id="${popupId}"]`)) {
-      setIsPopupDropTarget(null);
-    }
-  }, []);
-
-  const handlePopupDrop = useCallback(async (
-    folderId: string,
-    popupId: string,
-    event: React.DragEvent
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const itemIds = Array.from(draggedItems);
-    if (itemIds.length === 0) return;
-
-    // Don't allow dropping on itself (same guard as handleDrop)
-    if (itemIds.includes(folderId)) {
-      setIsPopupDropTarget(null);
-      return;
-    }
-
-    // Use popup's folderId as target
-    if (onBulkMove && dragSourcePopupId) {
-      await onBulkMove(itemIds, folderId, dragSourcePopupId);
-    }
-
-    // Clear selection from source popup and set in target popup
-    setPopupSelections(prev => {
-      const next = new Map(prev);
-      // Clear source popup selection
-      if (dragSourcePopupId) {
-        next.delete(dragSourcePopupId);
-      }
-      // Set moved items as selected in target popup
-      next.set(popupId, new Set(itemIds));
-      return next;
-    });
-
-    setIsPopupDropTarget(null);
-    handleDragEnd();
-  }, [draggedItems, dragSourcePopupId, onBulkMove, handleDragEnd]);
-
-  useEffect(() => {
-    const activeIds = new Set<string>();
-    popups.forEach((_, id) => activeIds.add(id));
-    setPreviewState(prev => {
-      let mutated = false;
-      const next: Record<string, PreviewEntry> = {};
-      Object.entries(prev).forEach(([id, entry]) => {
-        if (activeIds.has(id)) {
-          next[id] = entry;
-        } else {
-          mutated = true;
-        }
-      });
-      return mutated ? next : prev;
-    });
-  }, [popups]);
-
-  // Cleanup selection state for closed popups
-  useEffect(() => {
-    const activeIds = new Set<string>();
-    popups.forEach((_, id) => activeIds.add(id));
-
-    setPopupSelections(prev => {
-      let mutated = false;
-      const next = new Map<string, Set<string>>();
-      prev.forEach((selection, id) => {
-        if (activeIds.has(id)) {
-          next.set(id, selection);
-        } else {
-          mutated = true;
-        }
-      });
-      return mutated ? next : prev;
-    });
-
-    setLastSelectedIds(prev => {
-      let mutated = false;
-      const next = new Map<string, string>();
-      prev.forEach((lastId, popupId) => {
-        if (activeIds.has(popupId)) {
-          next.set(popupId, lastId);
-        } else {
-          mutated = true;
-        }
-      });
-      return mutated ? next : prev;
-    });
-
-    // Clear drag state if source popup closed
-    if (dragSourcePopupId && !activeIds.has(dragSourcePopupId)) {
-      setDraggedItems(new Set());
-      setDropTargetId(null);
-      setInvalidDropTargetId(null);
-      setDragSourcePopupId(null);
-      setDragSourceFolderId(null);
-      setIsPopupDropTarget(null);
-    }
-  }, [popups, dragSourcePopupId]);
-
-  useEffect(() => {
-    popups.forEach((popup, id) => {
-      const entry = previewStateRef.current[id];
-      const children = (popup.folder?.children ?? []) as PopupChildNode[];
-
-      if (!entry) {
-        // Removed auto-preview on mount - only highlight on hover
-        return;
-      }
-
-      const activeChildId = entry.activeChildId;
-      if (activeChildId && children.some(child => child.id === activeChildId && isNoteLikeNode(child))) {
-        return;
-      }
-
-      // Clear any stale activeChildId if no longer valid
-      if (activeChildId !== null) {
-        setPreviewState(prev => {
-          const current = prev[id];
-          if (!current) return prev;
-          return {
-            ...prev,
-            [id]: {
-              ...current,
-              activeChildId: null,
-            },
-          };
-        });
-      }
-    });
-  }, [popups, requestPreview]);
-
-  
   // Debug log on mount
   useEffect(() => {
     getUIResourceManager().enqueueLowPriority(() => {
@@ -2368,10 +1604,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
                 className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
                 onDragOver={(e) => {
                   const folderId = (popup as any).folderId;
-                  if (folderId && draggedItems.size > 0) {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    setIsPopupDropTarget(popup.id);
+                  if (folderId) {
+                    handlePopupDragOver(popup.id, folderId, e);
                   }
                 }}
                 onDrop={(e) => {
@@ -2428,7 +1662,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           layerCtx.setActiveLayer('notes');
         }
         onSelectNote?.(noteId);
-        setActivePreviewTooltip(null);
+        dismissPreviewTooltip();
       }}
       onMouseEnter={handlePreviewTooltipEnter}
       onMouseLeave={handlePreviewTooltipMouseLeave}
@@ -2717,14 +1951,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
               {/* Popup Footer - also droppable for easy access */}
                   <div
                     className="px-3 py-1.5 border-t border-gray-700 text-xs text-gray-500 cursor-pointer"
-                    onDragOver={(e) => {
-                      const folderId = (popup as any).folderId;
-                      if (folderId && draggedItems.size > 0) {
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        setIsPopupDropTarget(popup.id);
-                      }
-                    }}
+              onDragOver={(e) => {
+                const folderId = (popup as any).folderId;
+                if (folderId) {
+                  handlePopupDragOver(popup.id, folderId, e);
+                }
+              }}
                     onDrop={(e) => {
                       const folderId = (popup as any).folderId;
                       folderId && handlePopupDrop(folderId, popup.id, e);
