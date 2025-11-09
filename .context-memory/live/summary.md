@@ -15,8 +15,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-08 23:18Z] c4f1418: the empty popup issue disappered
 - commit [2025-11-08 20:28Z] c37b36e: refactor 1.1 worked.
 - commit [2025-11-08 19:19Z] b3d04ab: fixing (worked)
-- commit [2025-11-08 19:03Z] a4868b7: continue fixing(working)
-- commit [2025-11-08 18:52Z] d08e0b3: continue refactoring overlaypopup
 
 Recent Chat
 - (none)

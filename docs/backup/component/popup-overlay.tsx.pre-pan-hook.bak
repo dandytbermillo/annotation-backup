@@ -21,6 +21,7 @@ import {
   HOVER_HIGHLIGHT_DURATION_MS,
 } from '@/lib/constants/ui-timings';
 import {
+  AUTO_SCROLL_CONFIG,
   DEFAULT_POPUP_HEIGHT,
   DEFAULT_POPUP_WIDTH,
   IDENTITY_TRANSFORM,
@@ -35,9 +36,16 @@ import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-
 import { PopupCardHeader } from './popup-overlay/components/PopupCardHeader';
 import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
 import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
-import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
+
+interface AutoScrollState {
+  isActive: boolean;
+  velocity: { x: number; y: number };
+  threshold: number;
+  minSpeed: number;
+  maxSpeed: number;
+}
 
 interface PopupOverlayProps {
   popups: Map<string, PopupData>;
@@ -74,7 +82,6 @@ interface PopupOverlayProps {
   isLocked?: boolean;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
-  workspaceId?: string | null; // legacy alias retained for compatibility
   knowledgeBaseWorkspaceId?: string | null;
   activeMoveCascadeParentId?: string | null;
   moveCascadeChildIds?: string[];
@@ -1402,10 +1409,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [popups.size, multiLayerEnabled]);
   
+  // Self-contained transform state (committed when pan ends)
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [isPanning, setIsPanning] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const isPanningRef = useRef(false);
+  // RAF-driven pan refs: avoid React renders on every move
+  const transformRef = useRef({ x: 0, y: 0, scale: 1 });
+  const rafIdRef = useRef<number | null>(null);
+  const lastRafTsRef = useRef(0);
+  const [engaged, setEngaged] = useState(false); // hysteresis engaged
   
   // Use LayerProvider to gate interactivity by active layer
   const layerCtx = useLayer();
+  const hasSharedCamera = multiLayerEnabled && layerCtx?.layers instanceof Map && layerCtx.layers.size > 0;
+  const sharedTransform = hasSharedCamera ? (layerCtx.transforms.popups || IDENTITY_TRANSFORM) : null;
+  const activeTransform = sharedTransform ?? transform;
+  const isActiveLayer = !!layerCtx && layerCtx.activeLayer === 'popups';
   const popupChildRowRenderer = useMemo(
     () =>
       createPopupChildRowRenderer({
@@ -1483,38 +1503,81 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   // LOD: Track which popups are visible in the viewport to limit connection lines
   const visibleIdSetRef = useRef<Set<string>>(new Set());
   const visibilityObserversRef = useRef<Map<string, IntersectionObserver>>(new Map());
+  const panStartRef = useRef({ x: 0, y: 0 });
+  const lastMouseRef = useRef({ x: 0, y: 0 });
+  const pointerIdRef = useRef<number | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Selection guard refs to prevent text highlighting during drag
+  const selectionGuardsRef = useRef<{
+    onSelectStart: (e: Event) => void;
+    onDragStart: (e: Event) => void;
+    prevUserSelect: string;
+  } | null>(null);
+  
+  // Auto-scroll state and refs
+  const [autoScroll, setAutoScroll] = useState<AutoScrollState>(() => ({
+    isActive: false,
+    velocity: { x: 0, y: 0 },
+    threshold: AUTO_SCROLL_CONFIG.THRESHOLD,
+    minSpeed: AUTO_SCROLL_CONFIG.MIN_SPEED,
+    maxSpeed: AUTO_SCROLL_CONFIG.MAX_SPEED
+  }));
+  const autoScrollRef = useRef<AutoScrollState>(autoScroll);
+  const animationFrameRef = useRef<number | null>(null);
 
-  // Check if the pointer event is on empty space (not on interactive elements)
-  const isOverlayEmptySpace = useCallback((event: React.PointerEvent) => {
-    const target = event.target as HTMLElement;
-    const isOnPopup = !!target.closest('.popup-card');
-    const isOnButton = !!target.closest('button');
-    return !isOnPopup && !isOnButton;
+  useEffect(() => {
+    if (hasSharedCamera && sharedTransform) {
+      transformRef.current = { ...sharedTransform };
+    }
+  }, [hasSharedCamera, sharedTransform]);
+
+  // Inject global CSS once to hard-disable selection when dragging
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const STYLE_ID = 'dragging-no-select-style';
+    if (!document.getElementById(STYLE_ID)) {
+      const style = document.createElement('style');
+      style.id = STYLE_ID;
+      style.textContent = `
+        html.dragging-no-select, html.dragging-no-select * {
+          -webkit-user-select: none !important;
+          user-select: none !important;
+          -ms-user-select: none !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
   }, []);
 
-  const {
-    activeTransform,
-    hasSharedCamera,
-    isActiveLayer,
-    isPanning,
-    handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
-    applyExternalTransform,
-  } = useOverlayPanState({
-    overlayRef,
-    containerRef,
-    sidebarRectRef,
-    multiLayerEnabled,
-    layerCtx,
-    isLocked,
-    popupsCount: popups.size,
-    isOverlayEmptySpace,
-    overlayFullSpanEnabled,
-    tracePointerLog,
-  });
+  const enableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (selectionGuardsRef.current) return; // already enabled
+    const onSelectStart = (e: Event) => { e.preventDefault(); };
+    const onDragStart = (e: Event) => { e.preventDefault(); };
+    selectionGuardsRef.current = {
+      onSelectStart,
+      onDragStart,
+      prevUserSelect: document.body.style.userSelect,
+    };
+    document.documentElement.classList.add('dragging-no-select');
+    document.body.style.userSelect = 'none';
+    document.addEventListener('selectstart', onSelectStart, true);
+    document.addEventListener('dragstart', onDragStart, true);
+    try { window.getSelection()?.removeAllRanges?.(); } catch {}
+  }, []);
 
+  const disableSelectionGuards = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const g = selectionGuardsRef.current;
+    if (!g) return;
+    document.removeEventListener('selectstart', g.onSelectStart, true);
+    document.removeEventListener('dragstart', g.onDragStart, true);
+    document.documentElement.classList.remove('dragging-no-select');
+    document.body.style.userSelect = g.prevUserSelect || '';
+    selectionGuardsRef.current = null;
+  }, []);
+  
+  
   // Debug log initialization and state tracking
   useEffect(() => {
     if (!debugLoggingEnabled) return;
@@ -1553,6 +1616,319 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
   }, [debugLoggingEnabled, isActiveLayer, layerCtx?.activeLayer, popups.size]);
   
+  // Check if the pointer event is on empty space (not on interactive elements)
+  const isOverlayEmptySpace = useCallback((e: React.PointerEvent) => {
+    const target = e.target as HTMLElement;
+    // Check if we're NOT clicking on a popup card or button
+    // This allows clicking on any background element including transform containers
+    const isOnPopup = !!target.closest('.popup-card');
+    const isOnButton = !!target.closest('button');
+    
+    // Empty space = not on popup card and not on button
+    return !isOnPopup && !isOnButton;
+  }, []);
+
+  const isPointerOverSidebar = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!overlayFullSpanEnabled) {
+        return false;
+      }
+      const rect = sidebarRectRef.current;
+      if (!rect) {
+        return false;
+      }
+      return (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      );
+    },
+    [overlayFullSpanEnabled]
+  );
+  
+  // Handle pan start (simplified like notes canvas)
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    if (isPointerOverSidebar(e.clientX, e.clientY)) {
+      tracePointerLog('PopupOverlay', 'pointer_blocked_over_sidebar', {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        sidebarRect: sidebarRectRef.current
+          ? {
+              left: sidebarRectRef.current.left,
+              right: sidebarRectRef.current.right,
+              top: sidebarRectRef.current.top,
+              bottom: sidebarRectRef.current.bottom,
+            }
+          : null,
+      });
+      return;
+    }
+
+    if (isLocked) {
+      tracePointerLog('PopupOverlay', 'pan_blocked_locked_state', {
+        popupCount: popups.size,
+        activeLayer: layerCtx?.activeLayer || 'none',
+      });
+      return;
+    }
+
+    // Always log that pointer down was received (debug only)
+    void tracePointerLog({
+      component: 'PopupOverlay',
+      action: 'pointer_down_event',
+      metadata: {
+        target: (e.target as HTMLElement).className,
+        isEmptySpace: isOverlayEmptySpace(e),
+        isActiveLayer,
+        popupCount: popups.size,
+        layerCtx: layerCtx?.activeLayer || 'none',
+        clientX: e.clientX,
+        clientY: e.clientY,
+      },
+    });
+    
+    getUIResourceManager().enqueueLowPriority(() => {
+      tracePointerLog('PopupOverlay', 'pointer_down_received', {
+        target: (e.target as HTMLElement).className,
+        isEmptySpace: isOverlayEmptySpace(e),
+        isActiveLayer,
+        popupCount: popups.size,
+        layerCtx: layerCtx?.activeLayer || 'none'
+      });
+    });
+    
+    // Only start panning if clicking on empty space
+    if (!isOverlayEmptySpace(e)) {
+      getUIResourceManager().enqueueLowPriority(() => {
+        tracePointerLog('PopupOverlay', 'pan_blocked_not_empty_space', {
+          target: (e.target as HTMLElement).className
+        });
+      });
+      return;
+    }
+    
+    // Require at least one popup present
+    const hasPopups = popups.size > 0;
+    if (!hasPopups) {
+      getUIResourceManager().enqueueLowPriority(() => {
+        tracePointerLog('PopupOverlay', 'pan_blocked', { 
+          isActiveLayer,
+          hasPopups,
+          layerCtx: layerCtx?.activeLayer || 'none',
+          reason: 'no_popups'
+        });
+      });
+      return;
+    }
+    // Also require correct active layer to avoid accidental interception
+    if (!isActiveLayer) {
+      getUIResourceManager().enqueueLowPriority(() => {
+        tracePointerLog('PopupOverlay', 'pan_blocked_inactive_layer', {
+          isActiveLayer,
+          layerCtx: layerCtx?.activeLayer || 'none',
+          reason: 'inactive_layer'
+        });
+      });
+      return;
+    }
+    
+    void tracePointerLog({
+      component: 'PopupOverlay',
+      action: 'pan_start_event',
+      metadata: {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        transform: activeTransform,
+        pointerId: e.pointerId,
+      },
+    });
+    
+    getUIResourceManager().enqueueLowPriority(() => {
+      tracePointerLog('PopupOverlay', 'pan_start', { 
+        clientX: e.clientX, 
+        clientY: e.clientY,
+        currentTransform: activeTransform,
+        pointerId: e.pointerId,
+        isActiveLayer,
+        popupCount: popups.size
+      });
+    });
+    
+    // Use ref-driven panning to avoid render at t=0
+    isPanningRef.current = true;
+    setIsPanning(true);
+    setEngaged(false); // reset hysteresis
+    panStartRef.current = { x: e.clientX, y: e.clientY };
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+    pointerIdRef.current = e.pointerId;
+    
+    // Capture pointer for robust dragging across children
+    // Only capture if this is a real pointer event (not synthetic)
+    try {
+      if (e.pointerId !== undefined && overlayRef.current) {
+        overlayRef.current.setPointerCapture(e.pointerId);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      // Fallback: pointer capture not available or synthetic event
+      tracePointerLog('PopupOverlay', 'pointer_capture_failed', { 
+        error: message,
+        pointerId: e.pointerId 
+      });
+    }
+    
+    // Optimize for dragging
+    // Prevent text selection while dragging
+    enableSelectionGuards();
+    document.body.style.userSelect = 'none';
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('overlay-pan');
+      transformRef.current = { ...activeTransform };
+    } else if (containerRef.current) {
+      containerRef.current.style.willChange = 'transform';
+      containerRef.current.style.backfaceVisibility = 'hidden';
+      containerRef.current.style.perspective = '1000px';
+      transformRef.current = { ...transform };
+      const { x, y, scale } = transformRef.current;
+      containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+    }
+    // Immediate cursor feedback without render
+    if (overlayRef.current) overlayRef.current.style.cursor = 'grabbing';
+    
+    // Only prevent default for actual drag operations
+    e.preventDefault();
+  }, [
+    isOverlayEmptySpace,
+    transform,
+    sharedTransform,
+    activeTransform,
+    hasSharedCamera,
+    isActiveLayer,
+    popups.size,
+    layerCtx,
+    isLocked,
+    isPointerOverSidebar,
+    tracePointerLog
+  ]);
+  
+  // Handle pan move (simplified like notes canvas)
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!isPanningRef.current || pointerIdRef.current === null) {
+      tracePointerLog('PopupOverlay', 'pan_move_blocked', {
+        isPanning: isPanningRef.current,
+        pointerIdRef: pointerIdRef.current,
+        reason: !isPanningRef.current ? 'not_panning' : 'no_pointer_id'
+      });
+      return;
+    }
+    
+    // Don't block on capture - it may not be available for synthetic events
+    
+    const deltaX = e.clientX - lastMouseRef.current.x;
+    const deltaY = e.clientY - lastMouseRef.current.y;
+    
+    // 3-5px hysteresis to distinguish click vs pan
+    if (!engaged) {
+      const dx0 = e.clientX - panStartRef.current.x;
+      const dy0 = e.clientY - panStartRef.current.y;
+      if (Math.hypot(dx0, dy0) < 1) return; // maintain minimal hysteresis to avoid accidental pans
+      setEngaged(true);
+      getUIResourceManager().enqueueLowPriority(() => {
+        tracePointerLog('PopupOverlay', 'pan_engaged', { threshold: Math.hypot(dx0, dy0) });
+      });
+    }
+    
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY });
+    } else {
+      transformRef.current = {
+        ...transformRef.current,
+        x: transformRef.current.x + deltaX,
+        y: transformRef.current.y + deltaY,
+      };
+      if (containerRef.current) {
+        const { x, y, scale } = transformRef.current;
+        containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+      }
+      if (rafIdRef.current == null) {
+        rafIdRef.current = requestAnimationFrame((ts) => {
+          rafIdRef.current = null;
+          if (ts - lastRafTsRef.current < 16) return; // throttle ~60fps
+          lastRafTsRef.current = ts;
+          const { x, y, scale } = transformRef.current;
+          if (containerRef.current) {
+            containerRef.current.style.transform = `translate3d(${Math.round(x)}px, ${Math.round(y)}px, 0) scale(${scale})`;
+          }
+        });
+      }
+    }
+    
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+  }, [isPanning, engaged, popups.size, hasSharedCamera, layerCtx, tracePointerLog]);
+  
+  // Handle pan end (simplified)
+  const handlePointerEnd = useCallback((e: React.PointerEvent) => {
+    if (!isPanningRef.current) return;
+    
+    getUIResourceManager().enqueueLowPriority(() => {
+      tracePointerLog('PopupOverlay', 'pan_end', { 
+        totalDelta: {
+          x: activeTransform.x,
+          y: activeTransform.y
+        },
+        pointerId: e.pointerId,
+        wasEngaged: engaged
+      });
+    });
+    
+    // End ref-driven panning
+    isPanningRef.current = false;
+    setIsPanning(false);
+    // Keep state false (we did not set it to true at start) but ensure UI resets
+    setEngaged(false);
+    
+    // Release pointer capture
+    if (pointerIdRef.current !== null && overlayRef.current) {
+      try {
+        overlayRef.current.releasePointerCapture(pointerIdRef.current);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        // Pointer was never captured or already released
+        tracePointerLog('PopupOverlay', 'pointer_release_failed', { 
+          error: message,
+          pointerId: pointerIdRef.current 
+        });
+      }
+      pointerIdRef.current = null;
+    }
+    
+    // Reset styles
+    document.body.style.userSelect = '';
+    if (!hasSharedCamera && containerRef.current) {
+      containerRef.current.style.willChange = 'auto';
+      containerRef.current.style.backfaceVisibility = '';
+      containerRef.current.style.perspective = '';
+      containerRef.current.style.transform = '';
+    }
+    if (overlayRef.current) overlayRef.current.style.cursor = '';
+    if (!hasSharedCamera) {
+      setTransform(prev => ({ ...prev, ...transformRef.current }));
+    }
+    if (rafIdRef.current) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    // Re-enable selection
+    disableSelectionGuards();
+    if (hasSharedCamera && layerCtx) {
+      layerCtx.setGesture('none');
+    }
+  }, [isPanning, hasSharedCamera, layerCtx, engaged, activeTransform, tracePointerLog]);
+  
+  // Note: With pointer capture, we don't need document-level listeners
+  // The pointer events will continue to fire on the overlay even when
+  // the pointer moves outside or over child elements
   
   // Note: Auto-switch is already handled by the explorer component
   // Removing duplicate auto-switch logic to prevent conflicts
@@ -2095,10 +2471,11 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           y: nextTransform.y - activeTransform.y,
         });
       } else {
-        applyExternalTransform(nextTransform);
+        transformRef.current = nextTransform;
+        setTransform(nextTransform);
       }
     },
-    [activeTransform, applyExternalTransform, hasSharedCamera, layerCtx, viewportSize]
+    [activeTransform, hasSharedCamera, layerCtx, setTransform, viewportSize]
   );
   
   const hasClosingPopup = (() => {
@@ -2157,8 +2534,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       data-layer="popups"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
       onPointerEnter={() => setIsOverlayHovered(true)}
       onPointerLeave={() => setIsOverlayHovered(false)}
       onClick={(e) => {
@@ -2529,8 +2906,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           data-layer="popups"
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
           onPointerEnter={() => setIsOverlayHovered(true)}
           onPointerLeave={() => setIsOverlayHovered(false)}
           onClick={(e) => {

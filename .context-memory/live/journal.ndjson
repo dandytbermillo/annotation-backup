@@ -487,3 +487,5 @@
 {"ts":"2025-11-09T03:03:17.774Z","type":"commit","sha":"932a253b5c41ee9dd50901a73854ec46cf40a0b0","files_changed":3,"message":"start implementing"}
 {"ts":"2025-11-09T03:55:36.013Z","type":"commit","sha":"9dcbeed12d2972805381d264b772b7f5339bc9f9","files_changed":8,"message":"properly implemented"}
 {"ts":"2025-11-09T04:02:49.387Z","type":"commit","sha":"afce4cd7792c133f6f324ed2536ea2866e8ca06f","files_changed":3,"message":"fixed error"}
+{"timestamp":"2025-11-09T18:35:30Z","note":"Snapshot popup-overlay.tsx to docs/backup/component/popup-overlay.tsx.2025-11-09.bak before pan refactor"}
+{"timestamp":"2025-11-09T18:51:35Z","note":"Extracted popup pan logic into useOverlayPanControls hook, updated popup-overlay.tsx, and reran npm test -- __tests__/unit/popup-overlay.test.ts"}

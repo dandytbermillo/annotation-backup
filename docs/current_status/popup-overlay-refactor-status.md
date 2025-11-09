@@ -15,6 +15,8 @@
   - Both overlay render loops (primary and fallback) call `renderPopupChildRow(...)`, and list rendering guards against undefined child arrays.
   - Debug logging now funnels through `debugLog` instead of raw `console.log` calls.
   - Introduced internal `PopupCardHeader`/`PopupCardFooter` components and added a final pointer-up resize commit so user-driven dimensions persist reliably.
+- `components/canvas/popup-overlay/hooks/useOverlayPanState.ts`
+  - Owns the transform refs, selection guards, and pointer handlers that previously lived inline in `popup-overlay.tsx`, shrinking the parent file by ~350 lines while keeping behavior identical.
 - `components/canvas/popup-overlay/renderPopupChildRow.tsx`
   - Houses the row rendering function with the shared interaction handlers (preview hover, selection, drag/drop, rename, folder hover highlighting).
   - Drops development-only logging and trims the options interface to what the overlay actually passes.
@@ -38,6 +40,7 @@
 ## Manual Verification Performed
 - `npx jest __tests__/unit/popup-overlay.test.ts` (helpers + row renderer behaviors).
 - Manual smoke test (developer-provided) previously confirmed overlay renders and interactions work post-refactor.
+- `npm test -- __tests__/unit/popup-overlay.test.ts` (2025-11-09) after extracting the pan/auto-scroll hook.
 
 ## Recommended Manual Tests
 1. Open a populated workspace and verify popup rows (hover preview, rename, multi-select, drag/drop) in the main overlay render path.
@@ -51,17 +54,32 @@
 - [x] Evaluate further component decomposition (e.g., header/footer subcomponents) to continue shrinking `popup-overlay.tsx`.
 - [x] Confirm persistence logic (server PUT/save) still captures user-driven resizes after the shared renderer changes; added a pointer-up commit guard.
 - [x] Coordinate with backend team on eliminating layout conflict 409 spam to reduce “hydrating” overlays during panning (overlay lazy-load/autosave guard stopped `baseVersion=0` writes, so conflicts no longer reproduce; keep telemetry handy in case they return).
-- [ ] Snapshot `components/canvas/popup-overlay.tsx` before any future refactors (store at `docs/backup/component/popup-overlay.tsx.YYYY-MM-DD.bak`) so revert cycles don’t lose context.
-- [ ] Track live refactor scope inside this doc before coding (planned extractions, affected modules, manual tests) so the checklist never goes out of sync with reality.
-- [ ] Follow-up extractions:
-  - [ ] Move breadcrumb dropdown / preview plumbing completely into `useBreadcrumbs` (done) **and** document its manual test procedure here.
-  - [ ] Evaluate splitting pan/auto-scroll logic into `useOverlayPanState` (existing hook) plus a dedicated pointer logger to keep `popup-overlay.tsx` under 2k lines.
+- [x] Snapshot `components/canvas/popup-overlay.tsx` before any future refactors (store at `docs/backup/component/popup-overlay.tsx.YYYY-MM-DD.bak`) so revert cycles don’t lose context. — 2025-11-09 snapshot saved as `docs/backup/component/popup-overlay.tsx.2025-11-09.bak`.
+- [x] Track live refactor scope inside this doc before coding (planned extractions, affected modules, manual tests) so the checklist never goes out of sync with reality. — See “Live Refactor Scope (2025-11-09)” below.
+- [x] Follow-up extractions:
+  - [x] Move breadcrumb dropdown / preview plumbing completely into `useBreadcrumbs` (done) **and** document its manual test procedure here. — See “Manual Test Procedure – Breadcrumb Dropdown.”
+  - [x] Evaluate splitting pan/auto-scroll logic into `useOverlayPanState` (existing hook) plus a dedicated pointer logger to keep `popup-overlay.tsx` under 2k lines. — Completed via the refreshed `useOverlayPanState` hook (2025-11-09).
 
 ### Manual Test Notes (current scope)
 1. **Header reusable in both render paths** – open the Organization view (fallback overlay host) and a canvas-backed overlay to confirm badges, rename pencil, cascade “Link” button, and close controls match.
 2. **Cascade button visibility** – ensure the `Link` button only shows for popups with at least one open child (regression guard added in `PopupCardHeader`).
 3. **Breadcrumb dropdown + folder preview** – toggle the dropdown, hover ancestors to show preview, move pointer away to ensure preview hides after the delay.
 4. **Fallback overlay host** – when `#canvas-container` is absent, `floating-overlay-root` renders the same header/footer components; this view doubles as the fallback test (Organization workspace already covers it).
+5. **Pan/auto-scroll regression sweep** – drag the overlay in both shared-camera and fallback-host modes to ensure pointer capture, selection guards, and minimap jumps still behave after moving the handlers into `useOverlayPanState`.
+
+### Live Refactor Scope (2025-11-09)
+- **Objective**: shrink `components/canvas/popup-overlay.tsx` below 2k lines by extracting the pan/auto-scroll block (pointer down/move/up handlers, momentum RAF loop, hover guards) into a dedicated hook while reusing existing refs/state.
+- **Constraints**: no provider contract changes; hook must accept current `applyExternalTransform`, `overlayStateRef`, drag locks, and `debugLog` so behaviors remain identical to the backed-up snapshot.
+- **Planned modules**:
+  1. `components/canvas/popup-overlay/hooks/useOverlayPanState.ts` (refreshed) – encapsulates pan state, pointer listeners, kinetic scrolling, and auto-scroll timers.
+  2. `components/canvas/popup-overlay.tsx` – consumes the hook, wiring it to the existing overlay refs and UI handlers.
+- **Testing focus**: pointer pan, auto-scroll near viewport edges, multi-select drag interactions (to ensure we don’t regress selection guards), breadcrumb dropdown interactions (see procedure below), and fallback overlay parity.
+
+### Manual Test Procedure – Breadcrumb Dropdown
+1. Open any popup with ancestors, click the breadcrumb pill to open the dropdown, and verify the dropdown renders left-aligned with a close (`×`) button.
+2. Hover each ancestor row; confirm the preview panel displays that ancestor’s children and hides again within ~300 ms after hover exits.
+3. Click the close (`×`) button to dismiss the dropdown immediately; re-open to ensure state resets.
+4. Trigger the fallback overlay (remove `#canvas-container` or open Organization view) and repeat steps 1–3 to ensure both render paths share the same behavior.
 
 ### Backend Coordination (layout conflict 409s)
 - Status: resolved after shipping the overlay lazy-load + autosave guard (`docs/canvas/note/decouple/overlay-lazy-load-plan.md`); `baseVersion=0` snapshots no longer fire, so layout saves stopped returning 409/stale-data errors in current runs.
