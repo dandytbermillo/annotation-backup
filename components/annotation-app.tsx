@@ -43,6 +43,7 @@ import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
 import type { OverlayLayoutDiagnostics, OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
+import { appendWorkspaceParam, withWorkspaceHeaders, withWorkspacePayload } from "@/lib/workspaces/client-utils"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -279,7 +280,7 @@ function AnnotationAppContent() {
 
       const fetchPromise = (async () => {
         try {
-          const response = await fetchWithWorkspace(`/api/items/${encodeURIComponent(noteId)}`)
+        const response = await fetchWithKnowledgeBase(`/api/items/${encodeURIComponent(noteId)}`)
           if (!response.ok) {
             console.warn('[AnnotationApp] Failed to fetch note metadata for title', {
               noteId,
@@ -650,6 +651,7 @@ const sidebarPopupIdCounter = useRef(0)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
+  const [knowledgeBaseWorkspaceId, setKnowledgeBaseWorkspaceId] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
@@ -666,20 +668,17 @@ const sidebarPopupIdCounter = useRef(0)
     () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
   )
-  const fetchWithWorkspace = useCallback(
+  const fetchWithKnowledgeBase = useCallback(
     (input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers ?? {})
-      if (currentWorkspaceId) {
-        headers.set('X-Overlay-Workspace-ID', currentWorkspaceId)
-      }
-      return fetch(input, { ...init, headers })
+      const requestInit = withWorkspaceHeaders(init, knowledgeBaseWorkspaceId)
+      return fetch(input, requestInit)
     },
-    [currentWorkspaceId]
+    [knowledgeBaseWorkspaceId]
   )
 
   const fetchNotePreview = useCallback(
     async (noteId: string) => {
-      const response = await fetchWithWorkspace(`/api/items/${noteId}`)
+      const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`)
       if (!response.ok) throw new Error('Failed to fetch note')
       const data = await response.json()
       return {
@@ -687,7 +686,7 @@ const sidebarPopupIdCounter = useRef(0)
         contentText: data?.item?.contentText,
       }
     },
-    [fetchWithWorkspace]
+    [fetchWithKnowledgeBase]
   )
 
   const {
@@ -712,7 +711,7 @@ const sidebarPopupIdCounter = useRef(0)
         ...partial,
       })
     },
-    []
+    [debugLog, knowledgeBaseWorkspaceId]
   )
 
   const updateFolderCacheChildren = useCallback(
@@ -734,7 +733,9 @@ const sidebarPopupIdCounter = useRef(0)
         return cached.folder
       }
       try {
-        const response = await fetch(`/api/items/${folderId}`)
+        const response = await fetch(
+          appendWorkspaceParam(`/api/items/${folderId}`, knowledgeBaseWorkspaceId)
+        )
         if (!response.ok) {
           debugLog({
             component: 'AnnotationApp',
@@ -776,7 +777,9 @@ const sidebarPopupIdCounter = useRef(0)
       }
 
       try {
-        const response = await fetch(`/api/items?parentId=${folderId}`)
+        const response = await fetch(
+          appendWorkspaceParam(`/api/items?parentId=${folderId}`, knowledgeBaseWorkspaceId)
+        )
         if (!response.ok) {
           return cached?.children ?? null
         }
@@ -788,7 +791,7 @@ const sidebarPopupIdCounter = useRef(0)
         return cached?.children ?? null
       }
     },
-    [updateFolderCacheChildren]
+    [knowledgeBaseWorkspaceId, updateFolderCacheChildren]
   )
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
@@ -846,10 +849,19 @@ const sidebarPopupIdCounter = useRef(0)
 
     const loadOrganizationSidebar = async () => {
       try {
-        const rootResponse = await fetch('/api/items?parentId=null')
+        const rootResponse = await fetch(
+          appendWorkspaceParam('/api/items?parentId=null', knowledgeBaseWorkspaceId)
+        )
         if (!rootResponse.ok) return
         const rootData = await rootResponse.json().catch(() => ({ items: [] }))
         const rootItems: any[] = Array.isArray(rootData?.items) ? rootData.items : []
+        const resolvedWorkspaceId =
+          typeof rootData?.workspaceId === 'string' && rootData.workspaceId.length > 0
+            ? rootData.workspaceId
+            : null
+        if (resolvedWorkspaceId && resolvedWorkspaceId !== knowledgeBaseWorkspaceId) {
+          setKnowledgeBaseWorkspaceId(resolvedWorkspaceId)
+        }
 
         const knowledgeBase = rootItems.find(
           item => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
@@ -860,7 +872,11 @@ const sidebarPopupIdCounter = useRef(0)
         if (knowledgeBase) {
           let children: any[] = []
           try {
-            const childResponse = await fetch(`/api/items?parentId=${knowledgeBase.id}`)
+            const workspaceScopedUrl = appendWorkspaceParam(
+              `/api/items?parentId=${knowledgeBase.id}`,
+              resolvedWorkspaceId ?? knowledgeBaseWorkspaceId
+            )
+            const childResponse = await fetch(workspaceScopedUrl)
             if (childResponse.ok) {
               const childData = await childResponse.json().catch(() => ({ items: [] }))
               if (Array.isArray(childData?.items)) {
@@ -1542,7 +1558,7 @@ const initialWorkspaceSyncRef = useRef(false)
               const maxDepth = 10 // Prevent infinite loops
 
               while (currentParentId && !effectiveColor && depth < maxDepth) {
-                const parentResponse = await fetchWithWorkspace(`/api/items/${currentParentId}`)
+                const parentResponse = await fetchWithKnowledgeBase(`/api/items/${currentParentId}`)
                 if (!parentResponse.ok) break
 
                 const parentData = await parentResponse.json()
@@ -2607,7 +2623,9 @@ const handleCenterNote = useCallback(
       }
 
       try {
-        const detailResponse = await fetch(`/api/items/${folderId}`)
+        const detailResponse = await fetch(
+          appendWorkspaceParam(`/api/items/${folderId}`, knowledgeBaseWorkspaceId)
+        )
         if (!detailResponse.ok) throw new Error('Failed to load folder metadata')
         const detailData = await detailResponse.json()
         const detail = detailData.item || detailData
@@ -2661,7 +2679,9 @@ const handleCenterNote = useCallback(
         ])
 
         try {
-          const childResponse = await fetch(`/api/items?parentId=${folderId}`)
+          const childResponse = await fetch(
+            appendWorkspaceParam(`/api/items?parentId=${folderId}`, knowledgeBaseWorkspaceId)
+          )
           if (!childResponse.ok) throw new Error('Failed to load folder contents')
 
           const childData = await childResponse.json()
@@ -2706,7 +2726,7 @@ const handleCenterNote = useCallback(
         console.error('[AnnotationApp] Failed to open folder popup from sidebar:', error)
       }
     },
-    [ensureOverlayHydrated, knowledgeBaseId, overlayPopups, organizationFolders, layerContext]
+    [ensureOverlayHydrated, knowledgeBaseId, knowledgeBaseWorkspaceId, overlayPopups, organizationFolders, layerContext]
   )
 
   const closeSidebarFolderPopups = useCallback(() => {
@@ -3478,7 +3498,9 @@ const handleCenterNote = useCallback(
                 const maxDepth = 10
 
                 while (currentParentId && !inheritedColor && depth < maxDepth) {
-                  const parentResponse = await fetch(`/api/items/${currentParentId}`)
+                  const parentResponse = await fetch(
+                    appendWorkspaceParam(`/api/items/${currentParentId}`, knowledgeBaseWorkspaceId)
+                  )
                   if (!parentResponse.ok) break
 
                   const parentData = await parentResponse.json()
@@ -3611,7 +3633,7 @@ const handleCenterNote = useCallback(
         setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
       }
     }
-  }, [overlayPopups, layerContext, fetchGlobalChildren, mergeFolderCacheEntry])
+  }, [knowledgeBaseWorkspaceId, overlayPopups, layerContext, fetchGlobalChildren, mergeFolderCacheEntry])
 
   // Cancel close timeout when hovering the popup itself (keeps it alive)
   const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
@@ -3804,7 +3826,7 @@ const handleCenterNote = useCallback(
       const deleteResults = await Promise.all(
         Array.from(selectedIds).map(async (itemId) => {
           try {
-            const response = await fetchWithWorkspace(`/api/items/${itemId}`, {
+            const response = await fetchWithKnowledgeBase(`/api/items/${itemId}`, {
               method: 'DELETE',
               headers: {
                 'Content-Type': 'application/json'
@@ -3931,14 +3953,18 @@ const handleCenterNote = useCallback(
 
     try {
       // Call bulk-move API
-      const response = await fetchWithWorkspace('/api/items/bulk-move', {
+      const response = await fetchWithKnowledgeBase('/api/items/bulk-move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          itemIds,
-          targetFolderId,
-          ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
-        })
+        body: JSON.stringify(
+          withWorkspacePayload(
+            {
+              itemIds,
+              targetFolderId,
+            },
+            knowledgeBaseWorkspaceId
+          )
+        )
       })
 
       if (!response.ok) {
@@ -4044,7 +4070,7 @@ const handleCenterNote = useCallback(
       console.error('[handleBulkMove] Error:', error)
       alert(`Failed to move items: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [currentWorkspaceId, fetchWithWorkspace, invalidateFolderCache, updateFolderCacheChildren])
+  }, [currentWorkspaceId, fetchWithKnowledgeBase, invalidateFolderCache, updateFolderCacheChildren])
 
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
@@ -4376,6 +4402,7 @@ const handleCenterNote = useCallback(
                           refreshRecentNotes={recentNotesRefreshTrigger}
                           onToggleConstellationPanel={toggleConstellationView}
                           showConstellationPanel={showConstellationPanel}
+                          knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
                         />
                       )}
                     </ModernAnnotationCanvas>
@@ -4421,6 +4448,7 @@ const handleCenterNote = useCallback(
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
                 workspaceId={currentWorkspaceId}
+                knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
                 activeMoveCascadeParentId={moveCascadeState.parentId}
                 moveCascadeChildIds={moveCascadeState.childIds}
                 onToggleMoveCascade={handleToggleMoveCascade}
@@ -4564,7 +4592,7 @@ const handleCenterNote = useCallback(
                 refreshRecentNotes={recentNotesRefreshTrigger}
                 onToggleConstellationPanel={toggleConstellationView}
                 showConstellationPanel={showConstellationPanel}
-                workspaceId={currentWorkspaceId}
+                knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
               />
             )}
 

@@ -20,6 +20,10 @@
   - Drops development-only logging and trims the options interface to what the overlay actually passes.
 - `components/canvas/popup-overlay/helpers.ts`
   - Supplies common helpers (`clamp`, breadcrumb parsing, color theme lookup, relative-time formatting, node type guards) for the overlay and renderer.
+- `lib/workspaces/client-utils.ts`
+  - Centralizes helpers that append/query/headers `workspaceId` parameters so every Knowledge Base mutation consistently targets the canonical workspace.
+- `components/canvas/popup-overlay.tsx`, `components/floating-toolbar.tsx`, and `components/annotation-app.tsx`
+  - Accept the resolved Knowledge Base workspace id, apply it to all `/api/items` calls (query + payload), and stop leaking overlay layout ids into data calls—bulk moves, create/rename/delete, and toolbar interactions now hydrate identically across workspaces.
 - `components/annotation-app.tsx`
   - Folder cache entries now track fetch timestamps and invalidate automatically when folders mutate (create, delete, move) so popups never reuse stale snapshots.
   - Explicit folder opens (eye icon click) force a fresh `/api/items?parentId=...` fetch, while hover previews respect a short TTL to avoid spamming the API but still refresh after ~30 s.

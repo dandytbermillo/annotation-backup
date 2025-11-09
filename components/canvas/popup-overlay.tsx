@@ -31,6 +31,7 @@ import {
   MIN_POPUP_WIDTH,
 } from './popup-overlay/constants';
 import { clamp, getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popup-overlay/helpers';
+import { withWorkspaceHeaders, withWorkspacePayload } from '@/lib/workspaces/client-utils';
 import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-overlay/renderPopupChildRow';
 import { PopupCardHeader } from './popup-overlay/components/PopupCardHeader';
 import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
@@ -81,7 +82,7 @@ interface PopupOverlayProps {
   isLocked?: boolean;
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
-  workspaceId?: string | null;
+  knowledgeBaseWorkspaceId?: string | null;
   activeMoveCascadeParentId?: string | null;
   moveCascadeChildIds?: string[];
   onToggleMoveCascade?: (popupId: string) => void;
@@ -118,7 +119,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   isLocked = false,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
-  workspaceId = null,
+  knowledgeBaseWorkspaceId = null,
   activeMoveCascadeParentId = null,
   moveCascadeChildIds = [],
   onToggleMoveCascade,
@@ -153,15 +154,12 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     [debugDragTracingEnabled]
   );
 
-  const fetchWithWorkspace = useCallback(
+  const fetchWithKnowledgeBase = useCallback(
     (input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers ?? {});
-      if (workspaceId) {
-        headers.set('X-Overlay-Workspace-ID', workspaceId);
-      }
-      return fetch(input, { ...init, headers });
+      const requestInit = withWorkspaceHeaders(init, knowledgeBaseWorkspaceId);
+      return fetch(input, requestInit);
     },
-    [workspaceId]
+    [knowledgeBaseWorkspaceId]
   );
   const [previewState, setPreviewState] = useState<Record<string, PreviewEntry>>({});
   const previewStateRef = useRef(previewState);
@@ -316,7 +314,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     handleBreadcrumbFolderHoverLeave,
     handleBreadcrumbPreviewHover,
   } = useBreadcrumbs({
-    fetchWithWorkspace,
+    fetchWithKnowledgeBase,
     debugLog,
     folderPreviewDelayMs: FOLDER_PREVIEW_DELAY_MS,
   });
@@ -341,7 +339,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     previewControllersRef.current.set(controllerKey, controller);
 
     try {
-      const response = await fetchWithWorkspace(`/api/items/${childId}`, {
+      const response = await fetchWithKnowledgeBase(`/api/items/${childId}`, {
         method: 'GET',
         headers: {
           Accept: 'application/json',
@@ -680,18 +678,22 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setFolderCreationError(null);
 
     try {
-      const response = await fetchWithWorkspace('/api/items', {
+      const response = await fetchWithKnowledgeBase('/api/items', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'same-origin',
-        body: JSON.stringify({
-          type: 'folder',
-          name: trimmedName,
-          parentId: parentFolderId,
-          ...(workspaceId ? { workspaceId } : {}),
-        }),
+        body: JSON.stringify(
+          withWorkspacePayload(
+            {
+              type: 'folder',
+              name: trimmedName,
+              parentId: parentFolderId,
+            },
+            knowledgeBaseWorkspaceId
+          )
+        ),
       });
 
       if (!response.ok) {
@@ -854,13 +856,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setRenameError(null);
 
     try {
-      const response = await fetchWithWorkspace(`/api/items/${popup.folder.id}`, {
+      const response = await fetchWithKnowledgeBase(`/api/items/${popup.folder.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          ...(workspaceId ? { workspaceId } : {}),
-        })
+        body: JSON.stringify(
+          withWorkspacePayload(
+            {
+              name: trimmedName,
+            },
+            knowledgeBaseWorkspaceId
+          )
+        ),
       });
 
       if (!response.ok) {
@@ -947,13 +953,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     setRenameError(null);
 
     try {
-      const response = await fetchWithWorkspace(`/api/items/${renamingListFolder.folderId}`, {
+      const response = await fetchWithKnowledgeBase(`/api/items/${renamingListFolder.folderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          ...(workspaceId ? { workspaceId } : {}),
-        })
+        body: JSON.stringify(
+          withWorkspacePayload(
+            {
+              name: trimmedName,
+            },
+            knowledgeBaseWorkspaceId
+          )
+        ),
       });
 
       if (!response.ok) {
@@ -1041,7 +1051,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       });
 
       try {
-        const response = await fetchWithWorkspace(`/api/items/${noteId}`);
+        const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`);
         if (!response.ok) throw new Error('Failed to fetch note');
 
         const data = await response.json();

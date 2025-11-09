@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
         depth: row.depth
       }))
 
-      return NextResponse.json({ items })
+      return NextResponse.json({ items, workspaceId: activeWorkspaceId })
     })
   } catch (error) {
     console.error('Error fetching items:', error)
