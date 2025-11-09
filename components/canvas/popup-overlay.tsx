@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { ConnectionLineAdapter } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
 import { OverlayMinimap } from '@/components/canvas/overlay-minimap';
@@ -35,6 +34,7 @@ import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
 import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
 import { usePopupSelectionAndDrag } from './popup-overlay/hooks/usePopupSelectionAndDrag';
 import { useOverlayViewport } from './popup-overlay/hooks/useOverlayViewport';
+import { useConnectionLines } from './popup-overlay/hooks/useConnectionLines';
 import { usePopupMeasurements } from './popup-overlay/hooks/usePopupMeasurements';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
@@ -853,11 +853,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     }, 2000);
   };
   
-  // Generate connection lines (LOD: use visible popup ids if available)
-  const connectionPaths = ConnectionLineAdapter.adaptConnectionLines(
-    popups,
-    draggingPopup !== null
-  );
+  const { connectionPaths } = useConnectionLines({ popups, draggingPopup });
   
   // Container transform style with translate3d for GPU acceleration
   const containerStyle: React.CSSProperties = {

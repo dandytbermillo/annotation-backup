@@ -495,3 +495,4 @@
 {"timestamp":"2025-11-09T19:54:39Z","note":"Extracted selection/drag + preview state into usePopupSelectionAndDrag, updated popup-overlay.tsx, and re-ran npm test -- __tests__/unit/popup-overlay.test.ts"}
 {"ts":"2025-11-09T20:48:07.739Z","type":"commit","sha":"1ec490a27a92afef9dfdc90745ba770f239449fe","files_changed":5,"message":"Measurement + resize batching + Connection-line / minimap"}
 {"ts":"2025-11-09T21:09:06.605Z","type":"commit","sha":"4f46a9595f2164ce98f45efd808e90e63a59ef9f","files_changed":5,"message":"overlay bounds + minimap helper or connection-line"}
+{"ts":"2025-11-09T21:24:25.823Z","type":"commit","sha":"0ea8aea55d540673c46c867355007def24945859","files_changed":5,"message":"Give connection-line rendering"}

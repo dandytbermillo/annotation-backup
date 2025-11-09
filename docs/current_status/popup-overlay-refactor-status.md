@@ -19,6 +19,10 @@
   - New hook that owns preview hover fetches, tooltip lifecycle, selection tracking, folder hover highlights, and drag/drop state so `popup-overlay.tsx` no longer inlines ~400 lines of interaction logic.
 - `components/canvas/popup-overlay/hooks/usePopupMeasurements.ts`
   - Integrated (2025-11-09) to handle resize pointer handlers, measurement queue batching, and auto-height commits, allowing the main overlay file to drop another ~250 lines of DOM measurement code.
+- `components/canvas/popup-overlay/hooks/useOverlayViewport.ts`
+  - Manages overlay bounds, pointer guard offsets, viewport culling, and minimap navigation so the component no longer keeps that logic inline.
+- `components/canvas/popup-overlay/hooks/useConnectionLines.ts`
+  - Memoizes the `ConnectionLineAdapter` output, keeping SVG connection rendering isolated from the main component and ready for future LOD tweaks.
 - `components/canvas/popup-overlay/hooks/useOverlayPanState.ts`
   - Owns the transform refs, selection guards, and pointer handlers that previously lived inline in `popup-overlay.tsx`, shrinking the parent file by ~350 lines while keeping behavior identical.
 - `components/canvas/popup-overlay/renderPopupChildRow.tsx`
@@ -74,17 +78,19 @@
 5. **Pan/auto-scroll regression sweep** – drag the overlay in both shared-camera and fallback-host modes to ensure pointer capture, selection guards, and minimap jumps still behave after moving the handlers into `useOverlayPanState`.
 6. **Selection + drag/drop regression sweep** – hover eye icons to trigger previews, multi-select rows (Cmd/Ctrl + click, Shift+click), create/delete folders, and drag folders between popups to confirm the new `usePopupSelectionAndDrag` hook keeps tooltip timing, hover highlights, and drop targets in sync across both main and fallback overlays.
 7. **Measurement/resize sweep** – drag the resize handle on several popups (including fallback host) to ensure sizes persist, auto-resize still activates when `sizeMode !== 'user'`, and measurements pause while panning/dragging.
+8. **Connection lines** – in a workspace with multiple linked popups, pan/scroll so some popups leave the viewport and confirm the SVG connectors still match the visible popups; repeat in the fallback overlay host to ensure the new hook renders paths identically.
 
-### Live Refactor Scope (2025-11-09 – Overlay Bounds/Minimap Extraction)
+### Live Refactor Scope (2025-11-09 – Connection Line Extraction)
 - **Status**:
-  - *Selection/drag extraction:* Completed on 2025-11-09 — `usePopupSelectionAndDrag` now owns preview tooltips, hover highlights, selection state, and drag/drop plumbing, trimming ~400 lines from `popup-overlay.tsx`.
-  - *Measurement/resize extraction:* Completed on 2025-11-09 — `usePopupMeasurements` now handles resize pointer handlers, measurement batching, and auto-height commits, freeing another ~250 lines.
-  - *Current objective:* extract the overlay bounds + minimap helpers (bounds recomputation, sidebar guard offsets, viewport culling, minimap navigation) into a dedicated hook so `popup-overlay.tsx` focuses purely on rendering.
-- **Constraints**: keep the existing telemetry (`overlay_bounds_*` debugLog calls), ensure pointer-guard logic still clamps the overlay when the sidebar is visible, and preserve minimap navigation math (shared-camera vs fallback host) so transforms stay aligned.
+  - *Selection/drag extraction:* Completed on 2025-11-09 — `usePopupSelectionAndDrag` now owns preview tooltips, hover highlights, selection state, and drag/drop plumbing, trimming ~400 lines.
+  - *Measurement/resize extraction:* Completed on 2025-11-09 — `usePopupMeasurements` controls pointer resize handlers, measurement batching, and auto-height commits (≈250 lines removed).
+  - *Overlay viewport/minimap extraction:* Completed on 2025-11-09 — `useOverlayViewport` now manages bounds/viewport/minimap logic, keeping `popup-overlay.tsx` focused on composition.
+  - *Current objective:* extract the connection-line adapter wiring + visibility checks (currently handled inline via `ConnectionLineAdapter.adaptConnectionLines`, `visibleIdSetRef`, and observer plumbing) into a helper/hook so connection rendering is isolated and easier to test.
+- **Constraints**: keep the existing `ConnectionLineAdapter` output identical (same `markerEnd`, opacity, stroke); preserve the intersection-observer gating (only draw lines for popups actually on screen), and retain the debug logging around container style if relevant.
 - **Planned modules**:
-  1. `components/canvas/popup-overlay/hooks/useOverlayViewport.ts` (new) — manages overlay bounds, pointer guard offsets, viewport culling, cascade counts, and minimap navigation callbacks.
-  2. `components/canvas/popup-overlay.tsx` — consumes the hook’s outputs (bounds, pointer offsets, visiblePopups, cascade counts, `handleMinimapNavigate`) and removes the inline `recomputeOverlayBounds` / viewport memo blocks.
-- **Testing focus**: toggle the sidebar (open/close) to ensure bounds clamp correctly; remove `#canvas-container` to confirm fallback host sizing still works; use the minimap to jump the view (shared camera + fallback) and verify popups land where expected; confirm connection lines still draw only for visible popups after culling moves.
+  1. `components/canvas/popup-overlay/hooks/useConnectionLines.ts` (new) — computes `connectionPaths`, manages `visibleIdSetRef`/observers, and exposes the filtered connection data.
+  2. `components/canvas/popup-overlay.tsx` — consumes the hook output when rendering `<svg>` lines, removing the inline observer bookkeeping.
+- **Testing focus**: open a crowded workspace and ensure connection lines still respect visibility (lines disappear when popups scroll out); force the fallback overlay to confirm connectors still render with the new hook; toggle multi-select/drag to ensure connection rendering remains in sync with popups.
 
 ### Manual Test Procedure – Breadcrumb Dropdown
 1. Open any popup with ancestors, click the breadcrumb pill to open the dropdown, and verify the dropdown renders left-aligned with a close (`×`) button.
