@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-09 18:59Z] b07e9ea: refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,
 - commit [2025-11-09 04:02Z] afce4cd: fixed error
 - commit [2025-11-09 03:55Z] 9dcbeed: properly implemented
 - commit [2025-11-09 03:03Z] 932a253: start implementing
@@ -14,7 +15,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-09 02:25Z] 2c5cc5b: implemented fix for empty content of child popup
 - commit [2025-11-08 23:18Z] c4f1418: the empty popup issue disappered
 - commit [2025-11-08 20:28Z] c37b36e: refactor 1.1 worked.
-- commit [2025-11-08 19:19Z] b3d04ab: fixing (worked)
 
 Recent Chat
 - (none)
@@ -33,4 +33,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-09 04:02Z] afce4cd: fixed error
+- commit [2025-11-09 18:59Z] b07e9ea: refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,
