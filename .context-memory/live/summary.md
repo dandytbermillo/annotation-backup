@@ -7,13 +7,13 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-09 22:20Z] 58e1441: refactoring test
 - commit [2025-11-09 21:24Z] 0ea8aea: Give connection-line rendering
 - commit [2025-11-09 21:09Z] 4f46a95: overlay bounds + minimap helper or connection-line
 - commit [2025-11-09 20:48Z] 1ec490a: Measurement + resize batching + Connection-line / minimap
 - commit [2025-11-09 19:34Z] 665262c: start the code extraction
 - commit [2025-11-09 19:16Z] cb94bdc: refactoring was successful
 - commit [2025-11-09 18:59Z] b07e9ea: refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,
-- commit [2025-11-09 04:02Z] afce4cd: fixed error
 
 Recent Chat
 - (none)
@@ -32,4 +32,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-09 21:24Z] 0ea8aea: Give connection-line rendering
+- commit [2025-11-09 22:20Z] 58e1441: refactoring test
