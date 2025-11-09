@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-09 02:49Z] 7affb3e: implement actual Knowledge Base workspace id (option 2) i
 - commit [2025-11-09 02:25Z] 2c5cc5b: implemented fix for empty content of child popup
 - commit [2025-11-08 23:18Z] c4f1418: the empty popup issue disappered
 - commit [2025-11-08 20:28Z] c37b36e: refactor 1.1 worked.
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-08 06:39Z] 63634c6: implement fix for hydrating issue in overlay
 - commit [2025-11-08 06:18Z] 2a100d1: overlay lazy load plan
 - commit [2025-11-08 05:31Z] 8652af0: start here
-- commit [2025-11-07 22:53Z] 26488e7: hydrating persistence disappear
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-09 02:25Z] 2c5cc5b: implemented fix for empty content of child popup
+- commit [2025-11-09 02:49Z] 7affb3e: implement actual Knowledge Base workspace id (option 2) i
