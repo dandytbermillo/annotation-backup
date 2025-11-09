@@ -2,7 +2,6 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { CoordinateBridge } from '@/lib/utils/coordinate-bridge';
 import { ConnectionLineAdapter } from '@/lib/rendering/connection-line-adapter';
 import { Z_INDEX, getPopupZIndex } from '@/lib/constants/z-index';
 import { useLayer } from '@/components/canvas/layer-provider';
@@ -35,6 +34,7 @@ import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
 import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
 import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
 import { usePopupSelectionAndDrag } from './popup-overlay/hooks/usePopupSelectionAndDrag';
+import { useOverlayViewport } from './popup-overlay/hooks/useOverlayViewport';
 import { usePopupMeasurements } from './popup-overlay/hooks/usePopupMeasurements';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
@@ -708,16 +708,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   const overlayRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  // Track the on-screen bounds of the canvas container to scope the overlay
-  const [overlayBounds, setOverlayBounds] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const [pointerGuardOffset, setPointerGuardOffset] = useState(0);
   const sidebarRectRef = useRef<DOMRect | null>(null);
   // Preferred: mount overlay inside the canvas container via React portal
   const [overlayContainer, setOverlayContainer] = useState<HTMLElement | null>(null);
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
-  // LOD: Track which popups are visible in the viewport to limit connection lines
-  const visibleIdSetRef = useRef<Set<string>>(new Set());
-  const visibilityObserversRef = useRef<Map<string, IntersectionObserver>>(new Map());
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if the pointer event is on empty space (not on interactive elements)
@@ -748,6 +742,25 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     isOverlayEmptySpace,
     overlayFullSpanEnabled,
     tracePointerLog,
+  });
+
+  const {
+    overlayBounds,
+    pointerGuardOffset,
+    visiblePopups,
+    cascadeChildCountMap,
+    viewportSize,
+    handleMinimapNavigate,
+  } = useOverlayViewport({
+    popups,
+    overlayFullSpanEnabled,
+    debugLog,
+    sidebarOpen,
+    activeTransform,
+    hasSharedCamera,
+    applyExternalTransform,
+    layerCtx,
+    sidebarRectRef,
   });
 
   const shouldBlockMeasurements =
@@ -869,126 +882,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     opacity: isPanning && !hasSharedCamera ? 0.999 : 1,
   };
 
-  // Recompute overlay bounds to match the canvas area (avoids hardcoded offsets)
-  const recomputeOverlayBounds = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const canvasEl = document.getElementById('canvas-container');
-    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]') as HTMLElement | null;
-    const sidebarRect = sidebarEl?.getBoundingClientRect() ?? null;
-    sidebarRectRef.current = sidebarRect;
-
-    if (canvasEl) {
-      const rect = canvasEl.getBoundingClientRect();
-      let guardOffset = 0;
-
-      if (sidebarRect) {
-        const sidebarWidth = sidebarRect.width;
-        const isSidebarVisible = sidebarWidth > 0 && sidebarRect.right > rect.left + 1;
-        if (isSidebarVisible) {
-          guardOffset = Math.max(0, sidebarRect.right - rect.left);
-          if (guardOffset > 0) {
-            debugLog('PopupOverlay', 'bounds_sidebar_detected', {
-              sidebarWidth,
-              sidebarRight: sidebarRect.right,
-              canvasLeft: rect.left,
-              guardOffset,
-            });
-          }
-        }
-      }
-
-      const baseBounds = {
-        top: Math.max(0, rect.top),
-        left: Math.max(0, rect.left),
-        width: Math.max(0, rect.width),
-        height: Math.max(0, rect.height),
-      };
-
-      let resolvedBounds = baseBounds;
-      if (!overlayFullSpanEnabled && guardOffset > 0) {
-        const effectiveLeft = rect.left + guardOffset;
-        resolvedBounds = {
-          top: baseBounds.top,
-          left: Math.max(0, effectiveLeft),
-          width: Math.max(0, rect.right - effectiveLeft),
-          height: baseBounds.height,
-        };
-      }
-
-      setOverlayBounds(resolvedBounds);
-      setPointerGuardOffset(guardOffset);
-      debugLog(
-        'PopupOverlay',
-        overlayFullSpanEnabled ? 'overlay_bounds_full_span' : 'overlay_bounds_updated',
-        {
-          rect,
-          guardOffset,
-          sidebarPresent: !!sidebarRect,
-          overlayBounds: resolvedBounds,
-          overlayFullSpanEnabled,
-        }
-      );
-    } else {
-      const fallbackHost = ensureFloatingOverlayHost();
-      if (fallbackHost) {
-        const rect = fallbackHost.getBoundingClientRect();
-        setOverlayBounds({
-          top: rect.top,
-          left: rect.left,
-          width: rect.width,
-          height: rect.height,
-        });
-        setPointerGuardOffset(0);
-        debugLog('PopupOverlay', 'overlay_bounds_fallback', {
-          hostId: fallbackHost.id,
-          rect,
-        });
-      } else {
-        setOverlayBounds({ top: 0, left: 0, width: window.innerWidth, height: window.innerHeight });
-        setPointerGuardOffset(0);
-      }
-    }
-  }, [debugLog, overlayFullSpanEnabled]);
-
-  useEffect(() => {
-    // Initial compute and on resize
-    recomputeOverlayBounds();
-    const onResize = () => recomputeOverlayBounds();
-    window.addEventListener('resize', onResize);
-    const onScroll = () => recomputeOverlayBounds();
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('scroll', onScroll as any);
-    };
-  }, [recomputeOverlayBounds, sidebarOpen]); // Add sidebarOpen dependency to recalculate when sidebar toggles
-
-  // Recalculate bounds after sidebar animation completes
-  useEffect(() => {
-    const sidebarEl = document.querySelector('[data-sidebar="sidebar"]');
-    if (!sidebarEl) return;
-
-    const handleTransitionEnd = (event: Event) => {
-      const transitionEvent = event as TransitionEvent
-      // Recalculate bounds after sidebar animation completes
-      if (transitionEvent.propertyName === 'transform') {
-        // Small delay to ensure getBoundingClientRect returns final values
-        setTimeout(() => {
-          recomputeOverlayBounds();
-          debugLog('PopupOverlay', 'bounds_recalc_after_transition', {
-            sidebarOpen,
-            timestamp: new Date().toISOString()
-          });
-        }, 10);
-      }
-    };
-
-    sidebarEl.addEventListener('transitionend', handleTransitionEnd);
-    return () => {
-      sidebarEl.removeEventListener('transitionend', handleTransitionEnd);
-    };
-  }, [recomputeOverlayBounds, sidebarOpen]);
-
   useEffect(() => {
     debugLog('PopupOverlay', 'transform_applied', {
       x: activeTransform.x,
@@ -1013,13 +906,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
 
   // measurement, resize, and auto-height handling provided by usePopupMeasurements
 
-  useEffect(() => {
-    visibleIdSetRef.current.clear();
-    popups.forEach((_, id) => visibleIdSetRef.current.add(id));
-    visibilityObserversRef.current.forEach(obs => obs.disconnect());
-    visibilityObserversRef.current.clear();
-  }, [popups, overlayBounds]);
-
   // Debug log container style (only when verbose)
   useEffect(() => {
     if (!debugLoggingEnabled) return;
@@ -1029,71 +915,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       computedTransform: containerRef.current?.style?.transform || 'none'
     });
   }, [containerStyle, debugLoggingEnabled]);
-  
-  // Viewport culling - only render visible popups
-  const visiblePopups = useMemo(() => {
-    const margin = 200;
-    const viewport = CoordinateBridge.getViewportBounds(margin);
-    
-    return Array.from(popups.values()).filter((popup) => {
-      if (!popup.canvasPosition) return false
-      
-      const screenPos = CoordinateBridge.canvasToScreen(
-        popup.canvasPosition || popup.position,
-        activeTransform
-      )
-      
-      const popupWidth = popup.width ?? DEFAULT_POPUP_WIDTH
-      const popupHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
-      
-      return (
-        screenPos.x + popupWidth >= viewport.x &&
-        screenPos.x <= viewport.x + viewport.width &&
-        screenPos.y + popupHeight >= viewport.y &&
-        screenPos.y <= viewport.y + viewport.height
-      )
-    })
-  }, [popups, activeTransform])
-  
-  const cascadeChildCountMap = useMemo(() => {
-    const counts = new Map<string, number>();
-    popups.forEach((popup) => {
-      const parentId = (popup as any).parentPopupId ?? popup.parentId;
-      if (!parentId) return;
-      counts.set(parentId, (counts.get(parentId) ?? 0) + 1);
-    });
-    return counts;
-  }, [popups]);
-  
-  const viewportSize = useMemo(() => {
-    if (overlayBounds) {
-      return { width: overlayBounds.width, height: overlayBounds.height };
-    }
-    if (typeof window !== 'undefined') {
-      return { width: window.innerWidth, height: window.innerHeight };
-    }
-    return { width: 1920, height: 1080 };
-  }, [overlayBounds]);
-  
-  const handleMinimapNavigate = useCallback(
-    ({ x, y }: { x: number; y: number }) => {
-      const scale = activeTransform.scale || 1;
-      const nextTransform = {
-        scale,
-        x: viewportSize.width / 2 - x * scale,
-        y: viewportSize.height / 2 - y * scale,
-      };
-      if (hasSharedCamera && layerCtx) {
-        layerCtx.updateTransform('popups', {
-          x: nextTransform.x - activeTransform.x,
-          y: nextTransform.y - activeTransform.y,
-        });
-      } else {
-        applyExternalTransform(nextTransform);
-      }
-    },
-    [activeTransform, applyExternalTransform, hasSharedCamera, layerCtx, viewportSize]
-  );
   
   const hasClosingPopup = (() => {
     for (const popupEntry of popups.values()) {

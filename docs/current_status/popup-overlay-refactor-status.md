@@ -75,15 +75,16 @@
 6. **Selection + drag/drop regression sweep** – hover eye icons to trigger previews, multi-select rows (Cmd/Ctrl + click, Shift+click), create/delete folders, and drag folders between popups to confirm the new `usePopupSelectionAndDrag` hook keeps tooltip timing, hover highlights, and drop targets in sync across both main and fallback overlays.
 7. **Measurement/resize sweep** – drag the resize handle on several popups (including fallback host) to ensure sizes persist, auto-resize still activates when `sizeMode !== 'user'`, and measurements pause while panning/dragging.
 
-### Live Refactor Scope (2025-11-09 – Measurements/Resize Extraction)
+### Live Refactor Scope (2025-11-09 – Overlay Bounds/Minimap Extraction)
 - **Status**:
   - *Selection/drag extraction:* Completed on 2025-11-09 — `usePopupSelectionAndDrag` now owns preview tooltips, hover highlights, selection state, and drag/drop plumbing, trimming ~400 lines from `popup-overlay.tsx`.
-  - *Current objective:* move the measurement + auto-resize block (pointer resize handlers, measurement queues/RAF batching, auto-height commits) out of `components/canvas/popup-overlay.tsx` into the existing `usePopupMeasurements` hook so the component stays below the 2k-line target.
-- **Constraints**: preserve measurement timing semantics (skip updates while panning/dragging/locked), keep auto-resize behavior identical (only commit when sizeMode !== 'user' or height delta > 1px), and ensure resize pointer handlers still respect `isLocked`/`onResizePopup` availability.
+  - *Measurement/resize extraction:* Completed on 2025-11-09 — `usePopupMeasurements` now handles resize pointer handlers, measurement batching, and auto-height commits, freeing another ~250 lines.
+  - *Current objective:* extract the overlay bounds + minimap helpers (bounds recomputation, sidebar guard offsets, viewport culling, minimap navigation) into a dedicated hook so `popup-overlay.tsx` focuses purely on rendering.
+- **Constraints**: keep the existing telemetry (`overlay_bounds_*` debugLog calls), ensure pointer-guard logic still clamps the overlay when the sidebar is visible, and preserve minimap navigation math (shared-camera vs fallback host) so transforms stay aligned.
 - **Planned modules**:
-  1. `components/canvas/popup-overlay/hooks/usePopupMeasurements.ts` — already contains the extracted logic; we’ll wire it up so the component stops duplicating that code path.
-  2. `components/canvas/popup-overlay.tsx` — consumes the hook (`isResizing`, resize handlers) and deletes the inline measurement queue / useLayoutEffect block.
-- **Testing focus**: manually resize popups (drag the corner handle) to confirm sizes persist; drag the overlay while resizing to ensure measurements pause/resume; verify auto-resize behavior (content taller than popup) still expands popups when not in user-resize mode; run fallback overlay host and shared-camera modes to confirm measurement events still fire.
+  1. `components/canvas/popup-overlay/hooks/useOverlayViewport.ts` (new) — manages overlay bounds, pointer guard offsets, viewport culling, cascade counts, and minimap navigation callbacks.
+  2. `components/canvas/popup-overlay.tsx` — consumes the hook’s outputs (bounds, pointer offsets, visiblePopups, cascade counts, `handleMinimapNavigate`) and removes the inline `recomputeOverlayBounds` / viewport memo blocks.
+- **Testing focus**: toggle the sidebar (open/close) to ensure bounds clamp correctly; remove `#canvas-container` to confirm fallback host sizing still works; use the minimap to jump the view (shared camera + fallback) and verify popups land where expected; confirm connection lines still draw only for visible popups after culling moves.
 
 ### Manual Test Procedure – Breadcrumb Dropdown
 1. Open any popup with ancestors, click the breadcrumb pill to open the dropdown, and verify the dropdown renders left-aligned with a close (`×`) button.
