@@ -43,7 +43,8 @@ import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
 import type { OverlayLayoutDiagnostics, OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
-import { appendWorkspaceParam, withWorkspaceHeaders, withWorkspacePayload } from "@/lib/workspaces/client-utils"
+import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
+import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -651,7 +652,14 @@ const sidebarPopupIdCounter = useRef(0)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
-  const [knowledgeBaseWorkspaceId, setKnowledgeBaseWorkspaceId] = useState<string | null>(null)
+  const {
+    workspaceId: knowledgeBaseWorkspaceId,
+    appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
+    withWorkspaceHeaders: withKnowledgeBaseHeaders,
+    withWorkspacePayload: withKnowledgeBasePayload,
+    fetchWithWorkspace: fetchWithKnowledgeBase,
+    resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
+  } = useKnowledgeBaseWorkspace()
   const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
@@ -668,14 +676,6 @@ const sidebarPopupIdCounter = useRef(0)
     () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
   )
-  const fetchWithKnowledgeBase = useCallback(
-    (input: RequestInfo | URL, init?: RequestInit) => {
-      const requestInit = withWorkspaceHeaders(init, knowledgeBaseWorkspaceId)
-      return fetch(input, requestInit)
-    },
-    [knowledgeBaseWorkspaceId]
-  )
-
   const fetchNotePreview = useCallback(
     async (noteId: string) => {
       const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`)
@@ -701,98 +701,17 @@ const sidebarPopupIdCounter = useRef(0)
     fetchNote: fetchNotePreview,
   })
 
-  type FolderCacheEntry = { folder?: any | null; children?: any[] | null; fetchedAt?: number }
-  const folderCacheRef = useRef<Map<string, FolderCacheEntry>>(new Map())
-
-  const mergeFolderCacheEntry = useCallback(
-    (folderId: string, partial: Partial<FolderCacheEntry>) => {
-      folderCacheRef.current.set(folderId, {
-        ...(folderCacheRef.current.get(folderId) ?? {}),
-        ...partial,
-      })
-    },
-    [debugLog, knowledgeBaseWorkspaceId]
-  )
-
-  const updateFolderCacheChildren = useCallback(
-    (folderId: string, children: any[] | null) => {
-      mergeFolderCacheEntry(folderId, { children, fetchedAt: Date.now() })
-    },
-    [mergeFolderCacheEntry]
-  )
-
-  const invalidateFolderCache = useCallback((folderId?: string | null) => {
-    if (!folderId) return
-    folderCacheRef.current.delete(folderId)
-  }, [])
-
-  const fetchGlobalFolder = useCallback(
-    async (folderId: string): Promise<any | null> => {
-      const cached = folderCacheRef.current.get(folderId)
-      if (cached?.folder) {
-        return cached.folder
-      }
-      try {
-        const response = await fetch(
-          appendWorkspaceParam(`/api/items/${folderId}`, knowledgeBaseWorkspaceId)
-        )
-        if (!response.ok) {
-          debugLog({
-            component: 'AnnotationApp',
-            action: 'popup_restore_fetch_failed',
-            metadata: { folderId, status: response.status }
-          })
-          return null
-        }
-        const payload = await response.json()
-        mergeFolderCacheEntry(folderId, { folder: payload })
-        return payload
-      } catch (error) {
-        debugLog({
-          component: 'AnnotationApp',
-          action: 'popup_restore_fetch_failed',
-          metadata: {
-            folderId,
-            status: 'network_error',
-            error: error instanceof Error ? error.message : 'Unknown error'
-          }
-        })
-        return null
-      }
-    },
-    []
-  )
-
-  const fetchGlobalChildren = useCallback(
-    async (folderId: string, options?: { forceRefresh?: boolean }): Promise<any[] | null> => {
-      const cached = folderCacheRef.current.get(folderId)
-      const now = Date.now()
-      const isCacheFresh =
-        Boolean(cached?.children) &&
-        typeof cached?.fetchedAt === 'number' &&
-        now - cached.fetchedAt < FOLDER_CACHE_MAX_AGE_MS
-
-      if (!options?.forceRefresh && cached?.children && isCacheFresh) {
-        return cached.children
-      }
-
-      try {
-        const response = await fetch(
-          appendWorkspaceParam(`/api/items?parentId=${folderId}`, knowledgeBaseWorkspaceId)
-        )
-        if (!response.ok) {
-          return cached?.children ?? null
-        }
-        const data = await response.json().catch(() => ({ items: [] }))
-        const childItems = Array.isArray(data.items) ? data.items : []
-        updateFolderCacheChildren(folderId, childItems)
-        return childItems
-      } catch {
-        return cached?.children ?? null
-      }
-    },
-    [knowledgeBaseWorkspaceId, updateFolderCacheChildren]
-  )
+  const {
+    getEntry: getFolderCacheEntry,
+    updateFolderSnapshot: updateFolderCacheEntry,
+    updateChildrenSnapshot: updateFolderCacheChildren,
+    invalidate: invalidateFolderCache,
+    fetchFolder: fetchGlobalFolder,
+    fetchChildren: fetchGlobalChildren,
+  } = useFolderCache({
+    workspaceId: knowledgeBaseWorkspaceId,
+    cacheMaxAgeMs: FOLDER_CACHE_MAX_AGE_MS,
+  })
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
     ? 'Deleting...'
@@ -850,7 +769,7 @@ const sidebarPopupIdCounter = useRef(0)
     const loadOrganizationSidebar = async () => {
       try {
         const rootResponse = await fetch(
-          appendWorkspaceParam('/api/items?parentId=null', knowledgeBaseWorkspaceId)
+          appendKnowledgeBaseWorkspaceParam('/api/items?parentId=null', knowledgeBaseWorkspaceId)
         )
         if (!rootResponse.ok) return
         const rootData = await rootResponse.json().catch(() => ({ items: [] }))
@@ -859,9 +778,7 @@ const sidebarPopupIdCounter = useRef(0)
           typeof rootData?.workspaceId === 'string' && rootData.workspaceId.length > 0
             ? rootData.workspaceId
             : null
-        if (resolvedWorkspaceId && resolvedWorkspaceId !== knowledgeBaseWorkspaceId) {
-          setKnowledgeBaseWorkspaceId(resolvedWorkspaceId)
-        }
+        resolveKnowledgeBaseWorkspaceId(resolvedWorkspaceId)
 
         const knowledgeBase = rootItems.find(
           item => typeof item?.name === 'string' && item.name.toLowerCase() === 'knowledge base'
@@ -872,7 +789,7 @@ const sidebarPopupIdCounter = useRef(0)
         if (knowledgeBase) {
           let children: any[] = []
           try {
-            const workspaceScopedUrl = appendWorkspaceParam(
+            const workspaceScopedUrl = appendKnowledgeBaseWorkspaceParam(
               `/api/items?parentId=${knowledgeBase.id}`,
               resolvedWorkspaceId ?? knowledgeBaseWorkspaceId
             )
@@ -888,11 +805,8 @@ const sidebarPopupIdCounter = useRef(0)
           }
 
           const formattedChildren = children.map(toSidebarItem)
-          mergeFolderCacheEntry(knowledgeBase.id, {
-            folder: knowledgeBase,
-            children,
-            fetchedAt: Date.now(),
-          })
+          updateFolderCacheEntry(knowledgeBase.id, knowledgeBase)
+          updateFolderCacheChildren(knowledgeBase.id, children)
           const knowledgeBaseCount = mapCount(knowledgeBase)
 
           sidebarItems = [
@@ -2624,7 +2538,7 @@ const handleCenterNote = useCallback(
 
       try {
         const detailResponse = await fetch(
-          appendWorkspaceParam(`/api/items/${folderId}`, knowledgeBaseWorkspaceId)
+          appendKnowledgeBaseWorkspaceParam(`/api/items/${folderId}`, knowledgeBaseWorkspaceId)
         )
         if (!detailResponse.ok) throw new Error('Failed to load folder metadata')
         const detailData = await detailResponse.json()
@@ -2680,7 +2594,10 @@ const handleCenterNote = useCallback(
 
         try {
           const childResponse = await fetch(
-            appendWorkspaceParam(`/api/items?parentId=${folderId}`, knowledgeBaseWorkspaceId)
+            appendKnowledgeBaseWorkspaceParam(
+              `/api/items?parentId=${folderId}`,
+              knowledgeBaseWorkspaceId
+            )
           )
           if (!childResponse.ok) throw new Error('Failed to load folder contents')
 
@@ -2713,11 +2630,8 @@ const handleCenterNote = useCallback(
                 : p
             )
           )
-          mergeFolderCacheEntry(folderId, {
-            folder: detail,
-            children: childItems,
-            fetchedAt: Date.now(),
-          })
+          updateFolderCacheEntry(folderId, detail)
+          updateFolderCacheChildren(folderId, childItems)
         } catch (childError) {
           console.error('[AnnotationApp] Failed to load folder children:', childError)
           setOverlayPopups(prev => prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p)))
@@ -3488,23 +3402,26 @@ const handleCenterNote = useCallback(
           console.log('[createPopup] ⚡ Using folder own color (parent still loading):', inheritedColor)
         }
         // Last resort: walk up ancestor chain via API
-          else if (!parentPopup?.isLoading) {
-            console.log('[createPopup] Parent popup has no color and not loading, checking ancestors via API')
-            const initialParentId = folder.parentId ?? (folder as any).parent_id
-            if (initialParentId) {
-              try {
-                let currentParentId = initialParentId
-                let depth = 0
-                const maxDepth = 10
+        else if (!parentPopup?.isLoading) {
+          console.log('[createPopup] Parent popup has no color and not loading, checking ancestors via API')
+          const initialParentId = folder.parentId ?? (folder as any).parent_id
+          if (initialParentId) {
+            try {
+              let currentParentId = initialParentId
+              let depth = 0
+              const maxDepth = 10
 
-                while (currentParentId && !inheritedColor && depth < maxDepth) {
-                  const parentResponse = await fetch(
-                    appendWorkspaceParam(`/api/items/${currentParentId}`, knowledgeBaseWorkspaceId)
+              while (currentParentId && !inheritedColor && depth < maxDepth) {
+                const parentResponse = await fetch(
+                  appendKnowledgeBaseWorkspaceParam(
+                    `/api/items/${currentParentId}`,
+                    knowledgeBaseWorkspaceId
                   )
-                  if (!parentResponse.ok) break
+                )
+                if (!parentResponse.ok) break
 
-                  const parentData = await parentResponse.json()
-                  const parent = parentData.item || parentData
+                const parentData = await parentResponse.json()
+                const parent = parentData.item || parentData
 
                 if (parent.color) {
                   inheritedColor = parent.color
@@ -3520,6 +3437,7 @@ const handleCenterNote = useCallback(
             }
           }
         }
+        }
       }
 
       // Position child popup to the right of parent
@@ -3530,7 +3448,7 @@ const handleCenterNote = useCallback(
         popupPosition = { x: rect.left - 320, y: rect.top }
       }
 
-      const cachedEntry = folderCacheRef.current.get(folder.id)
+      const cachedEntry = getFolderCacheEntry(folder.id)
       const normalizeChild = (item: any): OrgItem => {
         if (item && typeof item === 'object' && 'hasChildren' in item) {
           return { ...(item as OrgItem) }
@@ -3623,17 +3541,14 @@ const handleCenterNote = useCallback(
             }
           })
         )
-        mergeFolderCacheEntry(folder.id, {
-          folder,
-          children,
-          fetchedAt: Date.now(),
-        })
+        updateFolderCacheEntry(folder.id, folder)
+        updateFolderCacheChildren(folder.id, children)
       } catch (error) {
         console.error('Error fetching child popup contents:', error)
         setOverlayPopups(prev => prev.filter(p => p.id !== popupId))
       }
     }
-  }, [knowledgeBaseWorkspaceId, overlayPopups, layerContext, fetchGlobalChildren, mergeFolderCacheEntry])
+  }, [knowledgeBaseWorkspaceId, overlayPopups, layerContext, fetchGlobalChildren, updateFolderCacheChildren, updateFolderCacheEntry])
 
   // Cancel close timeout when hovering the popup itself (keeps it alive)
   const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
@@ -3957,7 +3872,7 @@ const handleCenterNote = useCallback(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               itemIds,
               targetFolderId,
@@ -4070,7 +3985,13 @@ const handleCenterNote = useCallback(
       console.error('[handleBulkMove] Error:', error)
       alert(`Failed to move items: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-  }, [currentWorkspaceId, fetchWithKnowledgeBase, invalidateFolderCache, updateFolderCacheChildren])
+  }, [
+    fetchWithKnowledgeBase,
+    invalidateFolderCache,
+    knowledgeBaseWorkspaceId,
+    updateFolderCacheChildren,
+    withKnowledgeBasePayload,
+  ])
 
   // Handle popup drag start
   const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
