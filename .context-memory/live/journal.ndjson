@@ -493,3 +493,4 @@
 {"ts":"2025-11-09T19:16:00.254Z","type":"commit","sha":"cb94bdc71c9e47821acc3daa1e9e182378a56456","files_changed":2,"message":"refactoring was successful"}
 {"ts":"2025-11-09T19:34:56.950Z","type":"commit","sha":"665262ca98a1a60b40954f2c7c4ad00d5fcd2519","files_changed":3,"message":"start the code extraction"}
 {"timestamp":"2025-11-09T19:54:39Z","note":"Extracted selection/drag + preview state into usePopupSelectionAndDrag, updated popup-overlay.tsx, and re-ran npm test -- __tests__/unit/popup-overlay.test.ts"}
+{"ts":"2025-11-09T20:48:07.739Z","type":"commit","sha":"1ec490a27a92afef9dfdc90745ba770f239449fe","files_changed":5,"message":"Measurement + resize batching + Connection-line / minimap"}

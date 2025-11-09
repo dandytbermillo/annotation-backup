@@ -17,6 +17,8 @@
   - Introduced internal `PopupCardHeader`/`PopupCardFooter` components and added a final pointer-up resize commit so user-driven dimensions persist reliably.
 - `components/canvas/popup-overlay/hooks/usePopupSelectionAndDrag.ts`
   - New hook that owns preview hover fetches, tooltip lifecycle, selection tracking, folder hover highlights, and drag/drop state so `popup-overlay.tsx` no longer inlines ~400 lines of interaction logic.
+- `components/canvas/popup-overlay/hooks/usePopupMeasurements.ts`
+  - Integrated (2025-11-09) to handle resize pointer handlers, measurement queue batching, and auto-height commits, allowing the main overlay file to drop another ~250 lines of DOM measurement code.
 - `components/canvas/popup-overlay/hooks/useOverlayPanState.ts`
   - Owns the transform refs, selection guards, and pointer handlers that previously lived inline in `popup-overlay.tsx`, shrinking the parent file by ~350 lines while keeping behavior identical.
 - `components/canvas/popup-overlay/renderPopupChildRow.tsx`
@@ -44,6 +46,7 @@
 - Manual smoke test (developer-provided) previously confirmed overlay renders and interactions work post-refactor.
 - `npm test -- __tests__/unit/popup-overlay.test.ts` (2025-11-09) after extracting the pan/auto-scroll hook.
 - `npm test -- __tests__/unit/popup-overlay.test.ts` (2025-11-09, post selection/drag extraction) to ensure helper coverage still passes.
+- `npm test -- __tests__/unit/popup-overlay.test.ts` (2025-11-09, post measurement/resize extraction) to verify helper coverage after wiring `usePopupMeasurements`.
 
 ## Recommended Manual Tests
 1. Open a populated workspace and verify popup rows (hover preview, rename, multi-select, drag/drop) in the main overlay render path.
@@ -70,15 +73,17 @@
 4. **Fallback overlay host** – when `#canvas-container` is absent, `floating-overlay-root` renders the same header/footer components; this view doubles as the fallback test (Organization workspace already covers it).
 5. **Pan/auto-scroll regression sweep** – drag the overlay in both shared-camera and fallback-host modes to ensure pointer capture, selection guards, and minimap jumps still behave after moving the handlers into `useOverlayPanState`.
 6. **Selection + drag/drop regression sweep** – hover eye icons to trigger previews, multi-select rows (Cmd/Ctrl + click, Shift+click), create/delete folders, and drag folders between popups to confirm the new `usePopupSelectionAndDrag` hook keeps tooltip timing, hover highlights, and drop targets in sync across both main and fallback overlays.
+7. **Measurement/resize sweep** – drag the resize handle on several popups (including fallback host) to ensure sizes persist, auto-resize still activates when `sizeMode !== 'user'`, and measurements pause while panning/dragging.
 
-### Live Refactor Scope (2025-11-09 – Selection/Drag Extraction)
-- **Status**: Completed on 2025-11-09 — selection, preview tooltip, hover highlight, and drag/drop plumbing now live inside `usePopupSelectionAndDrag`, dropping `popup-overlay.tsx` by ~400 lines.
-- **Objective**: continue shrinking `components/canvas/popup-overlay.tsx` by extracting the selection + drag-and-drop + preview tooltip plumbing (preview state refs, hover fetch lifecycle, drag source tracking, bulk move triggers) into a dedicated hook while preserving current behaviors.
-- **Constraints**: keep `requestPreview`, `popupSelections`, and drag/drop semantics identical; the new hook must expose stable handlers for drag start/over/leave/drop, hover preview enter/leave, selection toggles, and rename interactions without mutating parent state outside the provided setters.
-- **Modules**:
-  1. `components/canvas/popup-overlay/hooks/usePopupSelectionAndDrag.ts` — centralizes preview state, tooltip timers, hover highlight management, drag/drop callbacks, and cached refs (`previewStateRef`, `previewControllersRef`).
-  2. `components/canvas/popup-overlay.tsx` — now consumes hook outputs (`requestPreview`, selection handlers, tooltip callbacks) and stays focused on rendering/layout concerns.
-- **Testing focus**: hover preview tooltips (eye icon hover + tooltip hover leave), rename flows, selection multi-select flows, drag/drop (including cascade popup drop targets), hover folder previews, and ensuring fallback overlay + shared-camera modes still hydrate child popups correctly after re-hovering.
+### Live Refactor Scope (2025-11-09 – Measurements/Resize Extraction)
+- **Status**:
+  - *Selection/drag extraction:* Completed on 2025-11-09 — `usePopupSelectionAndDrag` now owns preview tooltips, hover highlights, selection state, and drag/drop plumbing, trimming ~400 lines from `popup-overlay.tsx`.
+  - *Current objective:* move the measurement + auto-resize block (pointer resize handlers, measurement queues/RAF batching, auto-height commits) out of `components/canvas/popup-overlay.tsx` into the existing `usePopupMeasurements` hook so the component stays below the 2k-line target.
+- **Constraints**: preserve measurement timing semantics (skip updates while panning/dragging/locked), keep auto-resize behavior identical (only commit when sizeMode !== 'user' or height delta > 1px), and ensure resize pointer handlers still respect `isLocked`/`onResizePopup` availability.
+- **Planned modules**:
+  1. `components/canvas/popup-overlay/hooks/usePopupMeasurements.ts` — already contains the extracted logic; we’ll wire it up so the component stops duplicating that code path.
+  2. `components/canvas/popup-overlay.tsx` — consumes the hook (`isResizing`, resize handlers) and deletes the inline measurement queue / useLayoutEffect block.
+- **Testing focus**: manually resize popups (drag the corner handle) to confirm sizes persist; drag the overlay while resizing to ensure measurements pause/resume; verify auto-resize behavior (content taller than popup) still expands popups when not in user-resize mode; run fallback overlay host and shared-camera modes to confirm measurement events still fire.
 
 ### Manual Test Procedure – Breadcrumb Dropdown
 1. Open any popup with ancestors, click the breadcrumb pill to open the dropdown, and verify the dropdown renders left-aligned with a close (`×`) button.

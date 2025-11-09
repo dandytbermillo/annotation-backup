@@ -27,14 +27,15 @@ import {
   MIN_POPUP_HEIGHT,
   MIN_POPUP_WIDTH,
 } from './popup-overlay/constants';
-import { clamp, getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popup-overlay/helpers';
+import { getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popup-overlay/helpers';
 import { withWorkspaceHeaders, withWorkspacePayload } from '@/lib/workspaces/client-utils';
 import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-overlay/renderPopupChildRow';
 import { PopupCardHeader } from './popup-overlay/components/PopupCardHeader';
 import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
-import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
 import { useBreadcrumbs } from './popup-overlay/hooks/useBreadcrumbs';
+import { useOverlayPanState } from './popup-overlay/hooks/useOverlayPanState';
 import { usePopupSelectionAndDrag } from './popup-overlay/hooks/usePopupSelectionAndDrag';
+import { usePopupMeasurements } from './popup-overlay/hooks/usePopupMeasurements';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
@@ -638,8 +639,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     };
   }, [popups.size, multiLayerEnabled]);
   
-  const [isResizing, setIsResizing] = useState(false);
-  
   // Use LayerProvider to gate interactivity by active layer
   const layerCtx = useLayer();
   const popupChildRowRenderer = useMemo(
@@ -749,6 +748,23 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     isOverlayEmptySpace,
     overlayFullSpanEnabled,
     tracePointerLog,
+  });
+
+  const shouldBlockMeasurements =
+    isPanning || popups.size === 0 || draggingPopup !== null || isLocked;
+
+  const {
+    handleResizePointerDown,
+    handleResizePointerMove,
+    handleResizePointerEnd,
+  } = usePopupMeasurements({
+    popups,
+    overlayRef,
+    activeTransform,
+    onPopupPositionChange,
+    onResizePopup,
+    shouldBlockMeasurements,
+    isLocked,
   });
 
   // Debug log initialization and state tracking
@@ -983,124 +999,6 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     });
   }, [activeTransform.x, activeTransform.y, activeTransform.scale, hasSharedCamera, isPanning]);
 
-  const measurementQueueRef = useRef<Map<
-    string,
-    {
-      screen: { x: number; y: number };
-      canvas: { x: number; y: number };
-      size?: { width: number; height: number };
-    }
-  >>(new Map());
-  const measurementRafIdRef = useRef<number | null>(null);
-  const resizingStateRef = useRef<{
-    popupId: string;
-    pointerId: number;
-    startX: number;
-    startY: number;
-    startWidth: number;
-    startHeight: number;
-    lastWidth: number;
-    lastHeight: number;
-  } | null>(null);
-  const isMeasurementBlocked = isPanning || popups.size === 0 || draggingPopup !== null || isResizing || isLocked;
-  const measurementRestartRef = useRef<number | null>(null);
-
-  const handleResizePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>, popup: PopupData) => {
-      if (!onResizePopup || isLocked) {
-        return;
-      }
-
-      event.preventDefault();
-      event.stopPropagation();
-
-      const startWidth = popup.width ?? DEFAULT_POPUP_WIDTH;
-      const startHeight = popup.height ?? DEFAULT_POPUP_HEIGHT;
-
-      resizingStateRef.current = {
-        popupId: popup.id,
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startWidth,
-        startHeight,
-        lastWidth: startWidth,
-        lastHeight: startHeight,
-      };
-
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch (err) {
-        // Pointer capture can fail in some browsers; best-effort only.
-        if (process.env.NODE_ENV !== 'production') {
-          console.debug('[PopupOverlay] Pointer capture unavailable for resize handle', err);
-        }
-      }
-
-      setIsResizing(true);
-    },
-    [onResizePopup, isLocked]
-  );
-
-  const handleResizePointerMove = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      if (isLocked) {
-        return;
-      }
-
-      const state = resizingStateRef.current;
-      if (!state || state.pointerId !== event.pointerId || !onResizePopup) {
-        return;
-      }
-
-      event.preventDefault();
-
-      const deltaX = event.clientX - state.startX;
-      const deltaY = event.clientY - state.startY;
-      const nextWidth = clamp(state.startWidth + deltaX, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH);
-      const nextHeight = clamp(state.startHeight + deltaY, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT);
-
-      if (nextWidth === state.lastWidth && nextHeight === state.lastHeight) {
-        return;
-      }
-
-      state.lastWidth = nextWidth;
-      state.lastHeight = nextHeight;
-      onResizePopup(state.popupId, { width: nextWidth, height: nextHeight }, { source: 'user' });
-    },
-    [onResizePopup, isLocked]
-  );
-
-  const handleResizePointerEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const state = resizingStateRef.current;
-    if (state && state.pointerId === event.pointerId) {
-      const target = event.currentTarget as HTMLElement;
-      if (typeof target.releasePointerCapture === 'function') {
-        try {
-          target.releasePointerCapture(event.pointerId);
-        } catch (err) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[PopupOverlay] releasePointerCapture failed during resize cleanup', err);
-          }
-        }
-      }
-
-      if (!isLocked && onResizePopup) {
-        const didChange =
-          state.lastWidth !== state.startWidth ||
-          state.lastHeight !== state.startHeight;
-        if (didChange) {
-          onResizePopup(state.popupId, { width: state.lastWidth, height: state.lastHeight }, { source: 'user' });
-        }
-      }
-    }
-
-    resizingStateRef.current = null;
-    if (isResizing) {
-      setIsResizing(false);
-    }
-  }, [isLocked, isResizing, onResizePopup]);
-
   const handlePopupHeaderMouseDown = useCallback(
     (popupId: string, event: React.MouseEvent) => {
       if (isLocked) {
@@ -1113,147 +1011,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     [isLocked, onDragStart]
   );
 
-  useLayoutEffect(() => {
-    if (!onPopupPositionChange) return;
-    if (isMeasurementBlocked) {
-      if (measurementRafIdRef.current !== null) {
-        cancelAnimationFrame(measurementRafIdRef.current);
-        measurementRafIdRef.current = null;
-      }
-      measurementQueueRef.current.clear();
-      if (measurementRestartRef.current !== null) {
-        clearTimeout(measurementRestartRef.current);
-      }
-      measurementRestartRef.current = window.setTimeout(() => {
-        measurementRestartRef.current = null;
-        // Trigger effect by forcing a state update via a dummy ref; handled by dependency below
-      }, 50);
-      return;
-    }
-    const root = overlayRef.current;
-    if (!root) return;
-    const containerRect = root.getBoundingClientRect();
-    const autoResizePayload: Array<{ id: string; width: number; height: number }> = [];
-
-    popups.forEach((popupState, popupId) => {
-      const element = root.querySelector<HTMLElement>(`[data-popup-id="${popupId}"]`);
-      if (!element) return;
-
-      const rect = element.getBoundingClientRect();
-      const viewportScreenPosition = { x: rect.left, y: rect.top };
-      const localScreenPosition = containerRect
-        ? {
-            x: viewportScreenPosition.x - containerRect.left,
-            y: viewportScreenPosition.y - containerRect.top,
-          }
-        : viewportScreenPosition;
-      const canvasPosition = CoordinateBridge.screenToCanvas(localScreenPosition, activeTransform);
-
-      const prevScreen = popupState.position;
-      const prevCanvas = popupState.canvasPosition;
-      const prevWidth = popupState.width ?? DEFAULT_POPUP_WIDTH;
-      const prevHeight = popupState.height ?? DEFAULT_POPUP_HEIGHT;
-
-      const screenChanged =
-        !prevScreen ||
-        Math.abs(prevScreen.x - viewportScreenPosition.x) > 0.5 ||
-        Math.abs(prevScreen.y - viewportScreenPosition.y) > 0.5;
-
-      const canvasChanged = false; // world position updates handled when popup moves/dragged
-
-      const widthChanged = Math.abs(prevWidth - rect.width) > 0.5;
-      const heightChanged = Math.abs(prevHeight - rect.height) > 0.5;
-
-      if (screenChanged || widthChanged || heightChanged) {
-        measurementQueueRef.current.set(popupId, {
-          screen: viewportScreenPosition,
-          canvas: popupState.canvasPosition || canvasPosition,
-          size: widthChanged || heightChanged ? { width: rect.width, height: rect.height } : undefined,
-        });
-      }
-
-      const shouldAutoResize =
-        !!onResizePopup &&
-        !popupState.isLoading &&
-        popupState.sizeMode !== 'user';
-
-      if (shouldAutoResize) {
-        let intrinsicHeight = rect.height;
-        const contentElement = element.querySelector<HTMLElement>('[data-popup-content]');
-        if (contentElement) {
-          const contentRect = contentElement.getBoundingClientRect();
-          const chromeHeight = Math.max(0, rect.height - contentRect.height);
-          const contentScrollHeight = contentElement.scrollHeight;
-          intrinsicHeight = chromeHeight + contentScrollHeight;
-        } else {
-          intrinsicHeight = element.scrollHeight || rect.height;
-        }
-        const desiredHeight = clamp(intrinsicHeight, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT);
-        const previousHeight = popupState.height ?? DEFAULT_POPUP_HEIGHT;
-        const heightDelta = Math.abs(previousHeight - desiredHeight);
-        if (popupState.sizeMode !== 'auto' || heightDelta > 1) {
-          const currentWidth = popupState.width ?? rect.width ?? DEFAULT_POPUP_WIDTH;
-          if (process.env.NODE_ENV !== 'production') {
-            console.debug('[PopupOverlay] auto_resize_request', {
-              popupId,
-              previousHeight,
-              desiredHeight,
-              sizeMode: popupState.sizeMode,
-              heightDelta
-            });
-          }
-          autoResizePayload.push({
-            id: popupId,
-            width: clamp(currentWidth, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH),
-            height: desiredHeight,
-          });
-        }
-      }
-    });
-
-    if (measurementRafIdRef.current !== null) {
-      cancelAnimationFrame(measurementRafIdRef.current);
-      measurementRafIdRef.current = null;
-    }
-
-    if (measurementQueueRef.current.size > 0) {
-      measurementRafIdRef.current = requestAnimationFrame(() => {
-        measurementQueueRef.current.forEach((payload, popupId) => {
-          const updatePayload: {
-            screenPosition: { x: number; y: number };
-            canvasPosition: { x: number; y: number };
-            size?: { width: number; height: number };
-          } = {
-            screenPosition: payload.screen,
-            canvasPosition: payload.canvas,
-          };
-          if (payload.size) {
-            updatePayload.size = payload.size;
-          }
-          onPopupPositionChange(popupId, updatePayload);
-        });
-        measurementQueueRef.current.clear();
-        measurementRafIdRef.current = null;
-      });
-    }
-
-    if (autoResizePayload.length > 0 && onResizePopup) {
-      autoResizePayload.forEach(({ id, width, height }) => {
-        if (process.env.NODE_ENV !== 'production') {
-          console.debug('[PopupOverlay] auto_resize_commit', { id, width, height });
-        }
-        onResizePopup(id, { width, height }, { source: 'auto' });
-      });
-    }
-
-    return () => {
-      if (measurementRafIdRef.current !== null) {
-        cancelAnimationFrame(measurementRafIdRef.current);
-        measurementRafIdRef.current = null;
-      }
-      measurementQueueRef.current.clear();
-    };
-  }, [popups, activeTransform, onPopupPositionChange, isMeasurementBlocked, onResizePopup]);
+  // measurement, resize, and auto-height handling provided by usePopupMeasurements
 
   useEffect(() => {
     visibleIdSetRef.current.clear();

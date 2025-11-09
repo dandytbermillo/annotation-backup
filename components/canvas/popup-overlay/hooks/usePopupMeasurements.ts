@@ -8,13 +8,13 @@ import {
   MAX_POPUP_WIDTH,
   MIN_POPUP_HEIGHT,
   MIN_POPUP_WIDTH,
-  clamp,
 } from '@/components/canvas/popup-overlay/constants';
+import { clamp } from '@/components/canvas/popup-overlay/helpers';
 import type { PopupData } from '@/components/canvas/popup-overlay/types';
 
 interface Options {
   popups: Map<string, PopupData>;
-  overlayRef: React.RefObject<HTMLDivElement>;
+  overlayRef: React.RefObject<HTMLDivElement | null>;
   activeTransform: Transform;
   onPopupPositionChange?: PopupOverlayPositionChangeHandler;
   onResizePopup?: PopupOverlayResizeHandler;
