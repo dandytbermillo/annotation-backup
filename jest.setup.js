@@ -45,3 +45,7 @@ global.window.clearInterval = global.clearInterval
 
 // Attach IndexedDB to window (provided by fake-indexeddb)
 global.window.indexedDB = global.indexedDB
+
+if (typeof global.IS_REACT_ACT_ENVIRONMENT === 'undefined') {
+  global.IS_REACT_ACT_ENVIRONMENT = true
+}

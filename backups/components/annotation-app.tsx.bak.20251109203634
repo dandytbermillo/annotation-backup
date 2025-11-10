@@ -46,7 +46,6 @@ import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
 import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-state"
-import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -96,6 +95,10 @@ const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
 
 const camerasEqual = (a: OverlayCameraState, b: OverlayCameraState) =>
   a.x === b.x && a.y === b.y && a.scale === b.scale
+
+type NotePreviewContext = {
+  sourceFolderId?: string
+}
 
 const ModernAnnotationCanvas = dynamic(
   () => import('./annotation-canvas-modern'),
@@ -620,6 +623,20 @@ function AnnotationAppContent() {
   const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
 
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
+type SidebarFolderPopup = {
+  id: string
+  folderId: string
+  folderName: string
+  position: { x: number; y: number }
+  children: OrgItem[]
+  isLoading: boolean
+  parentFolderId?: string
+  folderColor?: string
+}
+  const [sidebarFolderPopups, setSidebarFolderPopups] = useState<SidebarFolderPopup[]>([])
+  const sidebarFolderPopupsRef = useRef<SidebarFolderPopup[]>([])
+  const sidebarHoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const sidebarPopupIdCounter = useRef(0)
   const latestCameraRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
@@ -671,7 +688,7 @@ function AnnotationAppContent() {
     handleTooltipEnter: triggerNotePreviewTooltipEnter,
     handleTooltipLeave: triggerNotePreviewTooltipLeave,
     cancelPreview: cancelNotePreview,
-  } = useNotePreviewHover<SidebarNotePreviewContext>({
+  } = useNotePreviewHover<NotePreviewContext>({
     fetchNote: fetchNotePreview,
   })
 
@@ -738,6 +755,10 @@ function AnnotationAppContent() {
   useEffect(() => {
     diagnosticsRef.current = pendingDiagnostics
   }, [pendingDiagnostics])
+
+  useEffect(() => {
+    sidebarFolderPopupsRef.current = sidebarFolderPopups
+  }, [sidebarFolderPopups])
 
   useEffect(() => {
     const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
@@ -2582,40 +2603,120 @@ const handleCenterNote = useCallback(
     [ensureOverlayHydrated, knowledgeBaseId, knowledgeBaseWorkspaceId, overlayPopups, organizationFolders, layerContext]
   )
 
-  const openNoteFromSidebar = useCallback(
-    (noteId: string) => {
-      layerContext?.setActiveLayer('notes')
-      handleNoteSelect(noteId, { source: 'popup' })
+  const closeSidebarFolderPopups = useCallback(() => {
+    sidebarHoverTimeoutRef.current.forEach(timeout => clearTimeout(timeout))
+    sidebarHoverTimeoutRef.current.clear()
+    setSidebarFolderPopups([])
+    cancelNotePreview()
+  }, [cancelNotePreview])
+
+  const handleSidebarPopupHover = useCallback((folderId: string) => {
+    const timeout = sidebarHoverTimeoutRef.current.get(folderId)
+    if (timeout) {
+      clearTimeout(timeout)
+      sidebarHoverTimeoutRef.current.delete(folderId)
+    }
+
+    const currentPopup = sidebarFolderPopupsRef.current.find(p => p.folderId === folderId)
+    if (currentPopup?.parentFolderId) {
+      let parentId: string | undefined = currentPopup.parentFolderId
+      while (parentId) {
+        const parentTimeout = sidebarHoverTimeoutRef.current.get(parentId)
+        if (parentTimeout) {
+          clearTimeout(parentTimeout)
+          sidebarHoverTimeoutRef.current.delete(parentId)
+        }
+        parentId = sidebarFolderPopupsRef.current.find(p => p.folderId === parentId)?.parentFolderId
+      }
+    }
+  }, [])
+
+  const handleSidebarEyeHoverLeave = useCallback((folderId: string) => {
+    const timeout = setTimeout(() => {
+      setSidebarFolderPopups(prev =>
+        prev.filter(p => p.folderId !== folderId && p.parentFolderId !== folderId)
+      )
+      sidebarHoverTimeoutRef.current.delete(folderId)
+    }, 200)
+    const existingTimeout = sidebarHoverTimeoutRef.current.get(folderId)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+    sidebarHoverTimeoutRef.current.set(folderId, timeout)
+  }, [])
+
+  const handleSidebarOrgEyeHover = useCallback(
+    async (folder: OrgItem, event: React.MouseEvent<HTMLElement>, parentFolderId?: string) => {
+      event.stopPropagation()
+      ensureOverlayHydrated('sidebar-hover')
+
+      if (sidebarFolderPopupsRef.current.some(popup => popup.folderId === folder.id)) {
+        return
+      }
+
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      const spaceRight = window.innerWidth - rect.right
+      const popupPosition =
+        spaceRight > 320
+          ? { x: rect.right + 10, y: Math.max(16, rect.top) }
+          : { x: Math.max(16, rect.left), y: Math.min(rect.bottom + 10, window.innerHeight - 320) }
+
+      const popupId = `sidebar-folder-popup-${++sidebarPopupIdCounter.current}`
+      const newPopup: SidebarFolderPopup = {
+        id: popupId,
+        folderId: folder.id,
+        folderName: folder.name,
+        position: popupPosition,
+        children: [],
+        isLoading: true,
+        parentFolderId,
+        folderColor: folder.color,
+      }
+
+      setSidebarFolderPopups(prev => [...prev, newPopup])
+
+      try {
+        const children = await fetchGlobalChildren(folder.id)
+        if (!children) {
+          setSidebarFolderPopups(prev =>
+            prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p))
+          )
+          return
+        }
+
+        const formattedChildren: OrgItem[] = children.map((item: any) => ({
+          id: item.id,
+          name: item.name ?? deriveFromPath(item.path) ?? 'Untitled',
+          type: item.type === 'note' ? 'note' : 'folder',
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color || (item.type === 'folder' ? folder.color : undefined),
+          path: item.path,
+          hasChildren: item.type === 'folder',
+          level: (folder.level ?? 0) + 1,
+          children: [],
+          parentId: item.parentId,
+        }))
+
+        setSidebarFolderPopups(prev =>
+          prev.map(p =>
+            p.id === popupId
+              ? {
+                  ...p,
+                  children: formattedChildren,
+                  isLoading: false,
+                }
+              : p
+          )
+        )
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to load sidebar hover children:', error)
+        setSidebarFolderPopups(prev =>
+          prev.map(p => (p.id === popupId ? { ...p, isLoading: false } : p))
+        )
+      }
     },
-    [handleNoteSelect, layerContext]
+    [ensureOverlayHydrated, fetchGlobalChildren]
   )
-
-  const getPreviewSourceFolderId = useCallback(() => notePreview?.context?.sourceFolderId, [notePreview])
-
-  const {
-    sidebarFolderPopups,
-    dismissSidebarPopup,
-    handleSidebarPopupHover,
-    handleSidebarEyeHoverLeave,
-    handleSidebarOrgEyeHover,
-    handleSidebarNotePreviewHover,
-    handleSidebarNotePreviewLeave,
-    handleSidebarPreviewTooltipEnter,
-    handleSidebarPreviewTooltipLeave,
-    handleSidebarPopupFolderClick,
-    handleSidebarNoteOpen,
-  } = useSidebarFolderPopups({
-    ensureOverlayHydrated,
-    fetchChildren: fetchGlobalChildren,
-    onSelectFolder: handleOrganizationSidebarSelect,
-    onOpenNote: openNoteFromSidebar,
-    triggerNotePreviewHover,
-    triggerNotePreviewLeave,
-    triggerNotePreviewTooltipEnter,
-    triggerNotePreviewTooltipLeave,
-    cancelNotePreview,
-    getPreviewSourceFolderId,
-  })
 
   const handleOrganizationSidebarEyeHover = useCallback(
     (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
@@ -2633,6 +2734,33 @@ const handleCenterNote = useCallback(
     [handleSidebarEyeHoverLeave]
   )
 
+  const handleSidebarNotePreviewHover = useCallback(
+    (noteId: string, event: React.MouseEvent<HTMLElement>, sourceFolderId?: string) => {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const position = {
+        x: rect.right + 10,
+        y: Math.max(16, rect.top),
+      }
+      triggerNotePreviewHover(noteId, () => position, { sourceFolderId })
+    },
+    [triggerNotePreviewHover]
+  )
+
+  const handleSidebarNotePreviewLeave = useCallback(() => {
+    triggerNotePreviewLeave()
+  }, [triggerNotePreviewLeave])
+
+  const handleSidebarPreviewTooltipEnter = useCallback(() => {
+    triggerNotePreviewTooltipEnter()
+    if (notePreview?.context?.sourceFolderId) {
+      handleSidebarPopupHover(notePreview.context.sourceFolderId)
+    }
+  }, [handleSidebarPopupHover, notePreview, triggerNotePreviewTooltipEnter])
+
+  const handleSidebarPreviewTooltipLeave = useCallback(() => {
+    triggerNotePreviewTooltipLeave()
+  }, [triggerNotePreviewTooltipLeave])
+
   const handleOrganizationSidebarNoteHover = useCallback(
     (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
       handleSidebarNotePreviewHover(item.id, event)
@@ -2643,6 +2771,24 @@ const handleCenterNote = useCallback(
   const handleOrganizationSidebarNoteLeave = useCallback(() => {
     handleSidebarNotePreviewLeave()
   }, [handleSidebarNotePreviewLeave])
+
+  const handleSidebarPopupFolderClick = useCallback(
+    (folder: OrgItem, event: React.MouseEvent<HTMLElement>) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+      handleOrganizationSidebarSelect(folder.id, rect)
+      closeSidebarFolderPopups()
+    },
+    [handleOrganizationSidebarSelect, closeSidebarFolderPopups]
+  )
+
+  const handleSidebarNoteOpen = useCallback(
+    (noteId: string) => {
+      layerContext?.setActiveLayer('notes')
+      handleNoteSelect(noteId, { source: 'popup' })
+      closeSidebarFolderPopups()
+    },
+    [handleNoteSelect, layerContext, closeSidebarFolderPopups]
+  )
 
   const handleWorkspaceSelect = useCallback(
     async (workspaceId: string) => {
@@ -3718,7 +3864,9 @@ const handleCenterNote = useCallback(
                     </div>
                     <button
                       className="text-white/60 hover:text-white"
-                      onClick={() => dismissSidebarPopup(popup.id)}
+                      onClick={() =>
+                        setSidebarFolderPopups((prev) => prev.filter((p) => p.id !== popup.id))
+                      }
                       aria-label="Close preview popup"
                     >
                       ×
