@@ -13,12 +13,16 @@ import { Trash2, Eye } from 'lucide-react'
 import {
   OverlayLayoutAdapter,
   OverlayLayoutConflictError,
+  OVERLAY_LAYOUT_SCHEMA_VERSION,
   type OverlayLayoutPayload,
+  type OverlayWorkspaceSummary,
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
+import { useCanvasMode, type CanvasMode } from "@/lib/canvas/use-canvas-mode"
 import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
+import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
@@ -27,11 +31,6 @@ import {
   computeVisuallyCenteredWorldPosition,
   type RapidSequenceState,
 } from "@/lib/canvas/visual-centering"
-import {
-  useCanvasCentering,
-  CENTER_RETRY_ATTEMPTS,
-  CENTER_EXISTING_NOTES_ENABLED,
-} from "@/lib/hooks/annotation/use-canvas-centering"
 import { ConstellationPanel } from "@/components/constellation/constellation-panel"
 import { ConstellationProvider } from "@/components/constellation/constellation-context"
 import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
@@ -47,11 +46,7 @@ import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-s
 import { useOverlayPopupLayout } from "@/lib/hooks/annotation/use-overlay-popup-layout"
 import { useOverlayLayoutPersistence } from "@/lib/hooks/annotation/use-overlay-layout-persistence"
 import { useOverlayLayoutSaveQueue } from "@/lib/hooks/annotation/use-overlay-layout-save-queue"
-import { useOverlayWorkspaces } from "@/lib/hooks/annotation/use-overlay-workspaces"
 import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
-import { useOverlayLayerInteractions } from "@/lib/hooks/annotation/use-overlay-layer-interactions"
-import { useWorkspaceToolbarState } from "@/lib/hooks/annotation/use-workspace-toolbar-state"
-import { useConstellationViewState } from "@/lib/hooks/annotation/use-constellation-view-state"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -86,6 +81,17 @@ function sidebarItemToOrgItem(item: OrganizationSidebarItem): OrgItem {
   }
 }
 
+function computeNextWorkspaceName(workspaceSummaries: OverlayWorkspaceSummary[]): string {
+  const pattern = /^Workspace (\d+)$/i
+  const highest = workspaceSummaries.reduce((max, workspace) => {
+    const match = pattern.exec(workspace.name)
+    if (!match) return max
+    const value = Number.parseInt(match[1], 10)
+    return Number.isNaN(value) ? max : Math.max(max, value)
+  }, 0)
+  return `Workspace ${highest + 1}`
+}
+
 const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
 
 const camerasEqual = (a: OverlayCameraState, b: OverlayCameraState) =>
@@ -103,6 +109,13 @@ const ModernAnnotationCanvas = dynamic(
   }
 )
 
+const CENTER_RETRY_ATTEMPTS = 2
+const CENTER_RETRY_DELAY_MS = 160
+const POST_LOAD_CENTER_ATTEMPTS = 6
+const POST_LOAD_CENTER_DELAY_MS = 180
+const POST_LOAD_SECOND_PASS_DELAY_MS = 420
+const POST_LOAD_PENDING_CLEAR_DELAY_MS = 2200
+const CENTER_EXISTING_NOTES_ENABLED = process.env.NEXT_PUBLIC_CANVAS_CENTER_EXISTING_NOTES !== "disabled"
 const DEFAULT_POPUP_WIDTH = 300
 const DEFAULT_POPUP_HEIGHT = 400
 const MIN_POPUP_WIDTH = 200
@@ -147,15 +160,22 @@ function AnnotationAppContent() {
     return null
   })
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
+  const [activeSidebarTab, setActiveSidebarTab] = useState<CanvasSidebarTab>('organization')
   const layerContext = useLayer()
-  const {
-    activeSidebarTab,
-    showConstellationPanel,
-    canvasMode,
-    setCanvasMode,
-    handleSidebarTabChange,
-    toggleConstellationView,
-  } = useConstellationViewState({ layerContext })
+  const { mode: canvasMode, setMode: setCanvasMode } = useCanvasMode({
+    layerContext,
+    onModeChange: useCallback(
+      (nextMode: CanvasMode) => {
+        if (nextMode === 'constellation') {
+          setActiveSidebarTab('constellation')
+        } else if (activeSidebarTab === 'constellation') {
+          setActiveSidebarTab('organization')
+        }
+      },
+      [activeSidebarTab]
+    ),
+  })
+  const showConstellationPanel = canvasMode === 'constellation'
   const multiLayerEnabled = true
   const [shouldLoadOverlay, setShouldLoadOverlay] = useState(false)
   const overlayHydrationTriggerRef = useRef<string | null>(null)
@@ -189,26 +209,26 @@ function AnnotationAppContent() {
     }
   }, [layerContext?.activeLayer, ensureOverlayHydrated])
 
+  const handleSidebarTabChange = useCallback(
+    (tab: CanvasSidebarTab) => {
+      setActiveSidebarTab(tab)
+      if (tab === 'constellation') {
+        setCanvasMode('constellation')
+        return
+      }
+      setCanvasMode('overlay')
+    },
+    [setCanvasMode]
+  )
+
+  const toggleConstellationView = useCallback(() => {
+    setCanvasMode(canvasMode === 'constellation' ? 'overlay' : 'constellation')
+  }, [canvasMode, setCanvasMode])
+
   const activeNoteIdRef = useRef<string | null>(activeNoteId)
   useEffect(() => {
     activeNoteIdRef.current = activeNoteId
   }, [activeNoteId])
-
-  const {
-    canvasRef,
-    freshNoteSeeds,
-    freshNoteIds,
-    registerFreshNote,
-    consumeFreshNoteSeed,
-    storeFreshNoteSeed,
-    handleFreshNoteHydrated,
-    handleSnapshotLoadComplete,
-    centerNoteOnCanvas,
-  } = useCanvasCentering({
-    activeNoteIdRef,
-    debugLog,
-    sharedWorkspace,
-  })
   const sortedOpenNotes = useMemo(() => {
     return [...openNotes].sort((a, b) => {
       if (a.noteId === b.noteId) return 0
@@ -558,21 +578,16 @@ function AnnotationAppContent() {
   )
   const reopenSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
   const newNoteSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
-  const {
-    showNotesWidget,
-    setShowNotesWidget,
-    notesWidgetPosition,
-    setNotesWidgetPosition,
-    activeEditorRef,
-    activePanelId,
-    setActivePanelId,
-    toolbarActivePanel,
-    setToolbarActivePanel,
-    recentNotesRefreshTrigger,
-    bumpRecentNotesRefresh,
-    showAddComponentMenu,
-    setShowAddComponentMenu,
-  } = useWorkspaceToolbarState()
+  const [freshNoteSeeds, setFreshNoteSeeds] = useState<Record<string, { x: number; y: number }>>({})
+  const consumeFreshNoteSeed = useCallback((targetNoteId: string) => {
+    setFreshNoteSeeds(prev => {
+      if (!prev[targetNoteId]) return prev
+      const next = { ...prev }
+      delete next[targetNoteId]
+      return next
+    })
+  }, [])
+  const [showAddComponentMenu, setShowAddComponentMenu] = useState(false)
   const [mainOnlyNotes, setMainOnlyNotes] = useState<string[]>([])
   const requestMainOnlyNote = useCallback((noteId: string) => {
     if (!noteId) return
@@ -582,6 +597,22 @@ function AnnotationAppContent() {
     if (!noteId) return
     setMainOnlyNotes(prev => prev.filter(id => id !== noteId))
   }, [])
+
+  // Floating notes widget state
+  const [showNotesWidget, setShowNotesWidget] = useState(false)
+  const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
+  const activeEditorRef = useRef<any>(null) // Track the currently active editor
+  const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
+
+  const freshNotesRef = useRef<Set<string>>(new Set())
+  const [freshNoteIds, setFreshNoteIds] = useState<string[]>([])
+
+  // Toolbar active panel state - persists across toolbar close/reopen
+  // When user closes toolbar and reopens it, the last opened panel will be restored
+  const [toolbarActivePanel, setToolbarActivePanel] = useState<"recents" | "org" | "tools" | "layer" | "format" | "resize" | "branches" | "actions" | "add-component" | "display" | null>(null)
+
+  // Recent notes refresh counter - incremented when note is accessed to refresh toolbar's recent notes list
+  const [recentNotesRefreshTrigger, setRecentNotesRefreshTrigger] = useState(0)
 
   // Display settings state (backdrop style preference)
   const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
@@ -601,10 +632,20 @@ function AnnotationAppContent() {
     resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
   } = knowledgeBaseWorkspace
 
+  const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+  const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
   const [isWorkspaceLayoutLoading, setIsWorkspaceLayoutLoading] = useState(false)
+  const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false)
+  const [workspaceDeletionId, setWorkspaceDeletionId] = useState<string | null>(null)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
   const workspacesLoadedRef = useRef(false)
+  const workspaceToggleRef = useRef<HTMLDivElement | null>(null)
   const lastDiagnosticsHashRef = useRef<string | null>(null)
+  const currentWorkspace = useMemo(
+    () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
+    [workspaces, currentWorkspaceId]
+  )
   const fetchNotePreview = useCallback(
     async (noteId: string) => {
       const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`)
@@ -693,6 +734,16 @@ function AnnotationAppContent() {
     minHeight: MIN_POPUP_HEIGHT,
     maxHeight: MAX_POPUP_HEIGHT,
   })
+  const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
+  const workspaceStatusLabel = workspaceDeletionId
+    ? 'Deleting...'
+    : isWorkspaceSaving
+    ? 'Saving...'
+    : isWorkspaceLayoutLoading
+    ? 'Hydrating...'
+    : isWorkspaceListLoading
+    ? 'Loading...'
+    : currentWorkspaceName
 
   useEffect(() => {
     const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
@@ -840,6 +891,66 @@ function AnnotationAppContent() {
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
   const overlayPersistenceActive = overlayPersistenceEnabled && shouldLoadOverlay
   const shouldShowWorkspaceToggle = overlayPersistenceActive && shouldShowSidebar
+  useEffect(() => {
+    if (!shouldShowWorkspaceToggle && workspaceMenuOpen) {
+      setWorkspaceMenuOpen(false)
+    }
+  }, [shouldShowWorkspaceToggle, workspaceMenuOpen])
+
+  useEffect(() => {
+    if (!overlayPersistenceActive) {
+      setIsWorkspaceListLoading(false)
+      return
+    }
+    if (workspacesLoadedRef.current) return
+
+    let cancelled = false
+
+    setIsWorkspaceListLoading(true)
+
+    OverlayLayoutAdapter.listWorkspaces()
+      .then(list => {
+        if (cancelled) return
+        setWorkspaces(list)
+        if (!currentWorkspaceId && list.length > 0) {
+          setCurrentWorkspaceId(list[0].id)
+        }
+        workspacesLoadedRef.current = true
+      })
+      .catch(error => {
+        console.error('[AnnotationApp] Failed to load workspace list:', error)
+        toast({
+          variant: 'destructive',
+          title: 'Unable to load workspaces',
+          description: error instanceof Error ? error.message : 'Unexpected error while listing workspaces.',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsWorkspaceListLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [overlayPersistenceActive, toast, currentWorkspaceId])
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return
+
+    const handleClickAway = (event: MouseEvent) => {
+      if (!workspaceToggleRef.current) return
+      if (!workspaceToggleRef.current.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickAway)
+    return () => {
+      document.removeEventListener('mousedown', handleClickAway)
+    }
+  }, [workspaceMenuOpen])
 
   const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
   const layoutLoadedRef = useRef(false)
@@ -951,6 +1062,23 @@ function AnnotationAppContent() {
     }
   }, [activeNoteId, logWorkspaceNotePositions])
 
+  // Initialize overlay adapter when workspace changes
+  // Force re-center trigger - increment to force effect to run
+  // Ref to access canvas methods
+  const canvasRef = useRef<any>(null)
+
+  // Ref to track last centered note to avoid repeated centering during normal flow
+
+  // Ref to track when canvas last loaded a note (to avoid duplicate centering)
+  const lastCanvasLoadTimeRef = useRef<number>(0)
+  const pendingCenterAfterLoadRef = useRef<string | null>(null)
+
+  const registerFreshNote = useCallback((noteId: string) => {
+    if (!freshNotesRef.current.has(noteId)) {
+      freshNotesRef.current.add(noteId)
+      setFreshNoteIds(Array.from(freshNotesRef.current))
+    }
+  }, [])
 const initialWorkspaceSyncRef = useRef(false)
 
   // Determine collaboration mode from environment
@@ -1089,53 +1217,6 @@ const initialWorkspaceSyncRef = useRef(false)
     isDebugEnabled,
   })
 
-  const {
-    workspaces,
-    isWorkspaceListLoading,
-    isWorkspaceSaving,
-    workspaceDeletionId,
-    workspaceMenuOpen,
-    workspaceToggleRef,
-    setWorkspaceMenuOpen,
-    handleWorkspaceSelect,
-    handleCreateWorkspace,
-    handleDeleteWorkspace,
-  } = useOverlayWorkspaces({
-    overlayPersistenceActive,
-    shouldShowWorkspaceToggle,
-    currentWorkspaceId,
-    setCurrentWorkspaceId,
-    setCanvasMode,
-    ensureOverlayHydrated,
-    buildLayoutPayload,
-    flushLayoutSave,
-    lastSavedLayoutHashRef,
-    pendingLayoutRef,
-    saveTimeoutRef,
-    overlayAdapterRef,
-    layoutRevisionRef,
-    layoutLoadedRef,
-    setOverlayPopups,
-    toast,
-    workspacesLoadedRef,
-    defaultCamera: DEFAULT_CAMERA,
-  })
-
-  const currentWorkspace = useMemo(
-    () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
-    [workspaces, currentWorkspaceId]
-  )
-  const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
-  const workspaceStatusLabel = workspaceDeletionId
-    ? 'Deleting...'
-    : isWorkspaceSaving
-    ? 'Saving...'
-    : isWorkspaceLayoutLoading
-    ? 'Hydrating...'
-    : isWorkspaceListLoading
-    ? 'Loading...'
-    : currentWorkspaceName
-
   useEffect(() => {
     if (!overlayPersistenceActive) {
       prevCameraForSaveRef.current = latestCameraRef.current
@@ -1265,6 +1346,106 @@ const initialWorkspaceSyncRef = useRef(false)
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
 
+  const centerNoteOnCanvas = useCallback(
+    (noteId: string, overrides?: CenterOnNoteOptions) => {
+      const attempts = overrides?.attempts ?? CENTER_RETRY_ATTEMPTS
+      const delayMs = overrides?.delayMs ?? CENTER_RETRY_DELAY_MS
+      const extraShouldRetry = overrides?.shouldRetry
+
+      const shouldRetry = () => {
+        if (activeNoteIdRef.current !== noteId) return false
+        return extraShouldRetry ? extraShouldRetry() : true
+      }
+
+      const handled = centerOnNotePanel(canvasRef.current, noteId, {
+        attempts,
+        delayMs,
+        shouldRetry,
+        onError: overrides?.onError,
+      })
+
+      if (!handled) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'center_on_panel_skipped',
+          metadata: {
+            noteId,
+            reason: 'canvas_unavailable'
+          }
+        })
+      }
+    },
+    [],
+  )
+
+  const handleSnapshotLoadComplete = useCallback(() => {
+    lastCanvasLoadTimeRef.current = Date.now()
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'snapshot_load_complete',
+      metadata: { timestamp: lastCanvasLoadTimeRef.current }
+    })
+
+    const pendingNoteId = pendingCenterAfterLoadRef.current
+    if (pendingNoteId && activeNoteIdRef.current === pendingNoteId) {
+      const scheduleCenter = (attempts = POST_LOAD_CENTER_ATTEMPTS) => {
+        centerNoteOnCanvas(pendingNoteId, {
+          attempts,
+          delayMs: POST_LOAD_CENTER_DELAY_MS,
+        })
+      }
+
+      setTimeout(() => {
+        if (activeNoteIdRef.current === pendingNoteId) {
+          scheduleCenter()
+        }
+      }, 30)
+
+      setTimeout(() => {
+        if (activeNoteIdRef.current === pendingNoteId) {
+          scheduleCenter(POST_LOAD_CENTER_ATTEMPTS)
+        }
+      }, POST_LOAD_SECOND_PASS_DELAY_MS)
+
+      setTimeout(() => {
+        if (pendingCenterAfterLoadRef.current === pendingNoteId) {
+          pendingCenterAfterLoadRef.current = null
+        }
+      }, POST_LOAD_PENDING_CLEAR_DELAY_MS)
+    }
+  }, [centerNoteOnCanvas])
+
+  const handleFreshNoteHydrated = useCallback((noteId: string) => {
+    if (!freshNotesRef.current.has(noteId)) {
+      return
+    }
+
+    freshNotesRef.current.delete(noteId)
+    setFreshNoteIds(Array.from(freshNotesRef.current))
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'fresh_note_hydrated',
+      metadata: { noteId }
+    })
+
+    const events = sharedWorkspace?.events
+    if (!events) {
+      return
+    }
+
+    try {
+      events.emit('workspace:highlight-note', { noteId })
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'fresh_note_highlight_emitted',
+        metadata: { noteId }
+      })
+    } catch (error) {
+      console.warn('[AnnotationApp] Failed to emit highlight for fresh note:', error)
+    }
+  }, [sharedWorkspace])
+
   const handleNoteSelect = useCallback((noteId: string, options?: { initialPosition?: { x: number; y: number } | null; source?: 'toolbar-create' | 'toolbar-open' | 'popup' | 'recent' }) => {
     debugLog({
       component: 'AnnotationApp',
@@ -1289,7 +1470,8 @@ const initialWorkspaceSyncRef = useRef(false)
 
     trackNoteAccess(noteId)
       .then(() => {
-        bumpRecentNotesRefresh()
+        // Increment refresh trigger after tracking completes to update toolbar's recent notes
+        setRecentNotesRefreshTrigger(prev => prev + 1)
       })
       .catch(() => {
         // Error already logged by trackNoteAccess, silently skip refresh
@@ -1522,7 +1704,10 @@ const initialWorkspaceSyncRef = useRef(false)
 
           // CRITICAL: Store in freshNoteSeeds so canvas gets position BEFORE first paint
           // This prevents the panel from appearing elsewhere and then moving
-          storeFreshNoteSeed(noteId, centeredCandidate)
+          setFreshNoteSeeds(prev => ({
+            ...prev,
+            [noteId]: centeredCandidate
+          }))
         }
 
         if (usedCenteredOverride) {
@@ -1581,7 +1766,7 @@ const initialWorkspaceSyncRef = useRef(false)
     if (!isToolbarCreation) {
       emitHighlight()
     }
-  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, bumpRecentNotesRefresh, canvasState, requestMainOnlyNote, storeFreshNoteSeed])
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, setRecentNotesRefreshTrigger, canvasState, requestMainOnlyNote])
 
   const handleCloseNote = useCallback(
     (noteId: string) => {
@@ -1622,7 +1807,7 @@ const handleCenterNote = useCallback(
 
       centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
     },
-    [activeNoteId, setActiveNoteId, sharedWorkspace, centerNoteOnCanvas],
+    [activeNoteId, setActiveNoteId, sharedWorkspace],
   )
 
   const handleSnapshotSettled = useCallback((noteId: string) => {
@@ -1632,21 +1817,117 @@ const handleCenterNote = useCallback(
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget
-  const { handleContextMenu } = useOverlayLayerInteractions({
-    layerContext,
-    multiLayerEnabled,
-    clearAllTimeouts,
-    canvasState,
-    debugLog,
-    setNotesWidgetPosition,
-    setShowNotesWidget,
-    showNotesWidget,
-    setActivePanelId,
-  })
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
 
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'context_menu_opened',
+      metadata: {
+        x: e.clientX,
+        y: e.clientY,
+        canvasTranslateX: canvasState?.translateX,
+        canvasTranslateY: canvasState?.translateY
+      }
+    })
+
+    // Find which panel was right-clicked
+    let target = e.target as HTMLElement
+    let panelElement: HTMLElement | null = null
+
+    // Traverse up the DOM tree to find the panel element
+    // Panels have data-store-key attribute with composite key (noteId::panelId)
+    while (target && target !== e.currentTarget) {
+      if (target.dataset?.storeKey) {
+        panelElement = target
+        break
+      }
+      target = target.parentElement as HTMLElement
+    }
+
+    // If a panel was right-clicked, register its composite key as active
+    // This allows FloatingToolbar to correctly identify which note's panel was clicked
+    if (panelElement?.dataset?.storeKey) {
+      const storeKey = panelElement.dataset.storeKey
+      console.log('[AnnotationApp] Right-click detected on panel with store key:', storeKey)
+      setActivePanelId(storeKey)  // Set full composite key (e.g., "abc123::main")
+    }
+
+    setNotesWidgetPosition({ x: e.clientX, y: e.clientY })
+    setShowNotesWidget(true)
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'context_menu_after_open',
+      metadata: {
+        canvasTranslateX: canvasState?.translateX,
+        canvasTranslateY: canvasState?.translateY,
+        toolbarOpen: true
+      }
+    })
+  }, [canvasState])
+
+  // Handle closing notes widget
   const handleCloseNotesWidget = useCallback(() => {
     setShowNotesWidget(false)
   }, [])
+
+  // Track mouse position for keyboard shortcut
+  const mousePositionRef = useRef({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePositionRef.current = { x: e.clientX, y: e.clientY }
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [])
+
+  // Listen for text selection events from editor
+  useEffect(() => {
+    const handleShowToolbarOnSelection = (e: Event) => {
+      const customEvent = e as CustomEvent
+      const { x, y, autoOpenFormat } = customEvent.detail
+
+      setNotesWidgetPosition({ x, y })
+      setShowNotesWidget(true)
+
+      // Auto-open Format panel if requested
+      // This will be handled by FloatingToolbar component
+      if (autoOpenFormat) {
+        // Store in window for FloatingToolbar to pick up
+        ;(window as any).__autoOpenFormatPanel = true
+      }
+    }
+
+    window.addEventListener('show-floating-toolbar-on-selection', handleShowToolbarOnSelection)
+    return () => window.removeEventListener('show-floating-toolbar-on-selection', handleShowToolbarOnSelection)
+  }, [])
+
+  // Keyboard shortcut to open floating toolbar (Cmd+K or Ctrl+K)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+
+        // Use last known mouse position
+        const { x, y } = mousePositionRef.current
+
+        setNotesWidgetPosition({ x, y })
+        setShowNotesWidget(true)
+      }
+
+      // Escape to close toolbar
+      if (e.key === 'Escape' && showNotesWidget) {
+        setShowNotesWidget(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showNotesWidget])
 
   // Handle registering active editor (called by panels when they gain focus)
   const handleRegisterActiveEditor = useCallback((editorRef: any, panelId: string) => {
@@ -1894,6 +2175,170 @@ const handleCenterNote = useCallback(
     handleSidebarNotePreviewLeave()
   }, [handleSidebarNotePreviewLeave])
 
+  const handleWorkspaceSelect = useCallback(
+    async (workspaceId: string) => {
+      ensureOverlayHydrated('workspace-select')
+      if (overlayPersistenceActive) {
+        // Force any pending layout changes to flush so the next workspace loads a clean snapshot.
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current)
+          saveTimeoutRef.current = null
+        }
+
+        const snapshot = buildLayoutPayload()
+        const hasUnsavedChanges = snapshot.hash !== lastSavedLayoutHashRef.current
+        if (hasUnsavedChanges) {
+          pendingLayoutRef.current = snapshot
+          try {
+            await flushLayoutSave()
+          } catch (error) {
+            console.error('[AnnotationApp] Failed to flush layout before workspace switch:', error)
+          }
+        }
+      }
+
+      setWorkspaceMenuOpen(false)
+      setCanvasMode('overlay')
+      setCurrentWorkspaceId(prev => (prev === workspaceId ? prev : workspaceId))
+    },
+    [ensureOverlayHydrated, overlayPersistenceActive, buildLayoutPayload, flushLayoutSave, setCanvasMode]
+  )
+
+  const handleCreateWorkspace = useCallback(async () => {
+    ensureOverlayHydrated('workspace-create')
+    if (!overlayPersistenceActive) return
+
+    const emptyLayout: OverlayLayoutPayload = {
+      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: [],
+      inspectors: [],
+      lastSavedAt: new Date().toISOString(),
+      camera: DEFAULT_CAMERA,
+    }
+
+    const defaultName = computeNextWorkspaceName(workspaces)
+    let nameHint = defaultName
+
+    if (typeof window !== 'undefined') {
+      const proposed = window.prompt('Name this workspace', defaultName)
+      if (proposed === null) {
+        return
+      }
+      const trimmed = proposed.trim()
+      if (trimmed.length > 0) {
+        nameHint = trimmed
+      }
+    }
+
+    setIsWorkspaceSaving(true)
+
+    try {
+      const result = await OverlayLayoutAdapter.createWorkspace({
+        layout: emptyLayout,
+        version: emptyLayout.schemaVersion,
+        nameHint,
+      })
+
+      setWorkspaces(prev => {
+        const withoutDuplicate = prev.filter(ws => ws.id !== result.workspace.id)
+        const updated = [result.workspace, ...withoutDuplicate]
+        return updated.sort((a, b) => {
+          const aTime = a.updatedAt ? Date.parse(a.updatedAt) : 0
+          const bTime = b.updatedAt ? Date.parse(b.updatedAt) : 0
+          return bTime - aTime
+        })
+      })
+
+      layoutRevisionRef.current = result.envelope.revision
+      lastSavedLayoutHashRef.current = JSON.stringify({
+        schemaVersion: result.envelope.layout.schemaVersion,
+        popups: result.envelope.layout.popups,
+        inspectors: result.envelope.layout.inspectors,
+        camera: result.envelope.layout.camera ?? DEFAULT_CAMERA,
+      })
+      layoutLoadedRef.current = true
+      setCanvasMode('overlay')
+      setCurrentWorkspaceId(result.workspace.id)
+      setWorkspaceMenuOpen(false)
+      setOverlayPopups([])
+      toast({
+        title: 'Workspace created',
+        description: `${result.workspace.name} is ready — start arranging panels.`,
+      })
+    } catch (error) {
+      console.error('[AnnotationApp] Failed to create workspace:', error)
+      toast({
+        variant: 'destructive',
+        title: 'Failed to snapshot workspace',
+        description: error instanceof Error ? error.message : 'Unexpected error while saving the workspace.',
+      })
+    } finally {
+      setIsWorkspaceSaving(false)
+    }
+  }, [ensureOverlayHydrated, overlayPersistenceActive, setCanvasMode, workspaces])
+
+  const handleDeleteWorkspace = useCallback(
+    async (workspaceId: string) => {
+      if (workspaceDeletionId) return
+
+      const targetWorkspace = workspaces.find(ws => ws.id === workspaceId)
+      if (!targetWorkspace || targetWorkspace.isDefault) return
+
+      if (typeof window !== 'undefined') {
+        const confirmed = window.confirm(
+          `Delete "${targetWorkspace.name}"? This will remove its saved overlay layout.`
+        )
+        if (!confirmed) {
+          return
+        }
+      }
+
+      setWorkspaceDeletionId(workspaceId)
+
+      try {
+        await OverlayLayoutAdapter.deleteWorkspace({ workspaceId })
+
+        const updatedWorkspaces = workspaces.filter(ws => ws.id !== workspaceId)
+        setWorkspaces(updatedWorkspaces)
+        setWorkspaceMenuOpen(false)
+
+        if (currentWorkspaceId === workspaceId) {
+          const fallback = updatedWorkspaces[0]?.id ?? null
+          setCurrentWorkspaceId(fallback)
+          setCanvasMode('overlay')
+          if (!fallback) {
+            overlayAdapterRef.current = null
+            layoutRevisionRef.current = null
+            lastSavedLayoutHashRef.current = null
+            layoutLoadedRef.current = true
+            setOverlayPopups([])
+          }
+        }
+
+        toast({
+          title: 'Workspace deleted',
+          description: `${targetWorkspace.name} has been removed.`,
+        })
+      } catch (error) {
+        console.error('[AnnotationApp] Failed to delete workspace:', error)
+        toast({
+          variant: 'destructive',
+          title: 'Failed to delete workspace',
+          description:
+            error instanceof Error ? error.message : 'Unexpected error while deleting the workspace.',
+        })
+      } finally {
+        setWorkspaceDeletionId(null)
+      }
+    },
+    [
+      workspaceDeletionId,
+      workspaces,
+      currentWorkspaceId,
+      setCanvasMode,
+      setOverlayPopups,
+    ]
+  )
 
   useEffect(() => {
     if (!moveCascadeState.parentId) return

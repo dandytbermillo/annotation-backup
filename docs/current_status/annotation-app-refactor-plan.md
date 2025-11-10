@@ -18,6 +18,11 @@
 4. **Popup selection & overlay plumbing** – even after overlay refactors, `annotation-app.tsx` still handles selection/move callbacks inline, reimplementing guardrails already handled elsewhere.
 5. **Testing friction** – because everything lives in one component, unit testing any single concern requires stubbing massive context.
 
+## Latest Progress (2025-02-15)
+- Added Jest suites for `useOverlayLayoutSaveQueue` and `useOverlayLayoutPersistence`, covering debounce timing, conflict resolution, diagnostics toasts, and ancestor-color fetch fallbacks.
+- Extracted workspace list/create/delete orchestration plus menu state into `useOverlayWorkspaces`, so `annotation-app.tsx` now consumes a focused hook while leaving the `ANNOTATION_APP_REFACTOR_PHASE` gate untouched.
+- Manual regression plan now includes the workspace lifecycle loop (create/delete, dual-tab conflict, diagnostics repair) to accompany the new hook + tests.
+
 ## Module Interface Overview
 | Module/Hook | Inputs | Outputs | Notes |
 | --- | --- | --- | --- |
@@ -69,12 +74,25 @@
   - Hook wraps `OverlayLayoutAdapter`, ensures `load` and `save` return typed promises, and adds retry/backoff for HTTP 409 conflicts.
   - Provide `handleConflict` helper that notifies the caller and merges remote vs local snapshots via timestamp priority.
   - Continue emitting telemetry via injected `telemetry` dependency (defaulting to `canvasTelemetry`).
+  - (2025-02-15) Workspace list/create/delete orchestration plus menu state now live inside `useOverlayWorkspaces`, keeping `annotation-app.tsx` focused on wiring while the phase gate remains unchanged.
 - Rollout:
   - Flag `ANNOTATION_APP_REFACTOR_PHASE >= layout` switches `annotation-app.tsx` to use the hook; fallback path remains available for one version.
   - Update manual checklist with conflict scenarios (parallel browser tabs, offline -> online recovery).
 - Validation:
-  - New unit tests mocking `OverlayLayoutAdapter`.
+  - ✅ `__tests__/unit/hooks/use-overlay-layout-save-queue.test.ts` + `use-overlay-layout-persistence.test.ts` mock `OverlayLayoutAdapter` to cover conflicts, debounce timing, diagnostics toast wiring, and ancestor-color fetch fallbacks.
   - Add smoke Playwright script that toggles layout persistence and asserts saved positions survive reload.
+
+#### Manual Regression Checklist – Workspace Lifecycle (additive for Phase 3+)
+1. **Workspace create/save loop** – snapshot a new workspace while multiple popups are open, refresh the page, and confirm layout + camera persist; verify the diagnostics toast does not appear for a clean save.
+2. **Workspace delete fallback** – delete a non-default workspace that currently owns open popups and ensure:
+   - the workspace disappears from the list,
+   - `annotation-app.tsx` switches to the fallback workspace (or clears popups if none remain),
+   - the toast reports the removal.
+3. **Dual-tab conflict** – open two tabs on the same workspace, move popups in tab A, then move different popups in tab B and force a save:
+   - expect the second save to trigger conflict resolution,
+   - verify popups reconcile and diagnostics toasts fire if data diverges.
+4. **Diagnostics repair** – load a workspace that intentionally references folders from another Knowledge Base (or simulate via API) and confirm the repair toast appears, the “Repair” action removes mismatched popups, and ancestor color fallbacks apply during refetch.
+5. **Menu interactions** – open the workspace menu, click outside to dismiss, toggle the sidebar to hide the menu, and ensure the hook closes it automatically (regression guard for `shouldShowWorkspaceToggle`).
 
 ### Phase 4 – UI Composition Split
 - Scope: separate shell/providers from workspace view.
@@ -88,6 +106,16 @@
 - Validation:
   - Bundle analyzer run to confirm size improvement.
   - Manual regression on keyboard shortcuts, toast display, and LayerProvider hydration.
+
+### Phase 4 Prerequisites (current focus)
+1. Document the shell/view split: outline which providers remain in `AnnotationAppShell` vs. which props `AnnotationWorkspaceView` consumes so routing/SSR wiring is predictable.
+2. Inventory remaining shared state that still lives inline and decide which pieces need hooks before the split:
+   - **Canvas centering + retry timers** (`AnnotationApp`, lines ~180-340): still uses local refs/effects; extract into `useCanvasCentering` so shell/view boundary stays pure.
+   - **Multi-layer keyboard shortcuts + hover guards** (`AnnotationApp`, lines ~1360-1520): currently manipulate `layerContext` directly; consider `useOverlayLayerHotkeys`.
+   - **Constellation toggle + sidebar coordination** (`AnnotationApp`, lines ~240-320 & ~2500+): move into `useConstellationViewState` to avoid re-threading props through the view.
+   - **Workspace toolbar backdrops + toolbar active panel state** (`AnnotationApp`, lines ~500-620): evaluate a `useWorkspaceToolbarState` hook to keep future shell lean.
+3. Confirm every hook (`useKnowledgeBaseWorkspace`, `useFolderCache`, `useOverlayWorkspaces`, `useOverlayLayoutPersistence`, `usePopupOverlayState`) has green unit tests + manual regression notes so the shell swap is a wiring change only.
+4. Keep telemetry + feature flags in place so `ANNOTATION_APP_REFACTOR_PHASE` can toggle the shell without reintroducing provider drift (lessons from the isolation reactivity anti-pattern document). Add explicit “flag flip checklist” before implementing Phase 4.
 
 ## Testing & Validation Plan
 - **Unit tests** (Vitest/Jest): each hook/module with exhaustive cases (success, failure, stale cache, conflict resolution). Owners: Canvas Infra.

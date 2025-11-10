@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-10 05:07Z] dd1466f: continue refactoring
 - commit [2025-11-10 04:27Z] c19afcf: phase 3
 - commit [2025-11-10 04:21Z] 9f53d4b: dedicated hooks/utilities
 - commit [2025-11-10 02:39Z] cb15837: keep peeling logic out of components/
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-09 22:34Z] 75d94e6: refactoring annotation-app.tsx
 - commit [2025-11-09 22:20Z] 58e1441: refactoring test
 - commit [2025-11-09 21:24Z] 0ea8aea: Give connection-line rendering
-- commit [2025-11-09 21:09Z] 4f46a95: overlay bounds + minimap helper or connection-line
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-10 04:27Z] c19afcf: phase 3
+- commit [2025-11-10 05:07Z] dd1466f: continue refactoring
