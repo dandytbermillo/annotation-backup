@@ -630,11 +630,19 @@ function AnnotationAppContent() {
     setDraggingPopup,
     overlayPanning,
     setOverlayPanning,
+    moveCascadeState,
+    setMoveCascadeState,
+    hoverTimeouts,
+    closeTimeouts,
+    setHoverTimeout,
+    clearHoverTimeout,
+    setCloseTimeout,
+    clearCloseTimeout,
+    clearAllTimeouts,
+    handlePopupDragStart: startPopupDrag,
+    handlePopupDragMove,
+    handlePopupDragEnd,
   } = usePopupOverlayState()
-  const [moveCascadeState, setMoveCascadeState] = useState<{ parentId: string | null; childIds: string[] }>({
-    parentId: null,
-    childIds: [],
-  })
 type SidebarFolderPopup = {
   id: string
   folderId: string
@@ -649,11 +657,6 @@ type SidebarFolderPopup = {
   const sidebarFolderPopupsRef = useRef<SidebarFolderPopup[]>([])
   const sidebarHoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const sidebarPopupIdCounter = useRef(0)
-  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  const draggingPopupRef = useRef<string | null>(null)
-  const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
-  const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
-  const closeTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const latestCameraRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
@@ -1141,10 +1144,7 @@ const initialWorkspaceSyncRef = useRef(false)
       console.log('[AnnotationApp] Switched to notes layer, clearing pending hover timeouts')
 
       // Clear all pending timeouts to prevent new popups from appearing
-      hoverTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
-      hoverTimeoutRef.current.clear()
-      closeTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
-      closeTimeoutRef.current.clear()
+      clearAllTimeouts()
     }
   }, [layerContext?.activeLayer, multiLayerEnabled, layerContext])
 
@@ -1152,88 +1152,22 @@ const initialWorkspaceSyncRef = useRef(false)
   useEffect(() => {
     return () => {
       // Clear all hover timeouts
-      hoverTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
-      hoverTimeoutRef.current.clear()
-
-      // Clear all close timeouts
-      closeTimeoutRef.current.forEach((timeout) => clearTimeout(timeout))
-      closeTimeoutRef.current.clear()
+      clearAllTimeouts()
     }
   }, [])
-
-  // Keep draggingPopupRef in sync
-  useEffect(() => {
-    draggingPopupRef.current = draggingPopup
-  }, [draggingPopup])
 
   // Handle global mouse events for dragging popup
   useEffect(() => {
     if (!draggingPopup) return
 
     const handleGlobalMouseMove = (e: MouseEvent) => {
-      e.preventDefault()
-
-      const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
-
-      // Calculate new screen position
-      const newScreenPosition = {
-        x: e.clientX - dragOffsetRef.current.x,
-        y: e.clientY - dragOffsetRef.current.y
-      }
-
-      // Convert to canvas coordinates
-      const newCanvasPosition = CoordinateBridge.screenToCanvas(newScreenPosition, sharedTransform)
-
-      const deltaScreen = {
-        x: newScreenPosition.x - dragScreenPosRef.current.x,
-        y: newScreenPosition.y - dragScreenPosRef.current.y,
-      }
-      const scale = sharedTransform.scale || 1
-      const deltaCanvas = {
-        x: deltaScreen.x / scale,
-        y: deltaScreen.y / scale,
-      }
-      const cascadeActive = moveCascadeState.parentId === draggingPopup
-      const cascadeChildSet = cascadeActive ? new Set(moveCascadeState.childIds) : null
-
-      setOverlayPopups(prev =>
-        prev.map(p => {
-          if (p.id === draggingPopup) {
-            return { ...p, canvasPosition: newCanvasPosition, position: newScreenPosition, isDragging: true }
-          }
-          if (cascadeChildSet?.has(p.id) && !p.isPinned) {
-            const prevCanvas = p.canvasPosition || { x: 0, y: 0 }
-            const newChildCanvas = { x: prevCanvas.x + deltaCanvas.x, y: prevCanvas.y + deltaCanvas.y }
-            const prevScreen = p.position || CoordinateBridge.canvasToScreen(prevCanvas, sharedTransform)
-            const newChildScreen = { x: prevScreen.x + deltaScreen.x, y: prevScreen.y + deltaScreen.y }
-            return { ...p, canvasPosition: newChildCanvas, position: newChildScreen }
-          }
-          return p
-        })
-      )
-
-      dragScreenPosRef.current = newScreenPosition
+      handlePopupDragMove(e, layerContext ?? null)
     }
 
     const handleGlobalMouseUp = () => {
-      if (!draggingPopup) return
-
-      // Mark popup as no longer dragging
-      setOverlayPopups(prev =>
-        prev.map(p =>
-          p.id === draggingPopup
-            ? { ...p, isDragging: false }
-            : p
-        )
-      )
-
-      setDraggingPopup(null)
-      draggingPopupRef.current = null
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
+      handlePopupDragEnd()
     }
 
-    // Use capture phase for better responsiveness
     document.addEventListener('mousemove', handleGlobalMouseMove, true)
     document.addEventListener('mouseup', handleGlobalMouseUp, true)
 
@@ -1241,7 +1175,7 @@ const initialWorkspaceSyncRef = useRef(false)
       document.removeEventListener('mousemove', handleGlobalMouseMove, true)
       document.removeEventListener('mouseup', handleGlobalMouseUp, true)
     }
-  }, [draggingPopup, layerContext, moveCascadeState]) // Stable during drag - only refs used inside
+  }, [draggingPopup, handlePopupDragEnd, handlePopupDragMove, layerContext])
 
   // Build layout payload from current overlayPopups state
   const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
@@ -1645,7 +1579,7 @@ const initialWorkspaceSyncRef = useRef(false)
   const scheduleLayoutSave = useCallback((immediate = false) => {
     if (!overlayPersistenceActive) return
     if (!overlayAdapterRef.current) return
-    if (draggingPopupRef.current) {
+    if (draggingPopup) {
       console.log('[AnnotationApp] Save skipped: popup dragging in progress')
       return
     }
@@ -3173,19 +3107,8 @@ const handleCenterNote = useCallback(
 
       const timeoutKey = popup.parentPopupId ? `${popup.parentPopupId}-${popup.folderId}` : popup.folderId
 
-      // Clear hover timeout
-      const hoverTimeout = hoverTimeoutRef.current.get(timeoutKey)
-      if (hoverTimeout) {
-        clearTimeout(hoverTimeout)
-        hoverTimeoutRef.current.delete(timeoutKey)
-      }
-
-      // Clear close timeout
-      const closeTimeout = closeTimeoutRef.current.get(timeoutKey)
-      if (closeTimeout) {
-        clearTimeout(closeTimeout)
-        closeTimeoutRef.current.delete(timeoutKey)
-      }
+      clearHoverTimeout(timeoutKey)
+      clearCloseTimeout(timeoutKey)
     })
 
     // Remove all popups in the cascade
@@ -3274,16 +3197,8 @@ const handleCenterNote = useCallback(
       if (!popup) return
 
       const timeoutKey = popup.parentPopupId ? `${popup.parentPopupId}-${popup.folderId}` : popup.folderId
-      const hoverTimeout = hoverTimeoutRef.current.get(timeoutKey)
-      if (hoverTimeout) {
-        clearTimeout(hoverTimeout)
-        hoverTimeoutRef.current.delete(timeoutKey)
-      }
-      const closeTimeout = closeTimeoutRef.current.get(timeoutKey)
-      if (closeTimeout) {
-        clearTimeout(closeTimeout)
-        closeTimeoutRef.current.delete(timeoutKey)
-      }
+      clearHoverTimeout(timeoutKey)
+      clearCloseTimeout(timeoutKey)
     })
 
     // Remove closing popups and clear highlights/close mode from survivors
@@ -3367,19 +3282,18 @@ const handleCenterNote = useCallback(
 
     if (!isPersistent) {
       // Clear any existing timeout for this folder
-      if (hoverTimeoutRef.current.has(timeoutKey)) {
-        clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
-        hoverTimeoutRef.current.delete(timeoutKey)
+      if (hoverTimeouts.current.has(timeoutKey)) {
+        clearHoverTimeout(timeoutKey)
       }
 
       // Set timeout to show hover tooltip after 300ms
       const timeout = setTimeout(() => {
-        hoverTimeoutRef.current.delete(timeoutKey)
+        hoverTimeouts.current.delete(timeoutKey)
         // Create temporary hover popup (pass captured rect)
         createPopup(folder, rect, parentPopupId, false)
       }, 300)
 
-      hoverTimeoutRef.current.set(timeoutKey, timeout)
+      setHoverTimeout(timeoutKey, timeout)
       return
     }
 
@@ -3558,7 +3472,7 @@ const handleCenterNote = useCallback(
 
   // Cancel close timeout when hovering the popup itself (keeps it alive)
   const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
-    console.log('[handlePopupHover] CALLED', { folderId, parentPopupId, hasTimeouts: closeTimeoutRef.current.size })
+    console.log('[handlePopupHover] CALLED', { folderId, parentPopupId, hasTimeouts: closeTimeouts.current.size })
 
     // Try multiple possible timeout keys since we might not know the exact parent
     const possibleKeys = [
@@ -3567,21 +3481,19 @@ const handleCenterNote = useCallback(
     ].filter(Boolean) as string[]
 
     // Also try all keys that end with this folderId
-    closeTimeoutRef.current.forEach((timeout, key) => {
+    closeTimeouts.current.forEach((timeout, key) => {
       if (key.endsWith(folderId) && !possibleKeys.includes(key)) {
         possibleKeys.push(key)
       }
     })
 
     console.log('[handlePopupHover] Trying timeout keys:', possibleKeys)
-    console.log('[handlePopupHover] Available timeouts:', Array.from(closeTimeoutRef.current.keys()))
+    console.log('[handlePopupHover] Available timeouts:', Array.from(closeTimeouts.current.keys()))
 
     let found = false
     for (const key of possibleKeys) {
-      const timeout = closeTimeoutRef.current.get(key)
-      if (timeout) {
-        clearTimeout(timeout)
-        closeTimeoutRef.current.delete(key)
+      if (closeTimeouts.current.has(key)) {
+        clearCloseTimeout(key)
         console.log('[handlePopupHover] ✅ Cancelled close timeout for', key)
         found = true
         break
@@ -3601,14 +3513,13 @@ const handleCenterNote = useCallback(
 
     // Clear hover timeout if user leaves before tooltip appears
     const timeoutKey = parentPopupId ? `${parentPopupId}-${folderId}` : folderId
-    if (hoverTimeoutRef.current.has(timeoutKey)) {
-      clearTimeout(hoverTimeoutRef.current.get(timeoutKey)!)
-      hoverTimeoutRef.current.delete(timeoutKey)
+    if (hoverTimeouts.current.has(timeoutKey)) {
+      clearHoverTimeout(timeoutKey)
     }
 
     // Set close timeout and STORE IT so it can be cancelled when hovering the popup
     const closeTimeout = setTimeout(() => {
-      closeTimeoutRef.current.delete(timeoutKey)
+      closeTimeouts.current.delete(timeoutKey)
       // Close temporary (non-persistent) hover popups for this folder
       setOverlayPopups(prev =>
         prev.filter(p => {
@@ -3621,7 +3532,7 @@ const handleCenterNote = useCallback(
       )
     }, 300) // 300ms delay to allow moving to tooltip (same as organization panel)
 
-    closeTimeoutRef.current.set(timeoutKey, closeTimeout)
+    setCloseTimeout(timeoutKey, closeTimeout)
   }, [])
 
   const handlePopupPositionChange = useCallback(
@@ -4000,37 +3911,14 @@ const handleCenterNote = useCallback(
   ])
 
   // Handle popup drag start
-  const handlePopupDragStart = useCallback((popupId: string, event: React.MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    const popup = overlayPopups.find(p => p.id === popupId)
-    if (!popup) return
-
-    // Get the shared transform for coordinate conversion
-    const sharedTransform = layerContext?.transforms.popups || { x: 0, y: 0, scale: 1 }
-
-    // Calculate offset between mouse position and popup position
-    const screenPosition = CoordinateBridge.canvasToScreen(popup.canvasPosition, sharedTransform)
-    const offset = {
-      x: event.clientX - screenPosition.x,
-      y: event.clientY - screenPosition.y
-    }
-
-    dragOffsetRef.current = offset
-    setDraggingPopup(popupId)
-    draggingPopupRef.current = popupId
-    dragScreenPosRef.current = { x: screenPosition.x, y: screenPosition.y }
-
-    // Mark popup as dragging
-    setOverlayPopups(prev =>
-      prev.map(p => p.id === popupId ? { ...p, isDragging: true } : p)
-    )
-
-    // Prevent text selection
-    document.body.style.cursor = 'grabbing'
-    document.body.style.userSelect = 'none'
-  }, [overlayPopups, layerContext])
+  const handlePopupDragStart = useCallback(
+    (popupId: string, event: React.MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      startPopupDrag(popupId, event.nativeEvent, layerContext ?? null)
+    },
+    [layerContext, startPopupDrag],
+  )
 
   // Navigation control functions
   const handleZoomIn = () => {
