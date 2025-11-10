@@ -18,7 +18,7 @@ import {
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
-import { appendWorkspaceParam, withWorkspaceHeaders, withWorkspacePayload } from "@/lib/workspaces/client-utils"
+import type { KnowledgeBaseWorkspaceApi } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 
 
 // Folder color palette - similar to sticky notes pattern
@@ -85,7 +85,7 @@ type FloatingToolbarProps = {
   canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
   canvasDataStore?: any // DataStore from useCanvas()
   canvasNoteId?: string // noteId from useCanvas()
-  knowledgeBaseWorkspaceId?: string | null // Knowledge Base workspace id for data mutations
+  knowledgeBaseWorkspace: KnowledgeBaseWorkspaceApi // Knowledge Base workspace helpers for data mutations
 }
 
 type NotePreviewContext = {
@@ -200,7 +200,13 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, knowledgeBaseWorkspaceId }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, knowledgeBaseWorkspace }: FloatingToolbarProps) {
+  const {
+    workspaceId: knowledgeBaseWorkspaceId,
+    appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
+    withWorkspaceHeaders: withKnowledgeBaseHeaders,
+    withWorkspacePayload: withKnowledgeBasePayload,
+  } = knowledgeBaseWorkspace
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
 
@@ -255,11 +261,8 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [orgFolderCreationError, setOrgFolderCreationError] = useState<string | null>(null)
   const [orgFolderCreationLoading, setOrgFolderCreationLoading] = useState(false)
   const fetchWithKnowledgeBase = useCallback(
-    (input: RequestInfo | URL, init?: RequestInit) => {
-      const requestInit = withWorkspaceHeaders(init, knowledgeBaseWorkspaceId)
-      return fetch(input, requestInit)
-    },
-    [knowledgeBaseWorkspaceId]
+    (input: RequestInfo | URL, init?: RequestInit) => fetch(input, withKnowledgeBaseHeaders(init)),
+    [withKnowledgeBaseHeaders]
   )
 
   const fetchNotePreview = useCallback(
@@ -576,7 +579,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
       setIsLoadingOrg(true)
       try {
         const response = await fetchWithKnowledgeBase(
-          appendWorkspaceParam('/api/items?parentId=null', knowledgeBaseWorkspaceId)
+          appendKnowledgeBaseWorkspaceParam('/api/items?parentId=null', knowledgeBaseWorkspaceId)
         )
         if (!response.ok) throw new Error('Failed to fetch organization tree')
 
@@ -605,7 +608,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         if (knowledgeBase) {
           try {
             const childResponse = await fetchWithKnowledgeBase(
-              appendWorkspaceParam(`/api/items?parentId=${knowledgeBase.id}`, knowledgeBaseWorkspaceId)
+              appendKnowledgeBaseWorkspaceParam(`/api/items?parentId=${knowledgeBase.id}`, knowledgeBaseWorkspaceId)
             )
             if (childResponse.ok) {
               const childData = await childResponse.json()
@@ -692,7 +695,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         },
         credentials: 'same-origin',
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               color: newColorName,
             },
@@ -765,7 +768,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         },
         credentials: 'same-origin',
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               type: 'folder',
               name: trimmedName,
@@ -788,7 +791,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
       // Refresh the org items to show the new folder
       // Re-fetch the organization tree
-      const treeUrl = appendWorkspaceParam(
+      const treeUrl = appendKnowledgeBaseWorkspaceParam(
         `/api/items?parentId=null`,
         knowledgeBaseWorkspaceId
       )
@@ -816,7 +819,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
           item.name.toLowerCase() === 'knowledge base' && item.type === 'folder'
         )
         if (knowledgeBase) {
-          const childUrl = appendWorkspaceParam(
+          const childUrl = appendKnowledgeBaseWorkspaceParam(
             `/api/items?parentId=${knowledgeBase.id}`,
             knowledgeBaseWorkspaceId
           )
@@ -928,7 +931,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         },
         credentials: 'same-origin',
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               name: trimmedName,
             },
@@ -1357,7 +1360,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     // Fetch children in background and update via callback
     try {
       const response = await fetchWithKnowledgeBase(
-        appendWorkspaceParam(`/api/items?parentId=${folder.id}`, knowledgeBaseWorkspaceId)
+        appendKnowledgeBaseWorkspaceParam(`/api/items?parentId=${folder.id}`, knowledgeBaseWorkspaceId)
       )
       if (!response.ok) throw new Error('Failed to fetch folder contents')
 

@@ -26,7 +26,7 @@ import {
   MIN_POPUP_WIDTH,
 } from './popup-overlay/constants';
 import { getFolderColorTheme, parseBreadcrumb, isFolderNode, isNoteLikeNode } from './popup-overlay/helpers';
-import { withWorkspaceHeaders, withWorkspacePayload } from '@/lib/workspaces/client-utils';
+import type { KnowledgeBaseWorkspaceApi } from '@/lib/hooks/annotation/use-knowledge-base-workspace';
 import { createPopupChildRowRenderer, type PopupChildRowOptions } from './popup-overlay/renderPopupChildRow';
 import { PopupCardHeader } from './popup-overlay/components/PopupCardHeader';
 import { PopupCardFooter } from './popup-overlay/components/PopupCardFooter';
@@ -75,7 +75,7 @@ interface PopupOverlayProps {
   sidebarOpen?: boolean; // Track sidebar state to recalculate bounds
   backdropStyle?: string; // Backdrop style preference (from Display Settings panel)
   workspaceId?: string | null; // legacy alias retained for compatibility
-  knowledgeBaseWorkspaceId?: string | null;
+  knowledgeBaseWorkspace: KnowledgeBaseWorkspaceApi;
   activeMoveCascadeParentId?: string | null;
   moveCascadeChildIds?: string[];
   onToggleMoveCascade?: (popupId: string) => void;
@@ -109,11 +109,17 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   isLocked = false,
   sidebarOpen, // Accept sidebar state
   backdropStyle = 'opaque', // Backdrop style preference (default to fully opaque)
-  knowledgeBaseWorkspaceId = null,
+  knowledgeBaseWorkspace,
   activeMoveCascadeParentId = null,
   moveCascadeChildIds = [],
   onToggleMoveCascade,
 }) => {
+  const {
+    workspaceId: knowledgeBaseWorkspaceId,
+    withWorkspaceHeaders: withKnowledgeBaseHeaders,
+    withWorkspacePayload: withKnowledgeBasePayload,
+  } = knowledgeBaseWorkspace
+
   const multiLayerEnabled = true;
   const debugLoggingEnabled = isDebugEnabled();
   const overlayFullSpanEnabled =
@@ -145,11 +151,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   );
 
   const fetchWithKnowledgeBase = useCallback(
-    (input: RequestInfo | URL, init?: RequestInit) => {
-      const requestInit = withWorkspaceHeaders(init, knowledgeBaseWorkspaceId);
-      return fetch(input, requestInit);
-    },
-    [knowledgeBaseWorkspaceId]
+    (input: RequestInfo | URL, init?: RequestInit) => fetch(input, withKnowledgeBaseHeaders(init)),
+    [withKnowledgeBaseHeaders]
   );
   const {
     previewState,
@@ -324,7 +327,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(
-            withWorkspacePayload(
+            withKnowledgeBasePayload(
               {
                 type: 'folder',
                 name: trimmedName,
@@ -474,7 +477,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               name: trimmedName,
             },
@@ -560,7 +563,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          withWorkspacePayload(
+          withKnowledgeBasePayload(
             {
               name: trimmedName,
             },

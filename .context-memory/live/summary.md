@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-09 22:55Z] e7092b5: refactor 1.1
 - commit [2025-11-09 22:34Z] 75d94e6: refactoring annotation-app.tsx
 - commit [2025-11-09 22:20Z] 58e1441: refactoring test
 - commit [2025-11-09 21:24Z] 0ea8aea: Give connection-line rendering
@@ -33,4 +34,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-09 22:34Z] 75d94e6: refactoring annotation-app.tsx
+- commit [2025-11-09 22:55Z] e7092b5: refactor 1.1

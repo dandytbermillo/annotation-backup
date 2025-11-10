@@ -652,6 +652,7 @@ const sidebarPopupIdCounter = useRef(0)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const [organizationFolders, setOrganizationFolders] = useState<OrganizationSidebarItem[]>([])
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null)
+  const knowledgeBaseWorkspace = useKnowledgeBaseWorkspace()
   const {
     workspaceId: knowledgeBaseWorkspaceId,
     appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
@@ -659,7 +660,7 @@ const sidebarPopupIdCounter = useRef(0)
     withWorkspacePayload: withKnowledgeBasePayload,
     fetchWithWorkspace: fetchWithKnowledgeBase,
     resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
-  } = useKnowledgeBaseWorkspace()
+  } = knowledgeBaseWorkspace
   const [workspaces, setWorkspaces] = useState<OverlayWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isWorkspaceListLoading, setIsWorkspaceListLoading] = useState(false)
@@ -3437,7 +3438,6 @@ const handleCenterNote = useCallback(
             }
           }
         }
-        }
       }
 
       // Position child popup to the right of parent
@@ -4323,7 +4323,7 @@ const handleCenterNote = useCallback(
                           refreshRecentNotes={recentNotesRefreshTrigger}
                           onToggleConstellationPanel={toggleConstellationView}
                           showConstellationPanel={showConstellationPanel}
-                          knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
+                          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
                         />
                       )}
                     </ModernAnnotationCanvas>
@@ -4344,7 +4344,7 @@ const handleCenterNote = useCallback(
             </div>
 
             {canRenderOverlay && adaptedPopups && (
-              <PopupOverlay
+                <PopupOverlay
                 popups={adaptedPopups}
                 draggingPopup={draggingPopup}
                 onClosePopup={handleCloseOverlayPopup}
@@ -4369,7 +4369,7 @@ const handleCenterNote = useCallback(
                 sidebarOpen={isPopupLayerActive}
                 backdropStyle={backdropStyle}
                 workspaceId={currentWorkspaceId}
-                knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
                 activeMoveCascadeParentId={moveCascadeState.parentId}
                 moveCascadeChildIds={moveCascadeState.childIds}
                 onToggleMoveCascade={handleToggleMoveCascade}
@@ -4513,7 +4513,7 @@ const handleCenterNote = useCallback(
                 refreshRecentNotes={recentNotesRefreshTrigger}
                 onToggleConstellationPanel={toggleConstellationView}
                 showConstellationPanel={showConstellationPanel}
-                knowledgeBaseWorkspaceId={knowledgeBaseWorkspaceId}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
               />
             )}
 
