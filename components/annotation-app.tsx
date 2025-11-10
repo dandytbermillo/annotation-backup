@@ -46,6 +46,7 @@ import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
 import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-state"
+import { useOverlayPopupLayout } from "@/lib/hooks/annotation/use-overlay-popup-layout"
 import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -122,8 +123,6 @@ const MIN_POPUP_WIDTH = 200
 const MIN_POPUP_HEIGHT = 200
 const MAX_POPUP_WIDTH = 900
 const MAX_POPUP_HEIGHT = 900
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
 function AnnotationAppContent() {
   const {
@@ -723,6 +722,20 @@ function AnnotationAppContent() {
     fetchChildren: fetchGlobalChildren,
     ensureOverlayHydrated,
     popupWidth: DEFAULT_POPUP_WIDTH,
+  })
+  const {
+    createOverlayPopup: handleCreateOverlayPopup,
+    updatePopupPosition: handlePopupPositionChange,
+    resizePopup: handleResizePopup,
+  } = useOverlayPopupLayout({
+    setPopups: setOverlayPopups,
+    ensureOverlayHydrated,
+    defaultWidth: DEFAULT_POPUP_WIDTH,
+    defaultHeight: DEFAULT_POPUP_HEIGHT,
+    minWidth: MIN_POPUP_WIDTH,
+    maxWidth: MAX_POPUP_WIDTH,
+    minHeight: MIN_POPUP_HEIGHT,
+    maxHeight: MAX_POPUP_HEIGHT,
   })
   const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
   const workspaceStatusLabel = workspaceDeletionId
@@ -2809,82 +2822,6 @@ const handleCenterNote = useCallback(
     ]
   )
 
-  const handleCreateOverlayPopup = useCallback((popup: OverlayPopup, shouldHighlight: boolean = false) => {
-    ensureOverlayHydrated('floating-toolbar')
-    console.log('[handleCreateOverlayPopup] Adding popup:', popup.folderName, 'folderId:', popup.folderId, 'shouldHighlight:', shouldHighlight);
-    setOverlayPopups(prev => {
-      console.log('[handleCreateOverlayPopup] Current popups:', prev.length, prev.map(p => p.folderName));
-
-      // Check if popup with same ID already exists
-      const existingIndex = prev.findIndex(p => p.id === popup.id)
-      if (existingIndex >= 0) {
-        console.log('[handleCreateOverlayPopup] Popup already exists at index', existingIndex);
-
-        // If shouldHighlight is true, just highlight - don't replace data or position
-        if (shouldHighlight) {
-          console.log('[handleCreateOverlayPopup] Just highlighting existing popup IN PLACE, not moving');
-          console.log('[handleCreateOverlayPopup] Setting isHighlighted to TRUE for popup:', prev[existingIndex].folderName);
-          const updated = [...prev]
-          // Only update isHighlighted flag, keep existing position and data
-          updated[existingIndex] = { ...updated[existingIndex], isHighlighted: true }
-          console.log('[handleCreateOverlayPopup] Updated popup isHighlighted:', updated[existingIndex].isHighlighted);
-          return updated
-        }
-
-        // Otherwise update popup data (e.g., when children are loaded)
-        // Preserve position when just updating children
-        console.log('[handleCreateOverlayPopup] Updating existing popup data, preserving position');
-        const updated = [...prev]
-        const incomingSizeMode = popup.sizeMode ?? (popup.isLoading ? (updated[existingIndex].sizeMode ?? 'default') : 'default')
-        const nextSizeMode = updated[existingIndex].sizeMode === 'user' ? 'user' : incomingSizeMode
-        const shouldReleaseHeight = nextSizeMode === 'default' && updated[existingIndex].sizeMode !== 'user'
-        const resolvedHeight = shouldReleaseHeight
-          ? undefined
-          : (popup.height ?? updated[existingIndex].height)
-        const resolvedWidth = popup.width ?? updated[existingIndex].width
-
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          ...popup,
-          // Preserve existing position - don't move popup when updating children
-          position: updated[existingIndex].position,
-          canvasPosition: updated[existingIndex].canvasPosition,
-          isHighlighted: updated[existingIndex].isHighlighted,
-          width: resolvedWidth,
-          height: resolvedHeight,
-          sizeMode: nextSizeMode
-        }
-        return updated
-      }
-
-      // Check if popup with same folder already exists (shouldn't happen with deterministic IDs, but keep as safety)
-      const folderExists = prev.some(p => p.folderId === popup.folderId)
-      if (folderExists) {
-        console.log('[handleCreateOverlayPopup] Popup for this folder already exists (different ID), highlighting it');
-        return prev.map(p =>
-          p.folderId === popup.folderId
-            ? { ...p, isHighlighted: true }
-            : p
-        )
-      }
-
-      // Add new popup
-      console.log('[handleCreateOverlayPopup] Adding new popup. New count will be:', prev.length + 1);
-      return [...prev, popup]
-    })
-
-    // If highlighting, clear the highlight after animation (2 seconds)
-    if (shouldHighlight) {
-      setTimeout(() => {
-        setOverlayPopups(prev =>
-          prev.map(p =>
-            p.id === popup.id ? { ...p, isHighlighted: false } : p
-          )
-        )
-      }, 2000)
-    }
-  }, [ensureOverlayHydrated])
-
   useEffect(() => {
     if (!moveCascadeState.parentId) return
     const exists = overlayPopups.some(p => p.id === moveCascadeState.parentId)
@@ -2946,121 +2883,6 @@ const handleCenterNote = useCallback(
       console.log('[handlePopupHover] ❌ No matching timeout found')
     }
   }, [])
-
-  // Handle folder hover leave (for temporary tooltips)
-  const handlePopupPositionChange = useCallback(
-    (
-      popupId: string,
-      positions: {
-        screenPosition?: { x: number; y: number }
-        canvasPosition?: { x: number; y: number }
-        size?: { width: number; height: number }
-      }
-    ) => {
-      setOverlayPopups(prev =>
-        prev.map(popup => {
-          if (popup.id !== popupId) return popup
-
-          let next = popup
-          const ensureClone = () => {
-            if (next === popup) {
-              next = { ...popup }
-            }
-          }
-
-          const { screenPosition, canvasPosition, size } = positions
-
-          if (screenPosition) {
-            const prevScreen = popup.position
-            if (
-              !prevScreen ||
-              Math.abs(prevScreen.x - screenPosition.x) > 0.5 ||
-              Math.abs(prevScreen.y - screenPosition.y) > 0.5
-            ) {
-              ensureClone()
-              next.position = screenPosition
-            }
-          }
-
-          if (canvasPosition) {
-            const prevCanvas = popup.canvasPosition
-            if (
-              !prevCanvas ||
-              Math.abs(prevCanvas.x - canvasPosition.x) > 0.1 ||
-              Math.abs(prevCanvas.y - canvasPosition.y) > 0.1
-            ) {
-              ensureClone()
-              next.canvasPosition = canvasPosition
-            }
-          }
-
-          if (size) {
-            const width = size.width
-            const height = size.height
-            const prevWidth = popup.width ?? DEFAULT_POPUP_WIDTH
-            const prevHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
-            const widthChanged = Math.abs(prevWidth - width) > 0.5
-            const heightChanged = Math.abs(prevHeight - height) > 0.5
-
-            if (widthChanged || heightChanged) {
-              ensureClone()
-              if (widthChanged) next.width = width
-              if (heightChanged) next.height = height
-            }
-          }
-
-          return next
-        })
-      )
-    },
-    []
-  )
-
-  const handleResizePopup = useCallback(
-    (
-      popupId: string,
-      size: { width: number; height: number },
-      options?: { source?: 'auto' | 'user' }
-    ) => {
-      const source = options?.source ?? 'user'
-      const clampedWidth = clamp(size.width, MIN_POPUP_WIDTH, MAX_POPUP_WIDTH)
-      const clampedHeight = clamp(size.height, MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT)
-
-      setOverlayPopups(prev =>
-        prev.map(popup => {
-          if (popup.id !== popupId) return popup
-
-          if (source === 'auto' && popup.sizeMode === 'user') {
-            return popup
-          }
-
-          const prevWidth = popup.width ?? DEFAULT_POPUP_WIDTH
-          const prevHeight = popup.height ?? DEFAULT_POPUP_HEIGHT
-
-          if (
-            Math.abs(prevWidth - clampedWidth) <= 0.5 &&
-            Math.abs(prevHeight - clampedHeight) <= 0.5
-          ) {
-            if (source === 'auto' && popup.sizeMode !== 'auto') {
-              return {
-                ...popup,
-                sizeMode: 'auto'
-              }
-            }
-            return popup
-          }
-
-          return {
-            ...popup,
-            width: clampedWidth,
-            height: clampedHeight,
-            sizeMode: source === 'user' ? 'user' : 'auto'
-          }
-        })
-      )
-    },
-    []
-  )
 
   // Handle delete selected items from popup
   const handleDeleteSelected = useCallback(async (popupId: string, selectedIds: Set<string>) => {

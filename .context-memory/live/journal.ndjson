@@ -502,3 +502,4 @@
 {"ts":"2025-11-10T01:56:46.395Z","type":"commit","sha":"17328c15867d05c08e64291e4530a9436032c361","files_changed":9,"message":"refactor 1.2"}
 {"ts":"2025-11-10T02:07:21.071Z","type":"commit","sha":"31b1f3ac933896e1bf91453c217c7b9b226fb20b","files_changed":4,"message":"move the popup handlers (hover close timers, drag logic, move cascade"}
 {"ts":"2025-11-10T02:39:30.747Z","type":"commit","sha":"cb15837fab634f67be8217b7de06f934dab6d8c4","files_changed":4,"message":"keep peeling logic out of components/"}
+{"ts":"2025-11-10T04:21:16.805Z","type":"commit","sha":"9f53d4bdbbc5222605710ac0e93da86234eb5874","files_changed":12,"message":"dedicated hooks/utilities"}
