@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-10 04:27Z] c19afcf: phase 3
 - commit [2025-11-10 04:21Z] 9f53d4b: dedicated hooks/utilities
 - commit [2025-11-10 02:39Z] cb15837: keep peeling logic out of components/
 - commit [2025-11-10 02:07Z] 31b1f3a: move the popup handlers (hover close timers, drag logic, move cascade
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-09 22:20Z] 58e1441: refactoring test
 - commit [2025-11-09 21:24Z] 0ea8aea: Give connection-line rendering
 - commit [2025-11-09 21:09Z] 4f46a95: overlay bounds + minimap helper or connection-line
-- commit [2025-11-09 20:48Z] 1ec490a: Measurement + resize batching + Connection-line / minimap
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-10 04:21Z] 9f53d4b: dedicated hooks/utilities
+- commit [2025-11-10 04:27Z] c19afcf: phase 3

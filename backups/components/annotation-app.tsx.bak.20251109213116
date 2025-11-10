@@ -15,12 +15,14 @@ import {
   OverlayLayoutConflictError,
   OVERLAY_LAYOUT_SCHEMA_VERSION,
   type OverlayLayoutPayload,
+  type OverlayPopupDescriptor,
   type OverlayWorkspaceSummary,
   isOverlayPersistenceEnabled,
 } from "@/lib/adapters/overlay-layout-adapter"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { useCanvasMode, type CanvasMode } from "@/lib/canvas/use-canvas-mode"
 import { toast } from "@/hooks/use-toast"
+import { ToastAction } from "@/components/ui/toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { centerOnNotePanel, type CenterOnNoteOptions } from "@/lib/canvas/center-on-note"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -37,15 +39,14 @@ import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canva
 import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
 import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 import { PreviewPopover } from "@/components/shared/preview-popover"
-import type { OverlayCameraState } from "@/lib/types/overlay-layout"
+import { buildHydratedOverlayLayout } from "@/lib/workspaces/overlay-hydration"
+import type { OverlayLayoutDiagnostics, OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
 import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-state"
 import { useOverlayPopupLayout } from "@/lib/hooks/annotation/use-overlay-popup-layout"
-import { useOverlayLayoutPersistence } from "@/lib/hooks/annotation/use-overlay-layout-persistence"
-import { useOverlayLayoutSaveQueue } from "@/lib/hooks/annotation/use-overlay-layout-save-queue"
 import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -639,8 +640,10 @@ function AnnotationAppContent() {
   const [isWorkspaceSaving, setIsWorkspaceSaving] = useState(false)
   const [workspaceDeletionId, setWorkspaceDeletionId] = useState<string | null>(null)
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [pendingDiagnostics, setPendingDiagnostics] = useState<OverlayLayoutDiagnostics | null>(null)
   const workspacesLoadedRef = useRef(false)
   const workspaceToggleRef = useRef<HTMLDivElement | null>(null)
+  const diagnosticsRef = useRef<OverlayLayoutDiagnostics | null>(null)
   const lastDiagnosticsHashRef = useRef<string | null>(null)
   const currentWorkspace = useMemo(
     () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
@@ -744,6 +747,10 @@ function AnnotationAppContent() {
     : isWorkspaceListLoading
     ? 'Loading...'
     : currentWorkspaceName
+
+  useEffect(() => {
+    diagnosticsRef.current = pendingDiagnostics
+  }, [pendingDiagnostics])
 
   useEffect(() => {
     const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
@@ -961,32 +968,6 @@ function AnnotationAppContent() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isInitialLoadRef = useRef(false) // Track if we're in initial database load
 
-  const { applyOverlayLayout } = useOverlayLayoutPersistence({
-    overlayPersistenceActive,
-    currentWorkspaceId,
-    overlayPopupsLength: overlayPopups.length,
-    setOverlayPopups,
-    fetchGlobalFolder,
-    fetchGlobalChildren,
-    fetchWithKnowledgeBase,
-    toast,
-    layerContext,
-    debugLog,
-    isDebugEnabled,
-    overlayAdapterRef,
-    layoutLoadedRef,
-    layoutRevisionRef,
-    lastSavedLayoutHashRef,
-    pendingLayoutRef,
-    saveInFlightRef,
-    saveTimeoutRef,
-    isInitialLoadRef,
-    latestCameraRef,
-    prevCameraForSaveRef,
-    setIsWorkspaceLayoutLoading,
-    defaultCamera: DEFAULT_CAMERA,
-  })
-
   // Debug: Log persistence state on mount
   useEffect(() => {
     console.log('[AnnotationApp] overlayPersistenceEnabled =', overlayPersistenceEnabled)
@@ -1063,6 +1044,20 @@ function AnnotationAppContent() {
   }, [activeNoteId, logWorkspaceNotePositions])
 
   // Initialize overlay adapter when workspace changes
+  useEffect(() => {
+    if (!overlayPersistenceActive) {
+      overlayAdapterRef.current = null
+      return
+    }
+
+    const workspaceKey = currentWorkspaceId ?? 'default'
+    overlayAdapterRef.current = new OverlayLayoutAdapter({ workspaceKey })
+    layoutLoadedRef.current = false
+    layoutRevisionRef.current = null
+    lastSavedLayoutHashRef.current = null
+    pendingLayoutRef.current = null
+  }, [overlayPersistenceActive, currentWorkspaceId])
+
   // Force re-center trigger - increment to force effect to run
   // Ref to access canvas methods
   const canvasRef = useRef<any>(null)
@@ -1193,29 +1188,442 @@ const initialWorkspaceSyncRef = useRef(false)
     }
   }, [draggingPopup, handlePopupDragEnd, handlePopupDragMove, layerContext])
 
+  // Build layout payload from current overlayPopups state
+  const buildLayoutPayload = useCallback((): { payload: OverlayLayoutPayload; hash: string } => {
+    const descriptors: OverlayPopupDescriptor[] = []
+    const sharedTransform = layerContext?.transforms.popups || DEFAULT_CAMERA
 
-  const {
-    buildLayoutPayload,
-    flushLayoutSave,
-    scheduleLayoutSave,
-  } = useOverlayLayoutSaveQueue({
-    overlayPopups,
-    layerTransform: layerContext?.transforms.popups || DEFAULT_CAMERA,
-    overlayPersistenceActive,
-    overlayAdapterRef,
-    layoutRevisionRef,
-    lastSavedLayoutHashRef,
-    pendingLayoutRef,
-    saveTimeoutRef,
-    saveInFlightRef,
-    applyOverlayLayout,
-    draggingPopup,
-    defaultCamera: DEFAULT_CAMERA,
-    defaultWidth: DEFAULT_POPUP_WIDTH,
-    defaultHeight: DEFAULT_POPUP_HEIGHT,
-    debugLog,
-    isDebugEnabled,
-  })
+    overlayPopups.forEach(popup => {
+      const canvasPos = popup.canvasPosition
+      if (!canvasPos) return
+
+      const x = Number.isFinite(canvasPos.x) ? canvasPos.x : 0
+      const y = Number.isFinite(canvasPos.y) ? canvasPos.y : 0
+
+      // Derive display name with fallbacks to ensure we always persist a usable label
+      const displayName = popup.folderName?.trim()
+        || popup.folder?.name?.trim()
+        || deriveFromPath((popup.folder as any)?.path)
+        || 'Untitled Folder'
+
+      const descriptor: OverlayPopupDescriptor = {
+        id: popup.id,
+        folderId: popup.folderId || null,
+        folderName: displayName,
+        folderColor: null,  // Don't cache colors - always fetch fresh from DB on restore
+        parentId: popup.parentPopupId || null,
+        canvasPosition: { x, y },
+        level: popup.level || 0,
+        width: popup.width ?? DEFAULT_POPUP_WIDTH,
+        height: popup.height ?? DEFAULT_POPUP_HEIGHT,
+      }
+
+      console.log('[Save] Saving popup:', displayName, '- color:', popup.folder?.color, '- descriptor:', JSON.stringify(descriptor))
+      descriptors.push(descriptor)
+    })
+
+    const camera: OverlayCameraState = {
+      x: Number.isFinite(sharedTransform.x) ? (sharedTransform.x as number) : 0,
+      y: Number.isFinite(sharedTransform.y) ? (sharedTransform.y as number) : 0,
+      scale: Number.isFinite(sharedTransform.scale) ? (sharedTransform.scale as number) : 1,
+    }
+
+    const payload: OverlayLayoutPayload = {
+      schemaVersion: OVERLAY_LAYOUT_SCHEMA_VERSION,
+      popups: descriptors,
+      inspectors: [],
+      lastSavedAt: new Date().toISOString(),
+      camera,
+    }
+
+    const hash = JSON.stringify({
+      schemaVersion: payload.schemaVersion,
+      popups: payload.popups,
+      inspectors: payload.inspectors,
+      camera,
+    })
+
+    return { payload, hash }
+  }, [overlayPopups, layerContext?.transforms.popups])
+
+  const handleRepairMismatchedPopups = useCallback(() => {
+    const diagnostics = diagnosticsRef.current
+    if (!diagnostics) {
+      return
+    }
+
+    const flaggedPopupIds = new Set<string>()
+    diagnostics.workspaceMismatches.forEach(entry => {
+      if (entry.popupId) flaggedPopupIds.add(entry.popupId)
+    })
+    diagnostics.missingFolders.forEach(entry => {
+      if (entry.popupId) flaggedPopupIds.add(entry.popupId)
+    })
+
+    if (flaggedPopupIds.size === 0) {
+      setPendingDiagnostics(null)
+      lastDiagnosticsHashRef.current = null
+      return
+    }
+
+    setOverlayPopups(prev => prev.filter(popup => !flaggedPopupIds.has(popup.id)))
+    needsSaveAfterInteractionRef.current = true
+    pendingLayoutRef.current = null
+
+    debugLog({
+      component: 'PopupOverlay',
+      action: 'overlay_workspace_repair_applied',
+      metadata: {
+        removedPopupIds: Array.from(flaggedPopupIds),
+        mismatchCount: diagnostics.workspaceMismatches.length,
+        missingCount: diagnostics.missingFolders.length,
+      },
+    })
+
+    toast({
+      title: flaggedPopupIds.size === 1 ? 'Removed 1 popup' : `Removed ${flaggedPopupIds.size} popups`,
+      description:
+        diagnostics.workspaceMismatches.length > 0
+          ? 'Popups referencing another workspace were removed from this layout.'
+          : 'Popups without matching folders were removed from this layout.',
+    })
+
+    setPendingDiagnostics(null)
+    lastDiagnosticsHashRef.current = null
+  }, [setOverlayPopups])
+
+  // Apply layout from database
+  const applyOverlayLayout = useCallback((layout: OverlayLayoutPayload) => {
+    const diagnostics = layout.diagnostics ?? null
+    const mismatchCount = diagnostics?.workspaceMismatches?.length ?? 0
+    const missingCount = diagnostics?.missingFolders?.length ?? 0
+    const hasDiagnostics = Boolean(diagnostics) && (mismatchCount > 0 || missingCount > 0)
+
+    if (hasDiagnostics && diagnostics) {
+      const digest = JSON.stringify({
+        mismatches: diagnostics.workspaceMismatches.map(entry => ({
+          popupId: entry.popupId,
+          actualWorkspaceId: entry.actualWorkspaceId ?? null,
+        })),
+        missing: diagnostics.missingFolders.map(entry => ({
+          popupId: entry.popupId,
+          folderId: entry.folderId ?? null,
+        })),
+      })
+
+      if (lastDiagnosticsHashRef.current !== digest) {
+        lastDiagnosticsHashRef.current = digest
+        setPendingDiagnostics(diagnostics)
+
+        debugLog({
+          component: 'PopupOverlay',
+          action: 'overlay_workspace_mismatch_detected',
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            mismatchCount,
+            missingCount,
+            mismatches: diagnostics.workspaceMismatches.slice(0, 10),
+            missingFolders: diagnostics.missingFolders.slice(0, 10),
+          },
+        })
+
+        const summaryParts: string[] = []
+        if (mismatchCount > 0) {
+          summaryParts.push(
+            mismatchCount === 1
+              ? '1 popup belongs to a different workspace.'
+              : `${mismatchCount} popups belong to a different workspace.`
+          )
+        }
+        if (missingCount > 0) {
+          summaryParts.push(
+            missingCount === 1
+              ? '1 popup references a folder that no longer exists.'
+              : `${missingCount} popups reference folders that no longer exist.`
+          )
+        }
+
+        toast({
+          variant: 'destructive',
+          title: 'Overlay layout needs repair',
+          description: summaryParts.join(' '),
+          action: (
+            <ToastAction altText="Repair popups" onClick={handleRepairMismatchedPopups}>
+              Repair
+            </ToastAction>
+          ),
+        })
+      }
+    } else {
+      if (pendingDiagnostics) {
+        setPendingDiagnostics(null)
+      }
+      lastDiagnosticsHashRef.current = null
+    }
+
+    const savedCamera = layout.camera ?? DEFAULT_CAMERA
+    if (layerContext?.setTransform) {
+      const currentTransform = layerContext.transforms.popups || DEFAULT_CAMERA
+      if (!camerasEqual(currentTransform, savedCamera)) {
+        layerContext.setTransform('popups', savedCamera)
+      }
+    }
+    latestCameraRef.current = savedCamera
+    prevCameraForSaveRef.current = savedCamera
+    const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, savedCamera)
+    lastSavedLayoutHashRef.current = coreHash
+    // NOTE: Do NOT set layoutLoadedRef.current = true here!
+    // It must be set AFTER setOverlayPopups completes, to prevent auto-switch during hydration
+    // The load effect (lines 562-604) sets it correctly at line 596
+
+    if (hydratedPopups.length === 0) {
+      setOverlayPopups([])
+      return
+    }
+
+    const restoredPopups = (hydratedPopups as OverlayPopup[]).map((popup) => ({
+      ...popup,
+      sizeMode: popup.sizeMode ?? (
+        Number.isFinite(popup.width) || Number.isFinite(popup.height)
+          ? 'auto'
+          : 'default'
+      )
+    }))
+    setOverlayPopups(restoredPopups)
+
+    const popupsNeedingFetch = restoredPopups.filter(p => p.isLoading && p.folderId)
+    if (popupsNeedingFetch.length === 0) {
+      return
+    }
+
+    // Fallback: fetch folder data when metadata was not prefetched
+    popupsNeedingFetch.forEach(async (popup) => {
+      if (!popup.folderId) return
+
+      try {
+        const responseData = await fetchGlobalFolder(popup.folderId)
+        if (!responseData) return
+        const folderData = responseData.item || responseData
+
+        // Get the cached color from the descriptor
+        const cachedColor = popup.folder?.color
+
+        console.log('[Restore] Processing', folderData.name, '- DB color:', folderData.color, ', cached:', cachedColor)
+
+        // Start with folder's own color, fall back to cached
+        let effectiveColor = folderData.color || cachedColor
+
+        // Walk up ancestor chain if we have no color at all (neither DB nor cache)
+        if (!effectiveColor) {
+          const initialParentId = folderData.parentId ?? folderData.parent_id
+          console.log('[Restore] No color for', folderData.name, '- walking ancestor chain from:', initialParentId)
+          if (initialParentId) {
+            try {
+              let currentParentId = initialParentId
+              let depth = 0
+              const maxDepth = 10 // Prevent infinite loops
+
+              while (currentParentId && !effectiveColor && depth < maxDepth) {
+                const parentResponse = await fetchWithKnowledgeBase(`/api/items/${currentParentId}`)
+                if (!parentResponse.ok) break
+
+                const parentData = await parentResponse.json()
+                const parent = parentData.item || parentData
+
+                if (parent.color) {
+                  effectiveColor = parent.color
+                  console.log('[Restore] Inherited color from ancestor:', parent.name, 'color:', effectiveColor, 'depth:', depth + 1)
+                  break
+                }
+
+                // Move up to next parent
+                currentParentId = parent.parentId ?? parent.parent_id
+                depth++
+              }
+
+              if (!effectiveColor) {
+                console.log('[Restore] No color found in ancestor chain after', depth, 'levels')
+              }
+            } catch (e) {
+              console.warn('[Popup Restore] Failed to fetch ancestor color:', e)
+            }
+          }
+        }
+
+        console.log('[Restore] Final effectiveColor for', folderData.name, ':', effectiveColor)
+
+        // Fetch children
+        const childItems = await fetchGlobalChildren(popup.folderId)
+        if (!childItems) return
+        const children = childItems.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          icon: item.icon || (item.type === 'folder' ? '📁' : '📄'),
+          color: item.color,
+          path: item.path,
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+          hasChildren: item.type === 'folder',
+          level: popup.level + 1,
+          children: [],
+          parentId: item.parentId ?? item.parent_id,
+        }))
+
+        setOverlayPopups(prev => {
+          const updated = prev.map(p => {
+            if (p.id !== popup.id) return p
+
+            // Derive display name with fallbacks to prevent blank name from wiping cached label
+            const displayName = folderData.name?.trim()
+              || deriveFromPath(folderData.path)
+              || p.folderName?.trim()  // Keep existing cached name if new data has no name
+              || 'Untitled Folder'
+
+            return {
+              ...p,
+              folderName: displayName,
+              folder: {
+                id: folderData.id,
+                name: displayName,
+                type: 'folder' as const,
+                level: p.level,
+                color: effectiveColor,
+                path: folderData.path,
+                children,
+              },
+              children,
+              isLoading: false,
+            }
+          })
+
+          return updated
+        })
+      } catch (error) {
+        if (isDebugEnabled()) {
+          debugLog({
+            component: 'AnnotationApp',
+            action: 'folder_load_failed',
+            metadata: {
+              folderId: popup.folderId,
+              error: error instanceof Error ? error.message : 'Unknown error'
+            }
+          })
+        }
+      }
+    })
+  }, [layerContext, handleRepairMismatchedPopups, currentWorkspaceId, pendingDiagnostics])
+
+  // Flush pending save to database
+  const flushLayoutSave = useCallback(async () => {
+    if (!overlayPersistenceActive) return
+
+    const adapter = overlayAdapterRef.current
+    if (!adapter) return
+
+    const pending = pendingLayoutRef.current ?? (() => {
+      const snapshot = buildLayoutPayload()
+      return snapshot.hash === lastSavedLayoutHashRef.current ? null : snapshot
+    })()
+
+    if (!pending) return
+
+    if (saveInFlightRef.current) {
+      pendingLayoutRef.current = pending
+      return
+    }
+
+    pendingLayoutRef.current = null
+    saveInFlightRef.current = true
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+    }
+
+    try {
+      const envelope = await adapter.saveLayout({
+        layout: pending.payload,
+        version: pending.payload.schemaVersion,
+        revision: layoutRevisionRef.current,
+      })
+
+      layoutRevisionRef.current = envelope.revision
+      lastSavedLayoutHashRef.current = JSON.stringify({
+        schemaVersion: envelope.layout.schemaVersion,
+        popups: envelope.layout.popups,
+        inspectors: envelope.layout.inspectors,
+        camera: envelope.layout.camera ?? DEFAULT_CAMERA,
+      })
+      console.log('[AnnotationApp] Saved overlay layout to database')
+    } catch (error) {
+      if (error instanceof OverlayLayoutConflictError) {
+        const envelope = error.payload
+        layoutRevisionRef.current = envelope.revision
+        lastSavedLayoutHashRef.current = JSON.stringify({
+          schemaVersion: envelope.layout.schemaVersion,
+          popups: envelope.layout.popups,
+          inspectors: envelope.layout.inspectors,
+          camera: envelope.layout.camera ?? DEFAULT_CAMERA,
+        })
+        applyOverlayLayout(envelope.layout)
+        console.log('[AnnotationApp] Resolved layout conflict from database')
+      } else {
+        if (isDebugEnabled()) {
+          debugLog({
+            component: 'AnnotationApp',
+            action: 'overlay_layout_save_failed',
+            metadata: { error: error instanceof Error ? error.message : 'Unknown error' }
+          })
+        }
+        pendingLayoutRef.current = pending
+      }
+    } finally {
+      saveInFlightRef.current = false
+      if (pendingLayoutRef.current) {
+        void flushLayoutSave()
+      }
+    }
+  }, [applyOverlayLayout, buildLayoutPayload, overlayPersistenceActive])
+
+  // Schedule save with debounce (or immediate for creation/deletion)
+  const scheduleLayoutSave = useCallback((immediate = false) => {
+    if (!overlayPersistenceActive) return
+    if (!overlayAdapterRef.current) return
+    if (draggingPopup) {
+      console.log('[AnnotationApp] Save skipped: popup dragging in progress')
+      return
+    }
+
+    const snapshot = buildLayoutPayload()
+
+    if (snapshot.hash === lastSavedLayoutHashRef.current) {
+      pendingLayoutRef.current = null
+      return
+    }
+
+    if (saveInFlightRef.current) {
+      pendingLayoutRef.current = snapshot
+      return
+    }
+
+    pendingLayoutRef.current = snapshot
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    if (immediate) {
+      // Immediate save (for creation/deletion - existence changes)
+      console.log('[AnnotationApp] Saving immediately (existence change)...')
+      void flushLayoutSave()
+    } else {
+      // Debounced save (for moves, resizes, etc. - property changes)
+      saveTimeoutRef.current = setTimeout(() => {
+        void flushLayoutSave()
+      }, 2500) // 2.5 second debounce
+    }
+  }, [buildLayoutPayload, flushLayoutSave, overlayPersistenceActive])
 
   useEffect(() => {
     if (!overlayPersistenceActive) {
@@ -1235,6 +1643,80 @@ const initialWorkspaceSyncRef = useRef(false)
   }, [overlayPersistenceActive, scheduleLayoutSave, layerContext?.transforms.popups])
 
   // Load layout from database on mount
+  useEffect(() => {
+    if (!overlayPersistenceActive || layoutLoadedRef.current) return
+
+    const adapter = overlayAdapterRef.current
+    if (!adapter) return
+
+    let cancelled = false
+    setIsWorkspaceLayoutLoading(true)
+
+    void (async () => {
+      try {
+        console.log('[AnnotationApp] Loading overlay layout from database...')
+        const envelope = await adapter.loadLayout()
+        if (cancelled) return
+
+        if (!envelope) {
+          console.log('[AnnotationApp] No saved layout found')
+          layoutRevisionRef.current = null
+          lastSavedLayoutHashRef.current = null
+          layoutLoadedRef.current = true
+          setOverlayPopups([])
+          setIsWorkspaceLayoutLoading(false)
+          return
+        }
+
+        console.log('[AnnotationApp] Loaded overlay layout from database:', envelope.layout.popups.length, 'popups')
+        layoutRevisionRef.current = envelope.revision
+        lastSavedLayoutHashRef.current = JSON.stringify({
+          schemaVersion: envelope.layout.schemaVersion,
+          popups: envelope.layout.popups,
+          inspectors: envelope.layout.inspectors,
+          camera: envelope.layout.camera ?? DEFAULT_CAMERA,
+        })
+
+        // Set flag to indicate initial load is in progress
+        // This prevents auto-switch during hydration
+        isInitialLoadRef.current = true
+        applyOverlayLayout(envelope.layout)
+        // NOTE: Do NOT set layoutLoadedRef.current = true here!
+        // It will be set by the useEffect below after overlayPopups state update completes
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[AnnotationApp] Failed to load overlay layout:', error)
+          layoutLoadedRef.current = true // Set on error so we don't block saves
+          toast({
+            variant: 'destructive',
+            title: 'Failed to load workspace layout',
+            description:
+              error instanceof Error ? error.message : 'Unexpected error while loading the workspace.',
+          })
+        }
+      } finally {
+        if (!cancelled) {
+          setIsWorkspaceLayoutLoading(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [applyOverlayLayout, overlayPersistenceActive, currentWorkspaceId, setOverlayPopups])
+
+  // Set layoutLoadedRef.current = true AFTER initial popups load completes
+  // This ensures auto-switch doesn't trigger during database hydration
+  useEffect(() => {
+    if (isInitialLoadRef.current && overlayPopups.length >= 0) {
+      // Initial load completed (popups state has been updated)
+      console.log('[AnnotationApp] Initial layout load complete, enabling auto-switch')
+      layoutLoadedRef.current = true
+      isInitialLoadRef.current = false
+    }
+  }, [overlayPopups.length])
+
   // Save layout when overlayPopups changes
   // Use a ref to track if we need to save, to avoid infinite loops
   const prevPopupsRef = useRef<OverlayPopup[]>([])
