@@ -45,6 +45,7 @@ import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
+import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-state"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -603,10 +604,10 @@ function AnnotationAppContent() {
   }, [])
 
   // Floating notes widget state
-const [showNotesWidget, setShowNotesWidget] = useState(false)
-const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
-const activeEditorRef = useRef<any>(null) // Track the currently active editor
-const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
+  const [showNotesWidget, setShowNotesWidget] = useState(false)
+  const [notesWidgetPosition, setNotesWidgetPosition] = useState({ x: 100, y: 100 })
+  const activeEditorRef = useRef<any>(null) // Track the currently active editor
+  const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track the currently active panel ID
 
   const freshNotesRef = useRef<Set<string>>(new Set())
   const [freshNoteIds, setFreshNoteIds] = useState<string[]>([])
@@ -622,11 +623,18 @@ const [activePanelId, setActivePanelId] = useState<string | null>(null) // Track
   const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
 
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
-const [overlayPopups, setOverlayPopups] = useState<OverlayPopup[]>([])
-const [moveCascadeState, setMoveCascadeState] = useState<{ parentId: string | null; childIds: string[] }>({
-  parentId: null,
-  childIds: [],
-})
+  const {
+    popups: overlayPopups,
+    setPopups: setOverlayPopups,
+    draggingPopup,
+    setDraggingPopup,
+    overlayPanning,
+    setOverlayPanning,
+  } = usePopupOverlayState()
+  const [moveCascadeState, setMoveCascadeState] = useState<{ parentId: string | null; childIds: string[] }>({
+    parentId: null,
+    childIds: [],
+  })
 type SidebarFolderPopup = {
   id: string
   folderId: string
@@ -637,12 +645,10 @@ type SidebarFolderPopup = {
   parentFolderId?: string
   folderColor?: string
 }
-const [sidebarFolderPopups, setSidebarFolderPopups] = useState<SidebarFolderPopup[]>([])
-const sidebarFolderPopupsRef = useRef<SidebarFolderPopup[]>([])
-const sidebarHoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
-const sidebarPopupIdCounter = useRef(0)
-  const [draggingPopup, setDraggingPopup] = useState<string | null>(null)
-  const [overlayPanning, setOverlayPanning] = useState(false)
+  const [sidebarFolderPopups, setSidebarFolderPopups] = useState<SidebarFolderPopup[]>([])
+  const sidebarFolderPopupsRef = useRef<SidebarFolderPopup[]>([])
+  const sidebarHoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const sidebarPopupIdCounter = useRef(0)
   const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const draggingPopupRef = useRef<string | null>(null)
   const dragScreenPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })

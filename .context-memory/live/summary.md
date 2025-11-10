@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Made overlay minimap render even without popups, added fallback portals so it shows in all overlay branches, and ensured CSS keeps it above popups; awaiting verification.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-10 01:56Z] 17328c1: refactor 1.2
 - commit [2025-11-09 22:55Z] e7092b5: refactor 1.1
 - commit [2025-11-09 22:34Z] 75d94e6: refactoring annotation-app.tsx
 - commit [2025-11-09 22:20Z] 58e1441: refactoring test
@@ -15,7 +16,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-09 20:48Z] 1ec490a: Measurement + resize batching + Connection-line / minimap
 - commit [2025-11-09 19:34Z] 665262c: start the code extraction
 - commit [2025-11-09 19:16Z] cb94bdc: refactoring was successful
-- commit [2025-11-09 18:59Z] b07e9ea: refactored transform refs, pointer handlers, selection guards, and shared-camera coordination live in this hook,
 
 Recent Chat
 - (none)
@@ -34,4 +34,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-09 22:55Z] e7092b5: refactor 1.1
+- commit [2025-11-10 01:56Z] 17328c1: refactor 1.2
