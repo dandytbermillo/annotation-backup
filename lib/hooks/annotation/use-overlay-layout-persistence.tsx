@@ -16,6 +16,7 @@ type PendingSnapshot = { payload: OverlayLayoutPayload; hash: string }
 type UseOverlayLayoutPersistenceOptions = {
   overlayPersistenceActive: boolean
   currentWorkspaceId: string | null
+  overlayPopups: OverlayPopup[]
   overlayPopupsLength: number
   setOverlayPopups: Dispatch<SetStateAction<OverlayPopup[]>>
   fetchGlobalFolder: (folderId: string) => Promise<any | null>
@@ -46,6 +47,7 @@ type UseOverlayLayoutPersistenceResult = {
 export function useOverlayLayoutPersistence({
   overlayPersistenceActive,
   currentWorkspaceId,
+  overlayPopups,
   overlayPopupsLength,
   setOverlayPopups,
   fetchGlobalFolder,
@@ -413,12 +415,13 @@ export function useOverlayLayoutPersistence({
   ])
 
   useEffect(() => {
-    if (isInitialLoadRef.current) {
-      layoutLoadedRef.current = true
-      isInitialLoadRef.current = false
-      console.log("[AnnotationApp] Initial layout load complete, enabling auto-switch")
+    if (!isInitialLoadRef.current) {
+      return
     }
-  }, [overlayPopupsLength, isInitialLoadRef, layoutLoadedRef])
+    layoutLoadedRef.current = true
+    isInitialLoadRef.current = false
+    console.log("[AnnotationApp] Initial layout load complete, enabling auto-switch")
+  }, [overlayPopups, isInitialLoadRef, layoutLoadedRef])
 
   return {
     applyOverlayLayout,

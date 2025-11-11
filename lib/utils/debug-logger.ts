@@ -2,12 +2,111 @@
  * Debug Logger - Logs to PostgreSQL debug_logs table
  */
 
-// Feature flag to disable debug logging
 const DEBUG_LOGGING_ENABLED = ['true', '1', 'on', 'yes'].includes(
   (process.env.NEXT_PUBLIC_DEBUG_LOGGING ?? '').toLowerCase()
 );
+const DEBUG_OVERRIDE_STORAGE_KEY = 'annotation:debug-logging';
+const RUNTIME_PREF_CACHE_MS = 1000;
+const RATE_LIMIT_INTERVAL_MS = 1000;
+const RATE_LIMIT_MAX =
+  Number(process.env.NEXT_PUBLIC_DEBUG_LOG_MAX ?? '') > 0
+    ? Number(process.env.NEXT_PUBLIC_DEBUG_LOG_MAX)
+    : 40; // ~40 logs/sec default before suppressing
 
-export const isDebugEnabled = () => DEBUG_LOGGING_ENABLED;
+type OverrideValue = string | boolean | null | undefined;
+
+const parseOverride = (value: OverrideValue): boolean | null => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'on', 'yes', 'enable', 'enabled'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'off', 'no', 'disable', 'disabled'].includes(normalized)) {
+    return false;
+  }
+  return null;
+};
+
+let cachedPreference = DEBUG_LOGGING_ENABLED;
+let lastPreferenceCheck = 0;
+
+const computeRuntimePreference = (): boolean => {
+  if (typeof window === 'undefined') {
+    return DEBUG_LOGGING_ENABLED;
+  }
+
+  const globalOverride = parseOverride(
+    (window as typeof window & { __ANNOTATION_DEBUG_LOGGING_OVERRIDE?: OverrideValue })
+      .__ANNOTATION_DEBUG_LOGGING_OVERRIDE,
+  );
+  if (globalOverride !== null) {
+    return globalOverride;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(DEBUG_OVERRIDE_STORAGE_KEY);
+    const storedOverride = parseOverride(stored);
+    if (storedOverride !== null) {
+      return storedOverride;
+    }
+  } catch {
+    // Ignore storage errors; fall back to default
+  }
+
+  return DEBUG_LOGGING_ENABLED;
+};
+
+export const isDebugEnabled = () => {
+  if (typeof window === 'undefined') {
+    return DEBUG_LOGGING_ENABLED;
+  }
+  const now = Date.now();
+  if (now - lastPreferenceCheck > RUNTIME_PREF_CACHE_MS) {
+    cachedPreference = computeRuntimePreference();
+    lastPreferenceCheck = now;
+  }
+  return cachedPreference;
+};
+
+let rateWindowStart = 0;
+let rateWindowCount = 0;
+let rateLimitWarned = false;
+
+const shouldEmitDebugLog = () => {
+  if (!isDebugEnabled()) {
+    return false;
+  }
+
+  if (RATE_LIMIT_MAX <= 0) {
+    return true;
+  }
+
+  const now = Date.now();
+  if (now - rateWindowStart > RATE_LIMIT_INTERVAL_MS) {
+    rateWindowStart = now;
+    rateWindowCount = 0;
+    rateLimitWarned = false;
+  }
+
+  if (rateWindowCount >= RATE_LIMIT_MAX) {
+    if (!rateLimitWarned && typeof console !== 'undefined') {
+      console.warn(
+        `[DebugLogger] Suppressing debug logs after ${RATE_LIMIT_MAX} events/sec. ` +
+          `Set localStorage("${DEBUG_OVERRIDE_STORAGE_KEY}","on") or raise NEXT_PUBLIC_DEBUG_LOG_MAX to re-enable.`,
+      );
+      rateLimitWarned = true;
+    }
+    return false;
+  }
+
+  rateWindowCount += 1;
+  return true;
+};
 
 let sessionId: string | null = null;
 
@@ -36,8 +135,8 @@ export async function debugLog(
   event?: string,
   details?: any
 ): Promise<void> {
-  // Early return if debug logging is disabled
-  if (!DEBUG_LOGGING_ENABLED) {
+  // Early return if debug logging is disabled or rate-limited
+  if (!shouldEmitDebugLog()) {
     return;
   }
 

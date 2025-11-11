@@ -19,7 +19,7 @@ import {
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
 import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
 import { AutoHideToolbar } from "./canvas/auto-hide-toolbar"
@@ -55,8 +55,6 @@ import { useConstellationViewState } from "@/lib/hooks/annotation/use-constellat
 import { useOrganizationSidebarActions } from "@/lib/hooks/annotation/use-organization-sidebar-actions"
 import { usePopupBulkActions } from "@/lib/hooks/annotation/use-popup-bulk-actions"
 import { useKnowledgeBaseSidebar } from "@/lib/hooks/annotation/use-knowledge-base-sidebar"
-import { useWorkspaceNoteTitleSync } from "@/lib/hooks/annotation/use-workspace-note-title-sync"
-import { useWorkspacePanelPositions } from "@/lib/hooks/annotation/use-workspace-panel-positions"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -361,32 +359,6 @@ function AnnotationAppContent() {
     fetchChildren: fetchGlobalChildren,
   } = folderCacheApi
 
-  const sidebarLoaderDeps = useMemo(
-    () => ({
-      appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
-      fetchWithWorkspace: fetchWithKnowledgeBase,
-      knowledgeBaseWorkspaceId,
-      resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
-      updateFolderCacheEntry,
-      updateFolderCacheChildren,
-    }),
-    [
-      appendKnowledgeBaseWorkspaceParam,
-      fetchWithKnowledgeBase,
-      knowledgeBaseWorkspaceId,
-      resolveKnowledgeBaseWorkspaceId,
-      updateFolderCacheEntry,
-      updateFolderCacheChildren,
-    ],
-  )
-
-  const noteTitleDeps = useMemo(
-    () => ({
-      fetchWithKnowledgeBase,
-    }),
-    [fetchWithKnowledgeBase],
-  )
-
   const {
     organizationSidebarData: sidebarState,
     knowledgeBaseId,
@@ -395,10 +367,18 @@ function AnnotationAppContent() {
     setTitleForNote,
     ensureTitleFromServer,
   } = useKnowledgeBaseSidebar({
-    loader: sidebarLoaderDeps,
-    noteTitles: noteTitleDeps,
+    loader: {
+      appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
+      fetchWithWorkspace: fetchWithKnowledgeBase,
+      knowledgeBaseWorkspaceId,
+      resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
+      updateFolderCacheEntry,
+      updateFolderCacheChildren,
+    },
+    noteTitles: {
+      fetchWithKnowledgeBase,
+    },
     sharedWorkspace,
-    enabled: shouldLoadOverlay,
   })
 
   const sortedOpenNotes = useMemo(() => {
@@ -413,28 +393,114 @@ function AnnotationAppContent() {
     })
   }, [openNotes])
 
-  useWorkspaceNoteTitleSync({
-    sharedWorkspace,
-    sortedOpenNotes,
-    noteTitleMapRef,
-    setTitleForNote,
-    ensureTitleFromServer,
-    forceNoteTitleUpdate,
-  })
+  const deriveTitleFromRecord = useCallback((record: any): string | null => {
+    if (!record || typeof record !== "object") return null
+    const candidates = [
+      record.title,
+      record.name,
+      record.metadata?.noteTitle,
+      record.metadata?.title,
+      record.metadata?.displayName,
+      record.metadata?.displayId,
+    ]
 
-  const {
-    logWorkspaceNotePositions,
-    resolveMainPanelPosition,
-    hasRenderedMainPanel,
-  } = useWorkspacePanelPositions({
-    sharedWorkspace,
-    sortedOpenNotes,
-    openNotes,
-    activeNoteId,
-    getPendingPosition,
-    getCachedPosition,
-    debugLog,
-  })
+    for (const candidate of candidates) {
+      if (typeof candidate === "string") {
+        const trimmed = candidate.trim()
+        if (trimmed) {
+          return trimmed
+        }
+      }
+    }
+
+    return null
+  }, [])
+
+  const updateTitleForNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return
+      const storeKey = ensurePanelKey(noteId, "main")
+      const record = dataStore.get(storeKey)
+      const derived = deriveTitleFromRecord(record)
+      if (derived) {
+        setTitleForNote(noteId, derived)
+        return
+      }
+
+      const existingTitle = noteTitleMapRef.current.get(noteId)
+
+      if (existingTitle) {
+        if (record && typeof record === "object") {
+          const currentStoreTitle = typeof record.title === "string" ? record.title.trim() : ""
+          if (currentStoreTitle !== existingTitle) {
+            dataStore.update(storeKey, { title: existingTitle })
+          }
+        }
+        return
+      }
+
+      setTitleForNote(noteId, null)
+      ensureTitleFromServer(noteId)
+    },
+    [sharedWorkspace, deriveTitleFromRecord, setTitleForNote, ensureTitleFromServer],
+  )
+
+  useEffect(() => {
+    if (sortedOpenNotes.length === 0) {
+      if (noteTitleMapRef.current.size > 0) {
+        noteTitleMapRef.current.clear()
+        forceNoteTitleUpdate()
+      }
+      return
+    }
+
+    sortedOpenNotes.forEach((note) => {
+      updateTitleForNote(note.noteId)
+    })
+
+    const activeIds = new Set(sortedOpenNotes.map((note) => note.noteId))
+    let removed = false
+    noteTitleMapRef.current.forEach((_value, noteId) => {
+      if (!activeIds.has(noteId)) {
+        noteTitleMapRef.current.delete(noteId)
+        removed = true
+      }
+    })
+    if (removed) {
+      forceNoteTitleUpdate()
+    }
+  }, [sortedOpenNotes, updateTitleForNote, forceNoteTitleUpdate])
+
+  useEffect(() => {
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore) return
+
+    const handleMutation = (key: unknown) => {
+      if (typeof key !== "string") return
+      const { noteId, panelId } = parsePanelKey(key)
+      if (!noteId || panelId !== "main") return
+      updateTitleForNote(noteId)
+    }
+
+    const handleDelete = (key: unknown) => {
+      if (typeof key !== "string") return
+      const { noteId, panelId } = parsePanelKey(key)
+      if (!noteId || panelId !== "main") return
+      setTitleForNote(noteId, null)
+    }
+
+    dataStore.on("set", handleMutation)
+    dataStore.on("update", handleMutation)
+    dataStore.on("delete", handleDelete)
+
+    return () => {
+      dataStore.off("set", handleMutation)
+      dataStore.off("update", handleMutation)
+      dataStore.off("delete", handleDelete)
+    }
+  }, [sharedWorkspace, updateTitleForNote, setTitleForNote])
 
   const {
     popups: overlayPopups,
@@ -551,6 +617,81 @@ function AnnotationAppContent() {
     }
   }, [organizationFolders, overlayPopups])
 
+  const logWorkspaceNotePositions = useCallback(
+    (context: string) => {
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return
+
+      const positions = sortedOpenNotes.map((note) => {
+        const storeKey = ensurePanelKey(note.noteId, "main")
+        const record = dataStore.get(storeKey)
+        const position = record?.position ?? record?.worldPosition ?? record?.mainPosition ?? null
+
+        return {
+          noteId: note.noteId,
+          hasRecord: Boolean(record),
+          position,
+        }
+      })
+
+      debugLog({
+        component: "AnnotationApp",
+        action: "panel_position_snapshot",
+        metadata: {
+          context,
+          activeNoteId,
+          positions,
+        },
+      })
+    },
+    [sharedWorkspace, sortedOpenNotes, activeNoteId, debugLog],
+  )
+
+  const resolveMainPanelPosition = useCallback(
+    (noteId: string): { x: number; y: number } | null => {
+      if (!noteId) return null
+
+      const normalize = (value: any): { x: number; y: number } | null => {
+        if (!value || typeof value !== "object") return null
+        const { x, y } = value as { x?: number; y?: number }
+        if (typeof x !== "number" || typeof y !== "number") {
+          return null
+        }
+        return { x, y }
+      }
+
+      const pending = normalize(getPendingPosition(noteId))
+      if (pending) return pending
+
+      const cached = normalize(getCachedPosition(noteId))
+      if (cached) return cached
+
+      const openNote = openNotes.find((note) => note.noteId === noteId)
+      const openPosition = normalize(openNote?.mainPosition)
+      if (openPosition) return openPosition
+
+      const dataStore = sharedWorkspace?.dataStore
+      if (dataStore) {
+        const storeKey = ensurePanelKey(noteId, "main")
+        const record = dataStore.get(storeKey)
+        if (record && typeof record === "object") {
+          const candidates = [
+            normalize((record as any)?.position),
+            normalize((record as any)?.worldPosition),
+            normalize((record as any)?.mainPosition),
+          ]
+          for (const candidate of candidates) {
+            if (candidate) return candidate
+          }
+        }
+      }
+
+      console.log("[resolveMainPanelPosition] DataStore miss, trying database for", noteId)
+
+      return null
+    },
+    [getPendingPosition, getCachedPosition, openNotes, sharedWorkspace],
+  )
 
   const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
   const canRenderOverlay =
@@ -576,7 +717,6 @@ function AnnotationAppContent() {
   const { applyOverlayLayout } = useOverlayLayoutPersistence({
     overlayPersistenceActive,
     currentWorkspaceId,
-    overlayPopups,
     overlayPopupsLength: overlayPopups.length,
     setOverlayPopups,
     fetchGlobalFolder,
@@ -1092,7 +1232,8 @@ const initialWorkspaceSyncRef = useRef(false)
     // During early hydration, openNotes is empty so resolveMainPanelPosition returns null,
     // but the canvas has already rendered panels from database. Treat rendered panels
     // as "having a persisted position" to prevent recentering during hydration gap.
-    const panelAlreadyRendered = hasRenderedMainPanel(noteId)
+    const dataStore = sharedWorkspace?.dataStore
+    const panelAlreadyRendered = dataStore ? dataStore.has(ensurePanelKey(noteId, 'main')) : false
 
     const hasPersistedPosition = Boolean(
       (persistedPosition && !isDefaultMainPosition(persistedPosition)) ||

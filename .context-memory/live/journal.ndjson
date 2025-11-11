@@ -505,3 +505,5 @@
 {"ts":"2025-11-10T04:21:16.805Z","type":"commit","sha":"9f53d4bdbbc5222605710ac0e93da86234eb5874","files_changed":12,"message":"dedicated hooks/utilities"}
 {"ts":"2025-11-10T04:27:53.395Z","type":"commit","sha":"c19afcfec34ba63caba689ba3725d4fe66a0930d","files_changed":4,"message":"phase 3"}
 {"ts":"2025-11-10T05:07:31.666Z","type":"commit","sha":"dd1466f1ba601721c9cab5b3b97657868ab5b197","files_changed":6,"message":"continue refactoring"}
+{"ts":"2025-11-10T21:04:44.144Z","type":"commit","sha":"ead0c3db57c0a2d9f48f70b47de708b47eae2b8b","files_changed":16,"message":"continue refactoring phase 3"}
+{"ts": "2025-11-10T23:00:06.886982+00:00", "type": "note", "text": "Refactored annotation-app data-store helpers into useWorkspaceNoteTitleSync/useWorkspacePanelPositions and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check."}

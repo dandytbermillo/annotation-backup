@@ -3678,25 +3678,27 @@ function PanelsRenderer({
         }
         seenStoreKeys.add(storeKey)
 
-        // Debug: Log branch type being passed to CanvasPanel
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'rendering_panel',
-          metadata: {
-            panelId,
-            branchType: branch.type,
-            branchDbType: branch.dbType,
-            branchMetadata: branch.metadata,
-            isPlainMode
-          }
-        })
-        
-        console.log(`[PanelsRenderer] Rendering panel ${panelId}:`, {
-          hasContent: !!branch.content,
-          contentLength: typeof branch.content === 'string' ? branch.content.length : 'N/A',
-          isNew: branch.isNew,
-          isEditable: branch.isEditable
-        })
+        if (isDebugEnabled()) {
+          // Debug: Log branch type being passed to CanvasPanel
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'rendering_panel',
+            metadata: {
+              panelId,
+              branchType: branch.type,
+              branchDbType: branch.dbType,
+              branchMetadata: branch.metadata,
+              isPlainMode,
+            },
+          })
+
+          console.log(`[PanelsRenderer] Rendering panel ${panelId}:`, {
+            hasContent: !!branch.content,
+            contentLength: typeof branch.content === 'string' ? branch.content.length : 'N/A',
+            isNew: branch.isNew,
+            isEditable: branch.isEditable,
+          })
+        }
 
         // CRITICAL FIX: Only use workspacePosition for MAIN panel
         // Branch panels should use their own branch.position, NOT the main panel's workspace position
