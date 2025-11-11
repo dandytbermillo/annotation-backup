@@ -59,3 +59,5 @@ export function useWorkspaceToolbarState({
     setShowAddComponentMenu,
   }
 }
+
+export type WorkspaceToolbarState = ReturnType<typeof useWorkspaceToolbarState>

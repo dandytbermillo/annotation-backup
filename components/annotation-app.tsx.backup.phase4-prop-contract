@@ -50,7 +50,6 @@ import { useOverlayLayoutSaveQueue } from "@/lib/hooks/annotation/use-overlay-la
 import { useOverlayWorkspaces } from "@/lib/hooks/annotation/use-overlay-workspaces"
 import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
 import { useOverlayLayerInteractions } from "@/lib/hooks/annotation/use-overlay-layer-interactions"
-import { useOverlayLayerHotkeys } from "@/lib/hooks/annotation/use-overlay-layer-hotkeys"
 import { useWorkspaceToolbarState } from "@/lib/hooks/annotation/use-workspace-toolbar-state"
 import { useConstellationViewState } from "@/lib/hooks/annotation/use-constellation-view-state"
 import { useOrganizationSidebarActions } from "@/lib/hooks/annotation/use-organization-sidebar-actions"
@@ -58,9 +57,7 @@ import { usePopupBulkActions } from "@/lib/hooks/annotation/use-popup-bulk-actio
 import { useKnowledgeBaseSidebar } from "@/lib/hooks/annotation/use-knowledge-base-sidebar"
 import { useWorkspaceNoteTitleSync } from "@/lib/hooks/annotation/use-workspace-note-title-sync"
 import { useWorkspacePanelPositions } from "@/lib/hooks/annotation/use-workspace-panel-positions"
-import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
 
-const ANNOTATION_APP_REFACTOR_PHASE = process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || 'off'
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
 // Helper to derive display name from path when folder.name is empty
@@ -118,11 +115,7 @@ const MIN_POPUP_HEIGHT = 200
 const MAX_POPUP_WIDTH = 900
 const MAX_POPUP_HEIGHT = 900
 
-type AnnotationAppContentProps = {
-  useShellView?: boolean
-}
-
-function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProps) {
+function AnnotationAppContent() {
   const {
     openNotes,
     openNote: openWorkspaceNote,
@@ -1362,17 +1355,10 @@ const handleCenterNote = useCallback(
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget
-  useOverlayLayerHotkeys({
+  const { handleContextMenu } = useOverlayLayerInteractions({
     layerContext,
     multiLayerEnabled,
     clearAllTimeouts,
-    setNotesWidgetPosition,
-    setShowNotesWidget,
-    showNotesWidget,
-  })
-
-  const { handleContextMenu } = useOverlayLayerInteractions({
-    layerContext,
     canvasState,
     debugLog,
     setNotesWidgetPosition,
@@ -1680,8 +1666,9 @@ const handleCenterNote = useCallback(
     console.log('[AnnotationApp] Settings clicked')
   }, [])
 
-  const legacyContent = (
-    <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
+  return (
+    <ConstellationProvider>
+      <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
         <div className="flex h-full w-full">
           {shouldShowSidebar && (
             <div
@@ -2113,45 +2100,16 @@ const handleCenterNote = useCallback(
         </div>
       </div>
     </div>
-  )
-
-  if (useShellView) {
-    return (
-      <ConstellationProvider>
-        <AnnotationWorkspaceView>{legacyContent}</AnnotationWorkspaceView>
-      </ConstellationProvider>
-    )
-  }
-
-  return (
-    <ConstellationProvider>
-      {legacyContent}
-    </ConstellationProvider>
+  </ConstellationProvider>
   )
 }
 
 export function AnnotationApp() {
-  const phase = ANNOTATION_APP_REFACTOR_PHASE
-  const useShell = phase === 'shell' || phase === 'shell_test' || phase === 'all'
-
-  if (useShell) {
-    return <AnnotationAppShell />
-  }
-
+  // Always provide LayerProvider - it will internally check feature flag
   return (
     <LayerProvider initialPopupCount={0}>
       <CanvasWorkspaceProvider>
         <AnnotationAppContent />
-      </CanvasWorkspaceProvider>
-    </LayerProvider>
-  )
-}
-
-function AnnotationAppShell() {
-  return (
-    <LayerProvider initialPopupCount={0}>
-      <CanvasWorkspaceProvider>
-        <AnnotationAppContent useShellView />
       </CanvasWorkspaceProvider>
     </LayerProvider>
   )

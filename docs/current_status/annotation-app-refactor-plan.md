@@ -117,6 +117,40 @@
 3. Confirm every hook (`useKnowledgeBaseWorkspace`, `useFolderCache`, `useOverlayWorkspaces`, `useOverlayLayoutPersistence`, `usePopupOverlayState`) has green unit tests + manual regression notes so the shell swap is a wiring change only.
 4. Keep telemetry + feature flags in place so `ANNOTATION_APP_REFACTOR_PHASE` can toggle the shell without reintroducing provider drift (lessons from the isolation reactivity anti-pattern document). Add explicit “flag flip checklist” before implementing Phase 4.
 
+#### Shell/View Interface Draft (2025-11-10)
+| Concern | `AnnotationAppShell` (new) | `AnnotationWorkspaceView` (new) |
+| --- | --- | --- |
+| Providers & Context | Owns `LayerProvider`, `CanvasWorkspaceProvider`, `ConstellationProvider`, toasts, hotkeys, feature flags, and telemetry wiring. | Receives already-resolved context values (`layerContext`, toolbar state, popup handlers) as props; no provider creation. |
+| Data orchestration | Calls hooks that touch IO (`useKnowledgeBaseWorkspace`, `useFolderCache`, `useOverlayLayoutPersistence`, `useOverlayWorkspaces`, `usePopupOverlayState`, `useWorkspaceNoteTitleSync`, `useWorkspacePanelPositions`). Manages `shouldLoadOverlay` + hydration gating. | Consumes serialized props: `{popups, workspaceMeta, toolbarState, sidebarData, layoutStatus}`, and emits user intents via callback props (`onSelectNote`, `onCreatePopup`, `onWorkspaceSelect`, etc.). |
+| Rendering | Handles route-level suspense, overlays, modals, error boundaries, and fallback UI for hydration (e.g., show note-only skeleton until overlay loads). | Renders the actual canvas composition (canvas + overlay + sidebars + toolbars) using pure props; no direct fetches or feature-flag branches. |
+| Navigation & telemetry | Tracks active workspace/workspace menu, diagnostics toasts, and aggregates telemetry events. | Emits telemetry/events via callback props supplied by the shell; no direct `debugLog` calls. |
+
+Props planned for `AnnotationWorkspaceView`:
+- `canvasState`, `setCanvasMode`, `layerContext`, `shouldLoadOverlay`.
+- `popups`, `overlayHandlers` (`create/move/resize/delete`, persistence status, diagnostics state).
+- `workspaceMeta` (`currentWorkspace`, `workspaces`, loading/saving flags, menu controls).
+- `sidebarData + noteTitleMap`, `organizationSidebarHandlers`, `notePreviewState`.
+- `toolbarState` (notes widget toggles, recent notes refresh trigger).
+
+Shell responsibilities:
+1. Resolve and memoize all external data (KB, folder cache, overlay layout).
+2. Hold refs for persistence (layout queues, camera state) and pass safe callbacks down.
+3. Decide when to mount overlay-specific effects (`shouldLoadOverlay`), keeping view stateless.
+
+#### Inline State Inventory & Hook Targets
+- **Canvas centering + retry timers** – implemented by `useCanvasCentering`; shell simply passes `{centerNoteOnCanvas, handleFreshNoteHydrated}` props to the view.
+- **Constellation view toggle & sidebar coordination** – already extracted via `useConstellationViewState`; ensure shell remains the only consumer and the view only receives `{activeSidebarTab, showConstellationPanel, toggleConstellationView}`.
+- **Workspace toolbar UI** – `useWorkspaceToolbarState` owns widget positioning, active panel, recent notes refresh; shell hands `{toolbarState, toolbarHandlers}` to the view.
+- **Popup overlay interactions** – `usePopupOverlayState`, `usePopupBulkActions`, `useOverlayLayerInteractions`, `useOrganizationSidebarActions` already encapsulate overlay-specific mutations; confirm each exposes serializable props so the view can stay declarative.
+- **Layout persistence & workspace menu** – `useOverlayLayoutPersistence`, `useOverlayLayoutSaveQueue`, and `useOverlayWorkspaces` now expose plain handlers/state; shell will coordinate sequencing (hydration, conflict repair) before handing off to the view.
+- **Hotkeys & layer guards** – follow-up hook `useOverlayLayerHotkeys` (TBD) should encapsulate keyboard shortcuts currently inline around lines ~1300–1500 so the view simply attaches provided handlers.
+
+#### Next Actions Before Phase 4
+1. Finalize the `AnnotationWorkspaceView` prop contract (types + story) so we can scaffold the component without touching business logic.
+2. Finish extracting any remaining inline effects (keyboard shortcuts, hover guards) into dedicated hooks to keep the shell lean.
+3. Add a “flag flip checklist” section (covering telemetry, bundle size, rollback plan) so enabling `ANNOTATION_APP_REFACTOR_PHASE >= shell` is procedural.
+4. Once the above land, create the shell/view files and move rendering logic behind the phase flag; run full manual regression + bundle analyzer before flipping the flag in staging.
+
 ## Testing & Validation Plan
 - **Unit tests** (Vitest/Jest): each hook/module with exhaustive cases (success, failure, stale cache, conflict resolution). Owners: Canvas Infra.
 - **Integration tests**: extend `__tests__/unit/popup-overlay.test.ts` plus add `lib/hooks/__tests__/folder-cache.test.ts`.

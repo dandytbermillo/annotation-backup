@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-11 00:11Z] 395c42f: phase 4 starts
 - commit [2025-11-11 00:04Z] cdf3a55: error/issues fixes after refactoring phase 3 (annotation)
 - note [2025-11-10 23:00Z]: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 - commit [2025-11-10 21:04Z] ead0c3d: continue refactoring phase 3
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-10 02:39Z] cb15837: keep peeling logic out of components/
 - commit [2025-11-10 02:07Z] 31b1f3a: move the popup handlers (hover close timers, drag logic, move cascade
 - commit [2025-11-10 01:56Z] 17328c1: refactor 1.2
-- commit [2025-11-09 22:55Z] e7092b5: refactor 1.1
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-11 00:04Z] cdf3a55: error/issues fixes after refactoring phase 3 (annotation)
+- commit [2025-11-11 00:11Z] 395c42f: phase 4 starts
