@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "r
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
 import type { OverlayPopup } from "./floating-toolbar"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
-import { createNote } from "@/lib/utils/note-creator"
+import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
 import {
   OverlayLayoutAdapter,
@@ -16,7 +16,13 @@ import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
-import { useCanvasCentering } from "@/lib/hooks/annotation/use-canvas-centering"
+import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
+import { computeVisuallyCenteredWorldPosition } from "@/lib/canvas/visual-centering"
+import {
+  useCanvasCentering,
+  CENTER_RETRY_ATTEMPTS,
+  CENTER_EXISTING_NOTES_ENABLED,
+} from "@/lib/hooks/annotation/use-canvas-centering"
 import { ConstellationProvider } from "@/components/constellation/constellation-context"
 import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { SidebarPreviewPopups } from "@/components/sidebar/sidebar-preview-popups"
@@ -48,7 +54,6 @@ import { useOrganizationSidebarActions } from "@/lib/hooks/annotation/use-organi
 import { usePopupBulkActions } from "@/lib/hooks/annotation/use-popup-bulk-actions"
 import { useKnowledgeBaseSidebar } from "@/lib/hooks/annotation/use-knowledge-base-sidebar"
 import { useWorkspaceNoteTitleSync } from "@/lib/hooks/annotation/use-workspace-note-title-sync"
-import { useWorkspaceNoteSelection } from "@/lib/hooks/annotation/use-workspace-note-selection"
 import { useWorkspacePanelPositions } from "@/lib/hooks/annotation/use-workspace-panel-positions"
 import { useWorkspaceMainOnlyNotes } from "@/lib/hooks/annotation/use-workspace-main-only-notes"
 import { useWorkspaceCanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
@@ -814,29 +819,364 @@ const initialWorkspaceSyncRef = useRef(false)
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
 
-  const { handleNoteSelect, handleCloseNote, handleCenterNote } = useWorkspaceNoteSelection({
-    activeNoteId,
-    openNotes,
-    openWorkspaceNote,
-    closeWorkspaceNote,
-    requestMainOnlyNote,
-    centerNoteOnCanvas,
-    logWorkspaceNotePositions,
-    resolveMainPanelPosition,
-    hasRenderedMainPanel,
-    setActiveNoteId,
-    setSkipSnapshotForNote,
-    registerFreshNote,
-    storeFreshNoteSeed,
-    bumpRecentNotesRefresh,
-    isHydrating,
-    sharedWorkspace,
-    canvasRef,
-    canvasState,
-    reopenSequenceRef,
-    lastCanvasInteractionRef,
-    debugLog,
-  })
+  const handleNoteSelect = useCallback((noteId: string, options?: { initialPosition?: { x: number; y: number } | null; source?: 'toolbar-create' | 'toolbar-open' | 'popup' | 'recent' }) => {
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'note_select',
+      metadata: {
+        noteId,
+        activeNoteId,
+        isReselect: noteId === activeNoteId,
+        source: options?.source,
+        hasOptions: !!options
+      }
+    })
+
+    // Track note access in recent notes and refresh toolbar's recent notes list
+    // Only refresh if tracking succeeds (promise resolves)
+    const isReselect = noteId === activeNoteId
+    const isToolbarCreation = options?.source === 'toolbar-create'
+
+    if (isToolbarCreation) {
+      registerFreshNote(noteId)
+    }
+
+    trackNoteAccess(noteId)
+      .then(() => {
+        bumpRecentNotesRefresh()
+      })
+      .catch(() => {
+        // Error already logged by trackNoteAccess, silently skip refresh
+        // Note will still open, just won't appear in recent notes
+      })
+
+    const emitHighlight = () => {
+      // Skip highlight during workspace hydration (TDD §4.1)
+      if (isHydrating) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'workspace_hydrating' }
+        })
+        return
+      }
+
+      const events = sharedWorkspace?.events
+      if (!events) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'no_workspace_events' }
+        })
+        return
+      }
+      try {
+        events.emit('workspace:highlight-note', { noteId })
+      } catch (error) {
+        console.warn('[AnnotationApp] Failed to emit highlight event:', error)
+      }
+    }
+
+    if (isReselect) {
+      logWorkspaceNotePositions('tab_click_reselect')
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'highlight_note',
+        metadata: { noteId }
+      })
+      if (!isToolbarCreation) {
+        emitHighlight()
+      }
+      return
+    }
+
+    // Different note - ensure it's marked open and marked as focused
+    setSkipSnapshotForNote(noteId)
+    const alreadyOpen = openNotes.some(open => open.noteId === noteId)
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'toolbar_click_debug',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        openNotesCount: openNotes.length,
+        openNoteIds: openNotes.map(n => n.noteId),
+        isThisNoteInList: openNotes.some(n => n.noteId === noteId)
+      }
+    })
+
+    // CRITICAL FIX (infinite-canvas approach): Separate new note creation from reopening
+    // NEW NOTES: Always compute fresh viewport-centered position (NO CACHING)
+    // EXISTING NOTES: Look up persisted position from database
+    const hasExplicitPosition = Boolean(options?.initialPosition)
+    let resolvedPosition = options?.initialPosition ?? null
+
+    // CRITICAL FIX: Fetch persisted position early to use in centering guard
+    // This prevents recentering notes that already have a saved position
+    const persistedPosition = !alreadyOpen && !hasExplicitPosition
+      ? resolveMainPanelPosition(noteId)
+      : null
+
+    // HYDRATION GAP FIX: Check if panel already rendered on canvas
+    // During early hydration, openNotes is empty so resolveMainPanelPosition returns null,
+    // but the canvas has already rendered panels from database. Treat rendered panels
+    // as "having a persisted position" to prevent recentering during hydration gap.
+    const panelAlreadyRendered = hasRenderedMainPanel(noteId)
+
+    const hasPersistedPosition = Boolean(
+      (persistedPosition && !isDefaultMainPosition(persistedPosition)) ||
+      panelAlreadyRendered  // Treat rendered panels as persisted
+    )
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'position_guard_check',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        hasExplicitPosition,
+        hasPersisted: !!persistedPosition,
+        panelAlreadyRendered,
+        hasPersistedPosition,
+        persistedPosition
+      }
+    })
+
+    if (isToolbarCreation && !hasExplicitPosition) {
+      // NEW NOTE: Compute viewport-centered position using simple, direct formula
+      // This is the infinite-canvas approach - no caching, no async lookups
+      const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_camera_state',
+        metadata: {
+          noteId,
+          currentCamera,
+          canvasState,
+          hasGetCameraState: !!canvasRef.current?.getCameraState
+        }
+      })
+
+      // Get viewport center in screen coordinates
+      const viewportCenterX = typeof window !== 'undefined' ? window.innerWidth / 2 : 960
+      const viewportCenterY = typeof window !== 'undefined' ? window.innerHeight / 2 : 540
+
+      // Convert to world coordinates accounting for camera transform
+      // Formula: worldX = (screenX - cameraX) / zoom
+      const PANEL_WIDTH = 500
+      const PANEL_HEIGHT = 400
+      const worldX = (viewportCenterX - (currentCamera.translateX ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_WIDTH / 2
+      const worldY = (viewportCenterY - (currentCamera.translateY ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_HEIGHT / 2
+
+      resolvedPosition = { x: worldX, y: worldY }
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_viewport_centered',
+        metadata: {
+          noteId,
+          viewportCenter: { x: viewportCenterX, y: viewportCenterY },
+          camera: currentCamera,
+          worldPosition: resolvedPosition,
+          formula: `x = (${viewportCenterX} - ${currentCamera.translateX ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_WIDTH / 2}`,
+          formulaY: `y = (${viewportCenterY} - ${currentCamera.translateY ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_HEIGHT / 2}`
+        }
+      })
+
+      // DO NOT cache this position - use it immediately
+    } else if (!hasExplicitPosition && !alreadyOpen) {
+      // EXISTING NOTE: Use persisted position fetched earlier
+      resolvedPosition = persistedPosition ?? null
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'existing_note_persisted_position',
+        metadata: {
+          noteId,
+          persistedPosition: resolvedPosition,
+          hasPersistedPosition
+        }
+      })
+    }
+
+    if (!alreadyOpen) {
+
+      const shouldCenterExisting =
+        CENTER_EXISTING_NOTES_ENABLED &&
+        !isToolbarCreation &&
+        !hasExplicitPosition &&
+        !hasPersistedPosition  // CRITICAL FIX: Only center if no saved position exists
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'centering_guard_evaluated',
+        metadata: {
+          noteId,
+          CENTER_EXISTING_NOTES_ENABLED,
+          isToolbarCreation,
+          hasExplicitPosition,
+          hasPersistedPosition,
+          panelAlreadyRendered,
+          shouldCenterExisting,
+          fixBlocked: !shouldCenterExisting && panelAlreadyRendered  // NEW: Show when hydration gap fix blocks centering
+        }
+      })
+
+      let usedCenteredOverride = false
+      if (shouldCenterExisting) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_override_applying',
+          metadata: { noteId, reason: 'shouldCenterExisting=true' }
+        })
+        // Get current camera state directly from canvas ref to avoid stale React state
+        const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centering_camera_state',
+          metadata: {
+            noteId,
+            currentCamera,
+            canvasState,
+            hasGetCameraState: !!canvasRef.current?.getCameraState
+          }
+        })
+
+        // EXISTING NOTES: Always use viewport center (null = use viewport center)
+        // Don't use lastCanvasInteractionRef because we want screen center, not last click position
+        const centeredCandidate = computeVisuallyCenteredWorldPosition(
+          {
+            translateX: currentCamera.translateX,
+            translateY: currentCamera.translateY,
+            zoom: currentCamera.zoom,
+          },
+          reopenSequenceRef.current,
+          null,  // Force viewport center, ignore last interaction
+        )
+
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centered_candidate',
+          metadata: {
+            noteId,
+            centeredCandidate,
+            lastInteraction: lastCanvasInteractionRef.current,
+            sequenceCount: reopenSequenceRef.current.count
+          }
+        })
+
+        // Use pure centered position (100%) - same behavior as new notes
+        if (centeredCandidate) {
+          resolvedPosition = centeredCandidate
+          usedCenteredOverride = true
+
+          // CRITICAL: Store in freshNoteSeeds so canvas gets position BEFORE first paint
+          // This prevents the panel from appearing elsewhere and then moving
+          storeFreshNoteSeed(noteId, centeredCandidate)
+        }
+
+        if (usedCenteredOverride) {
+          const persistedPosition = resolveMainPanelPosition(noteId)
+          debugLog({
+            component: "AnnotationApp",
+            action: "open_note_centered_override",
+            metadata: {
+              noteId,
+              persistedPosition,
+              centeredPosition: resolvedPosition,
+              storedInFreshNoteSeeds: true
+            },
+          })
+        }
+      } else if (panelAlreadyRendered) {
+        // HYDRATION GAP FIX: Centering blocked because panel already rendered
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_blocked_by_hydration_gap_fix',
+          metadata: {
+            noteId,
+            reason: 'Panel already rendered on canvas',
+            panelAlreadyRendered,
+            hasPersistedPosition
+          }
+        })
+      }
+
+      if (shouldCenterExisting) {
+        requestMainOnlyNote(noteId)
+      }
+
+      const skipPersistPosition = false
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'calling_openWorkspaceNote',
+        metadata: {
+          noteId,
+          resolvedPosition,
+          isToolbarCreation,
+          hasExplicitPosition
+        }
+      })
+
+      void openWorkspaceNote(noteId, {
+        persist: true,
+        mainPosition: resolvedPosition ?? undefined,
+        persistPosition: !skipPersistPosition,
+      }).catch(error => {
+        console.error('[AnnotationApp] Failed to open note in workspace:', error)
+      })
+    }
+    setActiveNoteId(noteId)
+    if (!isToolbarCreation) {
+      emitHighlight()
+    }
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, bumpRecentNotesRefresh, canvasState, requestMainOnlyNote, storeFreshNoteSeed])
+
+  const handleCloseNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      void closeWorkspaceNote(noteId).catch(error => {
+        console.error('[AnnotationApp] Failed to close workspace note:', error)
+      })
+    },
+    [closeWorkspaceNote],
+  )
+
+const handleCenterNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'manual_center_request',
+        metadata: {
+          noteId,
+          activeNoteId,
+        },
+      })
+
+      if (noteId !== activeNoteId) {
+        setActiveNoteId(noteId)
+      }
+
+      const events = sharedWorkspace?.events
+      if (events) {
+        try {
+          events.emit('workspace:highlight-note', { noteId })
+        } catch (error) {
+          console.warn('[AnnotationApp] Failed to emit manual highlight event:', error)
+        }
+      }
+
+      centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
+    },
+    [activeNoteId, setActiveNoteId, sharedWorkspace, centerNoteOnCanvas],
+  )
 
   const handleSnapshotSettled = useCallback((noteId: string) => {
     setSkipSnapshotForNote(current => (current === noteId ? null : current))
