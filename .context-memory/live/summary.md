@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-12 05:08Z] dad4440: still fixing
 - commit [2025-11-12 04:30Z] b62e15c: still refactoring
 - commit [2025-11-12 03:17Z] 762acaa: start moving real UI into AnnotationWorkspaceView
 - commit [2025-11-11 01:45Z] 6f1d01b: Gradually move chunks of the legacy JSX into that view
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - note [2025-11-10 23:00Z]: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 - commit [2025-11-10 21:04Z] ead0c3d: continue refactoring phase 3
 - commit [2025-11-10 05:07Z] dd1466f: continue refactoring
-- commit [2025-11-10 04:27Z] c19afcf: phase 3
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-12 04:30Z] b62e15c: still refactoring
+- commit [2025-11-12 05:08Z] dad4440: still fixing

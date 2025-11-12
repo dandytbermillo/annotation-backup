@@ -6,7 +6,7 @@ import type { LayerContextValue } from "@/components/canvas/layer-provider"
 import type { KnowledgeBaseWorkspaceApi } from "./use-knowledge-base-workspace"
 import type { FolderCacheApi } from "./use-folder-cache"
 
-type MoveCascadeState = {
+export type MoveCascadeState = {
   parentId: string | null
   childIds: string[]
 }
@@ -55,7 +55,7 @@ type UsePopupOverlayStateOptions = {
   popupWidth?: number
 }
 
-const DEFAULT_MOVE_CASCADE: MoveCascadeState = { parentId: null, childIds: [] }
+export const DEFAULT_MOVE_CASCADE: MoveCascadeState = { parentId: null, childIds: [] }
 
 const DEFAULT_TRANSFORM = { x: 0, y: 0, scale: 1 }
 
