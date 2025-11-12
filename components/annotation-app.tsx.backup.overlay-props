@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "react"
 import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
-import type { OverlayPopup } from "./floating-toolbar"
+import type { OverlayPopup, OrgItem } from "./floating-toolbar"
 import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
 import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
 import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
@@ -17,7 +17,10 @@ import { toast } from "@/hooks/use-toast"
 import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
 import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
-import { computeVisuallyCenteredWorldPosition } from "@/lib/canvas/visual-centering"
+import {
+  computeVisuallyCenteredWorldPosition,
+  type RapidSequenceState,
+} from "@/lib/canvas/visual-centering"
 import {
   useCanvasCentering,
   CENTER_RETRY_ATTEMPTS,
@@ -25,6 +28,8 @@ import {
 } from "@/lib/hooks/annotation/use-canvas-centering"
 import { ConstellationProvider } from "@/components/constellation/constellation-context"
 import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
+import type { OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
+import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
 import { SidebarPreviewPopups } from "@/components/sidebar/sidebar-preview-popups"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationWorkspaceCanvas } from "@/components/workspace/annotation-workspace-canvas"
@@ -46,21 +51,16 @@ import { useOverlayPopupLayout } from "@/lib/hooks/annotation/use-overlay-popup-
 import { useOverlayLayoutPersistence } from "@/lib/hooks/annotation/use-overlay-layout-persistence"
 import { useOverlayLayoutSaveQueue } from "@/lib/hooks/annotation/use-overlay-layout-save-queue"
 import { useOverlayWorkspaces } from "@/lib/hooks/annotation/use-overlay-workspaces"
-import type { SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
-import { useWorkspaceSidebarHover } from "@/lib/hooks/annotation/use-workspace-sidebar-hover"
-import { useWorkspaceNotesWidget } from "@/lib/hooks/annotation/use-workspace-notes-widget"
+import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
+import { useOverlayLayerInteractions } from "@/lib/hooks/annotation/use-overlay-layer-interactions"
+import { useOverlayLayerHotkeys } from "@/lib/hooks/annotation/use-overlay-layer-hotkeys"
+import { useWorkspaceToolbarState } from "@/lib/hooks/annotation/use-workspace-toolbar-state"
 import { useConstellationViewState } from "@/lib/hooks/annotation/use-constellation-view-state"
 import { useOrganizationSidebarActions } from "@/lib/hooks/annotation/use-organization-sidebar-actions"
 import { usePopupBulkActions } from "@/lib/hooks/annotation/use-popup-bulk-actions"
 import { useKnowledgeBaseSidebar } from "@/lib/hooks/annotation/use-knowledge-base-sidebar"
 import { useWorkspaceNoteTitleSync } from "@/lib/hooks/annotation/use-workspace-note-title-sync"
 import { useWorkspacePanelPositions } from "@/lib/hooks/annotation/use-workspace-panel-positions"
-import { useWorkspaceMainOnlyNotes } from "@/lib/hooks/annotation/use-workspace-main-only-notes"
-import { useWorkspaceCanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
-import { useOverlayDragHandlers } from "@/lib/hooks/annotation/use-overlay-drag-handlers"
-import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-workspace-overlay-persistence"
-import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
-import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
 
 const ANNOTATION_APP_REFACTOR_PHASE = process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || 'off'
@@ -80,6 +80,21 @@ function deriveFromPath(path: string | undefined | null): string | null {
   const segments = normalized.split('/')
   const lastSegment = segments[segments.length - 1]
   return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
+function sidebarItemToOrgItem(item: OrganizationSidebarItem): OrgItem {
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type === 'note' ? 'note' : 'folder',
+    icon: item.icon,
+    color: item.color ?? undefined,
+    path: item.path ?? undefined,
+    hasChildren: item.hasChildren ?? (item.count ?? 0) > 0,
+    level: typeof item.level === 'number' ? item.level : 0,
+    children: [],
+    parentId: item.parentId ?? undefined,
+  }
 }
 
 const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
@@ -199,15 +214,87 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
   })
 
 
+  const [canvasState, setCanvasState] = useState({
+    zoom: 1,
+    showConnections: true,
+    translateX: 0,
+    translateY: 0
+  })
+  const lastCanvasInteractionRef = useRef<{ x: number; y: number } | null>(null)
+  const handleCanvasStateChange = useCallback(
+    (
+      stateUpdate: Partial<{
+        zoom: number
+        showConnections: boolean
+        translateX: number
+        translateY: number
+        lastInteraction?: { x: number; y: number } | null
+        interactionSource?: 'canvas' | 'keyboard' | 'toolbar'
+      }>,
+    ) => {
+      let updated = false
+      setCanvasState(prev => {
+        const next = {
+          zoom: stateUpdate.zoom ?? prev.zoom,
+          showConnections: stateUpdate.showConnections ?? prev.showConnections,
+          translateX: stateUpdate.translateX ?? prev.translateX,
+          translateY: stateUpdate.translateY ?? prev.translateY,
+        }
+        if (
+          next.zoom === prev.zoom &&
+          next.showConnections === prev.showConnections &&
+          next.translateX === prev.translateX &&
+          next.translateY === prev.translateY
+        ) {
+          return prev
+        }
+        updated = true
+        return next
+      })
+      if (stateUpdate.lastInteraction) {
+        lastCanvasInteractionRef.current = stateUpdate.lastInteraction
+        if (typeof window !== 'undefined') {
+          ;(window as any).__canvasLastInteraction = stateUpdate.lastInteraction
+          ;(window as any).__canvasLastInteractionSource = stateUpdate.interactionSource ?? 'canvas'
+        }
+      } else if (
+        updated &&
+        typeof window !== 'undefined' &&
+        (stateUpdate.translateX !== undefined || stateUpdate.translateY !== undefined)
+      ) {
+        const fallbackPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+        lastCanvasInteractionRef.current = fallbackPoint
+        ;(window as any).__canvasLastInteraction = fallbackPoint
+      }
+    },
+    [],
+  )
+  const reopenSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
+  const newNoteSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
   const {
-    canvasState,
-    setCanvasState,
-    handleCanvasStateChange,
-    lastCanvasInteractionRef,
-    reopenSequenceRef,
-    newNoteSequenceRef,
-  } = useWorkspaceCanvasState()
-  const { mainOnlyNotes, requestMainOnlyNote, handleMainOnlyLayoutHandled } = useWorkspaceMainOnlyNotes()
+    showNotesWidget,
+    setShowNotesWidget,
+    notesWidgetPosition,
+    setNotesWidgetPosition,
+    activeEditorRef,
+    activePanelId,
+    setActivePanelId,
+    toolbarActivePanel,
+    setToolbarActivePanel,
+    recentNotesRefreshTrigger,
+    bumpRecentNotesRefresh,
+    showAddComponentMenu,
+    setShowAddComponentMenu,
+  } = useWorkspaceToolbarState()
+  const [mainOnlyNotes, setMainOnlyNotes] = useState<string[]>([])
+  const requestMainOnlyNote = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => (prev.includes(noteId) ? prev : [...prev, noteId]))
+  }, [])
+  const handleMainOnlyLayoutHandled = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => prev.filter(id => id !== noteId))
+  }, [])
 
   // Display settings state (backdrop style preference)
   const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
@@ -408,29 +495,6 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     },
   })
 
-  const {
-    showNotesWidget,
-    setShowNotesWidget,
-    notesWidgetPosition,
-    setNotesWidgetPosition,
-    activeEditorRef,
-    activePanelId,
-    setActivePanelId,
-    toolbarActivePanel,
-    setToolbarActivePanel,
-    recentNotesRefreshTrigger,
-    bumpRecentNotesRefresh,
-    showAddComponentMenu,
-    setShowAddComponentMenu,
-    handleContextMenu,
-  } = useWorkspaceNotesWidget({
-    layerContext,
-    multiLayerEnabled,
-    clearAllTimeouts,
-    canvasState,
-    debugLog,
-  })
-
   const organizationFolders = sidebarState.organizationFolders
 
   const { handleOrganizationSidebarSelect } = useOrganizationSidebarActions({
@@ -453,6 +517,15 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
       invalidateFolderCache,
     },
   })
+
+  useEffect(() => {
+    const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
+    latestCameraRef.current = {
+      x: Number.isFinite(transform.x) ? (transform.x as number) : 0,
+      y: Number.isFinite(transform.y) ? (transform.y as number) : 0,
+      scale: Number.isFinite(transform.scale) ? (transform.scale as number) : 1,
+    }
+  }, [layerContext?.transforms.popups])
 
   const organizationSidebarData = useMemo(() => {
     const pinnedIds = new Set(
@@ -694,12 +767,25 @@ const initialWorkspaceSyncRef = useRef(false)
   }, [])
 
   // Handle global mouse events for dragging popup
-  const draggingActive = useOverlayDragHandlers({
-    draggingPopup,
-    onDragMove: handlePopupDragMove,
-    onDragEnd: handlePopupDragEnd,
-    layerContext,
-  })
+  useEffect(() => {
+    if (!draggingPopup) return
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      handlePopupDragMove(e, layerContext ?? null)
+    }
+
+    const handleGlobalMouseUp = () => {
+      handlePopupDragEnd()
+    }
+
+    document.addEventListener('mousemove', handleGlobalMouseMove, true)
+    document.addEventListener('mouseup', handleGlobalMouseUp, true)
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove, true)
+      document.removeEventListener('mouseup', handleGlobalMouseUp, true)
+    }
+  }, [draggingPopup, handlePopupDragEnd, handlePopupDragMove, layerContext])
 
 
   const {
@@ -723,21 +809,6 @@ const initialWorkspaceSyncRef = useRef(false)
     defaultHeight: DEFAULT_POPUP_HEIGHT,
     debugLog,
     isDebugEnabled,
-  })
-
-  useWorkspaceOverlayPersistence({
-    overlayPopups,
-    overlayPersistenceActive,
-    overlayPersistenceEnabled,
-    overlayPanning,
-    draggingActive,
-    layerTransform: layerContext?.transforms.popups || DEFAULT_CAMERA,
-    latestCameraRef,
-    prevCameraForSaveRef,
-    layoutLoadedRef,
-    scheduleLayoutSave,
-    saveTimeoutRef,
-    pendingLayoutRef,
   })
 
   const {
@@ -807,6 +878,103 @@ const initialWorkspaceSyncRef = useRef(false)
   // Load layout from database on mount
   // Save layout when overlayPopups changes
   // Use a ref to track if we need to save, to avoid infinite loops
+  const prevPopupsRef = useRef<OverlayPopup[]>([])
+  const needsSaveAfterInteractionRef = useRef(false)
+
+  useEffect(() => {
+    console.log(
+      '[AnnotationApp] Save effect triggered.',
+      {
+        overlayPersistenceEnabled,
+        overlayPersistenceActive,
+        overlayCount: overlayPopups.length,
+        layoutLoaded: layoutLoadedRef.current,
+      }
+    )
+    if (!overlayPersistenceActive) {
+      console.log('[AnnotationApp] Save skipped: persistence inactive')
+      return
+    }
+    if (!layoutLoadedRef.current) {
+      console.log('[AnnotationApp] Save skipped: layout not loaded yet')
+      prevPopupsRef.current = overlayPopups
+      return
+    }
+
+    const serializeForChangeDetection = (popups: OverlayPopup[]) =>
+      popups.map(p => ({
+        id: p.id,
+        width: p.width,
+        height: p.height,
+        canvasPosition: p.canvasPosition,
+        position: p.position,
+        level: p.level,
+        parentPopupId: p.parentPopupId,
+        childrenCount: p.children?.length ?? 0,
+      }))
+
+    const currentSnapshot = serializeForChangeDetection(overlayPopups)
+    const prevSnapshot = serializeForChangeDetection(prevPopupsRef.current)
+    const changed = JSON.stringify(currentSnapshot) !== JSON.stringify(prevSnapshot)
+
+    const anyDragging = overlayPopups.some(popup => popup.isDragging)
+    if (anyDragging || overlayPanning) {
+      if (changed) {
+        console.log('[AnnotationApp] Save deferred: canvas interaction in progress', { anyDragging, overlayPanning })
+        needsSaveAfterInteractionRef.current = true
+      } else {
+        console.log('[AnnotationApp] Save skipped: interaction in progress (no layout delta)')
+      }
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (!changed) {
+      console.log('[AnnotationApp] Save skipped: no changes detected')
+      prevPopupsRef.current = overlayPopups
+      needsSaveAfterInteractionRef.current = false
+      return
+    }
+
+    // Detect if this is a creation or deletion (existence change vs property change)
+    const isCreation = overlayPopups.length > prevPopupsRef.current.length
+    const isDeletion = overlayPopups.length < prevPopupsRef.current.length
+    const isExistenceChange = isCreation || isDeletion
+
+    if (isCreation) {
+      console.log('[AnnotationApp] Scheduling save... (IMMEDIATE - creation)')
+    } else if (isDeletion) {
+      console.log('[AnnotationApp] Scheduling save... (IMMEDIATE - deletion)')
+    } else {
+      console.log('[AnnotationApp] Scheduling save... (debounced - property change)')
+    }
+
+    prevPopupsRef.current = overlayPopups
+    needsSaveAfterInteractionRef.current = false
+    scheduleLayoutSave(isExistenceChange) // Immediate save for creation/deletion, debounced for moves/resizes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayPopups, overlayPersistenceActive, overlayPanning, draggingPopup])
+
+  useEffect(() => {
+    if (!overlayPanning) return
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+      pendingLayoutRef.current = null
+      console.log('[AnnotationApp] Cleared pending layout save due to overlay panning')
+    }
+  }, [overlayPanning])
+
+  useEffect(() => {
+    if (!overlayPanning && needsSaveAfterInteractionRef.current) {
+      console.log('[AnnotationApp] Resuming deferred overlay save after interaction')
+      needsSaveAfterInteractionRef.current = false
+      scheduleLayoutSave(false)
+    }
+  }, [overlayPanning, scheduleLayoutSave])
 
   // Handle note selection with force re-center support
   const formatNoteLabel = useCallback((noteId: string) => {
@@ -1185,6 +1353,25 @@ const handleCenterNote = useCallback(
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget
+  useOverlayLayerHotkeys({
+    layerContext,
+    multiLayerEnabled,
+    clearAllTimeouts,
+    setNotesWidgetPosition,
+    setShowNotesWidget,
+    showNotesWidget,
+  })
+
+  const { handleContextMenu } = useOverlayLayerInteractions({
+    layerContext,
+    canvasState,
+    debugLog,
+    setNotesWidgetPosition,
+    setShowNotesWidget,
+    showNotesWidget,
+    setActivePanelId,
+  })
+
   const handleCloseNotesWidget = useCallback(() => {
     setShowNotesWidget(false)
   }, [])
@@ -1209,6 +1396,44 @@ const handleCenterNote = useCallback(
     setBackdropStyle(style)
   }, [])
 
+  // Handle folder renamed (callback from FloatingToolbar and PopupOverlay)
+  const handleFolderRenamed = useCallback((folderId: string, newName: string) => {
+    setOverlayPopups(prev => {
+      return prev.map(popup => {
+        // Case 1: This popup IS the renamed folder - update its title
+        if (popup.folderId === folderId) {
+          return {
+            ...popup,
+            folderName: newName,
+            folder: popup.folder ? { ...popup.folder, name: newName } : null
+          } as OverlayPopup
+        }
+
+        // Case 2: This popup CONTAINS the renamed folder in its children array
+        // Update the child entry so parent's list shows the new name
+        if (popup.folder?.children) {
+          const hasMatchingChild = popup.folder.children.some((child: OrgItem) => child.id === folderId)
+          if (hasMatchingChild) {
+            return {
+              ...popup,
+              folder: {
+                ...popup.folder,
+                children: popup.folder.children.map((child: OrgItem) =>
+                  child.id === folderId
+                    ? { ...child, name: newName }
+                    : child
+                )
+              }
+            } as OverlayPopup
+          }
+        }
+
+        // Case 3: Unrelated popup - return unchanged
+        return popup
+      })
+    })
+  }, [])
+
   const openNoteFromSidebar = useCallback(
     (noteId: string) => {
       layerContext?.setActiveLayer('notes')
@@ -1218,19 +1443,6 @@ const handleCenterNote = useCallback(
   )
 
   const getPreviewSourceFolderId = useCallback(() => notePreview?.context?.sourceFolderId, [notePreview])
-
-  const { hoverHandlers, sidebarPreviewProps } = useWorkspaceSidebarHover({
-    ensureOverlayHydrated,
-    fetchGlobalChildren,
-    handleOrganizationSidebarSelect,
-    openNoteFromSidebar,
-    triggerNotePreviewHover,
-    triggerNotePreviewLeave,
-    triggerNotePreviewTooltipEnter,
-    triggerNotePreviewTooltipLeave,
-    cancelNotePreview,
-    getPreviewSourceFolderId,
-  })
 
   const {
     sidebarFolderPopups,
@@ -1244,7 +1456,46 @@ const handleCenterNote = useCallback(
     handleSidebarPreviewTooltipLeave,
     handleSidebarPopupFolderClick,
     handleSidebarNoteOpen,
-  } = hoverHandlers
+  } = useSidebarFolderPopups({
+    ensureOverlayHydrated,
+    fetchChildren: fetchGlobalChildren,
+    onSelectFolder: handleOrganizationSidebarSelect,
+    onOpenNote: openNoteFromSidebar,
+    triggerNotePreviewHover,
+    triggerNotePreviewLeave,
+    triggerNotePreviewTooltipEnter,
+    triggerNotePreviewTooltipLeave,
+    cancelNotePreview,
+    getPreviewSourceFolderId,
+  })
+
+  const handleOrganizationSidebarEyeHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      if (item.interactive === false) return
+      const folder = sidebarItemToOrgItem(item)
+      handleSidebarOrgEyeHover(folder, event)
+    },
+    [handleSidebarOrgEyeHover]
+  )
+
+  const handleOrganizationSidebarEyeLeave = useCallback(
+    (id: string) => {
+      handleSidebarEyeHoverLeave(id)
+    },
+    [handleSidebarEyeHoverLeave]
+  )
+
+  const handleOrganizationSidebarNoteHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      handleSidebarNotePreviewHover(item.id, event)
+    },
+    [handleSidebarNotePreviewHover]
+  )
+
+  const handleOrganizationSidebarNoteLeave = useCallback(() => {
+    handleSidebarNotePreviewLeave()
+  }, [handleSidebarNotePreviewLeave])
+
 
   const handleToggleMoveCascade = toggleMoveCascade
 
@@ -1265,7 +1516,89 @@ const handleCenterNote = useCallback(
   // Handle cancel close (user cancelled - revert to normal mode)
   const handleCancelClose = cancelCloseMode
 
+  // Cancel close timeout when hovering the popup itself (keeps it alive)
+  const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
+    console.log('[handlePopupHover] CALLED', { folderId, parentPopupId, hasTimeouts: closeTimeouts.current.size })
+
+    // Try multiple possible timeout keys since we might not know the exact parent
+    const possibleKeys = [
+      folderId, // Simple key (no parent)
+      parentPopupId ? `${parentPopupId}-${folderId}` : null, // With known parent
+    ].filter(Boolean) as string[]
+
+    // Also try all keys that end with this folderId
+    closeTimeouts.current.forEach((timeout, key) => {
+      if (key.endsWith(folderId) && !possibleKeys.includes(key)) {
+        possibleKeys.push(key)
+      }
+    })
+
+    console.log('[handlePopupHover] Trying timeout keys:', possibleKeys)
+    console.log('[handlePopupHover] Available timeouts:', Array.from(closeTimeouts.current.keys()))
+
+    let found = false
+    for (const key of possibleKeys) {
+      if (closeTimeouts.current.has(key)) {
+        clearCloseTimeout(key)
+        console.log('[handlePopupHover] ✅ Cancelled close timeout for', key)
+        found = true
+        break
+      }
+    }
+
+    if (!found) {
+      console.log('[handlePopupHover] ❌ No matching timeout found')
+    }
+  }, [])
+
   // Handle bulk move of items to target folder (drag-drop)
+  const handleFolderCreated = useCallback((popupId: string, newFolder: any) => {
+    console.log('[handleFolderCreated]', { popupId, newFolder })
+
+    let updatedParentFolderId: string | null = null
+    let updatedChildrenSnapshot: OrgItem[] | null = null
+
+    // Update the popup's children to include the new folder
+    setOverlayPopups(prev =>
+      prev.map(popup => {
+        if (popup.id === popupId && popup.folder) {
+          // Add new folder to the beginning of children array (folders typically shown first)
+          const updatedChildren: OrgItem[] = [newFolder, ...popup.children]
+          const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
+
+          updatedParentFolderId = popup.folderId
+          updatedChildrenSnapshot = updatedChildren
+
+          return {
+            ...popup,
+            children: updatedChildren,
+            folder: { ...popup.folder, children: updatedChildren },
+            sizeMode: nextSizeMode,
+            height: nextSizeMode === 'default' ? undefined : popup.height
+          }
+        }
+        return popup
+      })
+    )
+
+    if (updatedParentFolderId && updatedChildrenSnapshot) {
+      updateFolderCacheChildren(updatedParentFolderId, updatedChildrenSnapshot)
+    }
+    invalidateFolderCache(newFolder?.id)
+
+    console.log('[handleFolderCreated] Popup updated with new folder')
+  }, [invalidateFolderCache, updateFolderCacheChildren])
+
+  // Handle popup drag start
+  const handlePopupDragStart = useCallback(
+    (popupId: string, event: React.MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      startPopupDrag(popupId, event.nativeEvent, layerContext ?? null)
+    },
+    [layerContext, startPopupDrag],
+  )
+
   // Navigation control functions
   const handleZoomIn = () => {
     setCanvasState(prev => ({ ...prev, zoom: Math.min(prev.zoom * 1.1, 2) }))
@@ -1330,80 +1663,35 @@ const handleCenterNote = useCallback(
     console.log('[AnnotationApp] Settings clicked')
   }, [])
 
-  const {
-    handleFolderCreated,
-    handlePopupDragStart,
-    handlePopupHover,
-    handleFolderRenamed,
-  } = useWorkspaceOverlayInteractions({
-    setOverlayPopups,
-    updateFolderCacheChildren,
-    invalidateFolderCache,
-    startPopupDrag,
-    layerContext,
-    closeTimeouts,
-    clearCloseTimeout,
-  })
-
-  const { workspaceSidebarProps } = useWorkspaceSidebarState({
-    shouldShowSidebar,
+  const workspaceSidebarProps = {
+    visible: shouldShowSidebar,
     showConstellationPanel,
-    activeSidebarTab,
-    handleSidebarTabChange,
-    sidebarState: {
-      organizationFolders: sidebarState.organizationFolders,
-      items: organizationSidebarData.items,
-      stats: organizationSidebarData.stats,
-    },
-    overlayPopups,
-    setOverlayPopups,
-    layerContext,
-    setCanvasMode,
-    ensureOverlayHydrated,
-    appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
-    knowledgeBaseWorkspaceId,
-    fetchWithKnowledgeBase,
-    fetchGlobalChildren,
-    folderCacheApi: {
-      updateFolderCacheEntry,
-      updateFolderCacheChildren,
-      invalidateFolderCache,
-    },
-    knowledgeBaseId,
-    hoverHandlers,
-  })
+    activeTab: activeSidebarTab,
+    onTabChange: handleSidebarTabChange,
+    organizationItems: organizationSidebarData.items,
+    organizationStats: organizationSidebarData.stats,
+    onOrganizationSelect: handleOrganizationSidebarSelect,
+    onOrganizationEyeHover: handleOrganizationSidebarEyeHover,
+    onOrganizationEyeLeave: handleOrganizationSidebarEyeLeave,
+    onOrganizationNoteHover: handleOrganizationSidebarNoteHover,
+    onOrganizationNoteLeave: handleOrganizationSidebarNoteLeave,
+    constellationContent: <ConstellationSidebarShared />,
+  }
 
   const sidebarNode = <WorkspaceSidebar {...workspaceSidebarProps} />
-
-  const workspaceToolbarProps = useMemo(
-    () => ({
-      notes: sortedOpenNotes,
-      activeNoteId,
-      isLoading: isWorkspaceLoading || isCreatingNoteFromToolbar,
-      formatNoteLabel,
-      onActivateNote: handleNoteSelect,
-      onCenterNote: handleCenterNote,
-      onCloseNote: handleCloseNote,
-      onNewNote: handleNewNoteFromToolbar,
-      onSettings: handleSettingsFromToolbar,
-    }), [
-      sortedOpenNotes,
-      activeNoteId,
-      isWorkspaceLoading,
-      isCreatingNoteFromToolbar,
-      formatNoteLabel,
-      handleNoteSelect,
-      handleCenterNote,
-      handleCloseNote,
-      handleNewNoteFromToolbar,
-      handleSettingsFromToolbar,
-    ],
-  )
 
   const toolbarNode = (
     <WorkspaceToolbarStrip
       isVisible={!showConstellationPanel && !isPopupLayerActive}
-      {...workspaceToolbarProps}
+      notes={sortedOpenNotes}
+      activeNoteId={activeNoteId}
+      isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
+      formatNoteLabel={formatNoteLabel}
+      onActivateNote={handleNoteSelect}
+      onCenterNote={handleCenterNote}
+      onCloseNote={handleCloseNote}
+      onNewNote={handleNewNoteFromToolbar}
+      onSettings={handleSettingsFromToolbar}
     />
   )
 
@@ -1555,48 +1843,25 @@ const handleCenterNote = useCallback(
 
   const workspaceLayersNode = <WorkspaceOverlay {...workspaceOverlayProps} />
 
-  const workspaceFloatingToolbarProps = useMemo(
-    () => ({
-      x: notesWidgetPosition.x,
-      y: notesWidgetPosition.y,
-      onClose: handleCloseNotesWidget,
-      onSelectNote: handleNoteSelect,
-      onCreateOverlayPopup: handleCreateOverlayPopup,
-      onAddComponent: handleAddComponentFromToolbar,
-      editorRef: activeEditorRef,
-      activePanelId,
-      onBackdropStyleChange: handleBackdropStyleChange,
-      onFolderRenamed: handleFolderRenamed,
-      activePanel: toolbarActivePanel,
-      onActivePanelChange: setToolbarActivePanel,
-      refreshRecentNotes: recentNotesRefreshTrigger,
-      onToggleConstellationPanel: toggleConstellationView,
-      showConstellationPanel,
-      knowledgeBaseWorkspace,
-    }), [
-      activePanelId,
-      activeEditorRef,
-      handleAddComponentFromToolbar,
-      handleBackdropStyleChange,
-      handleCloseNotesWidget,
-      handleCreateOverlayPopup,
-      handleFolderRenamed,
-      handleNoteSelect,
-      knowledgeBaseWorkspace,
-      notesWidgetPosition.x,
-      notesWidgetPosition.y,
-      recentNotesRefreshTrigger,
-      setToolbarActivePanel,
-      showConstellationPanel,
-      toggleConstellationView,
-      toolbarActivePanel,
-    ],
-  )
-
   const floatingToolbarNode = (
     <WorkspaceFloatingToolbar
       visible={showNotesWidget && !activeNoteId && !showConstellationPanel}
-      {...workspaceFloatingToolbarProps}
+      x={notesWidgetPosition.x}
+      y={notesWidgetPosition.y}
+      onClose={handleCloseNotesWidget}
+      onSelectNote={handleNoteSelect}
+      onCreateOverlayPopup={handleCreateOverlayPopup}
+      onAddComponent={handleAddComponentFromToolbar}
+      editorRef={activeEditorRef}
+      activePanelId={activePanelId}
+      onBackdropStyleChange={handleBackdropStyleChange}
+      onFolderRenamed={handleFolderRenamed}
+      activePanel={toolbarActivePanel}
+      onActivePanelChange={setToolbarActivePanel}
+      refreshRecentNotes={recentNotesRefreshTrigger}
+      onToggleConstellationPanel={toggleConstellationView}
+      showConstellationPanel={showConstellationPanel}
+      knowledgeBaseWorkspace={knowledgeBaseWorkspace}
     />
   )
 
@@ -1612,7 +1877,17 @@ const handleCenterNote = useCallback(
   )
 
   const sidebarPreviewPopupsNode = shouldLoadOverlay ? (
-    <SidebarPreviewPopups {...sidebarPreviewProps} />
+    <SidebarPreviewPopups
+      popups={sidebarFolderPopups}
+      onPopupHover={handleSidebarPopupHover}
+      onPopupLeave={handleSidebarEyeHoverLeave}
+      onDismiss={dismissSidebarPopup}
+      onFolderHover={handleSidebarOrgEyeHover}
+      onFolderClick={handleSidebarPopupFolderClick}
+      onNotePreviewHover={handleSidebarNotePreviewHover}
+      onNotePreviewLeave={handleSidebarNotePreviewLeave}
+      onNoteOpen={handleSidebarNoteOpen}
+    />
   ) : null
 
 
