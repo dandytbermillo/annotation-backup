@@ -1706,429 +1706,437 @@ const handleCenterNote = useCallback(
     </div>
   ) : null
 
-  const toolbarNode =
-    !showConstellationPanel && !isPopupLayerActive ? (
-      <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
-          <WorkspaceToolbar
-            notes={sortedOpenNotes}
-            activeNoteId={activeNoteId}
-            isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
-            formatNoteLabel={formatNoteLabel}
-            onActivateNote={handleNoteSelect}
-            onCenterNote={handleCenterNote}
-            onCloseNote={handleCloseNote}
-            onNewNote={handleNewNoteFromToolbar}
-            onSettings={handleSettingsFromToolbar}
-          />
-        </div>
-      </AutoHideToolbar>
-    ) : null
-
-  const workspaceToggleNode = shouldShowWorkspaceToggle ? (
-    <div
-      className="absolute inset-x-0 top-4 flex justify-center"
-      style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
-    >
-      <div
-        ref={workspaceToggleRef}
-        className="flex flex-col items-center gap-2 pointer-events-auto"
-      >
-        <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
-          <button
-            type="button"
-            onClick={() => setWorkspaceMenuOpen(prev => !prev)}
-            aria-expanded={workspaceMenuOpen}
-            aria-label="Choose workspace"
-            className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-          >
-            <span className="text-[11px] uppercase tracking-wide text-white/60">Workspace</span>
-            <span>{workspaceStatusLabel}</span>
-            <svg
-              aria-hidden="true"
-              className={`h-3 w-3 transition-transform ${workspaceMenuOpen ? 'rotate-180' : ''}`}
-              viewBox="0 0 12 12"
-              fill="none"
-            >
-              <path
-                d="M3 4.5L6 7.5L9 4.5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={handleCreateWorkspace}
-            disabled={isWorkspaceSaving || isWorkspaceLayoutLoading}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/90 text-slate-950 transition-transform hover:translate-y-[-1px] disabled:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
-            aria-label="Snapshot current workspace"
-          >
-            <span className="text-lg font-semibold leading-none">+</span>
-          </button>
-        </div>
-
-        {workspaceMenuOpen && (
-          <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
-            {isWorkspaceListLoading ? (
-              <div className="py-6 text-center text-sm text-white/60">Loading workspaces...</div>
-            ) : workspaces.length === 0 ? (
-              <div className="py-6 text-center text-sm text-white/60 px-4">
-                No saved workspaces yet. Use the + button to snapshot this layout.
-              </div>
-            ) : (
-              <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
-                {workspaces.map(workspace => {
-                  const isActive = workspace.id === currentWorkspaceId
-                  const isDeleting = workspaceDeletionId === workspace.id
-                  const disableDelete = workspace.isDefault || isDeleting
-                  const updatedDate = workspace.updatedAt ? new Date(workspace.updatedAt) : null
-                  const lastUpdated =
-                    updatedDate && !Number.isNaN(updatedDate.getTime())
-                      ? updatedDate.toLocaleString()
-                      : 'Never saved'
-                  return (
-                    <li key={workspace.id} className="group relative">
-                      <button
-                        type="button"
-                        onClick={() => handleWorkspaceSelect(workspace.id)}
-                        className={[
-                          'w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors',
-                          isActive
-                            ? 'border-blue-400/60 bg-blue-500/20 text-white shadow-lg'
-                            : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
-                        ].join(' ')}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium">{workspace.name}</span>
-                          <span className="text-xs text-white/60">
-                            {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-[11px] text-white/50">{lastUpdated}</div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={event => {
-                          event.stopPropagation()
-                          handleDeleteWorkspace(workspace.id)
-                        }}
-                        disabled={disableDelete}
-                        className={[
-                          'absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 text-white/70 opacity-0 transition-all group-hover:opacity-100',
-                          disableDelete
-                            ? 'cursor-not-allowed opacity-30'
-                            : 'hover:border-red-400/60 hover:bg-red-600/20 hover:text-red-200',
-                        ].join(' ')}
-                        aria-label={
-                          workspace.isDefault ? 'Default workspace cannot be deleted' : 'Delete workspace'
-                        }
-                      >
-                        {isDeleting ? (
-                          <span className="text-[10px] font-semibold uppercase tracking-wide">…</span>
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  ) : null
-
-  const canvasAreaNode = (
-    <div className="flex h-full w-full">
-      <div
-        className="flex-1 relative transition-all duration-300 ease-in-out"
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          isolation: 'isolate',
-          opacity: showConstellationPanel ? 0 : 1,
-          visibility: showConstellationPanel ? 'hidden' : 'visible',
-        }}
-        aria-hidden={showConstellationPanel}
-      >
-        <div
-          className="h-full w-full"
-          style={{
-            pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
-          }}
-        >
-          {openNotes.length > 0 ? (
-            <ModernAnnotationCanvas
-              key="workspace"
-              noteIds={openNotes.map(note => note.noteId)}
-              primaryNoteId={activeNoteId ?? openNotes[0].noteId}
-              ref={canvasRef}
-              freshNoteSeeds={freshNoteSeeds}
-              onConsumeFreshNoteSeed={consumeFreshNoteSeed}
-              isNotesExplorerOpen={false}
-              freshNoteIds={freshNoteIds}
-              onFreshNoteHydrated={handleFreshNoteHydrated}
-              onCanvasStateChange={handleCanvasStateChange}
-              mainOnlyNoteIds={mainOnlyNotes}
-              onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
-              showAddComponentMenu={showAddComponentMenu}
-              onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
-              onRegisterActiveEditor={handleRegisterActiveEditor}
-              onSnapshotLoadComplete={handleSnapshotLoadComplete}
-              skipSnapshotForNote={skipSnapshotForNote}
-              onSnapshotSettled={handleSnapshotSettled}
-            >
-              {showNotesWidget && (
-                <CanvasAwareFloatingToolbar
-                  x={notesWidgetPosition.x}
-                  y={notesWidgetPosition.y}
-                  onClose={handleCloseNotesWidget}
-                  onSelectNote={handleNoteSelect}
-                  onCreateOverlayPopup={handleCreateOverlayPopup}
-                  onAddComponent={handleAddComponentFromToolbar}
-                  editorRef={activeEditorRef}
-                  activePanelId={activePanelId}
-                  onBackdropStyleChange={handleBackdropStyleChange}
-                  onFolderRenamed={handleFolderRenamed}
-                  activePanel={toolbarActivePanel}
-                  onActivePanelChange={setToolbarActivePanel}
-                  refreshRecentNotes={recentNotesRefreshTrigger}
-                  onToggleConstellationPanel={toggleConstellationView}
-                  showConstellationPanel={showConstellationPanel}
-                  knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+  const mainContentNode = (
+    <div className="flex-1 flex flex-col overflow-hidden">
+            {!showConstellationPanel && !isPopupLayerActive && (
+            <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+                <WorkspaceToolbar
+                  notes={sortedOpenNotes}
+                  activeNoteId={activeNoteId}
+                  isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
+                  formatNoteLabel={formatNoteLabel}
+                  onActivateNote={handleNoteSelect}
+                  onCenterNote={handleCenterNote}
+                  onCloseNote={handleCloseNote}
+                  onNewNote={handleNewNoteFromToolbar}
+                  onSettings={handleSettingsFromToolbar}
                 />
-              )}
-            </ModernAnnotationCanvas>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-gray-950">
-              <div className="text-center">
-                <h2 className="mb-4 text-3xl font-bold text-gray-600">Welcome to Annotation Canvas</h2>
-                <p className="mb-6 text-gray-500">
-                  Right-click anywhere to open Notes Explorer and create a new note
-                </p>
               </div>
-            </div>
+            </AutoHideToolbar>
           )}
-        </div>
-      </div>
-    </div>
-  )
 
-  const workspaceLayersNode = (
-    <>
-      {canRenderOverlay && adaptedPopups && (
-        <PopupOverlay
-          popups={adaptedPopups}
-          draggingPopup={draggingPopup}
-          onClosePopup={handleCloseOverlayPopup}
-          onInitiateClose={handleInitiateClose}
-          onConfirmClose={handleConfirmClose}
-          onCancelClose={handleCancelClose}
-          onTogglePin={handleTogglePin}
-          onDragStart={handlePopupDragStart}
-          onHoverFolder={handleFolderHover}
-          onLeaveFolder={handleFolderHoverLeave}
-          onPopupHover={handlePopupHover}
-          onSelectNote={handleNoteSelect}
-          onDeleteSelected={handleDeleteSelected}
-          onBulkMove={handleBulkMove}
-          onFolderCreated={handleFolderCreated}
-          onFolderRenamed={handleFolderRenamed}
-          onPopupCardClick={handleCloseNotesWidget}
-          onContextMenu={handleContextMenu}
-          onPopupPositionChange={handlePopupPositionChange}
-          onResizePopup={handleResizePopup}
-          isLocked={isWorkspaceLayoutLoading}
-          sidebarOpen={isPopupLayerActive}
-          backdropStyle={backdropStyle}
-          workspaceId={currentWorkspaceId}
-          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
-          activeMoveCascadeParentId={moveCascadeState.parentId}
-          moveCascadeChildIds={moveCascadeState.childIds}
-          onToggleMoveCascade={handleToggleMoveCascade}
-        />
-      )}
+          <div className="relative flex-1" onContextMenu={handleContextMenu}>
+            {shouldShowWorkspaceToggle && (
+              <div
+                className="absolute inset-x-0 top-4 flex justify-center"
+                style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
+              >
+                <div
+                  ref={workspaceToggleRef}
+                  className="flex flex-col items-center gap-2 pointer-events-auto"
+                >
+                  <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceMenuOpen(prev => !prev)}
+                      aria-expanded={workspaceMenuOpen}
+                      aria-label="Choose workspace"
+                      className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <span className="text-[11px] uppercase tracking-wide text-white/60">
+                        Workspace
+                      </span>
+                      <span>{workspaceStatusLabel}</span>
+                      <svg
+                        aria-hidden="true"
+                        className={`h-3 w-3 transition-transform ${
+                          workspaceMenuOpen ? 'rotate-180' : ''
+                        }`}
+                        viewBox="0 0 12 12"
+                        fill="none"
+                      >
+                        <path
+                          d="M3 4.5L6 7.5L9 4.5"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateWorkspace}
+                      disabled={isWorkspaceSaving || isWorkspaceLayoutLoading}
+                      className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/90 text-slate-950 transition-transform hover:translate-y-[-1px] disabled:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                      aria-label="Snapshot current workspace"
+                    >
+                      <span className="text-lg font-semibold leading-none">+</span>
+                    </button>
+                  </div>
 
-    </>
-  )
-
-  const floatingToolbarNode =
-    showNotesWidget && !activeNoteId && !showConstellationPanel ? (
-      <FloatingToolbar
-        x={notesWidgetPosition.x}
-        y={notesWidgetPosition.y}
-        onClose={handleCloseNotesWidget}
-        onSelectNote={handleNoteSelect}
-        onCreateOverlayPopup={handleCreateOverlayPopup}
-        onAddComponent={handleAddComponentFromToolbar}
-        editorRef={activeEditorRef}
-        activePanelId={activePanelId}
-        onBackdropStyleChange={handleBackdropStyleChange}
-        onFolderRenamed={handleFolderRenamed}
-        activePanel={toolbarActivePanel}
-        onActivePanelChange={setToolbarActivePanel}
-        refreshRecentNotes={recentNotesRefreshTrigger}
-        onToggleConstellationPanel={toggleConstellationView}
-        showConstellationPanel={showConstellationPanel}
-        knowledgeBaseWorkspace={knowledgeBaseWorkspace}
-      />
-    ) : null
-
-  const previewPortalNode =
-    notePreview && typeof document !== 'undefined'
-      ? createPortal(
-          <PreviewPopover
-            content={notePreview.content}
-            status={isLoadingNotePreview ? 'loading' : 'ready'}
-            position={notePreview.position}
-            noteId={notePreview.noteId}
-            onOpenNote={noteId => {
-              handleSidebarNoteOpen(noteId)
-              cancelNotePreview()
-            }}
-            onMouseEnter={handleSidebarPreviewTooltipEnter}
-            onMouseLeave={handleSidebarPreviewTooltipLeave}
-          />,
-          document.body
-        )
-      : null
-
-  const sidebarPreviewPopupsNode = shouldLoadOverlay
-    ? sidebarFolderPopups.map(popup => {
-      const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
-      return (
-        <div
-          key={popup.id}
-          className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
-          style={{
-            backgroundColor: 'rgba(17, 24, 39, 0.98)',
-            left: `${popup.position.x}px`,
-            top: `${popup.position.y}px`,
-            zIndex: Z_INDEX.DROPDOWN + 20,
-          }}
-          onClick={event => event.stopPropagation()}
-          onMouseEnter={() => handleSidebarPopupHover(popup.folderId)}
-          onMouseLeave={() => handleSidebarEyeHoverLeave(popup.folderId)}
-        >
-          <div
-            className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
-            style={{
-              backgroundColor: 'transparent',
-              color: 'rgba(255, 255, 255, 0.8)',
-              borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-            }}
-          >
-            <div className="flex items-center gap-2">
-              {popupColorTheme && (
-                <span
-                  className="inline-block h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: popupColorTheme.bg }}
-                />
-              )}
-              <span>{popup.folderName}</span>
+                  {workspaceMenuOpen && (
+                    <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+                      {isWorkspaceListLoading ? (
+                        <div className="py-6 text-center text-sm text-white/60">
+                          Loading workspaces...
+                        </div>
+                      ) : workspaces.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-white/60 px-4">
+                          No saved workspaces yet. Use the + button to snapshot this layout.
+                        </div>
+                      ) : (
+                        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                          {workspaces.map(workspace => {
+                            const isActive = workspace.id === currentWorkspaceId
+                            const isDeleting = workspaceDeletionId === workspace.id
+                            const disableDelete = workspace.isDefault || isDeleting
+                            const updatedDate = workspace.updatedAt ? new Date(workspace.updatedAt) : null
+                            const lastUpdated =
+                              updatedDate && !Number.isNaN(updatedDate.getTime())
+                                ? updatedDate.toLocaleString()
+                                : 'Never saved'
+                            return (
+                              <li key={workspace.id} className="group relative">
+                                <button
+                                  type="button"
+                                  onClick={() => handleWorkspaceSelect(workspace.id)}
+                                  className={[
+                                    'w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors',
+                                    isActive
+                                      ? 'border-blue-400/60 bg-blue-500/20 text-white shadow-lg'
+                                      : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
+                                  ].join(' ')}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium">{workspace.name}</span>
+                                    <span className="text-xs text-white/60">
+                                      {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-white/50">
+                                    {lastUpdated}
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={event => {
+                                    event.stopPropagation()
+                                    handleDeleteWorkspace(workspace.id)
+                                  }}
+                                  disabled={disableDelete}
+                                  className={[
+                                    'absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 text-white/70 opacity-0 transition-all group-hover:opacity-100',
+                                    disableDelete
+                                      ? 'cursor-not-allowed opacity-30'
+                                      : 'hover:border-red-400/60 hover:bg-red-600/20 hover:text-red-200',
+                                  ].join(' ')}
+                                  aria-label={
+                                    workspace.isDefault
+                                      ? 'Default workspace cannot be deleted'
+                                      : 'Delete workspace'
+                                  }
+                                >
+                                  {isDeleting ? (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide">…</span>
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex h-full w-full">
+              <div
+                className="flex-1 relative transition-all duration-300 ease-in-out"
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  isolation: 'isolate',
+                  opacity: showConstellationPanel ? 0 : 1,
+                  visibility: showConstellationPanel ? 'hidden' : 'visible',
+                }}
+                aria-hidden={showConstellationPanel}
+              >
+                <div
+                  className="h-full w-full"
+                  style={{
+                    pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+                  }}
+                >
+                  {openNotes.length > 0 ? (
+                    <ModernAnnotationCanvas
+                      key="workspace"
+                      noteIds={openNotes.map(note => note.noteId)}
+                      primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+                      ref={canvasRef}
+                      freshNoteSeeds={freshNoteSeeds}
+                      onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+                      isNotesExplorerOpen={false}
+                      freshNoteIds={freshNoteIds}
+                      onFreshNoteHydrated={handleFreshNoteHydrated}
+                      onCanvasStateChange={handleCanvasStateChange}
+                      mainOnlyNoteIds={mainOnlyNotes}
+                      onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+                      showAddComponentMenu={showAddComponentMenu}
+                      onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+                      onRegisterActiveEditor={handleRegisterActiveEditor}
+                      onSnapshotLoadComplete={handleSnapshotLoadComplete}
+                      skipSnapshotForNote={skipSnapshotForNote}
+                      onSnapshotSettled={handleSnapshotSettled}
+                    >
+                      {showNotesWidget && (
+                        <CanvasAwareFloatingToolbar
+                          x={notesWidgetPosition.x}
+                          y={notesWidgetPosition.y}
+                          onClose={handleCloseNotesWidget}
+                          onSelectNote={handleNoteSelect}
+                          onCreateOverlayPopup={handleCreateOverlayPopup}
+                          onAddComponent={handleAddComponentFromToolbar}
+                          editorRef={activeEditorRef}
+                          activePanelId={activePanelId}
+                          onBackdropStyleChange={handleBackdropStyleChange}
+                          onFolderRenamed={handleFolderRenamed}
+                          activePanel={toolbarActivePanel}
+                          onActivePanelChange={setToolbarActivePanel}
+                          refreshRecentNotes={recentNotesRefreshTrigger}
+                          onToggleConstellationPanel={toggleConstellationView}
+                          showConstellationPanel={showConstellationPanel}
+                          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+                        />
+                      )}
+                    </ModernAnnotationCanvas>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gray-950">
+                      <div className="text-center">
+                        <h2 className="mb-4 text-3xl font-bold text-gray-600">
+                          Welcome to Annotation Canvas
+                        </h2>
+                        <p className="mb-6 text-gray-500">
+                          Right-click anywhere to open Notes Explorer and create a new note
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-            <button
-              className="text-white/60 hover:text-white"
-              onClick={() => dismissSidebarPopup(popup.id)}
-              aria-label="Close preview popup"
-            >
-              ×
-            </button>
-          </div>
-          <div className="max-h-64 overflow-y-auto p-3 space-y-1">
-            {popup.isLoading ? (
-              <div className="py-4 text-center text-sm text-white/60">Loading...</div>
-            ) : popup.children.length === 0 ? (
-              <div className="py-4 text-center text-sm text-white/60">Empty folder</div>
-            ) : (
-              popup.children.map(child => (
-                <div key={child.id} className="group relative">
-                  <button
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/90 transition hover:border-blue-400/40 hover:bg-blue-500/20"
-                    onDoubleClick={() => {
-                      if (child.type === 'note') {
-                        handleSidebarNoteOpen(child.id)
-                      }
+
+            {canRenderOverlay && adaptedPopups && (
+                <PopupOverlay
+                popups={adaptedPopups}
+                draggingPopup={draggingPopup}
+                onClosePopup={handleCloseOverlayPopup}
+                onInitiateClose={handleInitiateClose}
+                onConfirmClose={handleConfirmClose}
+                onCancelClose={handleCancelClose}
+                onTogglePin={handleTogglePin}
+                onDragStart={handlePopupDragStart}
+                onHoverFolder={handleFolderHover}
+                onLeaveFolder={handleFolderHoverLeave}
+                onPopupHover={handlePopupHover}
+                onSelectNote={handleNoteSelect}
+                onDeleteSelected={handleDeleteSelected}
+                onBulkMove={handleBulkMove}
+                onFolderCreated={handleFolderCreated}
+                onFolderRenamed={handleFolderRenamed}
+                onPopupCardClick={handleCloseNotesWidget}
+                onContextMenu={handleContextMenu}
+                onPopupPositionChange={handlePopupPositionChange}
+                onResizePopup={handleResizePopup}
+                isLocked={isWorkspaceLayoutLoading}
+                sidebarOpen={isPopupLayerActive}
+                backdropStyle={backdropStyle}
+                workspaceId={currentWorkspaceId}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+                activeMoveCascadeParentId={moveCascadeState.parentId}
+                moveCascadeChildIds={moveCascadeState.childIds}
+                onToggleMoveCascade={handleToggleMoveCascade}
+              />
+            )}
+
+            {shouldLoadOverlay && sidebarFolderPopups.map((popup) => {
+              const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
+              return (
+                <div
+                  key={popup.id}
+                  className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+                  style={{
+                    backgroundColor: 'rgba(17, 24, 39, 0.98)',
+                    left: `${popup.position.x}px`,
+                    top: `${popup.position.y}px`,
+                    zIndex: Z_INDEX.DROPDOWN + 20,
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseEnter={() => handleSidebarPopupHover(popup.folderId)}
+                  onMouseLeave={() => handleSidebarEyeHoverLeave(popup.folderId)}
+                >
+                  <div
+                    className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'rgba(255, 255, 255, 0.8)',
+                      borderBottomColor: 'rgba(255, 255, 255, 0.1)',
                     }}
                   >
-                    <div className="flex items-center justify-between gap-2 text-sm font-medium">
-                      <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span>{child.icon ?? (child.type === 'folder' ? '📁' : '📄')}</span>
-                        <span className="truncate">{child.name}</span>
-                      </div>
-                      {child.type === 'folder' ? (
-                        <div
-                          className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
-                          onMouseEnter={event => handleSidebarOrgEyeHover(child, event, popup.folderId)}
-                          onMouseLeave={() => handleSidebarEyeHoverLeave(child.id)}
-                          onClick={event => {
-                            event.stopPropagation()
-                            handleSidebarPopupFolderClick(child, event)
-                          }}
-                        >
-                          <Eye className="h-3.5 w-3.5 text-blue-400" />
-                        </div>
-                      ) : child.type === 'note' ? (
-                        <div
-                          className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
-                          onMouseEnter={event => handleSidebarNotePreviewHover(child.id, event, popup.folderId)}
-                          onMouseLeave={handleSidebarNotePreviewLeave}
-                        >
-                          <Eye className="h-3.5 w-3.5 text-blue-400" />
-                        </div>
-                      ) : null}
+                    <div className="flex items-center gap-2">
+                      {popupColorTheme && (
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: popupColorTheme.bg }}
+                        />
+                      )}
+                      <span>{popup.folderName}</span>
                     </div>
-                    <div className="mt-1 text-xs text-white/60">
-                      {child.type === 'folder' ? 'Folder' : 'Note'}
-                    </div>
-                  </button>
+                    <button
+                      className="text-white/60 hover:text-white"
+                      onClick={() => dismissSidebarPopup(popup.id)}
+                      aria-label="Close preview popup"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-3 space-y-1">
+                    {popup.isLoading ? (
+                      <div className="py-4 text-center text-sm text-white/60">Loading...</div>
+                    ) : popup.children.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-white/60">Empty folder</div>
+                    ) : (
+                      popup.children.map((child) => (
+                        <div key={child.id} className="group relative">
+                          <button
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/90 transition hover:border-blue-400/40 hover:bg-blue-500/20"
+                            onDoubleClick={() => {
+                              if (child.type === 'note') {
+                                handleSidebarNoteOpen(child.id)
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <span>{child.icon ?? (child.type === 'folder' ? '📁' : '📄')}</span>
+                                <span className="truncate">{child.name}</span>
+                              </div>
+                              {child.type === 'folder' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarOrgEyeHover(child, event, popup.folderId)
+                                  }
+                                  onMouseLeave={() => handleSidebarEyeHoverLeave(child.id)}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handleSidebarPopupFolderClick(child, event)
+                                  }}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
+                              ) : child.type === 'note' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarNotePreviewHover(child.id, event, popup.folderId)
+                                  }
+                                  onMouseLeave={handleSidebarNotePreviewLeave}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-xs text-white/60">
+                              {child.type === 'folder' ? 'Folder' : 'Note'}
+                            </div>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-              ))
+              )
+            })}
+
+            {notePreview &&
+              typeof document !== 'undefined' &&
+              createPortal(
+                <PreviewPopover
+                  content={notePreview.content}
+                  status={isLoadingNotePreview ? 'loading' : 'ready'}
+                  position={notePreview.position}
+                  noteId={notePreview.noteId}
+                  onOpenNote={(noteId) => {
+                    handleSidebarNoteOpen(noteId)
+                    cancelNotePreview()
+                  }}
+                  onMouseEnter={handleSidebarPreviewTooltipEnter}
+                  onMouseLeave={handleSidebarPreviewTooltipLeave}
+                />,
+                document.body
+              )}
+
+            {showNotesWidget && !activeNoteId && !showConstellationPanel && (
+              <FloatingToolbar
+                x={notesWidgetPosition.x}
+                y={notesWidgetPosition.y}
+                onClose={handleCloseNotesWidget}
+                onSelectNote={handleNoteSelect}
+                onCreateOverlayPopup={handleCreateOverlayPopup}
+                onAddComponent={handleAddComponentFromToolbar}
+                editorRef={activeEditorRef}
+                activePanelId={activePanelId}
+                onBackdropStyleChange={handleBackdropStyleChange}
+                onFolderRenamed={handleFolderRenamed}
+                activePanel={toolbarActivePanel}
+                onActivePanelChange={setToolbarActivePanel}
+                refreshRecentNotes={recentNotesRefreshTrigger}
+                onToggleConstellationPanel={toggleConstellationView}
+                showConstellationPanel={showConstellationPanel}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+              />
+            )}
+
+            {showConstellationPanel && (
+              <div className="absolute inset-0 z-40">
+                <ConstellationPanel />
+              </div>
             )}
           </div>
         </div>
-      )
-    })
-    : null
-
-
-  const constellationPanelNode = showConstellationPanel ? (
-    <div className="absolute inset-0 z-40">
-      <ConstellationPanel />
+      </div>
     </div>
-  ) : null
+  );
 
-  const workspaceView = (
-    <AnnotationWorkspaceView
-      sidebar={sidebarNode}
-      toolbar={toolbarNode}
-      workspaceToggle={workspaceToggleNode}
-      canvasArea={canvasAreaNode}
-      workspaceLayers={workspaceLayersNode}
-      sidebarPreviewPopups={sidebarPreviewPopupsNode}
-      floatingToolbar={floatingToolbarNode}
-      previewPortal={previewPortalNode}
-      constellationPanel={constellationPanelNode}
-      onMainAreaContextMenu={handleContextMenu}
-    />
+  const legacyContent = (
+    <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
+      <div className="flex h-full w-full">
+        {sidebarNode}
+        {mainContentNode}
+      </div>
+    </div>
+  );
+
+  const shellView = (
+    <AnnotationWorkspaceView sidebar={sidebarNode} content={mainContentNode} />
   )
 
   if (useShellView) {
     return (
       <ConstellationProvider>
-        {workspaceView}
+        {shellView}
       </ConstellationProvider>
     )
   }
 
   return (
     <ConstellationProvider>
-      {workspaceView}
+      {legacyContent}
     </ConstellationProvider>
   )
 }
