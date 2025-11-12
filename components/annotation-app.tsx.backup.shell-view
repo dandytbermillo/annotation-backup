@@ -1,0 +1,2501 @@
+"use client"
+
+import { useState, useRef, useEffect, useCallback, useMemo, useReducer } from "react"
+import { createPortal } from "react-dom"
+import dynamic from 'next/dynamic'
+import { CanvasAwareFloatingToolbar } from "./canvas-aware-floating-toolbar"
+import { FloatingToolbar, getFolderColorTheme, type OverlayPopup, type OrgItem } from "./floating-toolbar"
+import { PopupOverlay } from "@/components/canvas/popup-overlay"
+import { CoordinateBridge } from "@/lib/utils/coordinate-bridge"
+import { trackNoteAccess, createNote } from "@/lib/utils/note-creator"
+import { LayerProvider, useLayer } from "@/components/canvas/layer-provider"
+import { Trash2, Eye } from 'lucide-react'
+import {
+  OverlayLayoutAdapter,
+  OverlayLayoutConflictError,
+  type OverlayLayoutPayload,
+  isOverlayPersistenceEnabled,
+} from "@/lib/adapters/overlay-layout-adapter"
+import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
+import { toast } from "@/hooks/use-toast"
+import { CanvasWorkspaceProvider, useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas/canvas-workspace-context"
+import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { isDefaultMainPosition } from "@/lib/canvas/position-utils"
+import { WorkspaceToolbar } from "./canvas/workspace-toolbar"
+import { AutoHideToolbar } from "./canvas/auto-hide-toolbar"
+import {
+  computeVisuallyCenteredWorldPosition,
+  type RapidSequenceState,
+} from "@/lib/canvas/visual-centering"
+import {
+  useCanvasCentering,
+  CENTER_RETRY_ATTEMPTS,
+  CENTER_EXISTING_NOTES_ENABLED,
+} from "@/lib/hooks/annotation/use-canvas-centering"
+import { ConstellationPanel } from "@/components/constellation/constellation-panel"
+import { ConstellationProvider } from "@/components/constellation/constellation-context"
+import { CanvasSidebar, type CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
+import { OrganizationSidebarContent, type OrganizationSidebarItem } from "@/components/sidebar/organization-sidebar-content"
+import { ConstellationSidebarShared } from "@/components/sidebar/constellation-sidebar-shared"
+import { PreviewPopover } from "@/components/shared/preview-popover"
+import type { OverlayCameraState } from "@/lib/types/overlay-layout"
+import { Z_INDEX } from "@/lib/constants/z-index"
+import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
+import { useKnowledgeBaseWorkspace } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
+import { useFolderCache } from "@/lib/hooks/annotation/use-folder-cache"
+import { usePopupOverlayState } from "@/lib/hooks/annotation/use-popup-overlay-state"
+import { useOverlayPopupLayout } from "@/lib/hooks/annotation/use-overlay-popup-layout"
+import { useOverlayLayoutPersistence } from "@/lib/hooks/annotation/use-overlay-layout-persistence"
+import { useOverlayLayoutSaveQueue } from "@/lib/hooks/annotation/use-overlay-layout-save-queue"
+import { useOverlayWorkspaces } from "@/lib/hooks/annotation/use-overlay-workspaces"
+import { useSidebarFolderPopups, type SidebarNotePreviewContext } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
+import { useOverlayLayerInteractions } from "@/lib/hooks/annotation/use-overlay-layer-interactions"
+import { useOverlayLayerHotkeys } from "@/lib/hooks/annotation/use-overlay-layer-hotkeys"
+import { useWorkspaceToolbarState } from "@/lib/hooks/annotation/use-workspace-toolbar-state"
+import { useConstellationViewState } from "@/lib/hooks/annotation/use-constellation-view-state"
+import { useOrganizationSidebarActions } from "@/lib/hooks/annotation/use-organization-sidebar-actions"
+import { usePopupBulkActions } from "@/lib/hooks/annotation/use-popup-bulk-actions"
+import { useKnowledgeBaseSidebar } from "@/lib/hooks/annotation/use-knowledge-base-sidebar"
+import { useWorkspaceNoteTitleSync } from "@/lib/hooks/annotation/use-workspace-note-title-sync"
+import { useWorkspacePanelPositions } from "@/lib/hooks/annotation/use-workspace-panel-positions"
+import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
+
+const ANNOTATION_APP_REFACTOR_PHASE = process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || 'off'
+const FOLDER_CACHE_MAX_AGE_MS = 30000
+
+// Helper to derive display name from path when folder.name is empty
+function deriveFromPath(path: string | undefined | null): string | null {
+  if (!path || typeof path !== 'string') return null
+  const trimmed = path.trim()
+  if (!trimmed) return null
+
+  // Remove trailing slashes
+  const normalized = trimmed.replace(/\/+$/, '')
+  if (!normalized) return null
+
+  // Get last segment
+  const segments = normalized.split('/')
+  const lastSegment = segments[segments.length - 1]
+  return lastSegment && lastSegment.trim() ? lastSegment.trim() : null
+}
+
+function sidebarItemToOrgItem(item: OrganizationSidebarItem): OrgItem {
+  return {
+    id: item.id,
+    name: item.name,
+    type: item.type === 'note' ? 'note' : 'folder',
+    icon: item.icon,
+    color: item.color ?? undefined,
+    path: item.path ?? undefined,
+    hasChildren: item.hasChildren ?? (item.count ?? 0) > 0,
+    level: typeof item.level === 'number' ? item.level : 0,
+    children: [],
+    parentId: item.parentId ?? undefined,
+  }
+}
+
+const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
+
+const camerasEqual = (a: OverlayCameraState, b: OverlayCameraState) =>
+  a.x === b.x && a.y === b.y && a.scale === b.scale
+
+const ModernAnnotationCanvas = dynamic(
+  () => import('./annotation-canvas-modern'),
+  { 
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
+        <div className="text-white text-2xl font-semibold animate-pulse">Loading canvas...</div>
+      </div>
+    )
+  }
+)
+
+const DEFAULT_POPUP_WIDTH = 300
+const DEFAULT_POPUP_HEIGHT = 400
+const MIN_POPUP_WIDTH = 200
+const MIN_POPUP_HEIGHT = 200
+const MAX_POPUP_WIDTH = 900
+const MAX_POPUP_HEIGHT = 900
+
+type AnnotationAppContentProps = {
+  useShellView?: boolean
+}
+
+function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProps) {
+  const {
+    openNotes,
+    openNote: openWorkspaceNote,
+    closeNote: closeWorkspaceNote,
+    isWorkspaceReady,
+    isWorkspaceLoading,
+    isHydrating,
+    workspaceError,
+    refreshWorkspace,
+    getPendingPosition,
+    getCachedPosition,
+    getWorkspace
+  } = useCanvasWorkspace()
+  const sharedWorkspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
+
+  // Initialize activeNoteId from localStorage (persist which note canvas is focused)
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored =
+          localStorage.getItem('annotation_activeNoteId') ??
+          localStorage.getItem('annotation_focusedNoteId') ??
+          localStorage.getItem('annotation_selectedNoteId')
+        return stored || null
+      } catch (err) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'localStorage_focus_load_failed',
+          metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
+        })
+        return null
+      }
+    }
+    return null
+  })
+  const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
+  const layerContext = useLayer()
+  const {
+    activeSidebarTab,
+    showConstellationPanel,
+    canvasMode,
+    setCanvasMode,
+    handleSidebarTabChange,
+    toggleConstellationView,
+  } = useConstellationViewState({ layerContext })
+  const multiLayerEnabled = true
+  const [shouldLoadOverlay, setShouldLoadOverlay] = useState(false)
+  const overlayHydrationTriggerRef = useRef<string | null>(null)
+
+  const ensureOverlayHydrated = useCallback((reason: string) => {
+    setShouldLoadOverlay(prev => {
+      if (prev) return prev
+      overlayHydrationTriggerRef.current = reason
+      return true
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!shouldLoadOverlay) return
+    const trigger = overlayHydrationTriggerRef.current ?? 'unknown'
+    if (isDebugEnabled()) {
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'overlay_hydration_enabled',
+        metadata: { trigger },
+      })
+    } else {
+      console.log(`[AnnotationApp] Overlay hydration enabled (${trigger})`)
+    }
+    overlayHydrationTriggerRef.current = null
+  }, [shouldLoadOverlay])
+
+  useEffect(() => {
+    if (layerContext?.activeLayer === 'popups') {
+      ensureOverlayHydrated('layer-active')
+    }
+  }, [layerContext?.activeLayer, ensureOverlayHydrated])
+
+  const activeNoteIdRef = useRef<string | null>(activeNoteId)
+  useEffect(() => {
+    activeNoteIdRef.current = activeNoteId
+  }, [activeNoteId])
+
+  const {
+    canvasRef,
+    freshNoteSeeds,
+    freshNoteIds,
+    registerFreshNote,
+    consumeFreshNoteSeed,
+    storeFreshNoteSeed,
+    handleFreshNoteHydrated,
+    handleSnapshotLoadComplete,
+    centerNoteOnCanvas,
+  } = useCanvasCentering({
+    activeNoteIdRef,
+    debugLog,
+    sharedWorkspace,
+  })
+
+
+  const [canvasState, setCanvasState] = useState({
+    zoom: 1,
+    showConnections: true,
+    translateX: 0,
+    translateY: 0
+  })
+  const lastCanvasInteractionRef = useRef<{ x: number; y: number } | null>(null)
+  const handleCanvasStateChange = useCallback(
+    (
+      stateUpdate: Partial<{
+        zoom: number
+        showConnections: boolean
+        translateX: number
+        translateY: number
+        lastInteraction?: { x: number; y: number } | null
+        interactionSource?: 'canvas' | 'keyboard' | 'toolbar'
+      }>,
+    ) => {
+      let updated = false
+      setCanvasState(prev => {
+        const next = {
+          zoom: stateUpdate.zoom ?? prev.zoom,
+          showConnections: stateUpdate.showConnections ?? prev.showConnections,
+          translateX: stateUpdate.translateX ?? prev.translateX,
+          translateY: stateUpdate.translateY ?? prev.translateY,
+        }
+        if (
+          next.zoom === prev.zoom &&
+          next.showConnections === prev.showConnections &&
+          next.translateX === prev.translateX &&
+          next.translateY === prev.translateY
+        ) {
+          return prev
+        }
+        updated = true
+        return next
+      })
+      if (stateUpdate.lastInteraction) {
+        lastCanvasInteractionRef.current = stateUpdate.lastInteraction
+        if (typeof window !== 'undefined') {
+          ;(window as any).__canvasLastInteraction = stateUpdate.lastInteraction
+          ;(window as any).__canvasLastInteractionSource = stateUpdate.interactionSource ?? 'canvas'
+        }
+      } else if (
+        updated &&
+        typeof window !== 'undefined' &&
+        (stateUpdate.translateX !== undefined || stateUpdate.translateY !== undefined)
+      ) {
+        const fallbackPoint = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+        lastCanvasInteractionRef.current = fallbackPoint
+        ;(window as any).__canvasLastInteraction = fallbackPoint
+      }
+    },
+    [],
+  )
+  const reopenSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
+  const newNoteSequenceRef = useRef<RapidSequenceState>({ count: 0, lastTimestamp: 0 })
+  const {
+    showNotesWidget,
+    setShowNotesWidget,
+    notesWidgetPosition,
+    setNotesWidgetPosition,
+    activeEditorRef,
+    activePanelId,
+    setActivePanelId,
+    toolbarActivePanel,
+    setToolbarActivePanel,
+    recentNotesRefreshTrigger,
+    bumpRecentNotesRefresh,
+    showAddComponentMenu,
+    setShowAddComponentMenu,
+  } = useWorkspaceToolbarState()
+  const [mainOnlyNotes, setMainOnlyNotes] = useState<string[]>([])
+  const requestMainOnlyNote = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => (prev.includes(noteId) ? prev : [...prev, noteId]))
+  }, [])
+  const handleMainOnlyLayoutHandled = useCallback((noteId: string) => {
+    if (!noteId) return
+    setMainOnlyNotes(prev => prev.filter(id => id !== noteId))
+  }, [])
+
+  // Display settings state (backdrop style preference)
+  const [backdropStyle, setBackdropStyle] = useState<string>('opaque')
+
+  // Overlay popups state - persists independently of toolbar (like activeNoteId)
+  const latestCameraRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
+  const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
+  const knowledgeBaseWorkspace = useKnowledgeBaseWorkspace()
+  const {
+    workspaceId: knowledgeBaseWorkspaceId,
+    appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
+    withWorkspaceHeaders: withKnowledgeBaseHeaders,
+    withWorkspacePayload: withKnowledgeBasePayload,
+    fetchWithWorkspace: fetchWithKnowledgeBase,
+    resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
+  } = knowledgeBaseWorkspace
+  const applyWorkspacePayload = useCallback(
+    (payload: Record<string, unknown>, workspaceId: string | null) =>
+      withKnowledgeBasePayload(payload, workspaceId ?? undefined),
+    [withKnowledgeBasePayload],
+  )
+
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+  const [isWorkspaceLayoutLoading, setIsWorkspaceLayoutLoading] = useState(false)
+  const workspacesLoadedRef = useRef(false)
+  const lastDiagnosticsHashRef = useRef<string | null>(null)
+  const fetchNotePreview = useCallback(
+    async (noteId: string) => {
+      const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`)
+      if (!response.ok) throw new Error('Failed to fetch note')
+      const data = await response.json()
+      return {
+        content: data?.item?.content,
+        contentText: data?.item?.contentText,
+      }
+    },
+    [fetchWithKnowledgeBase]
+  )
+
+  const {
+    preview: notePreview,
+    isLoading: isLoadingNotePreview,
+    handleHover: triggerNotePreviewHover,
+    handleLeave: triggerNotePreviewLeave,
+    handleTooltipEnter: triggerNotePreviewTooltipEnter,
+    handleTooltipLeave: triggerNotePreviewTooltipLeave,
+    cancelPreview: cancelNotePreview,
+  } = useNotePreviewHover<SidebarNotePreviewContext>({
+    fetchNote: fetchNotePreview,
+  })
+
+  const folderCacheApi = useFolderCache({
+    workspaceId: knowledgeBaseWorkspaceId,
+    cacheMaxAgeMs: FOLDER_CACHE_MAX_AGE_MS,
+  })
+  const {
+    getEntry: getFolderCacheEntry,
+    updateFolderSnapshot: updateFolderCacheEntry,
+    updateChildrenSnapshot: updateFolderCacheChildren,
+    invalidate: invalidateFolderCache,
+    fetchFolder: fetchGlobalFolder,
+    fetchChildren: fetchGlobalChildren,
+  } = folderCacheApi
+
+  const sidebarLoaderDeps = useMemo(
+    () => ({
+      appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
+      fetchWithWorkspace: fetchWithKnowledgeBase,
+      knowledgeBaseWorkspaceId,
+      resolveWorkspaceId: resolveKnowledgeBaseWorkspaceId,
+      updateFolderCacheEntry,
+      updateFolderCacheChildren,
+    }),
+    [
+      appendKnowledgeBaseWorkspaceParam,
+      fetchWithKnowledgeBase,
+      knowledgeBaseWorkspaceId,
+      resolveKnowledgeBaseWorkspaceId,
+      updateFolderCacheEntry,
+      updateFolderCacheChildren,
+    ],
+  )
+
+  const noteTitleDeps = useMemo(
+    () => ({
+      fetchWithKnowledgeBase,
+    }),
+    [fetchWithKnowledgeBase],
+  )
+
+  const {
+    organizationSidebarData: sidebarState,
+    knowledgeBaseId,
+    noteTitleMapRef,
+    forceNoteTitleUpdate,
+    setTitleForNote,
+    ensureTitleFromServer,
+  } = useKnowledgeBaseSidebar({
+    loader: sidebarLoaderDeps,
+    noteTitles: noteTitleDeps,
+    sharedWorkspace,
+    enabled: shouldLoadOverlay,
+  })
+
+  const sortedOpenNotes = useMemo(() => {
+    return [...openNotes].sort((a, b) => {
+      if (a.noteId === b.noteId) return 0
+      if (!a.updatedAt && b.updatedAt) return 1
+      if (a.updatedAt && !b.updatedAt) return -1
+      if (a.updatedAt && b.updatedAt) {
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      }
+      return a.noteId.localeCompare(b.noteId)
+    })
+  }, [openNotes])
+
+  useWorkspaceNoteTitleSync({
+    sharedWorkspace,
+    sortedOpenNotes,
+    noteTitleMapRef,
+    setTitleForNote,
+    ensureTitleFromServer,
+    forceNoteTitleUpdate,
+  })
+
+  const {
+    logWorkspaceNotePositions,
+    resolveMainPanelPosition,
+    hasRenderedMainPanel,
+  } = useWorkspacePanelPositions({
+    sharedWorkspace,
+    sortedOpenNotes,
+    openNotes,
+    activeNoteId,
+    getPendingPosition,
+    getCachedPosition,
+    debugLog,
+  })
+
+  const {
+    popups: overlayPopups,
+    setPopups: setOverlayPopups,
+    draggingPopup,
+    setDraggingPopup,
+    overlayPanning,
+    setOverlayPanning,
+    moveCascadeState,
+    hoverTimeouts,
+    closeTimeouts,
+    setHoverTimeout,
+    clearHoverTimeout,
+    setCloseTimeout,
+    clearCloseTimeout,
+    clearAllTimeouts,
+    handlePopupDragStart: startPopupDrag,
+    handlePopupDragMove,
+    handlePopupDragEnd,
+    getAllDescendants,
+    toggleMoveCascade,
+    clearMoveCascadeState,
+    closePopupCascade,
+    initiateCloseMode,
+    confirmCloseMode,
+    cancelCloseMode,
+    togglePinCascade,
+    handleFolderHover,
+    handleFolderHoverLeave,
+  } = usePopupOverlayState({
+    layerContext,
+    knowledgeBaseWorkspace,
+    folderCache: folderCacheApi,
+    fetchChildren: fetchGlobalChildren,
+    ensureOverlayHydrated,
+    popupWidth: DEFAULT_POPUP_WIDTH,
+  })
+  const {
+    createOverlayPopup: handleCreateOverlayPopup,
+    updatePopupPosition: handlePopupPositionChange,
+    resizePopup: handleResizePopup,
+  } = useOverlayPopupLayout({
+    setPopups: setOverlayPopups,
+    ensureOverlayHydrated,
+    defaultWidth: DEFAULT_POPUP_WIDTH,
+    defaultHeight: DEFAULT_POPUP_HEIGHT,
+    minWidth: MIN_POPUP_WIDTH,
+    maxWidth: MAX_POPUP_WIDTH,
+    minHeight: MIN_POPUP_HEIGHT,
+    maxHeight: MAX_POPUP_HEIGHT,
+  })
+  const { handleDeleteSelected, handleBulkMove } = usePopupBulkActions({
+    fetchWithKnowledgeBase,
+    withKnowledgeBasePayload: applyWorkspacePayload,
+    knowledgeBaseWorkspaceId,
+    setOverlayPopups,
+    folderCacheApi: {
+      updateFolderCacheChildren,
+      invalidateFolderCache,
+    },
+  })
+
+  const organizationFolders = sidebarState.organizationFolders
+
+  const { handleOrganizationSidebarSelect } = useOrganizationSidebarActions({
+    knowledgeBaseId,
+    organizationFolders,
+    overlayPopups,
+    setOverlayPopups,
+    layerContext,
+    setCanvasMode,
+    ensureOverlayHydrated,
+    appendKnowledgeBaseWorkspaceParam,
+    knowledgeBaseWorkspaceId,
+    fetchWithKnowledgeBase,
+    fetchGlobalChildren,
+    defaultPopupWidth: DEFAULT_POPUP_WIDTH,
+    defaultPopupHeight: DEFAULT_POPUP_HEIGHT,
+    folderCacheApi: {
+      updateFolderCacheEntry,
+      updateFolderCacheChildren,
+      invalidateFolderCache,
+    },
+  })
+
+  useEffect(() => {
+    const transform = layerContext?.transforms.popups || DEFAULT_CAMERA
+    latestCameraRef.current = {
+      x: Number.isFinite(transform.x) ? (transform.x as number) : 0,
+      y: Number.isFinite(transform.y) ? (transform.y as number) : 0,
+      scale: Number.isFinite(transform.scale) ? (transform.scale as number) : 1,
+    }
+  }, [layerContext?.transforms.popups])
+
+  const organizationSidebarData = useMemo(() => {
+    const pinnedIds = new Set(
+      overlayPopups.filter(popup => popup.isPinned).map(popup => popup.folderId || popup.id)
+    )
+
+    const items = organizationFolders.map(item => ({
+      ...item,
+      pinned: pinnedIds.has(item.id),
+    }))
+
+    const totalItems = items.reduce((sum, item) => sum + (item.count ?? 0), 0)
+
+    return {
+      items,
+      stats: {
+        openPopups: overlayPopups.length,
+        totalItems,
+        pinnedPopups: pinnedIds.size,
+      },
+    }
+  }, [organizationFolders, overlayPopups])
+
+
+  const isPopupLayerActive = multiLayerEnabled && layerContext?.activeLayer === 'popups'
+  const canRenderOverlay =
+    shouldLoadOverlay &&
+    !showConstellationPanel &&
+    (!multiLayerEnabled || !layerContext || layerContext.activeLayer === 'popups')
+  const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
+
+  // Persistence state for overlay layout
+  const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
+  const overlayPersistenceActive = overlayPersistenceEnabled && shouldLoadOverlay
+  const shouldShowWorkspaceToggle = overlayPersistenceActive && shouldShowSidebar
+
+  const overlayAdapterRef = useRef<OverlayLayoutAdapter | null>(null)
+  const layoutLoadedRef = useRef(false)
+  const layoutRevisionRef = useRef<string | null>(null)
+  const lastSavedLayoutHashRef = useRef<string | null>(null)
+  const pendingLayoutRef = useRef<{ payload: OverlayLayoutPayload; hash: string } | null>(null)
+  const saveInFlightRef = useRef(false)
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isInitialLoadRef = useRef(false) // Track if we're in initial database load
+
+  const { applyOverlayLayout } = useOverlayLayoutPersistence({
+    overlayPersistenceActive,
+    currentWorkspaceId,
+    overlayPopups,
+    overlayPopupsLength: overlayPopups.length,
+    setOverlayPopups,
+    fetchGlobalFolder,
+    fetchGlobalChildren,
+    fetchWithKnowledgeBase,
+    toast,
+    layerContext,
+    debugLog,
+    isDebugEnabled,
+    overlayAdapterRef,
+    layoutLoadedRef,
+    layoutRevisionRef,
+    lastSavedLayoutHashRef,
+    pendingLayoutRef,
+    saveInFlightRef,
+    saveTimeoutRef,
+    isInitialLoadRef,
+    latestCameraRef,
+    prevCameraForSaveRef,
+    setIsWorkspaceLayoutLoading,
+    defaultCamera: DEFAULT_CAMERA,
+  })
+
+  // Debug: Log persistence state on mount
+  useEffect(() => {
+    console.log('[AnnotationApp] overlayPersistenceEnabled =', overlayPersistenceEnabled)
+  }, [overlayPersistenceEnabled])
+
+  useEffect(() => {
+    if (!isWorkspaceReady && !isWorkspaceLoading) {
+      refreshWorkspace().catch(error => {
+        console.error('[AnnotationApp] Workspace refresh failed:', error)
+      })
+    }
+  }, [isWorkspaceReady, isWorkspaceLoading, refreshWorkspace])
+
+  useEffect(() => {
+    if (workspaceError) {
+      console.error('[AnnotationApp] Workspace error:', workspaceError)
+    }
+  }, [workspaceError])
+
+  useEffect(() => {
+    if (!isWorkspaceReady) return
+
+    const isFocusedOpen = activeNoteId ? openNotes.some(note => note.noteId === activeNoteId) : false
+
+    if (!initialWorkspaceSyncRef.current) {
+      initialWorkspaceSyncRef.current = true
+
+      if (activeNoteId && !isFocusedOpen) {
+        const pendingPosition = getPendingPosition(activeNoteId)
+        const cachedPosition = getCachedPosition(activeNoteId)
+        const resolvedPosition = resolveMainPanelPosition(activeNoteId)
+        console.log(`[DEBUG AnnotationApp] Hydration position for ${activeNoteId}:`, {
+          pendingPosition,
+          cachedPosition,
+          resolvedPosition
+        })
+        void openWorkspaceNote(activeNoteId, {
+          persist: true,
+          mainPosition: resolvedPosition ?? undefined,
+        }).catch(error => {
+          console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
+        })
+      } else if (!activeNoteId && openNotes.length > 0) {
+        setActiveNoteId(openNotes[0].noteId)
+      }
+    } else if (activeNoteId && !isFocusedOpen) {
+      const fallback = openNotes[0]?.noteId ?? null
+      setActiveNoteId(fallback ?? null)
+    }
+  }, [isWorkspaceReady, openNotes, activeNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition, resolveMainPanelPosition])
+
+  // Persist activeNoteId to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        if (activeNoteId) {
+          localStorage.setItem('annotation_activeNoteId', activeNoteId)
+          localStorage.setItem('annotation_focusedNoteId', activeNoteId)
+        } else {
+          localStorage.removeItem('annotation_activeNoteId')
+          localStorage.removeItem('annotation_focusedNoteId')
+        }
+      } catch (err) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'localStorage_focus_save_failed',
+          metadata: {
+            error: err instanceof Error ? err.message : 'Unknown error',
+            operation: activeNoteId ? 'setItem' : 'removeItem'
+          }
+        })
+      }
+    }
+  }, [activeNoteId, logWorkspaceNotePositions])
+
+const initialWorkspaceSyncRef = useRef(false)
+
+  // Determine collaboration mode from environment
+  const collabMode = process.env.NEXT_PUBLIC_COLLAB_MODE || 'plain'
+  const isPlainMode = collabMode === 'plain'
+  // Adapt overlay popups for PopupOverlay component
+  // Only show popups when popups layer is active, otherwise pass empty Map
+  const adaptedPopups = useMemo(() => {
+    const adapt = () => {
+      const adapted = new Map()
+      overlayPopups.forEach((popup) => {
+        const adaptedPopup = {
+          ...popup,
+          width: popup.width ?? DEFAULT_POPUP_WIDTH,
+          height: popup.height,
+          sizeMode: popup.sizeMode ?? 'default',
+          folder: popup.folder || {
+            id: popup.folderId,
+            name: popup.folderName,
+            type: 'folder' as const,
+            children: popup.children
+          },
+          canvasPosition: popup.canvasPosition,
+          parentId: popup.parentPopupId // Map parentPopupId to parentId for PopupOverlay
+        }
+        adapted.set(popup.id, adaptedPopup)
+      })
+      return adapted
+    }
+
+    if (!multiLayerEnabled) {
+      return adapt()
+    }
+
+    // When no layer context is available, still render popups using raw state
+    if (!layerContext) {
+      return adapt()
+    }
+
+    return adapt()
+  }, [overlayPopups, multiLayerEnabled, layerContext, layerContext?.activeLayer])
+
+  // Track previous popup count to detect when NEW popups are added
+  const prevPopupCountRef = useRef(0)
+
+  // Auto-switch to popups layer ONLY when NEW popups are created
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+
+    const currentCount = overlayPopups.length
+    const previousCount = prevPopupCountRef.current
+
+    // Skip auto-switch while layout is still loading from database (initial hydration)
+    // This prevents auto-switch when restoring saved popups on app load
+    if (!layoutLoadedRef.current) {
+      prevPopupCountRef.current = currentCount
+      return
+    }
+
+    // Only auto-switch when a new popup is ADDED (count increases) AFTER layout loaded
+    if (currentCount > previousCount && currentCount > 0) {
+      if (layerContext.activeLayer !== 'popups') {
+        console.log('[AnnotationApp] New popup created, auto-switching to popups layer')
+        layerContext.setActiveLayer('popups')
+      }
+    }
+
+    // Update the ref for next comparison
+    prevPopupCountRef.current = currentCount
+  }, [overlayPopups.length, multiLayerEnabled, layerContext])
+
+  // Clear pending hover timeouts when switching TO notes layer (prevent new popups)
+  // But keep existing popups in state so they can be restored when switching back
+  useEffect(() => {
+    if (!multiLayerEnabled || !layerContext) return
+
+    // When user switches to notes layer, clear pending timeouts but keep popup state
+    if (layerContext.activeLayer === 'notes') {
+      console.log('[AnnotationApp] Switched to notes layer, clearing pending hover timeouts')
+
+      // Clear all pending timeouts to prevent new popups from appearing
+      clearAllTimeouts()
+    }
+  }, [layerContext?.activeLayer, multiLayerEnabled, layerContext])
+
+  // Cleanup all timeouts on unmount
+  useEffect(() => {
+    return () => {
+      // Clear all hover timeouts
+      clearAllTimeouts()
+    }
+  }, [])
+
+  // Handle global mouse events for dragging popup
+  useEffect(() => {
+    if (!draggingPopup) return
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      handlePopupDragMove(e, layerContext ?? null)
+    }
+
+    const handleGlobalMouseUp = () => {
+      handlePopupDragEnd()
+    }
+
+    document.addEventListener('mousemove', handleGlobalMouseMove, true)
+    document.addEventListener('mouseup', handleGlobalMouseUp, true)
+
+    return () => {
+      document.removeEventListener('mousemove', handleGlobalMouseMove, true)
+      document.removeEventListener('mouseup', handleGlobalMouseUp, true)
+    }
+  }, [draggingPopup, handlePopupDragEnd, handlePopupDragMove, layerContext])
+
+
+  const {
+    buildLayoutPayload,
+    flushLayoutSave,
+    scheduleLayoutSave,
+  } = useOverlayLayoutSaveQueue({
+    overlayPopups,
+    layerTransform: layerContext?.transforms.popups || DEFAULT_CAMERA,
+    overlayPersistenceActive,
+    overlayAdapterRef,
+    layoutRevisionRef,
+    lastSavedLayoutHashRef,
+    pendingLayoutRef,
+    saveTimeoutRef,
+    saveInFlightRef,
+    applyOverlayLayout,
+    draggingPopup,
+    defaultCamera: DEFAULT_CAMERA,
+    defaultWidth: DEFAULT_POPUP_WIDTH,
+    defaultHeight: DEFAULT_POPUP_HEIGHT,
+    debugLog,
+    isDebugEnabled,
+  })
+
+  const {
+    workspaces,
+    isWorkspaceListLoading,
+    isWorkspaceSaving,
+    workspaceDeletionId,
+    workspaceMenuOpen,
+    workspaceToggleRef,
+    setWorkspaceMenuOpen,
+    handleWorkspaceSelect,
+    handleCreateWorkspace,
+    handleDeleteWorkspace,
+  } = useOverlayWorkspaces({
+    overlayPersistenceActive,
+    shouldShowWorkspaceToggle,
+    currentWorkspaceId,
+    setCurrentWorkspaceId,
+    setCanvasMode,
+    ensureOverlayHydrated,
+    buildLayoutPayload,
+    flushLayoutSave,
+    lastSavedLayoutHashRef,
+    pendingLayoutRef,
+    saveTimeoutRef,
+    overlayAdapterRef,
+    layoutRevisionRef,
+    layoutLoadedRef,
+    setOverlayPopups,
+    toast,
+    workspacesLoadedRef,
+    defaultCamera: DEFAULT_CAMERA,
+  })
+
+  const currentWorkspace = useMemo(
+    () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
+    [workspaces, currentWorkspaceId]
+  )
+  const currentWorkspaceName = currentWorkspace?.name ?? 'Workspace'
+  const workspaceStatusLabel = workspaceDeletionId
+    ? 'Deleting...'
+    : isWorkspaceSaving
+    ? 'Saving...'
+    : isWorkspaceLayoutLoading
+    ? 'Hydrating...'
+    : isWorkspaceListLoading
+    ? 'Loading...'
+    : currentWorkspaceName
+
+  useEffect(() => {
+    if (!overlayPersistenceActive) {
+      prevCameraForSaveRef.current = latestCameraRef.current
+      return
+    }
+    if (!layoutLoadedRef.current) {
+      prevCameraForSaveRef.current = latestCameraRef.current
+      return
+    }
+    const prev = prevCameraForSaveRef.current
+    const current = latestCameraRef.current
+    if (!camerasEqual(prev, current)) {
+      prevCameraForSaveRef.current = current
+      scheduleLayoutSave(false)
+    }
+  }, [overlayPersistenceActive, scheduleLayoutSave, layerContext?.transforms.popups])
+
+  // Load layout from database on mount
+  // Save layout when overlayPopups changes
+  // Use a ref to track if we need to save, to avoid infinite loops
+  const prevPopupsRef = useRef<OverlayPopup[]>([])
+  const needsSaveAfterInteractionRef = useRef(false)
+
+  useEffect(() => {
+    console.log(
+      '[AnnotationApp] Save effect triggered.',
+      {
+        overlayPersistenceEnabled,
+        overlayPersistenceActive,
+        overlayCount: overlayPopups.length,
+        layoutLoaded: layoutLoadedRef.current,
+      }
+    )
+    if (!overlayPersistenceActive) {
+      console.log('[AnnotationApp] Save skipped: persistence inactive')
+      return
+    }
+    if (!layoutLoadedRef.current) {
+      console.log('[AnnotationApp] Save skipped: layout not loaded yet')
+      prevPopupsRef.current = overlayPopups
+      return
+    }
+
+    const serializeForChangeDetection = (popups: OverlayPopup[]) =>
+      popups.map(p => ({
+        id: p.id,
+        width: p.width,
+        height: p.height,
+        canvasPosition: p.canvasPosition,
+        position: p.position,
+        level: p.level,
+        parentPopupId: p.parentPopupId,
+        childrenCount: p.children?.length ?? 0,
+      }))
+
+    const currentSnapshot = serializeForChangeDetection(overlayPopups)
+    const prevSnapshot = serializeForChangeDetection(prevPopupsRef.current)
+    const changed = JSON.stringify(currentSnapshot) !== JSON.stringify(prevSnapshot)
+
+    const anyDragging = overlayPopups.some(popup => popup.isDragging)
+    if (anyDragging || overlayPanning) {
+      if (changed) {
+        console.log('[AnnotationApp] Save deferred: canvas interaction in progress', { anyDragging, overlayPanning })
+        needsSaveAfterInteractionRef.current = true
+      } else {
+        console.log('[AnnotationApp] Save skipped: interaction in progress (no layout delta)')
+      }
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (!changed) {
+      console.log('[AnnotationApp] Save skipped: no changes detected')
+      prevPopupsRef.current = overlayPopups
+      needsSaveAfterInteractionRef.current = false
+      return
+    }
+
+    // Detect if this is a creation or deletion (existence change vs property change)
+    const isCreation = overlayPopups.length > prevPopupsRef.current.length
+    const isDeletion = overlayPopups.length < prevPopupsRef.current.length
+    const isExistenceChange = isCreation || isDeletion
+
+    if (isCreation) {
+      console.log('[AnnotationApp] Scheduling save... (IMMEDIATE - creation)')
+    } else if (isDeletion) {
+      console.log('[AnnotationApp] Scheduling save... (IMMEDIATE - deletion)')
+    } else {
+      console.log('[AnnotationApp] Scheduling save... (debounced - property change)')
+    }
+
+    prevPopupsRef.current = overlayPopups
+    needsSaveAfterInteractionRef.current = false
+    scheduleLayoutSave(isExistenceChange) // Immediate save for creation/deletion, debounced for moves/resizes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayPopups, overlayPersistenceActive, overlayPanning, draggingPopup])
+
+  useEffect(() => {
+    if (!overlayPanning) return
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
+      pendingLayoutRef.current = null
+      console.log('[AnnotationApp] Cleared pending layout save due to overlay panning')
+    }
+  }, [overlayPanning])
+
+  useEffect(() => {
+    if (!overlayPanning && needsSaveAfterInteractionRef.current) {
+      console.log('[AnnotationApp] Resuming deferred overlay save after interaction')
+      needsSaveAfterInteractionRef.current = false
+      scheduleLayoutSave(false)
+    }
+  }, [overlayPanning, scheduleLayoutSave])
+
+  // Handle note selection with force re-center support
+  const formatNoteLabel = useCallback((noteId: string) => {
+    if (!noteId) return "Untitled"
+    const stored = noteTitleMapRef.current.get(noteId)
+    if (stored && stored.trim()) {
+      return stored.trim()
+    }
+    if (noteId.length <= 8) return noteId
+    return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
+  }, [])
+
+  const handleNoteSelect = useCallback((noteId: string, options?: { initialPosition?: { x: number; y: number } | null; source?: 'toolbar-create' | 'toolbar-open' | 'popup' | 'recent' }) => {
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'note_select',
+      metadata: {
+        noteId,
+        activeNoteId,
+        isReselect: noteId === activeNoteId,
+        source: options?.source,
+        hasOptions: !!options
+      }
+    })
+
+    // Track note access in recent notes and refresh toolbar's recent notes list
+    // Only refresh if tracking succeeds (promise resolves)
+    const isReselect = noteId === activeNoteId
+    const isToolbarCreation = options?.source === 'toolbar-create'
+
+    if (isToolbarCreation) {
+      registerFreshNote(noteId)
+    }
+
+    trackNoteAccess(noteId)
+      .then(() => {
+        bumpRecentNotesRefresh()
+      })
+      .catch(() => {
+        // Error already logged by trackNoteAccess, silently skip refresh
+        // Note will still open, just won't appear in recent notes
+      })
+
+    const emitHighlight = () => {
+      // Skip highlight during workspace hydration (TDD §4.1)
+      if (isHydrating) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'workspace_hydrating' }
+        })
+        return
+      }
+
+      const events = sharedWorkspace?.events
+      if (!events) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'highlight_event_skipped',
+          metadata: { noteId, reason: 'no_workspace_events' }
+        })
+        return
+      }
+      try {
+        events.emit('workspace:highlight-note', { noteId })
+      } catch (error) {
+        console.warn('[AnnotationApp] Failed to emit highlight event:', error)
+      }
+    }
+
+    if (isReselect) {
+      logWorkspaceNotePositions('tab_click_reselect')
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'highlight_note',
+        metadata: { noteId }
+      })
+      if (!isToolbarCreation) {
+        emitHighlight()
+      }
+      return
+    }
+
+    // Different note - ensure it's marked open and marked as focused
+    setSkipSnapshotForNote(noteId)
+    const alreadyOpen = openNotes.some(open => open.noteId === noteId)
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'toolbar_click_debug',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        openNotesCount: openNotes.length,
+        openNoteIds: openNotes.map(n => n.noteId),
+        isThisNoteInList: openNotes.some(n => n.noteId === noteId)
+      }
+    })
+
+    // CRITICAL FIX (infinite-canvas approach): Separate new note creation from reopening
+    // NEW NOTES: Always compute fresh viewport-centered position (NO CACHING)
+    // EXISTING NOTES: Look up persisted position from database
+    const hasExplicitPosition = Boolean(options?.initialPosition)
+    let resolvedPosition = options?.initialPosition ?? null
+
+    // CRITICAL FIX: Fetch persisted position early to use in centering guard
+    // This prevents recentering notes that already have a saved position
+    const persistedPosition = !alreadyOpen && !hasExplicitPosition
+      ? resolveMainPanelPosition(noteId)
+      : null
+
+    // HYDRATION GAP FIX: Check if panel already rendered on canvas
+    // During early hydration, openNotes is empty so resolveMainPanelPosition returns null,
+    // but the canvas has already rendered panels from database. Treat rendered panels
+    // as "having a persisted position" to prevent recentering during hydration gap.
+    const panelAlreadyRendered = hasRenderedMainPanel(noteId)
+
+    const hasPersistedPosition = Boolean(
+      (persistedPosition && !isDefaultMainPosition(persistedPosition)) ||
+      panelAlreadyRendered  // Treat rendered panels as persisted
+    )
+
+    debugLog({
+      component: 'AnnotationApp',
+      action: 'position_guard_check',
+      metadata: {
+        noteId,
+        alreadyOpen,
+        hasExplicitPosition,
+        hasPersisted: !!persistedPosition,
+        panelAlreadyRendered,
+        hasPersistedPosition,
+        persistedPosition
+      }
+    })
+
+    if (isToolbarCreation && !hasExplicitPosition) {
+      // NEW NOTE: Compute viewport-centered position using simple, direct formula
+      // This is the infinite-canvas approach - no caching, no async lookups
+      const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_camera_state',
+        metadata: {
+          noteId,
+          currentCamera,
+          canvasState,
+          hasGetCameraState: !!canvasRef.current?.getCameraState
+        }
+      })
+
+      // Get viewport center in screen coordinates
+      const viewportCenterX = typeof window !== 'undefined' ? window.innerWidth / 2 : 960
+      const viewportCenterY = typeof window !== 'undefined' ? window.innerHeight / 2 : 540
+
+      // Convert to world coordinates accounting for camera transform
+      // Formula: worldX = (screenX - cameraX) / zoom
+      const PANEL_WIDTH = 500
+      const PANEL_HEIGHT = 400
+      const worldX = (viewportCenterX - (currentCamera.translateX ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_WIDTH / 2
+      const worldY = (viewportCenterY - (currentCamera.translateY ?? 0)) / (currentCamera.zoom ?? 1) - PANEL_HEIGHT / 2
+
+      resolvedPosition = { x: worldX, y: worldY }
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'new_note_viewport_centered',
+        metadata: {
+          noteId,
+          viewportCenter: { x: viewportCenterX, y: viewportCenterY },
+          camera: currentCamera,
+          worldPosition: resolvedPosition,
+          formula: `x = (${viewportCenterX} - ${currentCamera.translateX ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_WIDTH / 2}`,
+          formulaY: `y = (${viewportCenterY} - ${currentCamera.translateY ?? 0}) / ${currentCamera.zoom ?? 1} - ${PANEL_HEIGHT / 2}`
+        }
+      })
+
+      // DO NOT cache this position - use it immediately
+    } else if (!hasExplicitPosition && !alreadyOpen) {
+      // EXISTING NOTE: Use persisted position fetched earlier
+      resolvedPosition = persistedPosition ?? null
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'existing_note_persisted_position',
+        metadata: {
+          noteId,
+          persistedPosition: resolvedPosition,
+          hasPersistedPosition
+        }
+      })
+    }
+
+    if (!alreadyOpen) {
+
+      const shouldCenterExisting =
+        CENTER_EXISTING_NOTES_ENABLED &&
+        !isToolbarCreation &&
+        !hasExplicitPosition &&
+        !hasPersistedPosition  // CRITICAL FIX: Only center if no saved position exists
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'centering_guard_evaluated',
+        metadata: {
+          noteId,
+          CENTER_EXISTING_NOTES_ENABLED,
+          isToolbarCreation,
+          hasExplicitPosition,
+          hasPersistedPosition,
+          panelAlreadyRendered,
+          shouldCenterExisting,
+          fixBlocked: !shouldCenterExisting && panelAlreadyRendered  // NEW: Show when hydration gap fix blocks centering
+        }
+      })
+
+      let usedCenteredOverride = false
+      if (shouldCenterExisting) {
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_override_applying',
+          metadata: { noteId, reason: 'shouldCenterExisting=true' }
+        })
+        // Get current camera state directly from canvas ref to avoid stale React state
+        const currentCamera = canvasRef.current?.getCameraState?.() ?? canvasState
+
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centering_camera_state',
+          metadata: {
+            noteId,
+            currentCamera,
+            canvasState,
+            hasGetCameraState: !!canvasRef.current?.getCameraState
+          }
+        })
+
+        // EXISTING NOTES: Always use viewport center (null = use viewport center)
+        // Don't use lastCanvasInteractionRef because we want screen center, not last click position
+        const centeredCandidate = computeVisuallyCenteredWorldPosition(
+          {
+            translateX: currentCamera.translateX,
+            translateY: currentCamera.translateY,
+            zoom: currentCamera.zoom,
+          },
+          reopenSequenceRef.current,
+          null,  // Force viewport center, ignore last interaction
+        )
+
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'existing_note_centered_candidate',
+          metadata: {
+            noteId,
+            centeredCandidate,
+            lastInteraction: lastCanvasInteractionRef.current,
+            sequenceCount: reopenSequenceRef.current.count
+          }
+        })
+
+        // Use pure centered position (100%) - same behavior as new notes
+        if (centeredCandidate) {
+          resolvedPosition = centeredCandidate
+          usedCenteredOverride = true
+
+          // CRITICAL: Store in freshNoteSeeds so canvas gets position BEFORE first paint
+          // This prevents the panel from appearing elsewhere and then moving
+          storeFreshNoteSeed(noteId, centeredCandidate)
+        }
+
+        if (usedCenteredOverride) {
+          const persistedPosition = resolveMainPanelPosition(noteId)
+          debugLog({
+            component: "AnnotationApp",
+            action: "open_note_centered_override",
+            metadata: {
+              noteId,
+              persistedPosition,
+              centeredPosition: resolvedPosition,
+              storedInFreshNoteSeeds: true
+            },
+          })
+        }
+      } else if (panelAlreadyRendered) {
+        // HYDRATION GAP FIX: Centering blocked because panel already rendered
+        debugLog({
+          component: 'AnnotationApp',
+          action: 'centering_blocked_by_hydration_gap_fix',
+          metadata: {
+            noteId,
+            reason: 'Panel already rendered on canvas',
+            panelAlreadyRendered,
+            hasPersistedPosition
+          }
+        })
+      }
+
+      if (shouldCenterExisting) {
+        requestMainOnlyNote(noteId)
+      }
+
+      const skipPersistPosition = false
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'calling_openWorkspaceNote',
+        metadata: {
+          noteId,
+          resolvedPosition,
+          isToolbarCreation,
+          hasExplicitPosition
+        }
+      })
+
+      void openWorkspaceNote(noteId, {
+        persist: true,
+        mainPosition: resolvedPosition ?? undefined,
+        persistPosition: !skipPersistPosition,
+      }).catch(error => {
+        console.error('[AnnotationApp] Failed to open note in workspace:', error)
+      })
+    }
+    setActiveNoteId(noteId)
+    if (!isToolbarCreation) {
+      emitHighlight()
+    }
+  }, [activeNoteId, logWorkspaceNotePositions, isHydrating, sharedWorkspace, openNotes, openWorkspaceNote, resolveMainPanelPosition, setSkipSnapshotForNote, registerFreshNote, bumpRecentNotesRefresh, canvasState, requestMainOnlyNote, storeFreshNoteSeed])
+
+  const handleCloseNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      void closeWorkspaceNote(noteId).catch(error => {
+        console.error('[AnnotationApp] Failed to close workspace note:', error)
+      })
+    },
+    [closeWorkspaceNote],
+  )
+
+const handleCenterNote = useCallback(
+    (noteId: string) => {
+      if (!noteId) return
+
+      debugLog({
+        component: 'AnnotationApp',
+        action: 'manual_center_request',
+        metadata: {
+          noteId,
+          activeNoteId,
+        },
+      })
+
+      if (noteId !== activeNoteId) {
+        setActiveNoteId(noteId)
+      }
+
+      const events = sharedWorkspace?.events
+      if (events) {
+        try {
+          events.emit('workspace:highlight-note', { noteId })
+        } catch (error) {
+          console.warn('[AnnotationApp] Failed to emit manual highlight event:', error)
+        }
+      }
+
+      centerNoteOnCanvas(noteId, { attempts: CENTER_RETRY_ATTEMPTS + 1 })
+    },
+    [activeNoteId, setActiveNoteId, sharedWorkspace, centerNoteOnCanvas],
+  )
+
+  const handleSnapshotSettled = useCallback((noteId: string) => {
+    setSkipSnapshotForNote(current => (current === noteId ? null : current))
+  }, [])
+  
+  // Center panel when note selection changes
+
+  // Handle right-click to show notes widget
+  useOverlayLayerHotkeys({
+    layerContext,
+    multiLayerEnabled,
+    clearAllTimeouts,
+    setNotesWidgetPosition,
+    setShowNotesWidget,
+    showNotesWidget,
+  })
+
+  const { handleContextMenu } = useOverlayLayerInteractions({
+    layerContext,
+    canvasState,
+    debugLog,
+    setNotesWidgetPosition,
+    setShowNotesWidget,
+    showNotesWidget,
+    setActivePanelId,
+  })
+
+  const handleCloseNotesWidget = useCallback(() => {
+    setShowNotesWidget(false)
+  }, [])
+
+  // Handle registering active editor (called by panels when they gain focus)
+  const handleRegisterActiveEditor = useCallback((editorRef: any, panelId: string) => {
+    console.log('[AnnotationApp] Registering active editor for panel:', panelId)
+    activeEditorRef.current = editorRef
+    setActivePanelId(panelId)
+  }, [])
+
+  // Handle adding component (callback from FloatingToolbar)
+  const handleAddComponentFromToolbar = useCallback((type: string, position?: { x: number; y: number }) => {
+    // Call the canvas's addComponent method directly
+    if (canvasRef.current?.addComponent) {
+      canvasRef.current.addComponent(type, position)
+    }
+  }, [])
+
+  // Handle backdrop style change (callback from FloatingToolbar)
+  const handleBackdropStyleChange = useCallback((style: string) => {
+    setBackdropStyle(style)
+  }, [])
+
+  // Handle folder renamed (callback from FloatingToolbar and PopupOverlay)
+  const handleFolderRenamed = useCallback((folderId: string, newName: string) => {
+    setOverlayPopups(prev => {
+      return prev.map(popup => {
+        // Case 1: This popup IS the renamed folder - update its title
+        if (popup.folderId === folderId) {
+          return {
+            ...popup,
+            folderName: newName,
+            folder: popup.folder ? { ...popup.folder, name: newName } : null
+          } as OverlayPopup
+        }
+
+        // Case 2: This popup CONTAINS the renamed folder in its children array
+        // Update the child entry so parent's list shows the new name
+        if (popup.folder?.children) {
+          const hasMatchingChild = popup.folder.children.some((child: OrgItem) => child.id === folderId)
+          if (hasMatchingChild) {
+            return {
+              ...popup,
+              folder: {
+                ...popup.folder,
+                children: popup.folder.children.map((child: OrgItem) =>
+                  child.id === folderId
+                    ? { ...child, name: newName }
+                    : child
+                )
+              }
+            } as OverlayPopup
+          }
+        }
+
+        // Case 3: Unrelated popup - return unchanged
+        return popup
+      })
+    })
+  }, [])
+
+  const openNoteFromSidebar = useCallback(
+    (noteId: string) => {
+      layerContext?.setActiveLayer('notes')
+      handleNoteSelect(noteId, { source: 'popup' })
+    },
+    [handleNoteSelect, layerContext]
+  )
+
+  const getPreviewSourceFolderId = useCallback(() => notePreview?.context?.sourceFolderId, [notePreview])
+
+  const {
+    sidebarFolderPopups,
+    dismissSidebarPopup,
+    handleSidebarPopupHover,
+    handleSidebarEyeHoverLeave,
+    handleSidebarOrgEyeHover,
+    handleSidebarNotePreviewHover,
+    handleSidebarNotePreviewLeave,
+    handleSidebarPreviewTooltipEnter,
+    handleSidebarPreviewTooltipLeave,
+    handleSidebarPopupFolderClick,
+    handleSidebarNoteOpen,
+  } = useSidebarFolderPopups({
+    ensureOverlayHydrated,
+    fetchChildren: fetchGlobalChildren,
+    onSelectFolder: handleOrganizationSidebarSelect,
+    onOpenNote: openNoteFromSidebar,
+    triggerNotePreviewHover,
+    triggerNotePreviewLeave,
+    triggerNotePreviewTooltipEnter,
+    triggerNotePreviewTooltipLeave,
+    cancelNotePreview,
+    getPreviewSourceFolderId,
+  })
+
+  const handleOrganizationSidebarEyeHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      if (item.interactive === false) return
+      const folder = sidebarItemToOrgItem(item)
+      handleSidebarOrgEyeHover(folder, event)
+    },
+    [handleSidebarOrgEyeHover]
+  )
+
+  const handleOrganizationSidebarEyeLeave = useCallback(
+    (id: string) => {
+      handleSidebarEyeHoverLeave(id)
+    },
+    [handleSidebarEyeHoverLeave]
+  )
+
+  const handleOrganizationSidebarNoteHover = useCallback(
+    (item: OrganizationSidebarItem, event: React.MouseEvent<HTMLButtonElement>) => {
+      handleSidebarNotePreviewHover(item.id, event)
+    },
+    [handleSidebarNotePreviewHover]
+  )
+
+  const handleOrganizationSidebarNoteLeave = useCallback(() => {
+    handleSidebarNotePreviewLeave()
+  }, [handleSidebarNotePreviewLeave])
+
+
+  useEffect(() => {
+    if (!moveCascadeState.parentId) return
+    const exists = overlayPopups.some(p => p.id === moveCascadeState.parentId)
+    if (!exists) {
+      clearMoveCascadeState()
+    }
+  }, [overlayPopups, moveCascadeState.parentId, clearMoveCascadeState])
+
+  const handleToggleMoveCascade = toggleMoveCascade
+
+  // Handle closing overlay popup with cascade (closes all children recursively)
+  // Used for immediate close without interactive mode
+  const handleCloseOverlayPopup = closePopupCascade
+
+  // Handle toggle pin (prevent cascade-close)
+  // Cascades pin state to all descendants automatically
+  const handleTogglePin = togglePinCascade
+
+  // Handle initiate close (enter interactive close mode)
+  const handleInitiateClose = initiateCloseMode
+
+  // Handle confirm close (user clicked Done - close parent and unpinned children)
+  const handleConfirmClose = confirmCloseMode
+
+  // Handle cancel close (user cancelled - revert to normal mode)
+  const handleCancelClose = cancelCloseMode
+
+  // Cancel close timeout when hovering the popup itself (keeps it alive)
+  const handlePopupHover = useCallback((folderId: string, parentPopupId?: string) => {
+    console.log('[handlePopupHover] CALLED', { folderId, parentPopupId, hasTimeouts: closeTimeouts.current.size })
+
+    // Try multiple possible timeout keys since we might not know the exact parent
+    const possibleKeys = [
+      folderId, // Simple key (no parent)
+      parentPopupId ? `${parentPopupId}-${folderId}` : null, // With known parent
+    ].filter(Boolean) as string[]
+
+    // Also try all keys that end with this folderId
+    closeTimeouts.current.forEach((timeout, key) => {
+      if (key.endsWith(folderId) && !possibleKeys.includes(key)) {
+        possibleKeys.push(key)
+      }
+    })
+
+    console.log('[handlePopupHover] Trying timeout keys:', possibleKeys)
+    console.log('[handlePopupHover] Available timeouts:', Array.from(closeTimeouts.current.keys()))
+
+    let found = false
+    for (const key of possibleKeys) {
+      if (closeTimeouts.current.has(key)) {
+        clearCloseTimeout(key)
+        console.log('[handlePopupHover] ✅ Cancelled close timeout for', key)
+        found = true
+        break
+      }
+    }
+
+    if (!found) {
+      console.log('[handlePopupHover] ❌ No matching timeout found')
+    }
+  }, [])
+
+  // Handle bulk move of items to target folder (drag-drop)
+  const handleFolderCreated = useCallback((popupId: string, newFolder: any) => {
+    console.log('[handleFolderCreated]', { popupId, newFolder })
+
+    let updatedParentFolderId: string | null = null
+    let updatedChildrenSnapshot: OrgItem[] | null = null
+
+    // Update the popup's children to include the new folder
+    setOverlayPopups(prev =>
+      prev.map(popup => {
+        if (popup.id === popupId && popup.folder) {
+          // Add new folder to the beginning of children array (folders typically shown first)
+          const updatedChildren: OrgItem[] = [newFolder, ...popup.children]
+          const nextSizeMode = popup.sizeMode === 'user' ? 'user' : 'default'
+
+          updatedParentFolderId = popup.folderId
+          updatedChildrenSnapshot = updatedChildren
+
+          return {
+            ...popup,
+            children: updatedChildren,
+            folder: { ...popup.folder, children: updatedChildren },
+            sizeMode: nextSizeMode,
+            height: nextSizeMode === 'default' ? undefined : popup.height
+          }
+        }
+        return popup
+      })
+    )
+
+    if (updatedParentFolderId && updatedChildrenSnapshot) {
+      updateFolderCacheChildren(updatedParentFolderId, updatedChildrenSnapshot)
+    }
+    invalidateFolderCache(newFolder?.id)
+
+    console.log('[handleFolderCreated] Popup updated with new folder')
+  }, [invalidateFolderCache, updateFolderCacheChildren])
+
+  // Handle popup drag start
+  const handlePopupDragStart = useCallback(
+    (popupId: string, event: React.MouseEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      startPopupDrag(popupId, event.nativeEvent, layerContext ?? null)
+    },
+    [layerContext, startPopupDrag],
+  )
+
+  // Navigation control functions
+  const handleZoomIn = () => {
+    setCanvasState(prev => ({ ...prev, zoom: Math.min(prev.zoom * 1.1, 2) }))
+    if (canvasRef.current?.zoomIn) {
+      canvasRef.current.zoomIn()
+    }
+  }
+
+  const handleZoomOut = () => {
+    setCanvasState(prev => ({ ...prev, zoom: Math.max(prev.zoom * 0.9, 0.3) }))
+    if (canvasRef.current?.zoomOut) {
+      canvasRef.current.zoomOut()
+    }
+  }
+
+  const handleResetView = () => {
+    setCanvasState(prev => ({ ...prev, zoom: 1 }))
+    if (canvasRef.current?.resetView) {
+      canvasRef.current.resetView()
+    }
+  }
+
+  const handleToggleConnections = () => {
+    setCanvasState(prev => ({ ...prev, showConnections: !prev.showConnections }))
+    if (canvasRef.current?.toggleConnections) {
+      canvasRef.current.toggleConnections()
+    }
+  }
+
+  // Track note creation state to prevent double-clicks
+  const [isCreatingNoteFromToolbar, setIsCreatingNoteFromToolbar] = useState(false)
+
+  // Handler for creating new note from workspace toolbar
+  // Reuses the same logic as floating toolbar's "+ Note" button
+  const handleNewNoteFromToolbar = useCallback(async () => {
+    if (isCreatingNoteFromToolbar) return // Prevent double-clicks
+
+    setIsCreatingNoteFromToolbar(true)
+    try {
+      const result = await createNote({
+        workspaceId: currentWorkspaceId ?? undefined
+      })
+
+      if (result.success && result.noteId) {
+        // Open the newly created note
+        handleNoteSelect(result.noteId, {
+          source: 'toolbar-create'
+        })
+      } else {
+        console.error('[AnnotationApp] Failed to create note:', result.error)
+      }
+    } catch (error) {
+      console.error('[AnnotationApp] Error creating note:', error)
+    } finally {
+      setIsCreatingNoteFromToolbar(false)
+    }
+  }, [isCreatingNoteFromToolbar, handleNoteSelect, currentWorkspaceId])
+
+  // Handler for opening settings from workspace toolbar
+  const handleSettingsFromToolbar = useCallback(() => {
+    // TODO: Implement settings panel
+    console.log('[AnnotationApp] Settings clicked')
+  }, [])
+
+  const sidebarNode = shouldShowSidebar ? (
+    <div
+      data-sidebar="sidebar"
+      className="h-full"
+      style={{ position: showConstellationPanel ? 'absolute' : 'relative', zIndex: 50 }}
+    >
+      <CanvasSidebar
+        activeTab={activeSidebarTab}
+        onTabChange={handleSidebarTabChange}
+        showWorkspaceTab={false}
+        constellationContent={<ConstellationSidebarShared />}
+        organizationContent={
+          <OrganizationSidebarContent
+            items={organizationSidebarData.items}
+            stats={organizationSidebarData.stats}
+            onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
+            onEyeHover={handleOrganizationSidebarEyeHover}
+            onEyeLeave={handleOrganizationSidebarEyeLeave}
+            onNoteHover={handleOrganizationSidebarNoteHover}
+            onNoteLeave={handleOrganizationSidebarNoteLeave}
+          />
+        }
+      />
+    </div>
+  ) : null
+
+  const autoHideToolbarNode = !showConstellationPanel && !isPopupLayerActive ? (
+    <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+        <WorkspaceToolbar
+          notes={sortedOpenNotes}
+          activeNoteId={activeNoteId}
+          isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
+          formatNoteLabel={formatNoteLabel}
+          onActivateNote={handleNoteSelect}
+          onCenterNote={handleCenterNote}
+          onCloseNote={handleCloseNote}
+          onNewNote={handleNewNoteFromToolbar}
+          onSettings={handleSettingsFromToolbar}
+        />
+      </div>
+    </AutoHideToolbar>
+  ) : null
+
+  const workspaceToggleNode = shouldShowWorkspaceToggle ? (
+    <div
+      className="absolute inset-x-0 top-4 flex justify-center"
+      style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
+    >
+      <div ref={workspaceToggleRef} className="flex flex-col items-center gap-2 pointer-events-auto">
+        <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
+          <button
+            type="button"
+            onClick={() => setWorkspaceMenuOpen(prev => !prev)}
+            aria-expanded={workspaceMenuOpen}
+            aria-label="Choose workspace"
+            className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          >
+            <span className="text-[11px] uppercase tracking-wide text-white/60">Workspace</span>
+            <span>{workspaceStatusLabel}</span>
+            <svg
+              aria-hidden="true"
+              className={`h-3 w-3 transition-transform ${workspaceMenuOpen ? 'rotate-180' : ''}`}
+              viewBox="0 0 12 12"
+              fill="none"
+            >
+              <path
+                d="M3 4.5L6 7.5L9 4.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateWorkspace}
+            disabled={isWorkspaceSaving || isWorkspaceLayoutLoading}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/90 text-slate-950 transition-transform hover:translate-y-[-1px] disabled:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+            aria-label="Snapshot current workspace"
+          >
+            <span className="text-lg font-semibold leading-none">+</span>
+          </button>
+        </div>
+
+        {workspaceMenuOpen && (
+          <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+            {isWorkspaceListLoading ? (
+              <div className="py-6 text-center text-sm text-white/60">Loading workspaces...</div>
+            ) : workspaces.length === 0 ? (
+              <div className="py-6 text-center text-sm text-white/60 px-4">
+                No saved workspaces yet. Use the + button to snapshot this layout.
+              </div>
+            ) : (
+              <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                {workspaces.map((workspace) => {
+                  const isActive = workspace.id === currentWorkspaceId
+                  const isDeleting = workspaceDeletionId === workspace.id
+                  const disableDelete = workspace.isDefault || isDeleting
+
+                  return (
+                    <li key={workspace.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleWorkspaceSelect(workspace.id)}
+                        className={`w-full rounded-xl border px-3 py-2 text-left text-sm transition ${
+                          isActive
+                            ? 'border-blue-400/50 bg-blue-500/15 text-white shadow-inner shadow-blue-500/30'
+                            : 'border-white/5 bg-white/5 text-white/80 hover:border-white/15 hover:bg-white/10'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-col">
+                            <span className="font-medium">{workspace.name}</span>
+                            <span className="text-[12px] text-white/60">
+                              {workspace.popupCount === 0
+                                ? 'Empty layout'
+                                : `${workspace.popupCount} popup${workspace.popupCount === 1 ? '' : 's'}`}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={disableDelete}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              void handleDeleteWorkspace(workspace.id)
+                            }}
+                            className={`rounded-full px-2 py-0.5 text-[11px] uppercase tracking-wide transition ${
+                              disableDelete
+                                ? 'cursor-not-allowed text-white/30'
+                                : 'text-red-300 hover:bg-red-500/20'
+                            }`}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null
+
+  const canvasAreaNode = (
+    <div
+      className="h-full w-full"
+      style={{
+        pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+      }}
+    >
+      {openNotes.length > 0 ? (
+        <ModernAnnotationCanvas
+          key="workspace"
+          noteIds={openNotes.map((note) => note.noteId)}
+          primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+          ref={canvasRef}
+          freshNoteSeeds={freshNoteSeeds}
+          onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+          isNotesExplorerOpen={false}
+          freshNoteIds={freshNoteIds}
+          onFreshNoteHydrated={handleFreshNoteHydrated}
+          onCanvasStateChange={handleCanvasStateChange}
+          mainOnlyNoteIds={mainOnlyNotes}
+          onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+          showAddComponentMenu={showAddComponentMenu}
+          onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+          onRegisterActiveEditor={handleRegisterActiveEditor}
+          onSnapshotLoadComplete={handleSnapshotLoadComplete}
+          skipSnapshotForNote={skipSnapshotForNote}
+          onSnapshotSettled={handleSnapshotSettled}
+        >
+          {showNotesWidget && (
+            <CanvasAwareFloatingToolbar
+              x={notesWidgetPosition.x}
+              y={notesWidgetPosition.y}
+              onClose={handleCloseNotesWidget}
+              onSelectNote={handleNoteSelect}
+              onCreateOverlayPopup={handleCreateOverlayPopup}
+              onAddComponent={handleAddComponentFromToolbar}
+              editorRef={activeEditorRef}
+              activePanelId={activePanelId}
+              onBackdropStyleChange={handleBackdropStyleChange}
+              onFolderRenamed={handleFolderRenamed}
+              activePanel={toolbarActivePanel}
+              onActivePanelChange={setToolbarActivePanel}
+              refreshRecentNotes={recentNotesRefreshTrigger}
+              onToggleConstellationPanel={toggleConstellationView}
+              showConstellationPanel={showConstellationPanel}
+              knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+            />
+          )}
+        </ModernAnnotationCanvas>
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-gray-950">
+          <div className="text-center">
+            <h2 className="mb-4 text-3xl font-bold text-gray-600">Welcome to Annotation Canvas</h2>
+            <p className="mb-6 text-gray-500">Right-click anywhere to open Notes Explorer and create a new note</p>
+            <button
+              className="rounded-full bg-white/10 px-6 py-3 text-white transition hover:bg-white/20"
+              onClick={handleContextMenu}
+            >
+              Open Notes Explorer
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  const overlayLayerNode = canRenderOverlay && adaptedPopups ? (
+    <PopupOverlay
+      popups={adaptedPopups}
+      draggingPopup={draggingPopup}
+      onClosePopup={handleCloseOverlayPopup}
+      onInitiateClose={handleInitiateClose}
+      onConfirmClose={handleConfirmClose}
+      onCancelClose={handleCancelClose}
+      onTogglePin={handleTogglePin}
+      onDragStart={handlePopupDragStart}
+      onHoverFolder={handleFolderHover}
+      onLeaveFolder={handleFolderHoverLeave}
+      onPopupHover={handlePopupHover}
+      onSelectNote={handleNoteSelect}
+      onDeleteSelected={handleDeleteSelected}
+      onBulkMove={handleBulkMove}
+      onFolderCreated={handleFolderCreated}
+      onFolderRenamed={handleFolderRenamed}
+      onPopupCardClick={handleCloseNotesWidget}
+      onContextMenu={handleContextMenu}
+      onPopupPositionChange={handlePopupPositionChange}
+      onResizePopup={handleResizePopup}
+      isLocked={isWorkspaceLayoutLoading}
+      sidebarOpen={isPopupLayerActive}
+      backdropStyle={backdropStyle}
+      workspaceId={currentWorkspaceId}
+      knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+      activeMoveCascadeParentId={moveCascadeState.parentId}
+      moveCascadeChildIds={moveCascadeState.childIds}
+    />
+  ) : null
+
+  const sidebarPopupsNode = shouldLoadOverlay
+    ? sidebarFolderPopups.map((popup) => {
+        const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
+        return (
+          <div
+            key={popup.id}
+            className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+            style={{
+              backgroundColor: 'rgba(17, 24, 39, 0.98)',
+              left: `${popup.position.x}px`,
+              top: `${popup.position.y}px`,
+              zIndex: Z_INDEX.DROPDOWN + 20,
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onMouseEnter={() => handleSidebarPopupHover(popup.folderId)}
+            onMouseLeave={() => handleSidebarEyeHoverLeave(popup.folderId)}
+          >
+            <div
+              className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
+              style={{
+                backgroundColor: 'transparent',
+                color: 'rgba(255, 255, 255, 0.8)',
+                borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+              }}
+            >
+              <div className="flex items-center gap-2">
+                {popupColorTheme && (
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: popupColorTheme.textColor }}
+                  />
+                )}
+                <span>{popup.folderName}</span>
+              </div>
+              <button
+                className="rounded p-1 text-white/60 transition hover:bg-white/10"
+                onClick={() => dismissSidebarPopup(popup.id)}
+                aria-label="Close preview popup"
+              >
+                ×
+              </button>
+            </div>
+            <div className="max-h-64 overflow-y-auto p-3 space-y-1">
+              {popup.isLoading ? (
+                <div className="py-4 text-center text-sm text-white/60">Loading...</div>
+              ) : popup.children.length === 0 ? (
+                <div className="py-4 text-center text-sm text-white/60">Empty folder</div>
+              ) : (
+                popup.children.map((child) => (
+                  <div key={child.id} className="group relative">
+                    <button
+                      className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/90 transition hover:border-blue-400/40 hover:bg-blue-500/20"
+                      onDoubleClick={() => {
+                        if (child.type === 'note') {
+                          handleSidebarNoteOpen(child.id)
+                        }
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <span>{child.icon ?? (child.type === 'folder' ? '📁' : '📄')}</span>
+                          <span className="truncate">{child.name}</span>
+                        </div>
+                        {child.type === 'folder' ? (
+                          <div
+                            className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                            onMouseEnter={(event) => handleSidebarOrgEyeHover(child, event, popup.folderId)}
+                            onMouseLeave={() => handleSidebarEyeHoverLeave(child.id)}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleSidebarPopupFolderClick(child, event)
+                            }}
+                          >
+                            <Eye className="h-3.5 w-3.5 text-blue-400" />
+                          </div>
+                        ) : child.type === 'note' ? (
+                          <div
+                            className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                            onMouseEnter={(event) => handleSidebarNotePreviewHover(child.id, event, popup.folderId)}
+                            onMouseLeave={handleSidebarNotePreviewLeave}
+                          >
+                            <Eye className="h-3.5 w-3.5 text-blue-400" />
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 text-xs text-white/60">{child.type === 'folder' ? 'Folder' : 'Note'}</div>
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )
+      })
+    : null
+
+  const legacyContent = (
+    <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
+        <div className="flex h-full w-full">
+          {shouldShowSidebar && (
+            <div
+              data-sidebar="sidebar"
+              className="h-full"
+              style={{ position: showConstellationPanel ? 'absolute' : 'relative', zIndex: 50 }}
+            >
+              <CanvasSidebar
+                activeTab={activeSidebarTab}
+                onTabChange={handleSidebarTabChange}
+                showWorkspaceTab={false}
+                constellationContent={<ConstellationSidebarShared />}
+                organizationContent={
+                  <OrganizationSidebarContent
+                    items={organizationSidebarData.items}
+                    stats={organizationSidebarData.stats}
+                    onSelect={(id, rect) => handleOrganizationSidebarSelect(id, rect)}
+                    onEyeHover={handleOrganizationSidebarEyeHover}
+                    onEyeLeave={handleOrganizationSidebarEyeLeave}
+                    onNoteHover={handleOrganizationSidebarNoteHover}
+                    onNoteLeave={handleOrganizationSidebarNoteLeave}
+                  />
+                }
+              />
+            </div>
+          )}
+
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {!showConstellationPanel && !isPopupLayerActive && (
+            <AutoHideToolbar edgeThreshold={50} hideDelay={800}>
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
+                <WorkspaceToolbar
+                  notes={sortedOpenNotes}
+                  activeNoteId={activeNoteId}
+                  isLoading={isWorkspaceLoading || isCreatingNoteFromToolbar}
+                  formatNoteLabel={formatNoteLabel}
+                  onActivateNote={handleNoteSelect}
+                  onCenterNote={handleCenterNote}
+                  onCloseNote={handleCloseNote}
+                  onNewNote={handleNewNoteFromToolbar}
+                  onSettings={handleSettingsFromToolbar}
+                />
+              </div>
+            </AutoHideToolbar>
+          )}
+
+          <div className="relative flex-1" onContextMenu={handleContextMenu}>
+            {shouldShowWorkspaceToggle && (
+              <div
+                className="absolute inset-x-0 top-4 flex justify-center"
+                style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
+              >
+                <div
+                  ref={workspaceToggleRef}
+                  className="flex flex-col items-center gap-2 pointer-events-auto"
+                >
+                  <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceMenuOpen(prev => !prev)}
+                      aria-expanded={workspaceMenuOpen}
+                      aria-label="Choose workspace"
+                      className="flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <span className="text-[11px] uppercase tracking-wide text-white/60">
+                        Workspace
+                      </span>
+                      <span>{workspaceStatusLabel}</span>
+                      <svg
+                        aria-hidden="true"
+                        className={`h-3 w-3 transition-transform ${
+                          workspaceMenuOpen ? 'rotate-180' : ''
+                        }`}
+                        viewBox="0 0 12 12"
+                        fill="none"
+                      >
+                        <path
+                          d="M3 4.5L6 7.5L9 4.5"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCreateWorkspace}
+                      disabled={isWorkspaceSaving || isWorkspaceLayoutLoading}
+                      className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500/90 text-slate-950 transition-transform hover:translate-y-[-1px] disabled:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                      aria-label="Snapshot current workspace"
+                    >
+                      <span className="text-lg font-semibold leading-none">+</span>
+                    </button>
+                  </div>
+
+                  {workspaceMenuOpen && (
+                    <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+                      {isWorkspaceListLoading ? (
+                        <div className="py-6 text-center text-sm text-white/60">
+                          Loading workspaces...
+                        </div>
+                      ) : workspaces.length === 0 ? (
+                        <div className="py-6 text-center text-sm text-white/60 px-4">
+                          No saved workspaces yet. Use the + button to snapshot this layout.
+                        </div>
+                      ) : (
+                        <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                          {workspaces.map(workspace => {
+                            const isActive = workspace.id === currentWorkspaceId
+                            const isDeleting = workspaceDeletionId === workspace.id
+                            const disableDelete = workspace.isDefault || isDeleting
+                            const updatedDate = workspace.updatedAt ? new Date(workspace.updatedAt) : null
+                            const lastUpdated =
+                              updatedDate && !Number.isNaN(updatedDate.getTime())
+                                ? updatedDate.toLocaleString()
+                                : 'Never saved'
+                            return (
+                              <li key={workspace.id} className="group relative">
+                                <button
+                                  type="button"
+                                  onClick={() => handleWorkspaceSelect(workspace.id)}
+                                  className={[
+                                    'w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors',
+                                    isActive
+                                      ? 'border-blue-400/60 bg-blue-500/20 text-white shadow-lg'
+                                      : 'border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10',
+                                  ].join(' ')}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-medium">{workspace.name}</span>
+                                    <span className="text-xs text-white/60">
+                                      {workspace.popupCount} panel{workspace.popupCount === 1 ? '' : 's'}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-white/50">
+                                    {lastUpdated}
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={event => {
+                                    event.stopPropagation()
+                                    handleDeleteWorkspace(workspace.id)
+                                  }}
+                                  disabled={disableDelete}
+                                  className={[
+                                    'absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full border border-white/10 bg-slate-900/80 text-white/70 opacity-0 transition-all group-hover:opacity-100',
+                                    disableDelete
+                                      ? 'cursor-not-allowed opacity-30'
+                                      : 'hover:border-red-400/60 hover:bg-red-600/20 hover:text-red-200',
+                                  ].join(' ')}
+                                  aria-label={
+                                    workspace.isDefault
+                                      ? 'Default workspace cannot be deleted'
+                                      : 'Delete workspace'
+                                  }
+                                >
+                                  {isDeleting ? (
+                                    <span className="text-[10px] font-semibold uppercase tracking-wide">…</span>
+                                  ) : (
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="flex h-full w-full">
+              <div
+                className="flex-1 relative transition-all duration-300 ease-in-out"
+                style={{
+                  position: 'relative',
+                  zIndex: 1,
+                  isolation: 'isolate',
+                  opacity: showConstellationPanel ? 0 : 1,
+                  visibility: showConstellationPanel ? 'hidden' : 'visible',
+                }}
+                aria-hidden={showConstellationPanel}
+              >
+                <div
+                  className="h-full w-full"
+                  style={{
+                    pointerEvents: showConstellationPanel || isPopupLayerActive ? 'none' : 'auto',
+                  }}
+                >
+                  {openNotes.length > 0 ? (
+                    <ModernAnnotationCanvas
+                      key="workspace"
+                      noteIds={openNotes.map(note => note.noteId)}
+                      primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+                      ref={canvasRef}
+                      freshNoteSeeds={freshNoteSeeds}
+                      onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+                      isNotesExplorerOpen={false}
+                      freshNoteIds={freshNoteIds}
+                      onFreshNoteHydrated={handleFreshNoteHydrated}
+                      onCanvasStateChange={handleCanvasStateChange}
+                      mainOnlyNoteIds={mainOnlyNotes}
+                      onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+                      showAddComponentMenu={showAddComponentMenu}
+                      onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+                      onRegisterActiveEditor={handleRegisterActiveEditor}
+                      onSnapshotLoadComplete={handleSnapshotLoadComplete}
+                      skipSnapshotForNote={skipSnapshotForNote}
+                      onSnapshotSettled={handleSnapshotSettled}
+                    >
+                      {showNotesWidget && (
+                        <CanvasAwareFloatingToolbar
+                          x={notesWidgetPosition.x}
+                          y={notesWidgetPosition.y}
+                          onClose={handleCloseNotesWidget}
+                          onSelectNote={handleNoteSelect}
+                          onCreateOverlayPopup={handleCreateOverlayPopup}
+                          onAddComponent={handleAddComponentFromToolbar}
+                          editorRef={activeEditorRef}
+                          activePanelId={activePanelId}
+                          onBackdropStyleChange={handleBackdropStyleChange}
+                          onFolderRenamed={handleFolderRenamed}
+                          activePanel={toolbarActivePanel}
+                          onActivePanelChange={setToolbarActivePanel}
+                          refreshRecentNotes={recentNotesRefreshTrigger}
+                          onToggleConstellationPanel={toggleConstellationView}
+                          showConstellationPanel={showConstellationPanel}
+                          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+                        />
+                      )}
+                    </ModernAnnotationCanvas>
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-gray-950">
+                      <div className="text-center">
+                        <h2 className="mb-4 text-3xl font-bold text-gray-600">
+                          Welcome to Annotation Canvas
+                        </h2>
+                        <p className="mb-6 text-gray-500">
+                          Right-click anywhere to open Notes Explorer and create a new note
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {canRenderOverlay && adaptedPopups && (
+                <PopupOverlay
+                popups={adaptedPopups}
+                draggingPopup={draggingPopup}
+                onClosePopup={handleCloseOverlayPopup}
+                onInitiateClose={handleInitiateClose}
+                onConfirmClose={handleConfirmClose}
+                onCancelClose={handleCancelClose}
+                onTogglePin={handleTogglePin}
+                onDragStart={handlePopupDragStart}
+                onHoverFolder={handleFolderHover}
+                onLeaveFolder={handleFolderHoverLeave}
+                onPopupHover={handlePopupHover}
+                onSelectNote={handleNoteSelect}
+                onDeleteSelected={handleDeleteSelected}
+                onBulkMove={handleBulkMove}
+                onFolderCreated={handleFolderCreated}
+                onFolderRenamed={handleFolderRenamed}
+                onPopupCardClick={handleCloseNotesWidget}
+                onContextMenu={handleContextMenu}
+                onPopupPositionChange={handlePopupPositionChange}
+                onResizePopup={handleResizePopup}
+                isLocked={isWorkspaceLayoutLoading}
+                sidebarOpen={isPopupLayerActive}
+                backdropStyle={backdropStyle}
+                workspaceId={currentWorkspaceId}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+                activeMoveCascadeParentId={moveCascadeState.parentId}
+                moveCascadeChildIds={moveCascadeState.childIds}
+                onToggleMoveCascade={handleToggleMoveCascade}
+              />
+            )}
+
+            {shouldLoadOverlay && sidebarFolderPopups.map((popup) => {
+              const popupColorTheme = popup.folderColor ? getFolderColorTheme(popup.folderColor) : null
+              return (
+                <div
+                  key={popup.id}
+                  className="fixed w-72 rounded-2xl border border-white/20 bg-gray-900 shadow-2xl"
+                  style={{
+                    backgroundColor: 'rgba(17, 24, 39, 0.98)',
+                    left: `${popup.position.x}px`,
+                    top: `${popup.position.y}px`,
+                    zIndex: Z_INDEX.DROPDOWN + 20,
+                  }}
+                  onClick={(event) => event.stopPropagation()}
+                  onMouseEnter={() => handleSidebarPopupHover(popup.folderId)}
+                  onMouseLeave={() => handleSidebarEyeHoverLeave(popup.folderId)}
+                >
+                  <div
+                    className="flex items-center justify-between px-4 py-3 border-b text-sm font-medium"
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: 'rgba(255, 255, 255, 0.8)',
+                      borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      {popupColorTheme && (
+                        <span
+                          className="inline-block h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: popupColorTheme.bg }}
+                        />
+                      )}
+                      <span>{popup.folderName}</span>
+                    </div>
+                    <button
+                      className="text-white/60 hover:text-white"
+                      onClick={() => dismissSidebarPopup(popup.id)}
+                      aria-label="Close preview popup"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto p-3 space-y-1">
+                    {popup.isLoading ? (
+                      <div className="py-4 text-center text-sm text-white/60">Loading...</div>
+                    ) : popup.children.length === 0 ? (
+                      <div className="py-4 text-center text-sm text-white/60">Empty folder</div>
+                    ) : (
+                      popup.children.map((child) => (
+                        <div key={child.id} className="group relative">
+                          <button
+                            className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-white/90 transition hover:border-blue-400/40 hover:bg-blue-500/20"
+                            onDoubleClick={() => {
+                              if (child.type === 'note') {
+                                handleSidebarNoteOpen(child.id)
+                              }
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2 text-sm font-medium">
+                              <div className="flex min-w-0 flex-1 items-center gap-2">
+                                <span>{child.icon ?? (child.type === 'folder' ? '📁' : '📄')}</span>
+                                <span className="truncate">{child.name}</span>
+                              </div>
+                              {child.type === 'folder' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarOrgEyeHover(child, event, popup.folderId)
+                                  }
+                                  onMouseLeave={() => handleSidebarEyeHoverLeave(child.id)}
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    handleSidebarPopupFolderClick(child, event)
+                                  }}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
+                              ) : child.type === 'note' ? (
+                                <div
+                                  className="rounded p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
+                                  onMouseEnter={(event) =>
+                                    handleSidebarNotePreviewHover(child.id, event, popup.folderId)
+                                  }
+                                  onMouseLeave={handleSidebarNotePreviewLeave}
+                                >
+                                  <Eye className="h-3.5 w-3.5 text-blue-400" />
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-1 text-xs text-white/60">
+                              {child.type === 'folder' ? 'Folder' : 'Note'}
+                            </div>
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+
+            {notePreview &&
+              typeof document !== 'undefined' &&
+              createPortal(
+                <PreviewPopover
+                  content={notePreview.content}
+                  status={isLoadingNotePreview ? 'loading' : 'ready'}
+                  position={notePreview.position}
+                  noteId={notePreview.noteId}
+                  onOpenNote={(noteId) => {
+                    handleSidebarNoteOpen(noteId)
+                    cancelNotePreview()
+                  }}
+                  onMouseEnter={handleSidebarPreviewTooltipEnter}
+                  onMouseLeave={handleSidebarPreviewTooltipLeave}
+                />,
+                document.body
+              )}
+
+            {showNotesWidget && !activeNoteId && !showConstellationPanel && (
+              <FloatingToolbar
+                x={notesWidgetPosition.x}
+                y={notesWidgetPosition.y}
+                onClose={handleCloseNotesWidget}
+                onSelectNote={handleNoteSelect}
+                onCreateOverlayPopup={handleCreateOverlayPopup}
+                onAddComponent={handleAddComponentFromToolbar}
+                editorRef={activeEditorRef}
+                activePanelId={activePanelId}
+                onBackdropStyleChange={handleBackdropStyleChange}
+                onFolderRenamed={handleFolderRenamed}
+                activePanel={toolbarActivePanel}
+                onActivePanelChange={setToolbarActivePanel}
+                refreshRecentNotes={recentNotesRefreshTrigger}
+                onToggleConstellationPanel={toggleConstellationView}
+                showConstellationPanel={showConstellationPanel}
+                knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+              />
+            )}
+
+            {showConstellationPanel && (
+              <div className="absolute inset-0 z-40">
+                <ConstellationPanel />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  if (useShellView) {
+    return (
+      <ConstellationProvider>
+        <AnnotationWorkspaceView>{legacyContent}</AnnotationWorkspaceView>
+      </ConstellationProvider>
+    )
+  }
+
+  return (
+    <ConstellationProvider>
+      {legacyContent}
+    </ConstellationProvider>
+  )
+}
+
+export function AnnotationApp() {
+  const phase = ANNOTATION_APP_REFACTOR_PHASE
+  const useShell = phase === 'shell' || phase === 'shell_test' || phase === 'all'
+
+  if (useShell) {
+    return <AnnotationAppShell />
+  }
+
+  return (
+    <LayerProvider initialPopupCount={0}>
+      <CanvasWorkspaceProvider>
+        <AnnotationAppContent />
+      </CanvasWorkspaceProvider>
+    </LayerProvider>
+  )
+}
+
+function AnnotationAppShell() {
+  return (
+    <LayerProvider initialPopupCount={0}>
+      <CanvasWorkspaceProvider>
+        <AnnotationAppContent useShellView />
+      </CanvasWorkspaceProvider>
+    </LayerProvider>
+  )
+}
