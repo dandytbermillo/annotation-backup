@@ -20,6 +20,7 @@ import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationWorkspaceCanvas } from "@/components/workspace/annotation-workspace-canvas"
 import { WorkspaceConstellationLayer } from "@/components/workspace/workspace-constellation-layer"
+import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar"
 import type { OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
@@ -1030,6 +1031,8 @@ const initialWorkspaceSyncRef = useRef(false)
     hoverHandlers,
   })
 
+  const sidebarNode = <WorkspaceSidebar {...workspaceSidebarProps} />
+
   const workspaceToolbarProps = useWorkspaceToolbarProps({
     notes: sortedOpenNotes,
     activeNoteId,
@@ -1205,7 +1208,7 @@ const initialWorkspaceSyncRef = useRef(false)
 
   const workspaceView = (
     <AnnotationWorkspaceView
-      sidebarProps={workspaceSidebarProps}
+      sidebar={sidebarNode}
       toolbarProps={workspaceToolbarStripProps}
       workspaceToggle={workspaceToggleNode}
       canvasProps={workspaceCanvasProps}

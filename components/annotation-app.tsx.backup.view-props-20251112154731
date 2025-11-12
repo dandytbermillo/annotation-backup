@@ -19,7 +19,12 @@ import { ConstellationProvider } from "@/components/constellation/constellation-
 import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationWorkspaceCanvas } from "@/components/workspace/annotation-workspace-canvas"
+import { WorkspaceCanvasContent } from "@/components/workspace/workspace-canvas-content"
+import { WorkspaceCanvasArea } from "@/components/workspace/workspace-canvas-area"
+import { WorkspaceOverlay } from "@/components/workspace/workspace-overlay"
+import { WorkspaceFloatingToolbar } from "@/components/workspace/workspace-floating-toolbar"
 import { WorkspaceConstellationLayer } from "@/components/workspace/workspace-constellation-layer"
+import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar"
 import type { OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
@@ -1030,6 +1035,8 @@ const initialWorkspaceSyncRef = useRef(false)
     hoverHandlers,
   })
 
+  const sidebarNode = <WorkspaceSidebar {...workspaceSidebarProps} />
+
   const workspaceToolbarProps = useWorkspaceToolbarProps({
     notes: sortedOpenNotes,
     activeNoteId,
@@ -1074,56 +1081,61 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  const workspaceCanvas = openNotes.length > 0 ? (
-    <AnnotationWorkspaceCanvas
-      key="workspace"
-      ref={canvasRef}
-      noteIds={openNotes.map(note => note.noteId)}
-      primaryNoteId={activeNoteId ?? openNotes[0].noteId}
-      freshNoteSeeds={freshNoteSeeds}
-      onConsumeFreshNoteSeed={consumeFreshNoteSeed}
-      isNotesExplorerOpen={false}
-      freshNoteIds={freshNoteIds}
-      onFreshNoteHydrated={handleFreshNoteHydrated}
-      onCanvasStateChange={handleCanvasStateChange}
-      mainOnlyNoteIds={mainOnlyNotes}
-      onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
-      showAddComponentMenu={showAddComponentMenu}
-      onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
-      onRegisterActiveEditor={handleRegisterActiveEditor}
-      onSnapshotLoadComplete={handleSnapshotLoadComplete}
-      skipSnapshotForNote={skipSnapshotForNote}
-      onSnapshotSettled={handleSnapshotSettled}
+  const canvasAreaNode = (
+    <WorkspaceCanvasArea
+      showConstellationPanel={showConstellationPanel}
+      isPopupLayerActive={isPopupLayerActive}
     >
-      {showNotesWidget && (
-        <CanvasAwareFloatingToolbar
-          x={notesWidgetPosition.x}
-          y={notesWidgetPosition.y}
-          onClose={handleCloseNotesWidget}
-          onSelectNote={handleNoteSelect}
-          onCreateOverlayPopup={handleCreateOverlayPopup}
-          onAddComponent={handleAddComponentFromToolbar}
-          editorRef={activeEditorRef}
-          activePanelId={activePanelId}
-          onBackdropStyleChange={handleBackdropStyleChange}
-          onFolderRenamed={handleFolderRenamed}
-          activePanel={toolbarActivePanel}
-          onActivePanelChange={setToolbarActivePanel}
-          refreshRecentNotes={recentNotesRefreshTrigger}
-          onToggleConstellationPanel={toggleConstellationView}
-          showConstellationPanel={showConstellationPanel}
-          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
-        />
-      )}
-    </AnnotationWorkspaceCanvas>
-  ) : null
-
-  const workspaceCanvasProps = {
-    showConstellationPanel,
-    isPopupLayerActive,
-    hasOpenNotes: openNotes.length > 0,
-    canvas: workspaceCanvas,
-  }
+      <WorkspaceCanvasContent
+        hasOpenNotes={openNotes.length > 0}
+        canvas={
+          openNotes.length > 0 ? (
+            <AnnotationWorkspaceCanvas
+              key="workspace"
+              ref={canvasRef}
+              noteIds={openNotes.map(note => note.noteId)}
+              primaryNoteId={activeNoteId ?? openNotes[0].noteId}
+              freshNoteSeeds={freshNoteSeeds}
+              onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+              isNotesExplorerOpen={false}
+              freshNoteIds={freshNoteIds}
+              onFreshNoteHydrated={handleFreshNoteHydrated}
+              onCanvasStateChange={handleCanvasStateChange}
+              mainOnlyNoteIds={mainOnlyNotes}
+              onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+              showAddComponentMenu={showAddComponentMenu}
+              onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+              onRegisterActiveEditor={handleRegisterActiveEditor}
+              onSnapshotLoadComplete={handleSnapshotLoadComplete}
+              skipSnapshotForNote={skipSnapshotForNote}
+              onSnapshotSettled={handleSnapshotSettled}
+            >
+              {showNotesWidget && (
+                <CanvasAwareFloatingToolbar
+                  x={notesWidgetPosition.x}
+                  y={notesWidgetPosition.y}
+                  onClose={handleCloseNotesWidget}
+                  onSelectNote={handleNoteSelect}
+                  onCreateOverlayPopup={handleCreateOverlayPopup}
+                  onAddComponent={handleAddComponentFromToolbar}
+                  editorRef={activeEditorRef}
+                  activePanelId={activePanelId}
+                  onBackdropStyleChange={handleBackdropStyleChange}
+                  onFolderRenamed={handleFolderRenamed}
+                  activePanel={toolbarActivePanel}
+                  onActivePanelChange={setToolbarActivePanel}
+                  refreshRecentNotes={recentNotesRefreshTrigger}
+                  onToggleConstellationPanel={toggleConstellationView}
+                  showConstellationPanel={showConstellationPanel}
+                  knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+                />
+              )}
+            </AnnotationWorkspaceCanvas>
+          ) : null
+        }
+      />
+    </WorkspaceCanvasArea>
+  )
 
   const workspaceOverlayProps = useWorkspaceOverlayProps({
     canRenderOverlay,
@@ -1157,6 +1169,8 @@ const initialWorkspaceSyncRef = useRef(false)
     onClearMoveCascadeState: clearMoveCascadeState,
   })
 
+  const workspaceLayersNode = <WorkspaceOverlay {...workspaceOverlayProps} />
+
   const { floatingToolbarProps, floatingToolbarVisible } = useWorkspaceFloatingToolbar({
     notesWidgetPosition,
     showNotesWidget,
@@ -1177,12 +1191,8 @@ const initialWorkspaceSyncRef = useRef(false)
     knowledgeBaseWorkspace,
   })
 
-  const workspaceFloatingToolbarProps = useMemo(
-    () => ({
-      visible: floatingToolbarVisible,
-      ...floatingToolbarProps,
-    }),
-    [floatingToolbarProps, floatingToolbarVisible],
+  const floatingToolbarNode = (
+    <WorkspaceFloatingToolbar visible={floatingToolbarVisible} {...floatingToolbarProps} />
   )
 
   const workspacePreviewPortalProps = useWorkspacePreviewPortal({
@@ -1196,24 +1206,21 @@ const initialWorkspaceSyncRef = useRef(false)
 
   const sidebarPreviewPopupsProps = shouldLoadOverlay ? sidebarPreviewProps : undefined
 
-  const constellationPanelProps = useMemo(
-    () => ({
-      visible: showConstellationPanel,
-    }),
-    [showConstellationPanel],
+  const constellationPanelNode = (
+    <WorkspaceConstellationLayer visible={showConstellationPanel} />
   )
 
   const workspaceView = (
     <AnnotationWorkspaceView
-      sidebarProps={workspaceSidebarProps}
+      sidebar={sidebarNode}
       toolbarProps={workspaceToolbarStripProps}
       workspaceToggle={workspaceToggleNode}
-      canvasProps={workspaceCanvasProps}
-      workspaceOverlayProps={workspaceOverlayProps}
+      canvasArea={canvasAreaNode}
+      workspaceLayers={workspaceLayersNode}
       sidebarPreviewProps={sidebarPreviewPopupsProps}
-      floatingToolbarProps={workspaceFloatingToolbarProps}
+      floatingToolbar={floatingToolbarNode}
       previewPortalProps={workspacePreviewPortalProps}
-      constellationPanelProps={constellationPanelProps}
+      constellationPanel={constellationPanelNode}
       onMainAreaContextMenu={handleContextMenu}
     />
   )
