@@ -20,7 +20,7 @@
 
 ## Latest Progress (2025-02-15)
 - Added Jest suites for `useOverlayLayoutSaveQueue` and `useOverlayLayoutPersistence`, covering debounce timing, conflict resolution, diagnostics toasts, and ancestor-color fetch fallbacks.
-- Extracted workspace list/create/delete orchestration plus menu state into `useOverlayWorkspaces`, so `annotation-app.tsx` now consumes a focused hook while leaving the `ANNOTATION_APP_REFACTOR_PHASE` gate untouched.
+- Extracted workspace list/create/delete orchestration plus menu state into `useOverlayWorkspaces`, so `annotation-app.tsx` now consumes a focused hook (the legacy `ANNOTATION_APP_REFACTOR_PHASE` gate has since been removed—shell is always on).
 - Manual regression plan now includes the workspace lifecycle loop (create/delete, dual-tab conflict, diagnostics repair) to accompany the new hook + tests.
 
 ## Module Interface Overview
@@ -35,10 +35,12 @@
 
 ## Proposed Phases
 
+> **Update (2025-11-13):** The `ANNOTATION_APP_REFACTOR_PHASE` runtime flag has been retired; shell mode is now the only path. References to the flag remain below for historical context, but no code paths are gated today.
+
 ### Phase 0 – Readiness & Instrumentation
 - Owners: Canvas Infra + QA.
 - Deliverables:
-  - Add `ANNOTATION_APP_REFACTOR_PHASE` runtime flag (values `off`, `hooks`, `popup`, `layout`, `shell`).
+  - Initial rollout used a runtime flag (`ANNOTATION_APP_REFACTOR_PHASE`) to gate phases; this flag has been removed now that shell mode is stable.
   - Capture current telemetry baselines (popup CRUD latency, layout conflict rate, folder cache TTL misses).
   - Document rollback procedures per phase in the runbook.
 

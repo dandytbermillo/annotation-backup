@@ -72,6 +72,7 @@ export function useOverlayLayoutPersistence({
 }: UseOverlayLayoutPersistenceOptions): UseOverlayLayoutPersistenceResult {
   const [pendingDiagnostics, setPendingDiagnostics] = useState<OverlayLayoutDiagnostics | null>(null)
   const diagnosticsRef = useRef<OverlayLayoutDiagnostics | null>(null)
+  const diagnosticsHashRef = useRef<string | null>(null)
 
   useEffect(() => {
     diagnosticsRef.current = pendingDiagnostics
@@ -91,6 +92,7 @@ export function useOverlayLayoutPersistence({
 
     if (flaggedPopupIds.size === 0) {
       setPendingDiagnostics(null)
+      diagnosticsHashRef.current = null
       return
     }
 
@@ -115,7 +117,22 @@ export function useOverlayLayoutPersistence({
     })
 
     setPendingDiagnostics(null)
+    diagnosticsHashRef.current = null
   }, [debugLog, setOverlayPopups, toast])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    ;(window as any).__overlayRepairHandler = handleRepairMismatchedPopups
+
+    return () => {
+      if ((window as any).__overlayRepairHandler === handleRepairMismatchedPopups) {
+        delete (window as any).__overlayRepairHandler
+      }
+    }
+  }, [handleRepairMismatchedPopups])
 
   const applyOverlayLayout = useCallback(
     (layout: OverlayLayoutPayload) => {
@@ -136,21 +153,33 @@ export function useOverlayLayoutPersistence({
           })),
         })
 
-        if (lastSavedLayoutHashRef.current !== digest) {
-          lastSavedLayoutHashRef.current = digest
+        if (diagnosticsHashRef.current !== digest) {
+          diagnosticsHashRef.current = digest
           setPendingDiagnostics(diagnostics)
 
-          debugLog({
-            component: "PopupOverlay",
-            action: "overlay_workspace_mismatch_detected",
-            metadata: {
-              workspaceId: currentWorkspaceId,
-              mismatchCount,
-              missingCount,
-              mismatches: diagnostics.workspaceMismatches.slice(0, 10),
-              missingFolders: diagnostics.missingFolders.slice(0, 10),
-            },
-          })
+          if (mismatchCount > 0) {
+            debugLog({
+              component: "PopupOverlay",
+              action: "overlay_workspace_mismatch_detected",
+              metadata: {
+                workspaceId: currentWorkspaceId,
+                mismatchCount,
+                mismatches: diagnostics.workspaceMismatches.slice(0, 10),
+              },
+            })
+          }
+
+          if (missingCount > 0) {
+            debugLog({
+              component: "PopupOverlay",
+              action: "overlay_workspace_missing_folder",
+              metadata: {
+                workspaceId: currentWorkspaceId,
+                missingCount,
+                missingFolders: diagnostics.missingFolders.slice(0, 10),
+              },
+            })
+          }
 
           const summaryParts: string[] = []
           if (mismatchCount > 0) {
@@ -181,6 +210,7 @@ export function useOverlayLayoutPersistence({
         }
       } else if (pendingDiagnostics) {
         setPendingDiagnostics(null)
+        diagnosticsHashRef.current = null
       }
 
       const savedCamera = layout.camera ?? defaultCamera

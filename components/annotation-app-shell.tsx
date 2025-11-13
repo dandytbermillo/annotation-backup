@@ -56,9 +56,6 @@ import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-t
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
-export const getAnnotationAppPhase = () =>
-  process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || "off"
-
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
   if (!path || typeof path !== 'string') return null

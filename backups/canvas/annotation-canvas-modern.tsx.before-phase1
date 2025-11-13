@@ -43,15 +43,6 @@ import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 import { dedupeCanvasItems, type CanvasDedupeWarning } from "@/lib/canvas/dedupe-canvas-items"
 import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
 import { Z_INDEX } from "@/lib/constants/z-index"
-import {
-  defaultViewport,
-  createDefaultCanvasState,
-  getDefaultMainPosition,
-  isDefaultMainPosition,
-  createDefaultCanvasItems,
-  ensureMainPanel,
-  LEGACY_DEFAULT_MAIN_POSITION,
-} from "@/lib/canvas/canvas-defaults"
 
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -132,6 +123,43 @@ function NoteHydrator({
   return null
 }
 
+// Default viewport settings
+const defaultViewport = {
+  zoom: 1,
+  translateX: 0,
+  translateY: 0,
+  showConnections: true,
+}
+
+// Create default canvas state
+const createDefaultCanvasState = () => ({
+  ...defaultViewport,
+  isDragging: false,
+  lastMouseX: 0,
+  lastMouseY: 0,
+})
+
+// Create default canvas items with main panel
+const LEGACY_DEFAULT_MAIN_POSITION = { x: 2000, y: 1500 }
+
+const getDefaultMainPosition = (): { x: number; y: number } => {
+  if (typeof window === 'undefined') {
+    return { x: 0, y: 0 }
+  }
+
+  const { width, height } = DEFAULT_PANEL_DIMENSIONS
+  const centeredX = Math.round(window.innerWidth / 2 - width / 2)
+  const centeredY = Math.round(window.innerHeight / 2 - height / 2)
+  return { x: centeredX, y: centeredY }
+}
+
+const isDefaultMainPosition = (position: { x: number; y: number } | null | undefined) => {
+  if (!position) return false
+  const defaultPosition = getDefaultMainPosition()
+  const matchesCurrent = Math.round(position.x) === defaultPosition.x && Math.round(position.y) === defaultPosition.y
+  const matchesLegacy = position.x === LEGACY_DEFAULT_MAIN_POSITION.x && position.y === LEGACY_DEFAULT_MAIN_POSITION.y
+  return matchesCurrent || matchesLegacy
+}
 
 /**
  * Check if a panel is visible in the current viewport
@@ -165,7 +193,70 @@ const isPanelVisibleInViewport = (
   return isHorizontallyVisible && isVerticallyVisible
 }
 
-// helper functions moved to lib/canvas/canvas-defaults.ts
+const createDefaultCanvasItems = (noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => [
+  createPanelItem(
+    "main",
+    mainPosition ?? getDefaultMainPosition(),
+    "main",
+    noteId,
+    ensurePanelKey(noteId, "main"),
+  ),
+]
+
+// Ensure main panel always exists in items array
+const ensureMainPanel = (items: CanvasItem[], noteId: string, mainPosition?: { x: number; y: number }): CanvasItem[] => {
+  let hasMain = false
+
+  const normalizedItems = items.map((item) => {
+    if (item.itemType !== "panel") {
+      return item
+    }
+
+    const parsedFromStoreKey = item.storeKey ? parsePanelKey(item.storeKey) : null
+    const parsedFromPanelId =
+      item.panelId && item.panelId.includes("::") ? parsePanelKey(item.panelId) : null
+
+    const resolvedNoteId =
+      parsedFromStoreKey?.noteId || parsedFromPanelId?.noteId || item.noteId || noteId
+    const resolvedPanelId =
+      parsedFromStoreKey?.panelId || parsedFromPanelId?.panelId || item.panelId || "main"
+    const nextStoreKey = ensurePanelKey(resolvedNoteId, resolvedPanelId)
+
+    if (resolvedPanelId === "main" && resolvedNoteId === noteId) {
+      hasMain = true
+    }
+
+    if (
+      item.noteId !== resolvedNoteId ||
+      item.panelId !== resolvedPanelId ||
+      item.storeKey !== nextStoreKey
+    ) {
+      return {
+        ...item,
+        noteId: resolvedNoteId,
+        panelId: resolvedPanelId,
+        storeKey: nextStoreKey,
+      }
+    }
+
+    return item
+  })
+
+  if (hasMain) {
+    return normalizedItems
+  }
+
+  return [
+    ...normalizedItems,
+    createPanelItem(
+      "main",
+      mainPosition ?? getDefaultMainPosition(),
+      "main",
+      noteId,
+      ensurePanelKey(noteId, "main"),
+    ),
+  ]
+}
 
 const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
   noteIds,
