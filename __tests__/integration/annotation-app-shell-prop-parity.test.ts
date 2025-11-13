@@ -40,6 +40,7 @@ const windowMock: any = {
   })),
 }
 ;(globalThis as any).localStorage = windowMock.localStorage
+jest.mock("@/styles/popup-overlay.css", () => ({}), { virtual: true })
 const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {})
 const consoleLogSpy = jest.spyOn(console, "log").mockImplementation(() => {})
 
