@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-13 02:19Z] b19b7e7: phase 4
 - commit [2025-11-12 23:17Z] 28106ed: manual testing
 - commit [2025-11-12 21:34Z] 040765d: overlay persistence refs, preview portal, toolbar props
 - commit [2025-11-12 21:20Z] f20b8d1: Note selection hook,overly and sidebar
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-12 03:17Z] 762acaa: start moving real UI into AnnotationWorkspaceView
 - commit [2025-11-11 01:45Z] 6f1d01b: Gradually move chunks of the legacy JSX into that view
 - commit [2025-11-11 01:45Z] 0e70cdb: instead of the
-- commit [2025-11-11 00:11Z] 395c42f: phase 4 starts
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-12 23:17Z] 28106ed: manual testing
+- commit [2025-11-13 02:19Z] b19b7e7: phase 4

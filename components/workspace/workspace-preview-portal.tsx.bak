@@ -5,7 +5,7 @@ import { createPortal } from "react-dom"
 import { PreviewPopover } from "@/components/shared/preview-popover"
 import type { NotePreviewState } from "@/hooks/useNotePreviewHover"
 
-export type WorkspacePreviewPortalProps<TContext = unknown> = {
+type WorkspacePreviewPortalProps<TContext = unknown> = {
   preview: NotePreviewState<TContext> | null
   isLoading: boolean
   onOpenNote: (noteId: string) => void

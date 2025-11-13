@@ -6,7 +6,7 @@ import type { ComponentProps } from "react"
 import { WorkspaceOverlayLayer } from "@/components/workspace/workspace-overlay-layer"
 import type { MoveCascadeState } from "@/lib/hooks/annotation/use-popup-overlay-state"
 
-export type WorkspaceOverlayProps = ComponentProps<typeof WorkspaceOverlayLayer> & {
+type WorkspaceOverlayProps = ComponentProps<typeof WorkspaceOverlayLayer> & {
   moveCascadeState: MoveCascadeState
   onClearMoveCascadeState: () => void
 }

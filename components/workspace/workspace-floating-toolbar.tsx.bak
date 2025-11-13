@@ -4,7 +4,7 @@ import type { ComponentProps } from "react"
 
 import { FloatingToolbar } from "@/components/floating-toolbar"
 
-export type WorkspaceFloatingToolbarProps = {
+type WorkspaceFloatingToolbarProps = {
   visible: boolean
 } & ComponentProps<typeof FloatingToolbar>
 

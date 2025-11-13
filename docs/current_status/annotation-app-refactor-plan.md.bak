@@ -132,32 +132,6 @@ Props planned for `AnnotationWorkspaceView`:
 - `sidebarData + noteTitleMap`, `organizationSidebarHandlers`, `notePreviewState`.
 - `toolbarState` (notes widget toggles, recent notes refresh trigger).
 
-##### AnnotationWorkspaceView Prop Contract (detailed)
-| Prop | Type / Shape | Provided by | Notes |
-| --- | --- | --- | --- |
-| `canvasState` | `CanvasState` | `useCanvasMode` | Read-only snapshot of current canvas config. |
-| `setCanvasMode` | `(mode: CanvasMode) => void` | `useCanvasMode` | Shell debounces rapid changes before passing through. |
-| `layerContext` | `LayerContextValue` | `LayerProvider` | Shell supplies dependency-injected singleton; view never re-creates providers. |
-| `shouldLoadOverlay` | `boolean` | `useOverlayHydrationGate` | Prevents premature overlay mounts during SSR/hydration. |
-| `popups` | `PopupMap` | `usePopupOverlayState` | Already includes workspace/folder references and diagnostics metadata. |
-| `overlayHandlers` | `{onCreate,onMove,onResize,onDelete,onDiagnosticsAck}` | Aggregated from `usePopupOverlayState`, `usePopupBulkActions`, diagnostics hooks | Handlers must be referentially stable to avoid thrash. |
-| `workspaceMeta` | `{currentWorkspace, workspaces, status, menuState}` | `useKnowledgeBaseWorkspace`, `useOverlayWorkspaces` | Contains loading/saving flags plus menu open/close controls. |
-| `sidebarData` | `SidebarData` | `useOrganizationSidebarActions` | Includes `noteTitleMap`, `organizationSidebarHandlers`, `notePreviewState`. |
-| `toolbarState` | `{activePanel, recentNotesTrigger, constellationToggle}` | `useWorkspaceToolbarState`, `useConstellationViewState` | Stores widget toggles + callbacks for constellation panel. |
-| `layoutStatus` | `{camera, persistenceStatus, conflictState}` | `useOverlayLayoutPersistence`, `useOverlayLayoutSaveQueue` | Surface-only data; shell retains refs/queues. |
-
-###### Provider & story requirements
-- `AnnotationWorkspaceView` story must render underneath `LayerProvider`, `CanvasWorkspaceProvider`, and `ConstellationProvider` mocks supplied by the shell story to guarantee type parity.
-- The view exposes no side-effects; all callbacks are supplied by the shell, so Storybook stories validate prop shapes without touching real stores.
-- Prop types live under `components/annotation-workspace-view/types.ts` (to be created) and exported for both runtime props and smoke tests.
-
-###### Shell vs. legacy smoke test
-1. Test name: `AnnotationAppShell.prop-parity.test.tsx` under `__tests__/integration/`.
-2. Mount legacy `AnnotationApp` and the flag-on shell using the same mocked workspace + folder fixtures.
-3. Capture the props passed into `AnnotationWorkspaceView` (flagged run) and the legacy inline view (legacy run) via a shared `serializeWorkspaceViewProps` helper.
-4. Assert deep equality (excluding known transient refs) so regressions in prop shapes are caught automatically before flipping the flag.
-5. Run this smoke test in CI whenever `ANNOTATION_APP_REFACTOR_PHASE` changes or when shell wiring is modified; annotate failures with actionable diffs.
-
 Shell responsibilities:
 1. Resolve and memoize all external data (KB, folder cache, overlay layout).
 2. Hold refs for persistence (layout queues, camera state) and pass safe callbacks down.
@@ -172,17 +146,10 @@ Shell responsibilities:
 - **Hotkeys & layer guards** – follow-up hook `useOverlayLayerHotkeys` (TBD) should encapsulate keyboard shortcuts currently inline around lines ~1300–1500 so the view simply attaches provided handlers.
 
 #### Next Actions Before Phase 4
-1. Finalize and document the `AnnotationWorkspaceView` prop contract (types + story) and pair it with a smoke test (Jest or Playwright) that asserts shell vs. legacy paths receive the same props for a given workspace.
-2. Finish extracting any remaining inline effects (keyboard shortcuts, hover guards, constellation toggles, diagnostics flags) into dedicated hooks to keep the shell boundary lean.
-3. Add a “flag flip checklist” section (telemetry baselines, bundle analyzer snapshot, rollback plan, regression notes) so enabling `ANNOTATION_APP_REFACTOR_PHASE >= shell` is procedural.
-4. Once the above land, create the shell/view files, move rendering logic behind the phase flag, and run the full manual regression + bundle analyzer while keeping the legacy path active until telemetry proves parity for at least one release before flipping the flag in staging.
-
-## Flag Flip Checklist (Phase 4)
-1. **Telemetry baselines captured** – snapshot `popup_crud_latency_ms`, `folder_cache_ttl_miss_rate`, `layout_conflict_rate`, and `workspace_menu_error_rate` in Looker before enabling the shell flag; document expected variance (±5%).
-2. **Bundle analyzer delta** – record `next build` analyzer output for both legacy and shell paths; ensure the shell path reduces the `AnnotationApp` chunk or stays within +10 kB before rollout.
-3. **Regression evidence** – attach the latest manual checklist run, Playwright smoke (`--grep "@annotation-app"`), and the new prop-parity smoke test results to the rollout doc.
-4. **Rollback procedure** – verify `ANNOTATION_APP_REFACTOR_PHASE` env/feature switch can be flipped back to `layout` or `popup` within one deploy; include CLI/build instructions plus owner contact.
-5. **Observability hooks** – enable temporary logging (warn on prop mismatches, layout conflicts) scoped behind the shell flag and plan to remove once telemetry is stable for ≥1 release.
+1. Finalize the `AnnotationWorkspaceView` prop contract (types + story) so we can scaffold the component without touching business logic.
+2. Finish extracting any remaining inline effects (keyboard shortcuts, hover guards) into dedicated hooks to keep the shell lean.
+3. Add a “flag flip checklist” section (covering telemetry, bundle size, rollback plan) so enabling `ANNOTATION_APP_REFACTOR_PHASE >= shell` is procedural.
+4. Once the above land, create the shell/view files and move rendering logic behind the phase flag; run full manual regression + bundle analyzer before flipping the flag in staging.
 
 ## Testing & Validation Plan
 - **Unit tests** (Vitest/Jest): each hook/module with exhaustive cases (success, failure, stale cache, conflict resolution). Owners: Canvas Infra.

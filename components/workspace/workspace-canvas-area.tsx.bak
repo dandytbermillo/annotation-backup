@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react"
 
-export type WorkspaceCanvasAreaProps = {
+type WorkspaceCanvasAreaProps = {
   children: ReactNode
   showConstellationPanel: boolean
   isPopupLayerActive: boolean

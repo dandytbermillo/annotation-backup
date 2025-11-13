@@ -9,7 +9,7 @@ import {
   type OrganizationSidebarStats,
 } from "@/components/sidebar/organization-sidebar-content"
 
-export type WorkspaceSidebarProps = {
+type WorkspaceSidebarProps = {
   visible: boolean
   showConstellationPanel: boolean
   activeTab: CanvasSidebarTab

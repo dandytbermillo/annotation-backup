@@ -2,7 +2,7 @@
 
 import { ConstellationPanel } from "@/components/constellation/constellation-panel"
 
-export type WorkspaceConstellationLayerProps = {
+type WorkspaceConstellationLayerProps = {
   visible: boolean
 }
 

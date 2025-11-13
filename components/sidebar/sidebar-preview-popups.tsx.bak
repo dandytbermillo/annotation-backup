@@ -7,7 +7,7 @@ import { getFolderColorTheme, type OrgItem } from "@/components/floating-toolbar
 import { Z_INDEX } from "@/lib/constants/z-index"
 import type { SidebarFolderPopup } from "@/lib/hooks/annotation/use-sidebar-folder-popups"
 
-export type SidebarPreviewPopupsProps = {
+type SidebarPreviewPopupsProps = {
   popups: SidebarFolderPopup[]
   onPopupHover: (folderId: string) => void
   onPopupLeave: (folderId: string) => void
