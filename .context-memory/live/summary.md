@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 196)
+- commit [2025-11-13 22:05Z] 132705a: refactoring annotation canvas
 - commit [2025-11-13 20:02Z] cd912be: fixing the popups conflict
 - commit [2025-11-13 05:33Z] 62087a6: almost done
 - commit [2025-11-13 03:28Z] 00cd228: Complete the flag-flip artifacts
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 196)
 - commit [2025-11-12 21:34Z] 040765d: overlay persistence refs, preview portal, toolbar props
 - commit [2025-11-12 21:20Z] f20b8d1: Note selection hook,overly and sidebar
 - commit [2025-11-12 06:05Z] 3728293: success refactoring
-- commit [2025-11-12 05:08Z] dad4440: still fixing
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-13 20:02Z] cd912be: fixing the popups conflict
+- commit [2025-11-13 22:05Z] 132705a: refactoring annotation canvas
