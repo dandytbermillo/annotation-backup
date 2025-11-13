@@ -47,14 +47,17 @@ import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-works
 import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
 import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
+import type { AnnotationWorkspaceViewProps } from "@/components/annotation-workspace-view/types"
 import { useOverlayPersistenceRefs } from "@/lib/hooks/annotation/use-overlay-persistence-refs"
 import { useWorkspacePreviewPortal } from "@/lib/hooks/annotation/use-workspace-preview-portal"
 import { useWorkspaceFloatingToolbar } from "@/lib/hooks/annotation/use-workspace-floating-toolbar"
 import { useWorkspaceOverlayProps } from "@/lib/hooks/annotation/use-workspace-overlay-props"
 import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-toolbar-props"
 
-const ANNOTATION_APP_REFACTOR_PHASE = process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || 'off'
 const FOLDER_CACHE_MAX_AGE_MS = 30000
+
+const getAnnotationAppPhase = () =>
+  process.env.NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE || "off"
 
 // Helper to derive display name from path when folder.name is empty
 function deriveFromPath(path: string | undefined | null): string | null {
@@ -1203,20 +1206,24 @@ const initialWorkspaceSyncRef = useRef(false)
     [showConstellationPanel],
   )
 
-  const workspaceView = (
-    <AnnotationWorkspaceView
-      sidebarProps={workspaceSidebarProps}
-      toolbarProps={workspaceToolbarStripProps}
-      workspaceToggle={workspaceToggleNode}
-      canvasProps={workspaceCanvasProps}
-      workspaceOverlayProps={workspaceOverlayProps}
-      sidebarPreviewProps={sidebarPreviewPopupsProps}
-      floatingToolbarProps={workspaceFloatingToolbarProps}
-      previewPortalProps={workspacePreviewPortalProps}
-      constellationPanelProps={constellationPanelProps}
-      onMainAreaContextMenu={handleContextMenu}
-    />
-  )
+  const workspaceViewProps: AnnotationWorkspaceViewProps = {
+    sidebarProps: workspaceSidebarProps,
+    toolbarProps: workspaceToolbarStripProps,
+    workspaceToggle: workspaceToggleNode,
+    canvasProps: workspaceCanvasProps,
+    workspaceOverlayProps: workspaceOverlayProps,
+    sidebarPreviewProps: sidebarPreviewPopupsProps,
+    floatingToolbarProps: workspaceFloatingToolbarProps,
+    previewPortalProps: workspacePreviewPortalProps,
+    constellationPanelProps: constellationPanelProps,
+    onMainAreaContextMenu: handleContextMenu,
+  }
+
+  if (process.env.NODE_ENV === "test" && typeof globalThis !== "undefined") {
+    ;(globalThis as any).__annotationWorkspaceViewProps = workspaceViewProps
+  }
+
+  const workspaceView = <AnnotationWorkspaceView {...workspaceViewProps} />
 
   if (useShellView) {
     return (
@@ -1234,7 +1241,7 @@ const initialWorkspaceSyncRef = useRef(false)
 }
 
 export function AnnotationApp() {
-  const phase = ANNOTATION_APP_REFACTOR_PHASE
+  const phase = getAnnotationAppPhase()
   const useShell = phase === 'shell' || phase === 'shell_test' || phase === 'all'
 
   if (useShell) {

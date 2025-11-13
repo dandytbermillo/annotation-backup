@@ -178,23 +178,11 @@ Shell responsibilities:
 4. Once the above land, create the shell/view files, move rendering logic behind the phase flag, and run the full manual regression + bundle analyzer while keeping the legacy path active until telemetry proves parity for at least one release before flipping the flag in staging.
 
 ## Flag Flip Checklist (Phase 4)
-1. **Telemetry baselines captured**
-   - Run Looker dashboards for `popup_crud_latency_ms`, `folder_cache_ttl_miss_rate`, `layout_conflict_rate`, and `workspace_menu_error_rate` immediately before shell rollout.
-   - Export CSV snapshots to `docs/current_status/telemetry/baseline-<date>.csv` and note acceptable variance (±5%) in the rollout doc.
-   - Record who gathered the data + UTC timestamp so QA can repeat the measurement after rollout.
-2. **Bundle analyzer delta**
-   - Execute `NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE=off next build --analyze` and save the report under `docs/current_status/bundles/legacy-<date>.html`.
-   - Repeat with `NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE=shell` and store `shell-<date>.html`; include the delta summary (Annotation App chunk size, shared vendor cost) in the checklist.
-   - Shell path must reduce the legacy chunk or stay within +10 kB; otherwise gate rollout until the delta is explained.
-3. **Regression evidence**
-   - Attach the latest manual regression sheet (workspace lifecycle + overlay flows), Playwright smoke run (`npx playwright test --grep "@annotation-app"`), and `npm test -- annotation-app-shell-prop-parity.test.ts` output to the rollout doc.
-   - Note any known flakes plus owner sign-off so the flag flip has auditable QA coverage.
-4. **Rollback procedure**
-   - Document the exact switch (`export NEXT_PUBLIC_ANNOTATION_APP_REFACTOR_PHASE=layout`), CI pipeline, and deploy command needed to revert within one release.
-   - List on-call contacts and the expected time-to-revert so SRE/QA can execute without hunting through Slack threads.
-5. **Observability hooks**
-   - Keep the prop-parity serializer wired in CI (fails fast on drift) and add a temporary console warning if shell props are missing critical fields; guard both behind the shell flag.
-   - Remove the warnings once telemetry stays within baseline range for ≥1 release to avoid long-term noise.
+1. **Telemetry baselines captured** – snapshot `popup_crud_latency_ms`, `folder_cache_ttl_miss_rate`, `layout_conflict_rate`, and `workspace_menu_error_rate` in Looker before enabling the shell flag; document expected variance (±5%).
+2. **Bundle analyzer delta** – record `next build` analyzer output for both legacy and shell paths; ensure the shell path reduces the `AnnotationApp` chunk or stays within +10 kB before rollout.
+3. **Regression evidence** – attach the latest manual checklist run, Playwright smoke (`--grep "@annotation-app"`), and the new prop-parity smoke test results to the rollout doc.
+4. **Rollback procedure** – verify `ANNOTATION_APP_REFACTOR_PHASE` env/feature switch can be flipped back to `layout` or `popup` within one deploy; include CLI/build instructions plus owner contact.
+5. **Observability hooks** – enable temporary logging (warn on prop mismatches, layout conflicts) scoped behind the shell flag and plan to remove once telemetry is stable for ≥1 release.
 
 ## Testing & Validation Plan
 - **Unit tests** (Vitest/Jest): each hook/module with exhaustive cases (success, failure, stale cache, conflict resolution). Owners: Canvas Infra.
