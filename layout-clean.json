@@ -1,0 +1,1652 @@
+{
+  "layout": {
+    "schemaVersion": "2.2.0",
+    "popups": [
+      {
+        "id": "overlay-sidebar-1762978492110-718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+        "folderId": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+        "parentId": null,
+        "canvasPosition": {
+          "x": 599.8942444940051,
+          "y": 3182.104155355907
+        },
+        "level": 0,
+        "folderName": "todo",
+        "width": 300,
+        "height": 329.3380584716797
+      },
+      {
+        "id": "overlay-sidebar-1762992531083-8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+        "folderId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+        "parentId": null,
+        "canvasPosition": {
+          "x": 600.4485014534565,
+          "y": 2632.793599871239
+        },
+        "level": 0,
+        "folderName": "my documents",
+        "width": 300,
+        "height": 456.3380584716797
+      },
+      {
+        "id": "overlay-popup-1762992545439-85ba1124-836a-412f-9dda-c388120935e9",
+        "folderId": "85ba1124-836a-412f-9dda-c388120935e9",
+        "parentId": "overlay-sidebar-1762992531083-8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+        "canvasPosition": {
+          "x": 1217.676796459442,
+          "y": 2696.393339043784
+        },
+        "level": 1,
+        "folderName": "drafts",
+        "width": 300,
+        "height": 287.33807373046875
+      }
+    ],
+    "inspectors": [],
+    "lastSavedAt": "2025-11-13T01:38:46.156Z",
+    "camera": {
+      "x": -420.7296014063413,
+      "y": -2619.4539011775732,
+      "scale": 1
+    },
+    "resolvedFolders": {
+      "overlay-sidebar-1762923746469-1df6279a-92b4-4bfb-b29a-2475b68c597b": {
+        "id": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+        "name": "Uncategorized",
+        "level": 0,
+        "path": "/knowledge-base/uncategorized",
+        "color": "blue",
+        "parentId": "5874d493-b6af-4711-9157-ddb21fdde4b3",
+        "children": [
+          {
+            "id": "4049318a-af9f-494d-b267-2383de333e74",
+            "name": "2",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-04T10:13:27.546Z",
+            "updatedAt": "2025-11-04T10:13:27.546Z"
+          },
+          {
+            "id": "c19e6aba-e1d5-48ec-a500-0bd4c778493e",
+            "name": "a",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/a",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-04T10:13:20.305Z",
+            "updatedAt": "2025-11-04T10:13:20.305Z"
+          },
+          {
+            "id": "8f70b3e2-ec40-4677-acc1-0a475334e2a0",
+            "name": "Drag Test Source",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Drag Test Source",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-04T11:37:50.196Z",
+            "updatedAt": "2025-10-05T08:39:32.815Z"
+          },
+          {
+            "id": "f0435654-3328-459f-8009-878e3b138062",
+            "name": "Drag Test Target",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Drag Test Target",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-04T11:37:50.241Z",
+            "updatedAt": "2025-10-05T08:39:32.815Z"
+          },
+          {
+            "id": "3d1852c3-dda1-444e-97b0-5dca15ee42f5",
+            "name": "New Note - Nov 10, 4:43 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 10, 4:43 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-11T06:43:56.138Z",
+            "updatedAt": "2025-11-13T03:17:16.264Z"
+          },
+          {
+            "id": "1e70dfb3-6fb7-401e-8dfa-b68756f14cc2",
+            "name": "New Note - Nov 10, 4:44 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 10, 4:44 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-11T06:44:01.446Z",
+            "updatedAt": "2025-11-13T03:17:19.023Z"
+          },
+          {
+            "id": "58dbc255-943c-481b-9bd1-20c894bf9112",
+            "name": "New Note - Nov 12, 1:17 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 1:17 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T03:17:37.467Z",
+            "updatedAt": "2025-11-13T03:17:37.490Z"
+          },
+          {
+            "id": "46c82770-1a9e-44b0-98c1-5b31b6bb8797",
+            "name": "New Note - Nov 12, 1:17 PM 1 - Nov 12, 1:17 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 1:17 PM 1 - Nov 12, 1:17 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T03:17:44.819Z",
+            "updatedAt": "2025-11-13T06:33:52.069Z"
+          },
+          {
+            "id": "834cc051-c610-4c2a-8c6b-9ea923c89626",
+            "name": "New Note - Nov 12, 3:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 3:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T05:48:40.864Z",
+            "updatedAt": "2025-11-13T05:48:40.889Z"
+          },
+          {
+            "id": "075e3871-4424-439b-bab0-b6227fe76442",
+            "name": "New Note - Nov 12, 4:12 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:12 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:12:10.329Z",
+            "updatedAt": "2025-11-13T06:12:10.355Z"
+          },
+          {
+            "id": "a293f30f-8f83-4b9d-aa2f-9809b9e8a6f8",
+            "name": "New Note - Nov 12, 4:12 PM 1 - Nov 12, 4:12 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:12 PM 1 - Nov 12, 4:12 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:12:16.245Z",
+            "updatedAt": "2025-11-13T06:28:20.408Z"
+          },
+          {
+            "id": "45adc1eb-9f0a-49a5-bf8f-e226d2617fc1",
+            "name": "New Note - Nov 12, 4:12 PM 2 - Nov 12, 4:12 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:12 PM 2 - Nov 12, 4:12 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:12:21.682Z",
+            "updatedAt": "2025-11-13T06:28:19.105Z"
+          },
+          {
+            "id": "7bea7a87-ccbb-4c58-acf3-c5dc6536a703",
+            "name": "New Note - Nov 12, 4:27 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:27 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:27:38.233Z",
+            "updatedAt": "2025-11-13T06:28:37.944Z"
+          },
+          {
+            "id": "11d85807-b348-43a4-9991-9ce2ab2e1593",
+            "name": "New Note - Nov 12, 4:27 PM 1 - Nov 12, 4:27 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:27 PM 1 - Nov 12, 4:27 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:27:41.769Z",
+            "updatedAt": "2025-11-13T06:28:41.898Z"
+          },
+          {
+            "id": "145ac456-5a3f-49c5-81df-f9588406cea6",
+            "name": "New Note - Nov 12, 4:33 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:33 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:33:42.893Z",
+            "updatedAt": "2025-11-13T06:33:56.716Z"
+          },
+          {
+            "id": "9b51f65b-e600-4446-913e-472cfccacaf4",
+            "name": "New Note - Nov 12, 4:54 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:54 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:54:25.788Z",
+            "updatedAt": "2025-11-13T06:54:35.348Z"
+          },
+          {
+            "id": "7259d286-382d-4881-b252-e2852ac847fc",
+            "name": "New Note - Nov 12, 4:54 PM 1 - Nov 12, 4:54 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:54 PM 1 - Nov 12, 4:54 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:54:30.349Z",
+            "updatedAt": "2025-11-13T06:54:36.550Z"
+          },
+          {
+            "id": "7893a4e9-ec97-4e9f-87df-bca05436ecf5",
+            "name": "New Note - Nov 12, 4:55 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 12, 4:55 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-13T06:55:22.362Z",
+            "updatedAt": "2025-11-13T06:55:22.393Z"
+          },
+          {
+            "id": "47d81da2-f9b1-4762-8aac-35711965129f",
+            "name": "New Note - Nov 7, 6:56 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 6:56 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T08:56:11.823Z",
+            "updatedAt": "2025-11-08T09:19:59.514Z"
+          },
+          {
+            "id": "ec109448-669d-40b7-a05f-94cb2a0ec2ed",
+            "name": "New Note - Nov 7, 6:56 PM 1 - Nov 7, 6:56 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 6:56 PM 1 - Nov 7, 6:56 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T08:56:25.578Z",
+            "updatedAt": "2025-11-08T09:20:01.685Z"
+          },
+          {
+            "id": "427d7aa4-6366-4a49-82a6-5af869336cdb",
+            "name": "New Note - Nov 7, 7:20 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 7:20 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T09:20:30.962Z",
+            "updatedAt": "2025-11-08T09:20:30.981Z"
+          },
+          {
+            "id": "db81e75f-280e-4c30-bcb6-b0c0a47485b2",
+            "name": "New Note - Nov 7, 7:20 PM 1 - Nov 7, 7:20 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 7:20 PM 1 - Nov 7, 7:20 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T09:20:34.569Z",
+            "updatedAt": "2025-11-08T09:20:34.585Z"
+          },
+          {
+            "id": "0bbb9cc5-7416-495d-9b54-3df34c35353b",
+            "name": "New Note - Nov 7, 7:35 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 7:35 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T09:35:28.669Z",
+            "updatedAt": "2025-11-08T09:35:28.694Z"
+          },
+          {
+            "id": "ef3a03c6-ada6-4831-8bfe-9a38073e1257",
+            "name": "New Note - Nov 7, 7:43 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 7:43 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T09:43:20.793Z",
+            "updatedAt": "2025-11-08T09:43:20.815Z"
+          },
+          {
+            "id": "0affddaf-ffa0-406a-860f-2522fe5f49d7",
+            "name": "New Note - Nov 7, 7:45 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 7:45 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T09:45:52.213Z",
+            "updatedAt": "2025-11-08T09:46:22.977Z"
+          },
+          {
+            "id": "80cb8982-5e2a-4c98-81be-041c2e5bfdf7",
+            "name": "New Note - Nov 7, 8:25 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 7, 8:25 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-08T10:25:57.141Z",
+            "updatedAt": "2025-11-08T10:25:57.163Z"
+          },
+          {
+            "id": "2bb0fafd-ec9f-4535-91a9-41165f8ba049",
+            "name": "New Note - Nov 8, 12:01 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 8, 12:01 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-09T02:01:46.331Z",
+            "updatedAt": "2025-11-09T02:14:19.992Z"
+          },
+          {
+            "id": "63c36fc5-d511-49f8-a035-8de1c52940cf",
+            "name": "New Note - Nov 8, 12:01 PM 1 - Nov 8, 12:01 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 8, 12:01 PM 1 - Nov 8, 12:01 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-09T02:01:55.784Z",
+            "updatedAt": "2025-11-09T02:14:18.413Z"
+          },
+          {
+            "id": "52b29f4b-4275-402c-a8c8-922e6efcdaa9",
+            "name": "New Note - Nov 8, 12:14 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 8, 12:14 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-09T02:14:22.538Z",
+            "updatedAt": "2025-11-09T02:14:22.563Z"
+          },
+          {
+            "id": "e0495519-f939-4fde-84d1-d2dc187cc435",
+            "name": "New Note - Nov 9, 12:11 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 12:11 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T02:11:24.125Z",
+            "updatedAt": "2025-11-10T03:46:37.553Z"
+          },
+          {
+            "id": "851c2dc9-faf3-4817-99c1-f587a8e41e8b",
+            "name": "New Note - Nov 9, 12:11 PM 1 - Nov 9, 12:11 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 12:11 PM 1 - Nov 9, 12:11 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T02:11:31.455Z",
+            "updatedAt": "2025-11-10T03:46:36.328Z"
+          },
+          {
+            "id": "0d13935b-382e-446c-9d23-c065253f34c0",
+            "name": "New Note - Nov 9, 12:11 PM 2 - Nov 9, 12:11 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 12:11 PM 2 - Nov 9, 12:11 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T02:11:45.751Z",
+            "updatedAt": "2025-11-10T02:11:45.764Z"
+          },
+          {
+            "id": "ef40e159-b01a-4830-a392-a0ed040b7ba5",
+            "name": "New Note - Nov 9, 1:46 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 1:46 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T03:46:43.383Z",
+            "updatedAt": "2025-11-10T03:46:43.401Z"
+          },
+          {
+            "id": "7318b986-7a79-4ee8-b773-239c865c6b7b",
+            "name": "New Note - Nov 9, 2:00 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 2:00 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T04:00:04.211Z",
+            "updatedAt": "2025-11-10T04:00:04.625Z"
+          },
+          {
+            "id": "ef410b5e-8a7c-4869-b17a-e4d13c1a23cf",
+            "name": "New Note - Nov 9, 4:25 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 4:25 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T06:25:17.803Z",
+            "updatedAt": "2025-11-10T06:25:17.831Z"
+          },
+          {
+            "id": "b33d97f5-22ab-46c2-812a-4cb390fd774b",
+            "name": "New Note - Nov 9, 4:25 PM 1 - Nov 9, 4:25 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 4:25 PM 1 - Nov 9, 4:25 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T06:25:34.777Z",
+            "updatedAt": "2025-11-10T06:25:34.795Z"
+          },
+          {
+            "id": "b1e2d8c2-a2b1-4d3d-ad79-a4e652b79bfe",
+            "name": "New Note - Nov 9, 7:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Nov 9, 7:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-10T09:48:09.886Z",
+            "updatedAt": "2025-11-10T09:48:09.905Z"
+          },
+          {
+            "id": "c9918e5c-7e3b-408f-9a35-7d3a2bbcf4a6",
+            "name": "New Note - Oct 26, 2:47 PM 4 - Oct 26, 2:47 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:47 PM 4 - Oct 26, 2:47 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:47:36.966Z",
+            "updatedAt": "2025-10-27T02:53:01.306Z"
+          },
+          {
+            "id": "787fc3b0-e552-4e2e-bab1-e915c58fa6b5",
+            "name": "New Note - Oct 26, 2:47 PM 5 - Oct 26, 2:47 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:47 PM 5 - Oct 26, 2:47 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:47:40.878Z",
+            "updatedAt": "2025-10-27T02:47:40.894Z"
+          },
+          {
+            "id": "1d865545-f259-419a-a0eb-e1ed02be94fa",
+            "name": "New Note - Oct 26, 2:47 PM 7 - Oct 26, 2:47 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:47 PM 7 - Oct 26, 2:47 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:47:53.550Z",
+            "updatedAt": "2025-10-27T02:47:53.580Z"
+          },
+          {
+            "id": "1f0a1b54-b0fd-44a1-ac3f-f6222bde8f4a",
+            "name": "New Note - Oct 26, 2:47 PM 8 - Oct 26, 2:47 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:47 PM 8 - Oct 26, 2:47 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:47:59.165Z",
+            "updatedAt": "2025-10-27T02:47:59.361Z"
+          },
+          {
+            "id": "a60debae-d452-46ee-8a9e-2737b803efdd",
+            "name": "New Note - Oct 26, 2:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:48:01.424Z",
+            "updatedAt": "2025-10-27T02:48:01.567Z"
+          },
+          {
+            "id": "f2cd3fab-0d60-408c-8823-c1ef27b92cc7",
+            "name": "New Note - Oct 26, 2:48 PM 1 - Oct 26, 2:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:48 PM 1 - Oct 26, 2:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:48:05.248Z",
+            "updatedAt": "2025-10-27T02:48:05.268Z"
+          },
+          {
+            "id": "a14aae0f-f8b8-42d6-ae37-5f1ee8353fbb",
+            "name": "New Note - Oct 26, 2:48 PM 2 - Oct 26, 2:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:48 PM 2 - Oct 26, 2:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:48:08.186Z",
+            "updatedAt": "2025-10-27T02:48:08.200Z"
+          },
+          {
+            "id": "dee56d92-bae3-460a-9d6b-aa11eece9ee0",
+            "name": "New Note - Oct 26, 2:48 PM 3 - Oct 26, 2:48 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:48 PM 3 - Oct 26, 2:48 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:48:14.941Z",
+            "updatedAt": "2025-10-27T02:48:15.222Z"
+          },
+          {
+            "id": "97a14161-2049-4d9c-a26f-9ee63164598b",
+            "name": "New Note - Oct 2, 6:24 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 2, 6:24 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-03T06:24:01.170Z",
+            "updatedAt": "2025-10-05T08:39:32.815Z"
+          },
+          {
+            "id": "38adbd35-5a3a-4f02-96d1-fd4412c4e3d5",
+            "name": "New Note - Oct 26, 2:53 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:53 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:53:28.165Z",
+            "updatedAt": "2025-10-27T02:53:28.187Z"
+          },
+          {
+            "id": "a5ffb371-a878-4b31-9d2b-28e844a1699b",
+            "name": "New Note - Oct 26, 2:53 PM 1 - Oct 26, 2:53 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:53 PM 1 - Oct 26, 2:53 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:53:40.308Z",
+            "updatedAt": "2025-10-27T02:53:40.329Z"
+          },
+          {
+            "id": "474f3906-06a5-4047-80a2-ddc5fbb231dd",
+            "name": "New Note - Oct 26, 2:53 PM 2 - Oct 26, 2:53 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 2:53 PM 2 - Oct 26, 2:53 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T02:53:48.851Z",
+            "updatedAt": "2025-10-27T02:53:48.867Z"
+          },
+          {
+            "id": "963ba53e-d95a-417d-b3c9-d2b1a414f5b9",
+            "name": "New Note - Oct 2, 6:27 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 2, 6:27 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-03T06:27:51.800Z",
+            "updatedAt": "2025-10-05T08:39:32.815Z"
+          },
+          {
+            "id": "1af7b992-acea-4dbd-bcfa-e85d7b12261a",
+            "name": "New Note - Oct 26, 3:00 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:00 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:00:54.906Z",
+            "updatedAt": "2025-10-27T03:00:54.929Z"
+          },
+          {
+            "id": "79fac89b-5358-48ed-a2bc-5eb5b85d0915",
+            "name": "New Note - Oct 26, 3:01 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:01 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:01:04.820Z",
+            "updatedAt": "2025-10-27T03:01:04.838Z"
+          },
+          {
+            "id": "988a341e-8cdb-4e50-9412-9cee2f8906ca",
+            "name": "New Note - Oct 26, 3:01 PM 1 - Oct 26, 3:01 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:01 PM 1 - Oct 26, 3:01 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:01:12.891Z",
+            "updatedAt": "2025-10-27T03:01:12.905Z"
+          },
+          {
+            "id": "14075902-9adf-40d1-ad55-26cef0782eb2",
+            "name": "New Note - Oct 26, 3:06 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:06 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:06:04.255Z",
+            "updatedAt": "2025-10-27T03:06:04.279Z"
+          },
+          {
+            "id": "948cff07-c9aa-442f-b9ab-371a9bf5222d",
+            "name": "New Note - Oct 26, 3:06 PM 1 - Oct 26, 3:06 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:06 PM 1 - Oct 26, 3:06 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:06:15.129Z",
+            "updatedAt": "2025-10-27T03:06:15.146Z"
+          },
+          {
+            "id": "e1945163-0f83-4c67-af2b-ff9808e1da93",
+            "name": "New Note - Oct 26, 3:06 PM 2 - Oct 26, 3:06 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:06 PM 2 - Oct 26, 3:06 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:06:29.363Z",
+            "updatedAt": "2025-10-27T03:06:29.376Z"
+          },
+          {
+            "id": "e1a05fe2-6b96-4690-b08e-6c67fa02c4ad",
+            "name": "New Note - Oct 26, 3:06 PM 3 - Oct 26, 3:06 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:06 PM 3 - Oct 26, 3:06 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:06:36.023Z",
+            "updatedAt": "2025-10-27T03:06:36.036Z"
+          },
+          {
+            "id": "342f75f9-5b8a-48f7-a382-c178c793ecce",
+            "name": "New Note - Oct 26, 3:06 PM 4 - Oct 26, 3:06 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 26, 3:06 PM 4 - Oct 26, 3:06 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-27T03:06:43.437Z",
+            "updatedAt": "2025-10-27T03:06:43.452Z"
+          },
+          {
+            "id": "e15a9232-af78-49b0-9181-a73f56bb843b",
+            "name": "Projects",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Projects",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T11:33:11.504Z",
+            "updatedAt": "2025-09-30T04:55:40.536Z"
+          },
+          {
+            "id": "43ac04c2-ae58-4765-b7f2-400d4da5a227",
+            "name": "sample",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/sample",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-11-04T07:45:03.117Z",
+            "updatedAt": "2025-11-04T07:45:03.117Z"
+          },
+          {
+            "id": "0887a2a6-5811-44dc-8ae0-8f04fccbe399",
+            "name": "SW Test Note 3 (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T04:28:14.891Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "260a8ede-8afd-4ea3-be38-216ccee3040f",
+            "name": "SW Test Note 3 (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T04:28:38.294Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "75a093e1-a2e6-4b69-b182-c398fd4b4b32",
+            "name": "SW Test Note 3 (4)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-4",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T04:35:12.439Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "931e2c67-66fb-4cfe-bdf7-cec7a278dfd3",
+            "name": "SW Test Note 3 (5)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-5",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T08:43:04.595Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "66b48198-a6f5-47a8-98e4-7e36063a62ad",
+            "name": "SW Test Note 3 (6)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-6",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T08:54:16.997Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "a6414205-2f33-46db-b5d0-d4beec937f5b",
+            "name": "SW Test Note 3 (7)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-7",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T08:17:23.093Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "17abe018-68ff-4142-af46-f0d147ea536d",
+            "name": "SW Test Note 3 (8)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-8",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-08T02:02:50.661Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "f7bbb4e5-6052-4d76-80d0-414fa8e7ddd0",
+            "name": "SW Test Note 3 (9)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/SW Test Note 3-9",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T03:04:41.873Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "b388a9b3-ab55-4393-91b4-ea6c80a7c966",
+            "name": "test-1",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/test-1",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-16T11:37:28.002Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "93fa8f97-88f0-481d-b555-515f95c9a227",
+            "name": "TEST-2",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/TEST-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-16T11:41:52.536Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "9c468102-86c3-4929-8825-d86b6eea8728",
+            "name": "Test Folder A",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Folder A",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-04T11:36:27.511Z",
+            "updatedAt": "2025-10-05T08:39:32.815Z"
+          },
+          {
+            "id": "a75ded43-7268-4a79-b4c1-e67424436214",
+            "name": "Test Invalid UUID",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Invalid UUID",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T04:02:25.555Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "name": "Test New Note",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test New Note",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T04:02:07.533Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "6edd07f9-2d45-4bc1-b2c4-859ba4a2cf3e",
+            "name": "Test Note",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "28fba9ff-1f42-40d5-8082-571dd3e6180b",
+            "name": "Test Note 1",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 1",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T18:02:55.903Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "123de010-be5e-4e59-be27-77741e9791c3",
+            "name": "Test Note (10)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-10",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "0774646d-c0f4-58bf-b200-e55d8443f929",
+            "name": "Test Note (11)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-11",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T03:23:45.446Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "d8a88ab2-532d-4356-9cbd-fd74c8f73b69",
+            "name": "Test Note (12)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-12",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T17:50:57.709Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "0c873674-cafa-42d4-b160-08c30d7b788a",
+            "name": "Test Note 1 (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 1-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:18:35.989Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "af9cac36-d4d6-4a4c-80d5-16bb80085711",
+            "name": "Test Note - 12:00:23 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note - 12:00:23 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:00:23.413Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "480c281d-a4b0-423c-a72f-14304a34a7e0",
+            "name": "Test Note - 12:00:50 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note - 12:00:50 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:00:50.870Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "cf34d503-1960-4919-b961-73876611ffd0",
+            "name": "Test Note (13)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-13",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T17:51:51.943Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "0947d4cd-7736-4542-9944-e5a0b0724cf3",
+            "name": "Test Note 1 (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 1-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:19:45.163Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "351d60f6-4560-48de-8713-fc78d39d76da",
+            "name": "Test Note (14)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-14",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T23:58:43.976Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "8cafd6ad-a522-46cc-b89d-f16df14c2dd3",
+            "name": "Test Note (15)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-15",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T23:58:59.961Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "d8e60e7c-a22b-46dc-a524-2cf6be7bea8a",
+            "name": "Test Note (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "58e73cee-6b60-404c-9222-793be1c57937",
+            "name": "Test Note 2",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T18:02:56.132Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "bdf84bd8-0a0b-42d5-9e7a-e142d73645ab",
+            "name": "Test Note 2 (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 2-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:18:36.203Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "48fdd7a7-edfc-48cf-ad2d-16ba7d80ec62",
+            "name": "Test Note 2 (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note 2-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:19:45.375Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "c4ade762-1530-4185-bce7-cd32fd2c9891",
+            "name": "Test Note (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "d1db6174-f0b5-4f90-9d2c-5be4c0f165b5",
+            "name": "Test Note (4)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-4",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "9cbc26e4-977b-4cad-909e-ba3630a2d255",
+            "name": "Test Note (5)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-5",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "10da48db-802f-4be2-8f03-274d13bd3b26",
+            "name": "Test Note (6)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-6",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "9cb57ba5-859b-40d0-9852-786af9caba51",
+            "name": "Test Note (7)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-7",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "b40dd4c5-a516-4a52-b1ac-81937f3110b4",
+            "name": "Test Note (8)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-8",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "ac856546-d723-44d7-bf90-9177c1090a4e",
+            "name": "Test Note (9)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note-9",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "17042666-766f-4d63-bace-6b84862ac7ff",
+            "name": "Test Note for Annotations",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T10:56:26.046Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "f97e63ec-4805-4212-8f65-3b4f403fad56",
+            "name": "Test Note for Annotations (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T10:57:06.284Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "99156ec4-08f2-47c5-b72e-d39488c826fa",
+            "name": "Test Note for Annotations (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T10:58:01.951Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "5b5a0162-7737-4e62-b865-1dc9184ff4e5",
+            "name": "Test Note for Annotations (4)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations-4",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T10:59:07.404Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "65350555-d29c-4fc0-9557-04eb853efeb5",
+            "name": "Test Note for Annotations (5)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations-5",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T10:59:54.500Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "2f3fa0fc-b83e-42ca-88dd-8c5b63889786",
+            "name": "Test Note for Annotations (6)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Annotations-6",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T16:45:03.868Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "0dc4d926-6545-4903-b977-0f4e615ba5aa",
+            "name": "Test Note for Batch Verification",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Batch Verification",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-08-30T10:25:57.933Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "4e69071a-7fc7-48c2-88e1-c07ab9c170dc",
+            "name": "Test Note for Phase 3",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Phase 3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T03:03:58.138Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "e28a79f8-24d3-43f6-939f-635c5de3b53a",
+            "name": "Test Note for Phase 3 (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Phase 3-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T03:07:27.091Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "ce1ef47b-5f23-4a5c-87f4-efe2ffc4c2d7",
+            "name": "Test Note for Phase 3 (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Test Note for Phase 3-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T03:08:11.990Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "f1c4e78c-9ff7-4ade-9b11-8032c172e12b",
+            "name": "third- New Note - Oct 17, 4:10 PM",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/New Note - Oct 17, 4:10 PM",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-10-18T04:10:06.522Z",
+            "updatedAt": "2025-10-18T05:22:14.850Z"
+          },
+          {
+            "id": "c6ef578b-ac4a-461b-8952-86372e673a7e",
+            "name": "Untitled",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "45c75103-753d-4ceb-abe3-c498afa1186d",
+            "name": "Untitled (10)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-10",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "bfd4973d-78c8-4198-8182-e48d505fdcef",
+            "name": "Untitled (11)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-11",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "6624f89c-22fc-4eae-ba55-77623116eeb7",
+            "name": "Untitled (12)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-12",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "fccee123-1bc7-44e6-a360-594a78621620",
+            "name": "Untitled (13)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-13",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "2d1194d8-5100-4085-a517-1f415999b40d",
+            "name": "Untitled (14)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-14",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "01e72746-91fe-402a-aceb-37e55c77fb85",
+            "name": "Untitled (15)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-15",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "73cc8831-e50b-471a-857a-2b8ba2631f97",
+            "name": "Untitled (16)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-16",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "b51a72e9-9829-4bf9-b871-649f2b38f682",
+            "name": "Untitled (17)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-17",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "78595fb5-fec8-4408-a7d6-42c4a92e5d26",
+            "name": "Untitled (18)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-18",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "900479d8-2b64-4dd7-a3a2-db91d885dbce",
+            "name": "Untitled (19)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-19",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "8c706db7-bbc7-4f8d-86a4-ed41f934e494",
+            "name": "Untitled (2)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-2",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "eab3a772-8dd3-464c-a3c7-aea4816551b5",
+            "name": "Untitled (20)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-20",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "21745e66-9d67-50ee-b443-cffa38dab7e9",
+            "name": "Untitled (21)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-21",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T07:01:04.184Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "ddcdaa2d-7def-5abc-840c-2f789ec66898",
+            "name": "Untitled (22)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-22",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T07:01:15.344Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "ebf69176-a905-5382-a4ff-45a5cdbb8ffd",
+            "name": "Untitled (23)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-23",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T07:02:28.027Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "981d8c09-13cf-51d9-8b7c-a8249310c90c",
+            "name": "Untitled (24)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-24",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T08:34:05.059Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "03126b5d-45c0-5217-a31a-a6af9e6a19d0",
+            "name": "Untitled (25)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-25",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T08:34:05.059Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "53b5bd55-628c-52e8-9eaf-6e8608a28fa9",
+            "name": "Untitled (27)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-27",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-02T15:43:14.688Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "5a20983c-aec3-5dac-a26f-9bf214713fbf",
+            "name": "Untitled (28)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-28",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T16:45:04.288Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "18fc1536-8e6f-5804-9f90-13904fce047f",
+            "name": "Untitled (29)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-29",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-10T16:45:04.288Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "8e0eddc8-926f-4db9-9d75-77b555753711",
+            "name": "Untitled (3)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-3",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "68135a63-8b8b-52b8-b1a9-039ec8c59dbe",
+            "name": "Untitled (30)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-30",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T23:58:44.105Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "83d3b2bd-bbae-5a92-8036-386808fbe921",
+            "name": "Untitled (31)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-31",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-11T23:58:59.977Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "07e791fc-fa23-50b6-8117-1c72bb0faa54",
+            "name": "Untitled (32)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-32",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:00:23.426Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "882088d6-8aa5-5dac-a42a-3099c6124f79",
+            "name": "Untitled (33)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-33",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:18:36.516Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "eb737d95-e1cd-5843-b093-781d533e8b70",
+            "name": "Untitled (34)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-34",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-12T00:19:45.591Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "2d9a5235-5063-47af-aefc-ab22a75daef0",
+            "name": "Untitled (4)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-4",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "81b9a0f4-9907-4607-9f97-37647b8cdf04",
+            "name": "Untitled (5)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-5",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "3f6cf9e3-3004-4db7-b88e-841fd205f9b4",
+            "name": "Untitled (6)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-6",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "1b0aef3f-a582-4166-aa31-d9b08f5774b3",
+            "name": "Untitled (7)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-7",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "4fc72941-b78a-411d-96e4-ab017848f162",
+            "name": "Untitled (8)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-8",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "c12e7996-6cff-40b7-8181-dc5c994ffccb",
+            "name": "Untitled (9)",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Untitled-9",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-09-01T00:14:55.984Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          },
+          {
+            "id": "2d6e4885-96bf-4567-8504-e6e9d0d34953",
+            "name": "Verification Test",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/uncategorized/Verification Test",
+            "parentId": "1df6279a-92b4-4bfb-b29a-2475b68c597b",
+            "createdAt": "2025-08-30T10:31:36.047Z",
+            "updatedAt": "2025-09-18T03:28:22.476Z"
+          }
+        ],
+        "workspaceId": "13716608-6f27-4e54-b246-5e9ca7b61064"
+      },
+      "overlay-sidebar-1762978492110-718239a8-01e2-4e0d-b3c5-5571c4d5b80e": {
+        "id": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+        "name": "todo",
+        "level": 0,
+        "path": "/knowledge-base/todo",
+        "color": "amber",
+        "parentId": "5874d493-b6af-4711-9157-ddb21fdde4b3",
+        "children": [
+          {
+            "id": "98124c7a-ffe1-43e5-b1ee-2c758326633c",
+            "name": "samplexs",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/todo/samplexs",
+            "parentId": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+            "createdAt": "2025-09-16T02:07:32.253Z",
+            "updatedAt": "2025-11-10T06:30:28.344Z"
+          },
+          {
+            "id": "e9f22e66-0531-45d3-9ada-a18478ad9b47",
+            "name": "teset1",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/todo/teset1",
+            "parentId": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+            "createdAt": "2025-11-09T06:10:54.050Z",
+            "updatedAt": "2025-11-09T06:10:54.050Z"
+          },
+          {
+            "id": "4e452224-8a16-41f9-98e8-deac3dda7062",
+            "name": "teset 2.1",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/todo/teset 2",
+            "parentId": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+            "createdAt": "2025-11-10T06:29:37.508Z",
+            "updatedAt": "2025-11-10T06:29:54.252Z"
+          },
+          {
+            "id": "17159d36-91b6-446b-8000-9999e5ea4681",
+            "name": "todo list 1xx",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/todo/todo list 1xx",
+            "parentId": "718239a8-01e2-4e0d-b3c5-5571c4d5b80e",
+            "createdAt": "2025-09-16T02:12:59.402Z",
+            "updatedAt": "2025-11-10T06:30:28.344Z"
+          }
+        ],
+        "workspaceId": "13716608-6f27-4e54-b246-5e9ca7b61064"
+      },
+      "overlay-sidebar-1762992531083-8b193e0c-003c-4dcd-aecd-78f16b6c70c2": {
+        "id": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+        "name": "my documents",
+        "level": 0,
+        "path": "/knowledge-base/documents",
+        "color": "emerald",
+        "parentId": "5874d493-b6af-4711-9157-ddb21fdde4b3",
+        "children": [
+          {
+            "id": "85ba1124-836a-412f-9dda-c388120935e9",
+            "name": "drafts",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/draft",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-09-12T11:32:57.604Z",
+            "updatedAt": "2025-11-13T06:32:34.770Z"
+          },
+          {
+            "id": "cc8eb123-29d7-4744-bfa5-c2978a04c21c",
+            "name": "sample1",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/sample1",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-10-08T10:37:16.681Z",
+            "updatedAt": "2025-10-08T10:37:16.681Z"
+          },
+          {
+            "id": "d3556c80-4aaa-4ef0-8679-8f85deed6437",
+            "name": "sample 2",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/sample 2",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-10-08T10:37:23.832Z",
+            "updatedAt": "2025-10-08T10:37:23.832Z"
+          },
+          {
+            "id": "e6568f52-7514-4839-b5b3-6b91ec8a73b6",
+            "name": "test",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/test",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-11-05T06:15:03.254Z",
+            "updatedAt": "2025-11-05T06:15:03.254Z"
+          },
+          {
+            "id": "5587b041-8700-4321-82b2-2623c1ed07f7",
+            "name": "test 1",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/test 1",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-10-06T02:49:55.125Z",
+            "updatedAt": "2025-11-10T12:59:56.969Z"
+          },
+          {
+            "id": "808c734d-a3e4-4e59-bec0-ab48fb1329d3",
+            "name": "test2d",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/test2",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-10-07T06:47:18.453Z",
+            "updatedAt": "2025-11-05T12:57:02.307Z"
+          },
+          {
+            "id": "6b99cc55-3959-4e8f-b6fe-5a943224470a",
+            "name": "test 4",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/test 4",
+            "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+            "createdAt": "2025-10-07T06:59:10.925Z",
+            "updatedAt": "2025-11-10T06:30:57.596Z"
+          }
+        ],
+        "workspaceId": "13716608-6f27-4e54-b246-5e9ca7b61064"
+      },
+      "overlay-popup-1762992545439-85ba1124-836a-412f-9dda-c388120935e9": {
+        "id": "85ba1124-836a-412f-9dda-c388120935e9",
+        "name": "drafts",
+        "level": 1,
+        "path": "/knowledge-base/documents/draft",
+        "color": "emerald",
+        "parentId": "8b193e0c-003c-4dcd-aecd-78f16b6c70c2",
+        "children": [
+          {
+            "id": "7ffe06d6-25d0-4b78-8669-2bf05f2c6b18",
+            "name": "main 4.1",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/documents/draft/main 4.1",
+            "parentId": "85ba1124-836a-412f-9dda-c388120935e9",
+            "createdAt": "2025-10-10T01:36:56.700Z",
+            "updatedAt": "2025-11-13T06:56:03.480Z"
+          },
+          {
+            "id": "47c80766-49e2-4ab3-9222-c3d2a98d402f",
+            "name": "proposals",
+            "type": "folder",
+            "color": null,
+            "path": "/knowledge-base/documents/draft/proposal",
+            "parentId": "85ba1124-836a-412f-9dda-c388120935e9",
+            "createdAt": "2025-09-12T11:39:00.420Z",
+            "updatedAt": "2025-11-13T04:05:01.822Z"
+          },
+          {
+            "id": "84a5c169-1434-4f6c-be4c-d0f55d40b4b4",
+            "name": "todo 5",
+            "type": "note",
+            "color": null,
+            "path": "/knowledge-base/documents/draft/todo 5",
+            "parentId": "85ba1124-836a-412f-9dda-c388120935e9",
+            "createdAt": "2025-09-16T02:21:53.252Z",
+            "updatedAt": "2025-11-13T06:16:35.140Z"
+          }
+        ],
+        "workspaceId": "13716608-6f27-4e54-b246-5e9ca7b61064"
+      }
+    }
+  },
+  "version": "2.2.0",
+  "revision": "e3c40da7-b097-4d49-8c36-5a257156f1fd",
+  "updatedAt": "2025-11-13T01:38:46.156Z"
+}
