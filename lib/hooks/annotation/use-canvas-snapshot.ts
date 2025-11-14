@@ -30,7 +30,7 @@ type HydrationResult = {
   panels: HydrationPanel[]
 }
 
-type UseCanvasSnapshotOptions = {
+export type UseCanvasSnapshotOptions = {
   noteId: string
   activeWorkspaceVersion: number | null
   skipSnapshotForNote: string | null

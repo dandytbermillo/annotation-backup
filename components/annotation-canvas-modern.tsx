@@ -2,7 +2,6 @@
 
 import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
-import { flushSync } from "react-dom"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import type { DataStore } from "@/lib/data-store"
 import { IsolationProvider } from "@/lib/isolation/context"
@@ -25,7 +24,6 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
-import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 import { worldToScreen, screenToWorld } from "@/lib/canvas/coordinate-utils"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
@@ -35,7 +33,7 @@ import { useCanvasTransform } from "@/lib/hooks/annotation/use-canvas-transform"
 import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
 import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
-import { useCanvasSnapshot } from "@/lib/hooks/annotation/use-canvas-snapshot"
+import { useCanvasSnapshotLifecycle } from "@/lib/hooks/annotation/use-canvas-snapshot-lifecycle"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
@@ -50,7 +48,13 @@ import { useSelectionGuards } from "@/lib/hooks/annotation/use-selection-guards"
 import { useCanvasDragListeners } from "@/lib/hooks/annotation/use-canvas-drag-listeners"
 import { useStickyOverlay } from "@/lib/hooks/annotation/use-sticky-overlay"
 import { useCanvasInteractionCapture } from "@/lib/hooks/annotation/use-canvas-interaction-capture"
+import { useCanvasPointerHandlers } from "@/lib/hooks/annotation/use-canvas-pointer-handlers"
+import { useMinimapNavigation } from "@/lib/hooks/annotation/use-minimap-navigation"
 import { usePanelCloseHandler } from "@/lib/hooks/annotation/use-panel-close-handler"
+import { useCameraSnapshotPersistence } from "@/lib/hooks/annotation/use-camera-snapshot-persistence"
+import { useCanvasContextSync } from "@/lib/hooks/annotation/use-canvas-context-sync"
+import { useWorkspaceSeedRegistry } from "@/lib/hooks/annotation/use-workspace-seed-registry"
+import { usePanelCentering } from "@/lib/hooks/annotation/use-panel-centering"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -350,45 +354,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     resolveWorkspacePosition,
   })
 
-  // Reset per-note refs when noteId changes
-  const initialNoteRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    const isFirstNote = initialNoteRef.current === null
-    if (isFirstNote) {
-      initialNoteRef.current = noteId
-    }
-
-    const wasSeeded = workspaceSeededNotesRef.current.has(noteId)
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'noteId_changed_resetting_refs',
-      metadata: {
-        noteId,
-        prevMainPanelSeeded: mainPanelSeededRef.current,
-        prevWorkspaceSeedApplied: wasSeeded,
-        isFirstNote,
-      }
-    })
-
-    mainPanelSeededRef.current = false
-    if (isFirstNote) {
-      workspaceSeededNotesRef.current.clear()
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'workspace_seed_reset_all',
-        metadata: { reason: 'first_note', noteId },
-      })
-    }
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'workspace_seed_note_cleared',
-      metadata: {
-        noteId,
-        seededNotes: Array.from(workspaceSeededNotesRef.current),
-      },
-    })
-  }, [noteId])
+  useWorkspaceSeedRegistry({
+    noteId,
+    workspaceSeededNotesRef,
+    mainPanelSeededRef,
+    debugLog,
+  })
   const isRestoringSnapshotRef = useRef(false)
   const skipNextContextSyncRef = useRef(false)
 
@@ -490,21 +461,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     handleNoteHydration(noteId, primaryHydrationStatus)
   }, [noteId, primaryHydrationStatus, handleNoteHydration])
 
-  const persistCameraSnapshot = useCallback(
-    async (camera: { x: number; y: number; zoom: number }) => {
-      if (typeof window === 'undefined') return
-      try {
-        await fetch(`/api/canvas/camera/${noteId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ camera, userId: cameraUserId ?? null })
-        })
-      } catch (error) {
-        console.warn('[AnnotationCanvas] Failed to persist restored camera snapshot', error)
-      }
-    },
-    [noteId, cameraUserId]
-  )
+  const persistCameraSnapshot = useCameraSnapshotPersistence(noteId, cameraUserId ?? null)
 
   useDefaultMainPanelPersistence({
     noteId,
@@ -521,66 +478,16 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     mainPanelSeededRef,
   })
 
-  const { enableSelectionGuards, disableSelectionGuards } = useSelectionGuards()
+  const handleMinimapNavigate = useMinimapNavigation(updateCanvasTransform)
 
-  // CRITICAL FIX: Memoize minimap navigation callback to prevent infinite loop
-  // The inline callback was being recreated on every render, causing minimap's
-  // useCallback to recreate whenever onNavigate changed, leading to infinite loop
-  const handleMinimapNavigate = useCallback(
-    (x: number, y: number) => {
-      updateCanvasTransform(prev => ({
-        ...prev,
-        translateX: x,
-        translateY: y,
-      }))
-    },
-    [updateCanvasTransform]
-  )
-
-  useEffect(() => {
-    // Skip syncing if we're currently restoring from snapshot
-    // This prevents the visible "jump" from default viewport to restored viewport
-    if (isRestoringSnapshotRef.current) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'skip_context_sync_during_snapshot_restore',
-        metadata: { noteId, reason: 'snapshot_restoration_in_progress' }
-      })
-      return
-    }
-
-    if (skipNextContextSyncRef.current) {
-      skipNextContextSyncRef.current = false
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'skip_context_sync_after_snapshot_skip',
-        metadata: { noteId }
-      })
-      return
-    }
-
-    const { translateX, translateY, zoom } = canvasContextState.canvasState
-    setCanvasState(prev => {
-      if (
-        prev.translateX === translateX &&
-        prev.translateY === translateY &&
-        prev.zoom === zoom
-      ) {
-        return prev
-      }
-      return {
-        ...prev,
-        translateX,
-        translateY,
-        zoom,
-      }
-    })
-  }, [
-    canvasContextState.canvasState.translateX,
-    canvasContextState.canvasState.translateY,
-    canvasContextState.canvasState.zoom,
-    noteId
-  ])
+  useCanvasContextSync({
+    canvasContextState,
+    setCanvasState,
+    isRestoringSnapshotRef,
+    skipNextContextSyncRef,
+    noteId,
+    debugLog,
+  })
 
   useCollaborativeNoteInitialization({
     noteId,
@@ -588,10 +495,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     provider,
   })
 
-  useCanvasSnapshot({
+  useCanvasSnapshotLifecycle({
     noteId,
     activeWorkspaceVersion,
-    skipSnapshotForNote: skipSnapshotForNote ?? null,
+    skipSnapshotForNote,
     workspaceMainPosition,
     canvasState,
     canvasStateRef,
@@ -636,80 +543,22 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     lastInteractionRef: lastCanvasEventRef,
   })
 
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    captureInteractionPoint(e)
-    // Only respond to primary button (left-click)
-    // Ignore right-click (button 2), middle-click (button 1), etc.
-    if (e.button !== 0) return
+  const { enableSelectionGuards, disableSelectionGuards } = useSelectionGuards()
 
-    // Only start dragging if clicking on canvas background
-    // Don't drag if clicking on a panel or component
-    const target = e.target instanceof Element ? e.target : null
-    if (target && (target.closest('.panel') || target.closest('[data-component-panel]'))) return
-
-    setCanvasState(prev => ({
-      ...prev,
-      isDragging: true,
-      lastMouseX: e.clientX,
-      lastMouseY: e.clientY
-    }))
-
-    enableSelectionGuards()
-    document.body.style.userSelect = 'none'
-    try { window.getSelection()?.removeAllRanges?.() } catch {}
-    e.preventDefault()
-  }
-
-  const handleCanvasMouseMove = useCallback((e: MouseEvent) => {
-    captureInteractionPoint(e)
-    // CRITICAL FIX: Use ref to avoid infinite loop
-    // Reading from canvasStateRef prevents useEffect from re-running
-    // when lastMouseX/lastMouseY change during dragging
-    if (!canvasStateRef.current.isDragging) return
-
-    const deltaX = e.clientX - canvasStateRef.current.lastMouseX
-    const deltaY = e.clientY - canvasStateRef.current.lastMouseY
-
-    updateCanvasTransform(prev => ({
-      ...prev,
-      translateX: prev.translateX + deltaX,
-      translateY: prev.translateY + deltaY,
-      lastMouseX: e.clientX,
-      lastMouseY: e.clientY,
-    }))
-  }, [captureInteractionPoint, updateCanvasTransform])
-
-  const handleCanvasMouseUp = useCallback(() => {
-    setCanvasState(prev => ({ ...prev, isDragging: false }))
-    document.body.style.userSelect = ''
-    disableSelectionGuards()
-  }, [disableSelectionGuards, setCanvasState])
-
-  const handleWheel = (e: React.WheelEvent) => {
-    // Only zoom if Shift key is held down
-    if (!e.shiftKey) {
-      // Allow normal scrolling when Shift is not pressed
-      return
-    }
-    
-    e.preventDefault()
-
-    const multiplier = getWheelZoomMultiplier(e.nativeEvent)
-    const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * multiplier))
-    
-    const rect = e.currentTarget.getBoundingClientRect()
-    const mouseX = e.clientX - rect.left
-    const mouseY = e.clientY - rect.top
-    
-    const zoomChange = newZoom / canvasState.zoom
-    
-    updateCanvasTransform(prev => ({
-      ...prev,
-      zoom: newZoom,
-      translateX: mouseX - (mouseX - prev.translateX) * zoomChange,
-      translateY: mouseY - (mouseY - prev.translateY) * zoomChange,
-    }))
-  }
+  const {
+    handleCanvasMouseDown,
+    handleCanvasMouseMove,
+    handleCanvasMouseUp,
+    handleWheel,
+  } = useCanvasPointerHandlers({
+    captureInteractionPoint,
+    setCanvasState,
+    canvasStateRef,
+    updateCanvasTransform,
+    enableSelectionGuards,
+    disableSelectionGuards,
+    canvasState,
+  })
 
   useCanvasDragListeners({
     isDragging: canvasState.isDragging,
@@ -1134,151 +983,16 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     autoSaveTimerRef,
   })
 
-  const resolvePanelPosition = useCallback(
-    (key: string): { x: number; y: number } | null => {
-      const normalizePosition = (value: any): { x: number; y: number } | null => {
-        if (!value || typeof value !== "object") return null
-        const { x, y } = value as { x?: number; y?: number }
-        if (typeof x !== "number" || typeof y !== "number") return null
-        return { x, y }
-      }
-
-      const parsedKey = key.includes("::") ? parsePanelKey(key) : null
-      const targetNoteId = parsedKey?.noteId ?? noteId
-      const targetPanelId = parsedKey?.panelId ?? key
-      const storeKey = ensurePanelKey(targetNoteId, targetPanelId)
-
-      const panel = canvasItemsRef.current.find(item => {
-        if (item.itemType !== "panel") return false
-        if (key.includes("::")) {
-          return item.storeKey === key
-        }
-        if (item.storeKey === storeKey) return true
-        return item.panelId === targetPanelId
-      })
-      if (panel?.position) {
-        return { ...panel.position }
-      }
-
-      const record = dataStore?.get(storeKey)
-      if (record && typeof record === "object") {
-        const candidates = [
-          normalizePosition((record as any)?.position),
-          normalizePosition((record as any)?.worldPosition),
-          normalizePosition((record as any)?.mainPosition),
-        ]
-        for (const candidate of candidates) {
-          if (candidate) {
-            return { ...candidate }
-          }
-        }
-      }
-
-      if (!isPlainModeActive()) {
-        const provider = UnifiedProvider.getInstance()
-        const branchesMap = provider.getBranchesMap()
-        const branch = branchesMap?.get(storeKey) ?? branchesMap?.get(key)
-        if (branch?.position) {
-          return { ...branch.position }
-        }
-      }
-
-      if (targetPanelId === "main") {
-        const workspacePosition = resolveWorkspacePosition(targetNoteId)
-        if (workspacePosition && !isDefaultOffscreenPosition(workspacePosition)) {
-          return { ...workspacePosition }
-        }
-      }
-
-      const state = canvasStateRef.current
-      const el = document.querySelector(`[data-store-key="${storeKey}"]`) as HTMLElement | null
-      if (el) {
-        const rect = el.getBoundingClientRect()
-        const container = document.getElementById("canvas-container")
-        const containerRect = container?.getBoundingClientRect()
-
-        const screenX = rect.left + rect.width / 2 - (containerRect?.left ?? 0)
-        const screenY = rect.top + rect.height / 2 - (containerRect?.top ?? 0)
-
-        const worldX = (screenX - state.translateX) / state.zoom
-        const worldY = (screenY - state.translateY) / state.zoom
-        return { x: worldX, y: worldY }
-      }
-
-      return null
-    },
-    [canvasItemsRef, dataStore, noteId, resolveWorkspacePosition],
-  )
-
-  const centerOnPanel = useCallback(
-    (storeKeyOrPanelId: string) => {
-      const maxRetries = 10
-      const retryDelay = 100
-      let retryCount = 0
-
-      const attemptCenter = () => {
-        const position = resolvePanelPosition(storeKeyOrPanelId)
-        if (!position) {
-          if (retryCount < maxRetries) {
-            retryCount += 1
-            setTimeout(attemptCenter, retryDelay)
-          } else {
-            console.warn(`[Canvas] Panel '${storeKeyOrPanelId}' not found after ${maxRetries} retries`)
-          }
-          return
-        }
-
-        const state = canvasStateRef.current
-        const selector = storeKeyOrPanelId.includes("::")
-          ? `[data-store-key="${storeKeyOrPanelId}"]`
-          : `[data-panel-id="${storeKeyOrPanelId}"]`
-        const panelElement = document.querySelector(selector) as HTMLElement | null
-        const panelDimensions = panelElement
-          ? { width: panelElement.offsetWidth, height: panelElement.offsetHeight }
-          : { width: 500, height: 400 }
-
-        const viewportDimensions = { width: window.innerWidth, height: window.innerHeight }
-        const centerOffset = {
-          x: (viewportDimensions.width / 2 - panelDimensions.width / 2) / state.zoom,
-          y: (viewportDimensions.height / 2 - panelDimensions.height / 2) / state.zoom,
-        }
-
-        const targetX = -position.x + centerOffset.x
-        const targetY = -position.y + centerOffset.y
-
-        const canvasEl = document.getElementById("infinite-canvas")
-        if (canvasEl) {
-          canvasEl.style.transition = "transform 2s ease-in-out"
-          void canvasEl.offsetHeight
-        }
-
-        flushSync(() => {
-          setCanvasState(prev => {
-            const next = { ...prev, translateX: targetX, translateY: targetY }
-            canvasStateRef.current = next
-            return next
-          })
-        })
-
-        dispatch({
-          type: "SET_CANVAS_STATE",
-          payload: {
-            translateX: targetX,
-            translateY: targetY,
-          },
-        })
-
-        if (canvasEl) {
-          setTimeout(() => {
-            canvasEl.style.transition = ""
-          }, 2100)
-        }
-      }
-
-      attemptCenter()
-    },
-    [dispatch, resolvePanelPosition, setCanvasState],
-  )
+  const { resolvePanelPosition, centerOnPanel } = usePanelCentering({
+    noteId,
+    canvasItemsRef,
+    dataStore,
+    resolveWorkspacePosition,
+    isDefaultOffscreenPosition,
+    canvasStateRef,
+    setCanvasState,
+    dispatch,
+  })
 
   const handleRestoreMainPosition = useCallback(
     (targetNoteId: string, persistedPosition: { x: number; y: number }) => {
