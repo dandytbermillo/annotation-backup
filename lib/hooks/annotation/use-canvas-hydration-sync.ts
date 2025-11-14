@@ -66,7 +66,8 @@ export function useCanvasHydrationSync({
   })
 
   const handleNoteHydration = useCallback(
-    (targetNoteId: string) => {
+    (targetNoteId: string, statusOverride?: HydrationStatus | null) => {
+      const appliedStatus = statusOverride ?? hydrationStatus
       const workspaceMainForTarget = resolveWorkspacePosition(targetNoteId)
       const mainPanelExists = canvasItems.some(
         item => item.itemType === "panel" && item.panelId === "main" && getItemNoteId(item) === targetNoteId,
@@ -74,17 +75,17 @@ export function useCanvasHydrationSync({
 
       const { shouldHydrate, isInitialHydration, isSameNote, skipHydration } = evaluateHydration({
         targetNoteId,
-        hydrationStatus,
+        hydrationStatus: appliedStatus,
         mainPanelExists,
       })
 
-      if (!shouldHydrate || !hydrationStatus) {
+      if (!shouldHydrate || !appliedStatus) {
         return
       }
 
       const buildResult = buildHydratedPanels({
         targetNoteId,
-        hydrationStatus,
+        hydrationStatus: appliedStatus,
         skipHydration,
         isInitialHydration,
         isSameNote,
