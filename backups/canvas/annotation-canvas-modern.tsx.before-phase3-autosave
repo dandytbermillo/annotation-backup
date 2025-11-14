@@ -23,7 +23,11 @@ import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
 import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent, PanelType } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
-import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
+import { 
+  loadStateFromStorage, 
+  saveStateToStorage, 
+  CANVAS_STORAGE_DEBOUNCE 
+} from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
 import { worldToScreen, screenToWorld } from "@/lib/canvas/coordinate-utils"
@@ -34,7 +38,6 @@ import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { useCanvasTransform } from "@/lib/hooks/annotation/use-canvas-transform"
 import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
-import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
 import { useCanvasSnapshot } from "@/lib/hooks/annotation/use-canvas-snapshot"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
@@ -433,112 +436,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     skipCameraRestore
   })
 
-  const initialCanvasSetupRef = useRef(false)
-
-  // CRITICAL: This effect updates main panel positions from workspace
-  // It should ONLY run for BRAND NEW notes (first time opening), NOT when switching between already-open notes!
-  useEffect(() => {
-    // Check if main panel for this note already exists in canvasItems
-    const mainPanelExists = canvasItems.some(item => {
-      if (item.itemType === "panel" && item.panelId === "main") {
-        const itemNoteId = getItemNoteId(item)
-        return itemNoteId === noteId
-      }
-      return false
-    })
-
-    const alreadySeeded = workspaceSeededNotesRef.current.has(noteId)
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'workspaceSeedAppliedRef_effect_triggered',
-      metadata: {
-        noteId,
-        mainPanelExists,
-        workspaceSeedApplied: alreadySeeded,
-        hasWorkspacePosition: !!workspaceMainPosition,
-        workspacePosition: workspaceMainPosition,
-        hydrationSuccess: primaryHydrationStatus.success,
-        willUpdatePosition: !alreadySeeded && !!workspaceMainPosition && !primaryHydrationStatus.success,
-        seededNotes: Array.from(workspaceSeededNotesRef.current),
-      }
-    })
-
-    if (alreadySeeded) return
-    if (!workspaceMainPosition) return
-    if (primaryHydrationStatus.success) return
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'WORKSPACE_SEED_UPDATING_POSITIONS',
-      metadata: {
-        noteId,
-        workspaceMainPosition,
-        reason: 'workspace_seed_applied_new_note'
-      }
-    })
-
-    let applied = false
-    setCanvasItems(prev => {
-      let changed = false
-      const next = prev.map(item => {
-        if (item.itemType === "panel" && item.panelId === "main") {
-          const itemNoteId = getItemNoteId(item)
-          if (itemNoteId === noteId) {
-            const samePosition =
-              item.position?.x === workspaceMainPosition.x &&
-              item.position?.y === workspaceMainPosition.y
-            if (samePosition) {
-              applied = true
-              return item
-            }
-            changed = true
-            applied = true
-            return { ...item, position: workspaceMainPosition }
-          }
-        }
-        return item
-      })
-      if (changed) {
-        applied = true
-        return next
-      }
-      return prev
-    })
-    if (applied) {
-      workspaceSeededNotesRef.current.add(noteId)
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'workspace_seed_applied_from_workspace_effect',
-        metadata: {
-          noteId,
-          seedPosition: workspaceMainPosition,
-          seededNotes: Array.from(workspaceSeededNotesRef.current),
-        },
-      })
-    }
-  }, [noteId, workspaceMainPosition, primaryHydrationStatus.success, getItemNoteId, canvasItems])
-
-  // Enable camera persistence (debounced)
-  useCameraPersistence({
-    noteId,
-    userId: cameraUserId ?? undefined,
-    debounceMs: 500,
-    enabled: true
-  })
-
-  // Enable panel persistence
-  const { persistPanelCreate, persistPanelUpdate, getPanelDimensions } = usePanelPersistence({
-    dataStore,
-    branchesMap,
-    layerManager: layerManagerApi.manager,
-    noteId,
-    canvasItems,
-    userId: cameraUserId ?? undefined
-  })
-
+  // CRITICAL FIX: Track initial hydration PER NOTE (not per component)
+  // In multi-note workspaces, each note needs its own initial hydration
   const hydratedNotesRef = useRef<Set<string>>(new Set())
   const lastHydratedNoteRef = useRef<string | null>(null)
+  const initialCanvasSetupRef = useRef(false)
 
-  const handleNoteHydration = useCallback((targetNoteId: string, hydrationStatus: HydrationResult | null) => {
+  const handleNoteHydration = useCallback((targetNoteId: string, hydrationStatus: HydrationResult) => {
     if (!hydrationStatus?.success || hydrationStatus.panels.length === 0) {
       return
     }
@@ -614,6 +518,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       const hydratedNoteId = panel.noteId || parsedId?.noteId || targetNoteId
       const hydratedPanelId = parsedId?.panelId || panel.id
       const storeKey = ensurePanelKey(hydratedNoteId, hydratedPanelId)
+      // CRITICAL FIX: Use ref to avoid infinite loop when canvas pans/zooms
+      // Reading from canvasStateRef instead of canvasState prevents this callback
+      // from being recreated every time translateX/translateY/zoom changes
       const camera = { x: canvasStateRef.current.translateX, y: canvasStateRef.current.translateY }
       const screenPosition = worldToScreen(panel.position, camera, canvasStateRef.current.zoom)
 
@@ -779,12 +686,113 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         onFreshNoteHydrated?.(targetNoteId)
       })
     }
-  }, [canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated, mainOnlyNoteSet, canvasState.zoom, canvasStateRef, workspaceMainPosition, initialCanvasSetupRef])
+  }, [canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated])
+  // NOTE: canvasState.translateX/translateY/zoom deliberately excluded from dependencies
+  // We read them via canvasStateRef to avoid infinite loop when minimap dragging causes pan/zoom changes
 
   useEffect(() => {
     if (!noteId) return
     handleNoteHydration(noteId, primaryHydrationStatus)
   }, [noteId, primaryHydrationStatus, handleNoteHydration])
+  // CRITICAL: This effect updates main panel positions from workspace
+  // It should ONLY run for BRAND NEW notes (first time opening), NOT when switching between already-open notes!
+  useEffect(() => {
+    // Check if main panel for this note already exists in canvasItems
+    const mainPanelExists = canvasItems.some(item => {
+      if (item.itemType === "panel" && item.panelId === "main") {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId === noteId
+      }
+      return false
+    })
+
+    const alreadySeeded = workspaceSeededNotesRef.current.has(noteId)
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'workspaceSeedAppliedRef_effect_triggered',
+      metadata: {
+        noteId,
+        mainPanelExists,
+        workspaceSeedApplied: alreadySeeded,
+        hasWorkspacePosition: !!workspaceMainPosition,
+        workspacePosition: workspaceMainPosition,
+        hydrationSuccess: primaryHydrationStatus.success,
+        willUpdatePosition: !alreadySeeded && !!workspaceMainPosition && !primaryHydrationStatus.success,
+        seededNotes: Array.from(workspaceSeededNotesRef.current),
+      }
+    })
+
+    if (alreadySeeded) return
+    if (!workspaceMainPosition) return
+    if (primaryHydrationStatus.success) return
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'WORKSPACE_SEED_UPDATING_POSITIONS',
+      metadata: {
+        noteId,
+        workspaceMainPosition,
+        reason: 'workspace_seed_applied_new_note'
+      }
+    })
+
+    let applied = false
+    setCanvasItems(prev => {
+      let changed = false
+      const next = prev.map(item => {
+        if (item.itemType === "panel" && item.panelId === "main") {
+          const itemNoteId = getItemNoteId(item)
+          if (itemNoteId === noteId) {
+            const samePosition =
+              item.position?.x === workspaceMainPosition.x &&
+              item.position?.y === workspaceMainPosition.y
+            if (samePosition) {
+              applied = true
+              return item
+            }
+            changed = true
+            applied = true
+            return { ...item, position: workspaceMainPosition }
+          }
+        }
+        return item
+      })
+      if (changed) {
+        applied = true
+        return next
+      }
+      return prev
+    })
+    if (applied) {
+      workspaceSeededNotesRef.current.add(noteId)
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'workspace_seed_applied_from_workspace_effect',
+        metadata: {
+          noteId,
+          seedPosition: workspaceMainPosition,
+          seededNotes: Array.from(workspaceSeededNotesRef.current),
+        },
+      })
+    }
+  }, [noteId, workspaceMainPosition, primaryHydrationStatus.success, getItemNoteId, canvasItems])
+
+  // Enable camera persistence (debounced)
+  useCameraPersistence({
+    noteId,
+    userId: cameraUserId ?? undefined,
+    debounceMs: 500,
+    enabled: true
+  })
+
+  // Enable panel persistence
+  const { persistPanelCreate, persistPanelUpdate, getPanelDimensions } = usePanelPersistence({
+    dataStore,
+    branchesMap,
+    layerManager: layerManagerApi.manager,
+    noteId,
+    canvasItems,
+    userId: cameraUserId ?? undefined
+  })
 
   const persistCameraSnapshot = useCallback(
     async (camera: { x: number; y: number; zoom: number }) => {
@@ -1854,16 +1862,84 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     [canvasState.zoom, canvasState.translateX, canvasState.translateY, canvasState.showConnections]
   )
 
-  useCanvasAutosave({
-    noteId,
-    canvasItems,
-    getItemNoteId,
-    viewportSnapshot,
-    isStateLoaded,
-    activeWorkspaceVersion,
-    updateDedupeWarnings,
-    autoSaveTimerRef,
-  })
+  useEffect(() => {
+    if (!isStateLoaded) return
+
+    // Clear existing timer before scheduling a new save
+    if (autoSaveTimerRef.current) {
+      window.clearTimeout(autoSaveTimerRef.current)
+    }
+
+    autoSaveTimerRef.current = window.setTimeout(() => {
+      // CRITICAL FIX: Only save items belonging to THIS note
+      // Filter out items from other notes to prevent cross-contamination
+      const thisNoteItems = canvasItems.filter(item => {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId === noteId
+      })
+
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'snapshot_save_filter',
+        metadata: {
+          noteId,
+          totalItems: canvasItems.length,
+          thisNoteItems: thisNoteItems.length,
+          filteredOut: canvasItems.length - thisNoteItems.length
+        }
+      })
+
+      const dedupeResult = dedupeCanvasItems(thisNoteItems, { fallbackNoteId: noteId })
+
+      if (dedupeResult.removedCount > 0) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'canvasItems_deduped_on_save',
+          metadata: {
+            noteId,
+            removedCount: dedupeResult.removedCount,
+            resultingCount: dedupeResult.items.length
+          }
+        })
+      }
+
+      if (dedupeResult.warnings.length > 0) {
+        dedupeResult.warnings.forEach(warning => {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'canvasItems_dedupe_warning_on_save',
+            metadata: {
+              noteId,
+              code: warning.code,
+              panelId: warning.panelId ?? null,
+              storeKey: warning.storeKey ?? null
+            },
+            content_preview: warning.message
+          })
+        })
+        updateDedupeWarnings(dedupeResult.warnings, { append: true })
+      }
+
+      const success = saveStateToStorage(noteId, {
+        viewport: viewportSnapshot,
+        items: dedupeResult.items,
+        workspaceVersion: activeWorkspaceVersion ?? undefined,
+      })
+
+      if (!success) {
+        console.warn('[AnnotationCanvas] Failed to save canvas state')
+      }
+
+      autoSaveTimerRef.current = null
+    }, CANVAS_STORAGE_DEBOUNCE)
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        window.clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+    }
+  }, [noteId, viewportSnapshot, canvasItems, isStateLoaded, activeWorkspaceVersion, updateDedupeWarnings])
 
   const centerOnPanel = useCallback(
     (storeKeyOrPanelId: string) => {

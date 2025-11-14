@@ -36,6 +36,7 @@ import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
 import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
 import { useCanvasSnapshot } from "@/lib/hooks/annotation/use-canvas-snapshot"
+import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
@@ -535,251 +536,28 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     userId: cameraUserId ?? undefined
   })
 
-  const hydratedNotesRef = useRef<Set<string>>(new Set())
-  const lastHydratedNoteRef = useRef<string | null>(null)
-
-  const handleNoteHydration = useCallback((targetNoteId: string, hydrationStatus: HydrationResult | null) => {
-    if (!hydrationStatus?.success || hydrationStatus.panels.length === 0) {
-      return
-    }
-
-    if (hydratedNotesRef.current.has(targetNoteId)) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'skip_already_hydrated_note',
-        metadata: {
-          noteId: targetNoteId,
-          reason: 'note_marked_hydrated'
-        }
-      })
-      return
-    }
-
-    const workspaceMainPosition = resolveWorkspacePosition(targetNoteId)
-    const isInitialHydration = !hydratedNotesRef.current.has(targetNoteId)
-    const isSameNote = lastHydratedNoteRef.current === targetNoteId
-    const mainPanelExists = canvasItems.some(item => item.itemType === 'panel' && item.panelId === 'main' && getItemNoteId(item) === targetNoteId)
-    const skipHydration = !isInitialHydration && mainPanelExists
-
-    const currentNotePanels = hydrationStatus.panels.filter(panel => {
-      const parsed = panel.id.includes('::') ? parsePanelKey(panel.id) : null
-      const panelNoteId = panel.noteId || parsed?.noteId || targetNoteId
-      const isCurrentNote = panelNoteId === targetNoteId
-      const isActive = (panel.state ?? 'active') === 'active'
-      return isCurrentNote && isActive
-    })
-
-    const panelsToHydrate = skipHydration
-      ? []
-      : (isInitialHydration || !isSameNote
-          ? (isInitialHydration ? currentNotePanels : currentNotePanels.filter(panel => panel.id === 'main'))
-          : currentNotePanels.filter(panel => panel.id === 'main'))
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'creating_canvas_items_from_hydration',
-      metadata: {
-        totalPanels: hydrationStatus.panels.length,
-        currentNotePanels: currentNotePanels.length,
-        noteId: targetNoteId,
-        panelsHydrated: panelsToHydrate.map(panel => panel.id),
-        mode: skipHydration
-          ? 'skip_existing_panel'
-          : isInitialHydration
-            ? 'initial_restore'
-            : (isSameNote ? 'same_note_refresh' : 'note_switch')
-      }
-    })
-
-    if (panelsToHydrate.length === 0) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'skipping_hydration_no_panels',
-        metadata: {
-          reason: skipHydration ? 'skip_existing_panel' : 'no_panels_to_hydrate',
-          isInitialHydration,
-          mainPanelExists,
-          noteId: targetNoteId
-        }
-      })
-      if (!skipHydration) {
-        lastHydratedNoteRef.current = targetNoteId
-      }
-      return
-    }
-
-    const newItems = panelsToHydrate.map(panel => {
-      const panelType = (panel.metadata?.annotationType as PanelType) || 'note'
-      const parsedId = panel.id.includes('::') ? parsePanelKey(panel.id) : null
-      const hydratedNoteId = panel.noteId || parsedId?.noteId || targetNoteId
-      const hydratedPanelId = parsedId?.panelId || panel.id
-      const storeKey = ensurePanelKey(hydratedNoteId, hydratedPanelId)
-      const camera = { x: canvasStateRef.current.translateX, y: canvasStateRef.current.translateY }
-      const screenPosition = worldToScreen(panel.position, camera, canvasStateRef.current.zoom)
-
-      if (mainOnlyNoteSet.has(hydratedNoteId) && hydratedPanelId !== 'main') {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'HYDRATION_SKIPPED_BRANCH_MAIN_ONLY',
-          metadata: {
-            noteId: hydratedNoteId,
-            panelId: hydratedPanelId,
-          },
-        })
-        return null
-      }
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'world_to_screen_conversion',
-        metadata: {
-          panelId: panel.id,
-          worldPosition: panel.position,
-          camera,
-          zoom: canvasState.zoom,
-          screenPosition,
-          noteId: hydratedNoteId
-        },
-        content_preview: `Panel ${panel.id}: world(${panel.position.x}, ${panel.position.y}) → screen(${screenPosition.x}, ${screenPosition.y})`
-      })
-
-      return createPanelItem(
-        hydratedPanelId,
-        screenPosition,
-        panelType,
-        hydratedNoteId,
-        storeKey,
-      )
-    }).filter((panel): panel is CanvasItem => Boolean(panel))
-
-    setCanvasItems(prev => {
-      const existingStoreKeys = new Set(
-        prev
-          .filter(item => item.itemType === 'panel')
-          .map(item => {
-            if (item.storeKey) {
-              return item.storeKey
-            }
-            const resolvedNoteId = getItemNoteId(item) ?? targetNoteId
-            const resolvedPanelId = item.panelId ?? 'main'
-            return ensurePanelKey(resolvedNoteId, resolvedPanelId)
-          })
-      )
-
-      const itemsToAdd = newItems.filter(item => {
-        const key = item.storeKey ?? ensurePanelKey(
-          item.noteId ?? targetNoteId,
-          item.panelId ?? 'main'
-        )
-        if (existingStoreKeys.has(key)) {
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'HYDRATION_SKIPPED_DUPLICATE',
-            metadata: {
-              noteId: targetNoteId,
-              panelId: item.panelId,
-              storeKey: key,
-              reason: 'panel_already_exists_in_canvas'
-            }
-          })
-          return false
-        }
-        existingStoreKeys.add(key)
-        return true
-      })
-
-      if (itemsToAdd.length > 0) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'HYDRATION_ADDING_PANELS',
-          metadata: {
-            noteId: targetNoteId,
-            addedCount: itemsToAdd.length,
-            totalItems: prev.length + itemsToAdd.length,
-            addedPanels: itemsToAdd.map(p => ({
-              panelId: p.panelId,
-              position: p.position,
-              noteId: p.noteId
-            }))
-          }
-        })
-        return [...prev, ...itemsToAdd]
-      }
-
-      return prev
-    })
-
-    newItems.forEach(item => {
-      if (isPanel(item)) {
-        const panelKey = item.storeKey ?? ensurePanelKey(item.noteId ?? targetNoteId, item.panelId ?? 'main')
-        dispatch({
-          type: 'ADD_PANEL',
-          payload: {
-            id: panelKey,
-            panel: { element: null, branchId: item.panelId }
-          }
-        })
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'added_hydrated_panel_to_state',
-          metadata: {
-            panelId: item.panelId,
-            noteId: item.noteId,
-            compositeKey: panelKey
-          },
-          content_preview: `Added hydrated panel ${panelKey} to state.panels for connection lines`
-        })
-      }
-    })
-
-    if (!initialCanvasSetupRef.current && workspaceMainPosition && !mainPanelExists) {
-      setCanvasItems(prev =>
-        prev.map(item => {
-          if (item.itemType === 'panel' && item.panelId === 'main') {
-            const itemNoteId = getItemNoteId(item)
-            if (itemNoteId === targetNoteId) {
-              return { ...item, position: workspaceMainPosition }
-            }
-          }
-          return item
-        })
-      )
-      workspaceSeededNotesRef.current.add(targetNoteId)
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'workspace_seed_applied_during_hydration',
-        metadata: {
-          noteId: targetNoteId,
-          seedPosition: workspaceMainPosition,
-          seededNotes: Array.from(workspaceSeededNotesRef.current),
-        },
-      })
-    }
-
-    hydratedNotesRef.current.add(targetNoteId)
-    lastHydratedNoteRef.current = targetNoteId
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'marked_note_as_hydrated',
-      metadata: {
-        noteId: targetNoteId,
-        totalHydratedNotes: hydratedNotesRef.current.size,
-        hydratedNotes: Array.from(hydratedNotesRef.current)
-      }
-    })
-
-    if (freshNoteSet.has(targetNoteId)) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'fresh_note_hydrated',
-        metadata: { noteId: targetNoteId }
-      })
-      queueMicrotask(() => {
-        onFreshNoteHydrated?.(targetNoteId)
-      })
-    }
-  }, [canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated, mainOnlyNoteSet, canvasState.zoom, canvasStateRef, workspaceMainPosition, initialCanvasSetupRef])
+  const { handleNoteHydration } = useCanvasHydrationSync({
+    noteId,
+    primaryHydrationStatus,
+    canvasItems,
+    setCanvasItems,
+    getItemNoteId,
+    resolveWorkspacePosition,
+    canvasState,
+    canvasStateRef,
+    mainOnlyNoteSet,
+    persistPanelCreate,
+    workspaceMainPosition,
+    updateMainPosition,
+    workspaceSeededNotesRef,
+    mainPanelSeededRef,
+    initialCanvasSetupRef,
+    freshNoteSet,
+    onFreshNoteHydrated,
+    dataStore,
+    dispatch,
+    getPanelDimensions,
+  })
 
   useEffect(() => {
     if (!noteId) return
