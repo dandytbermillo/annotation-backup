@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-14 04:10Z] b78600a: still works
 - commit [2025-11-14 04:03Z] e299252: still working
 - commit [2025-11-14 03:01Z] e360588: small jumped spec when they first created
 - commit [2025-11-14 02:48Z] f31d08e: no stacking and no jumping stage
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-13 05:33Z] 62087a6: almost done
 - commit [2025-11-13 03:28Z] 00cd228: Complete the flag-flip artifacts
 - commit [2025-11-13 02:49Z] 6ae0fcf: next: Extract the remaining inline overlays
-- commit [2025-11-13 02:19Z] b19b7e7: phase 4
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-14 04:03Z] e299252: still working
+- commit [2025-11-14 04:10Z] b78600a: still works

@@ -42,7 +42,13 @@ import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 import { dedupeCanvasItems } from "@/lib/canvas/dedupe-canvas-items"
 import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
 import { Z_INDEX } from "@/lib/constants/z-index"
-import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
+import {
+  useHydrationPanelBuilder,
+  useHydrationPanelMerge,
+  useHydrationDispatcher,
+  useHydrationNoteTracker,
+  useFreshNoteNotifier,
+} from "@/lib/hooks/annotation/use-hydration-panel-builder"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -536,26 +542,102 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     userId: cameraUserId ?? undefined
   })
 
-  const { handleNoteHydration } = useCanvasHydrationSync({
-    noteId,
-    hydrationStatus: primaryHydrationStatus,
-    canvasItems,
-    setCanvasItems,
-    getItemNoteId,
-    resolveWorkspacePosition,
-    canvasStateRef,
+  const buildHydratedPanels = useHydrationPanelBuilder({
     mainOnlyNoteSet,
+    canvasStateRef,
+  })
+  const mergeHydratedPanels = useHydrationPanelMerge({
+    getItemNoteId,
+  })
+  const dispatchHydratedPanels = useHydrationDispatcher({
     dispatch,
     workspaceSeededNotesRef,
-    initialCanvasSetupRef,
+    getItemNoteId,
+  })
+  const { evaluateHydration, markHydrated, markNoPanels } = useHydrationNoteTracker()
+  const notifyFreshNoteHydrated = useFreshNoteNotifier({
     freshNoteSet,
     onFreshNoteHydrated,
   })
 
+  const handleNoteHydration = useCallback((targetNoteId: string, hydrationStatus: HydrationResult | null) => {
+    const workspaceMainForTarget = resolveWorkspacePosition(targetNoteId)
+    const mainPanelExists = canvasItems.some(item => item.itemType === 'panel' && item.panelId === 'main' && getItemNoteId(item) === targetNoteId)
+    const { shouldHydrate, isInitialHydration, isSameNote, skipHydration } = evaluateHydration({
+      targetNoteId,
+      hydrationStatus,
+      mainPanelExists,
+    })
+
+    if (!shouldHydrate) {
+      return
+    }
+
+    if (!hydrationStatus) {
+      return
+    }
+
+    const buildResult = buildHydratedPanels({
+      targetNoteId,
+      hydrationStatus,
+      skipHydration,
+      isInitialHydration,
+      isSameNote,
+      mainPanelExists,
+    })
+
+    if (!buildResult) {
+      markNoPanels(targetNoteId, skipHydration)
+      return
+    }
+
+    const { newItems } = buildResult
+
+    setCanvasItems(prev => {
+      const { itemsToAdd, nextItems } = mergeHydratedPanels({
+        prevItems: prev,
+        newItems,
+        targetNoteId,
+      })
+
+      if (itemsToAdd.length > 0) {
+        debugLog({
+          component: 'AnnotationCanvas',
+          action: 'HYDRATION_ADDING_PANELS',
+          metadata: {
+            noteId: targetNoteId,
+            addedCount: itemsToAdd.length,
+            totalItems: nextItems.length,
+            addedPanels: itemsToAdd.map(p => ({
+              panelId: p.panelId,
+              position: p.position,
+              noteId: p.noteId
+            }))
+          }
+        })
+        return nextItems
+      }
+
+      return prev
+    })
+
+    dispatchHydratedPanels({
+      itemsToAdd: newItems,
+      workspaceMainPosition: workspaceMainForTarget,
+      mainPanelExists,
+      targetNoteId,
+      initialCanvasSetupRef,
+      setCanvasItems,
+    })
+
+    markHydrated(targetNoteId)
+    notifyFreshNoteHydrated(targetNoteId)
+  }, [buildHydratedPanels, canvasItems, dispatchHydratedPanels, evaluateHydration, mergeHydratedPanels, notifyFreshNoteHydrated, resolveWorkspacePosition, setCanvasItems, markHydrated, markNoPanels])
+
   useEffect(() => {
     if (!noteId) return
-    handleNoteHydration(noteId)
-  }, [noteId, handleNoteHydration])
+    handleNoteHydration(noteId, primaryHydrationStatus)
+  }, [noteId, primaryHydrationStatus, handleNoteHydration])
 
   const persistCameraSnapshot = useCallback(
     async (camera: { x: number; y: number; zoom: number }) => {

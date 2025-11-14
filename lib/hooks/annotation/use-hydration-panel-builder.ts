@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback } from "react"
-import type { MutableRefObject, Dispatch } from "react"
+import { useCallback, useRef } from "react"
+import type { MutableRefObject, Dispatch, SetStateAction } from "react"
 
 import type { HydrationStatus } from "@/lib/hooks/use-canvas-hydration"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -94,7 +94,7 @@ export function useHydrationPanelBuilder({
         return null
       }
 
-      const newItems = panelsToHydrate
+  const newItems = panelsToHydrate
         .map(panel => {
           const panelType = (panel.metadata?.annotationType as PanelType) || "note"
           const parsedId = panel.id.includes("::") ? parsePanelKey(panel.id) : null
@@ -153,6 +153,12 @@ export function useHydrationPanelBuilder({
     },
     [mainOnlyNoteSet, canvasStateRef],
   )
+}
+
+function getNoteIdFromStoreKey(storeKey?: string): string | null {
+  if (!storeKey) return null
+  const parsed = parsePanelKey(storeKey)
+  return parsed?.noteId ?? null
 }
 
 type UseHydrationPanelMergeOptions = {
@@ -224,6 +230,7 @@ export function useHydrationPanelMerge({ getItemNoteId }: UseHydrationPanelMerge
 type UseHydrationDispatchOptions = {
   dispatch: Dispatch<any>
   workspaceSeededNotesRef: MutableRefObject<Set<string>>
+  getItemNoteId: (item: CanvasItem) => string | null
 }
 
 type HydrationDispatchInput = {
@@ -232,11 +239,13 @@ type HydrationDispatchInput = {
   mainPanelExists: boolean
   targetNoteId: string
   initialCanvasSetupRef: MutableRefObject<boolean>
+  setCanvasItems: Dispatch<SetStateAction<CanvasItem[]>>
 }
 
 export function useHydrationDispatcher({
   dispatch,
   workspaceSeededNotesRef,
+  getItemNoteId,
 }: UseHydrationDispatchOptions) {
   return useCallback(
     ({
@@ -245,6 +254,7 @@ export function useHydrationDispatcher({
       mainPanelExists,
       targetNoteId,
       initialCanvasSetupRef,
+      setCanvasItems,
     }: HydrationDispatchInput) => {
       itemsToAdd.forEach(item => {
         if (isPanel(item)) {
@@ -270,6 +280,17 @@ export function useHydrationDispatcher({
       })
 
       if (!initialCanvasSetupRef.current && workspaceMainPosition && !mainPanelExists) {
+        setCanvasItems(prev =>
+          prev.map(item => {
+            if (item.itemType === "panel" && item.panelId === "main") {
+              const itemNoteId = item.noteId || getNoteIdFromStoreKey(item.storeKey) || getItemNoteId(item)
+              if (itemNoteId === targetNoteId) {
+                return { ...item, position: workspaceMainPosition }
+              }
+            }
+            return item
+          }),
+        )
         workspaceSeededNotesRef.current.add(targetNoteId)
         debugLog({
           component: "AnnotationCanvas",
@@ -282,6 +303,119 @@ export function useHydrationDispatcher({
         })
       }
     },
-    [dispatch, workspaceSeededNotesRef],
+    [dispatch, workspaceSeededNotesRef, getItemNoteId],
+  )
+}
+
+type HydrationGateInput = {
+  targetNoteId: string
+  hydrationStatus: HydrationStatus | null
+  mainPanelExists: boolean
+}
+
+type HydrationGateResult = {
+  shouldHydrate: boolean
+  isInitialHydration: boolean
+  isSameNote: boolean
+  skipHydration: boolean
+}
+
+export function useHydrationNoteTracker() {
+  const hydratedNotesRef = useRef<Set<string>>(new Set())
+  const lastHydratedNoteRef = useRef<string | null>(null)
+
+  const evaluateHydration = useCallback(
+    ({ targetNoteId, hydrationStatus, mainPanelExists }: HydrationGateInput): HydrationGateResult => {
+      if (!hydrationStatus?.success || hydrationStatus.panels.length === 0) {
+        return {
+          shouldHydrate: false,
+          isInitialHydration: true,
+          isSameNote: false,
+          skipHydration: false,
+        }
+      }
+
+      const isInitialHydration = !hydratedNotesRef.current.has(targetNoteId)
+      const isSameNote = lastHydratedNoteRef.current === targetNoteId
+      const skipHydration = !isInitialHydration && mainPanelExists
+
+      if (!isInitialHydration) {
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "skip_already_hydrated_note",
+          metadata: {
+            noteId: targetNoteId,
+            reason: "note_marked_hydrated",
+          },
+        })
+        return {
+          shouldHydrate: false,
+          isInitialHydration,
+          isSameNote,
+          skipHydration,
+        }
+      }
+
+      return {
+        shouldHydrate: true,
+        isInitialHydration,
+        isSameNote,
+        skipHydration,
+      }
+    },
+    [],
+  )
+
+  const markHydrated = useCallback((targetNoteId: string) => {
+    hydratedNotesRef.current.add(targetNoteId)
+    lastHydratedNoteRef.current = targetNoteId
+
+    debugLog({
+      component: "AnnotationCanvas",
+      action: "marked_note_as_hydrated",
+      metadata: {
+        noteId: targetNoteId,
+        totalHydratedNotes: hydratedNotesRef.current.size,
+        hydratedNotes: Array.from(hydratedNotesRef.current),
+      },
+    })
+  }, [])
+
+  const markNoPanels = useCallback((targetNoteId: string, skipHydration: boolean) => {
+    if (!skipHydration) {
+      lastHydratedNoteRef.current = targetNoteId
+    }
+  }, [])
+
+  return {
+    evaluateHydration,
+    markHydrated,
+    markNoPanels,
+  }
+}
+
+type FreshNoteNotifierOptions = {
+  freshNoteSet: Set<string>
+  onFreshNoteHydrated?: (noteId: string) => void
+}
+
+export function useFreshNoteNotifier({ freshNoteSet, onFreshNoteHydrated }: FreshNoteNotifierOptions) {
+  return useCallback(
+    (noteId: string) => {
+      if (!freshNoteSet.has(noteId)) {
+        return
+      }
+
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "fresh_note_hydrated",
+        metadata: { noteId },
+      })
+
+      queueMicrotask(() => {
+        onFreshNoteHydrated?.(noteId)
+      })
+    },
+    [freshNoteSet, onFreshNoteHydrated],
   )
 }
