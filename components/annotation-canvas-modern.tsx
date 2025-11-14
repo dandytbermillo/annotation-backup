@@ -19,7 +19,7 @@ import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
-import { CanvasItem, createPanelItem, createComponentItem, isPanel, isComponent, PanelType } from "@/types/canvas-items"
+import { CanvasItem, createComponentItem, isComponent, isPanel } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
@@ -56,6 +56,7 @@ import { useCanvasContextSync } from "@/lib/hooks/annotation/use-canvas-context-
 import { useWorkspaceSeedRegistry } from "@/lib/hooks/annotation/use-workspace-seed-registry"
 import { usePanelCentering } from "@/lib/hooks/annotation/use-panel-centering"
 import { usePanelCreationEvents } from "@/lib/hooks/annotation/use-panel-creation-events"
+import { usePanelCreationHandler } from "@/lib/hooks/annotation/use-panel-creation-handler"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -593,251 +594,17 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     closeNote,
   })
 
-  const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string, isPreview?: boolean, coordinateSpace?: 'screen' | 'world') => {
-    const targetNoteId = sourceNoteId || noteId
-    if (!targetNoteId) {
-      console.warn('[AnnotationCanvas] Cannot create panel without target note id', panelId)
-      return
-    }
-
-    console.log('[AnnotationCanvas] Creating panel:', panelId, 'for note:', targetNoteId, 'with parent:', parentPanelId, 'at position:', parentPosition)
-
-    if (isDebugEnabled()) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'handle_create_panel',
-        metadata: {
-          panelId,
-          parentPanelId,
-          parentPosition,
-          isPlainMode: isPlainModeActive(),
-          noteId: targetNoteId
-        },
-        content_preview: `Creating panel ${panelId} at x=${parentPosition?.x}, y=${parentPosition?.y}`,
-        note_id: targetNoteId
-      }).catch(console.error)
-    }
-
-    const isPlainMode = isPlainModeActive()
-
-    setCanvasItems(prev => {
-      const newPanelStoreKey = ensurePanelKey(targetNoteId, panelId)
-
-      if (isDebugEnabled()) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'create_panel_check_existing',
-          metadata: {
-            panelId,
-            targetNoteId,
-            newPanelStoreKey,
-            currentCanvasItemsCount: prev.length,
-            panelIdsInItems: prev.filter(isPanel).map(p => ({ panelId: p.panelId, noteId: getItemNoteId(p) }))
-          },
-          content_preview: `Checking if panel ${panelId} already exists in ${prev.length} items`
-        })
-      }
-
-      const existingPanelCheck = prev.some(item => isPanel(item) && item.panelId === panelId && getItemNoteId(item) === targetNoteId)
-
-      if (existingPanelCheck) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'create_panel_early_return',
-          metadata: {
-            panelId,
-            targetNoteId,
-            reason: 'Panel already exists in canvasItems'
-          },
-          content_preview: `EARLY RETURN: Panel ${panelId} already exists, not creating`
-        })
-        return prev
-      }
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'create_panel_proceeding',
-        metadata: {
-          panelId,
-          targetNoteId,
-          isPlainMode: isPlainModeActive()
-        },
-        content_preview: `Proceeding to create panel ${panelId}`
-      })
-
-      if (isPlainMode) {
-        if (parentPosition && (window as any).canvasDataStore) {
-          const dataStore = (window as any).canvasDataStore
-          const existingPanelData = dataStore.get(newPanelStoreKey)
-
-          if (!existingPanelData?.worldPosition) {
-            // Only convert screen->world if position is in screen space
-            // If coordinateSpace is 'world', parentPosition is already in world coordinates
-            const worldPosition = coordinateSpace === 'world'
-              ? parentPosition
-              : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
-
-            dataStore.update(newPanelStoreKey, {
-              id: panelId,
-              position: worldPosition,
-              worldPosition
-            })
-          }
-        }
-      } else {
-        const provider = UnifiedProvider.getInstance()
-        provider.setCurrentNote(targetNoteId)
-
-        const yjsBranches = provider.getBranchesMap()
-        const panelData = yjsBranches.get(newPanelStoreKey)
-
-        if (!panelData) {
-          console.warn(`No data found for panel ${panelId} (note ${targetNoteId})`)
-          return prev
-        }
-
-        if (parentPosition) {
-          // Only convert screen->world if position is in screen space
-          // If coordinateSpace is 'world', parentPosition is already in world coordinates
-          const worldPosition = coordinateSpace === 'world'
-            ? parentPosition
-            : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom)
-
-          panelData.position = worldPosition
-          yjsBranches.set(newPanelStoreKey, panelData)
-        }
-      }
-
-      const hydratedStoreKey = newPanelStoreKey
-      let branchData = dataStore?.get(hydratedStoreKey)
-      if (!branchData && branchesMap) {
-        branchData = branchesMap.get(hydratedStoreKey)
-      }
-
-      let panelType: PanelType
-      if (panelId === 'main') {
-        panelType = 'main'
-      } else if (branchData?.type) {
-        panelType = branchData.type as PanelType
-      } else {
-        panelType = panelId.includes('explore') ? 'explore' : panelId.includes('promote') ? 'promote' : 'note'
-      }
-
-      const dbPanelType: 'editor' | 'branch' | 'context' | 'toolbar' | 'annotation' =
-        panelId === 'main' ? 'editor' :
-        panelType === 'explore' ? 'context' :
-        panelType === 'promote' ? 'annotation' : 'branch'
-
-      // For preview panels from dropdown, the parentPosition is already in screen coordinates
-      // We DON'T need to convert since the dropdown is fixed and preview should appear adjacent to it
-      // Panels are rendered with position:absolute inside the canvas, so we use screen coords directly
-      const position = isPreview && parentPosition
-        ? (() => {
-            console.log('[AnnotationCanvas] Using preview screen position directly:', {
-              isPreview,
-              position: parentPosition,
-              note: 'Screen coordinates from fixed dropdown'
-            })
-            return parentPosition  // Already screen coordinates, no conversion needed
-          })()
-        : (branchData?.position || branchData?.worldPosition)
-          ? (branchData.position || branchData.worldPosition)
-          : parentPosition
-            ? (coordinateSpace === 'world'
-                ? parentPosition  // Already in world coordinates, no conversion needed
-                : screenToWorld(parentPosition, { x: canvasState.translateX, y: canvasState.translateY }, canvasState.zoom))
-            : { x: 2000, y: 1500 }
-
-      let panelTitle: string | undefined
-      if (panelType !== 'main') {
-        if (branchData?.preview) {
-          panelTitle = branchData.preview
-        } else if (branchData?.title) {
-          panelTitle = branchData.title
-        }
-      } else {
-        const mainStoreKey = ensurePanelKey(targetNoteId, 'main')
-        const mainBranch = dataStore.get(mainStoreKey)
-        panelTitle =
-          (mainBranch && typeof mainBranch.title === 'string' && mainBranch.title.trim().length > 0
-            ? mainBranch.title
-            : undefined) ?? 'Main'
-      }
-
-      // Use the provided coordinateSpace, or determine it based on position source
-      const effectiveCoordinateSpace = coordinateSpace ?? ((isPreview && parentPosition) ? 'screen' : 'world')
-
-      const persistencePosition = effectiveCoordinateSpace === 'screen' && parentPosition
-        ? parentPosition
-        : position
-
-      persistPanelCreate({
-        panelId,
-        storeKey: hydratedStoreKey,
-        type: dbPanelType,
-        position: persistencePosition,
-        size: { width: 500, height: 400 },
-        zIndex: 1,
-        title: panelTitle,
-        metadata: { annotationType: panelType },
-        coordinateSpace: effectiveCoordinateSpace
-      }).catch(err => {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'panel_create_persist_failed',
-          metadata: {
-            panelId,
-            noteId: targetNoteId,
-            error: err instanceof Error ? err.message : 'Unknown error'
-          }
-        })
-      })
-
-      persistPanelUpdate({
-        panelId,
-        storeKey: hydratedStoreKey,
-        position: persistencePosition,
-        coordinateSpace: effectiveCoordinateSpace,
-        state: 'active'
-      }).catch(err => {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'panel_state_active_persist_failed',
-          metadata: {
-            panelId,
-            noteId: targetNoteId,
-            error: err instanceof Error ? err.message : 'Unknown error'
-          }
-        })
-      })
-
-      const existingPanel = prev.find(item => item.itemType === 'panel' && item.panelId === panelId && getItemNoteId(item) === targetNoteId)
-      if (existingPanel) {
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'panel_already_exists',
-          metadata: {
-            panelId,
-            noteId: targetNoteId,
-            existingPosition: existingPanel.position,
-            requestedPosition: position
-          }
-        })
-        return prev
-      }
-
-      return [
-        ...prev,
-        createPanelItem(
-          panelId,
-          position,
-          panelType,
-          targetNoteId,
-          hydratedStoreKey,
-        ),
-      ]
-    })
-  }
+  const { handleCreatePanel } = usePanelCreationHandler({
+    noteId,
+    canvasState,
+    getItemNoteId,
+    setCanvasItems,
+    dataStore,
+    branchesMap,
+    provider,
+    persistPanelCreate,
+    persistPanelUpdate,
+  })
   
   // Handle adding components
   const handleAddComponent = (type: string, position?: { x: number; y: number }) => {
