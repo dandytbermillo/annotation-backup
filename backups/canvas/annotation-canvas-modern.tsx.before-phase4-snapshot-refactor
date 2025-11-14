@@ -43,7 +43,6 @@ import { dedupeCanvasItems } from "@/lib/canvas/dedupe-canvas-items"
 import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
-import { useWorkspaceHydrationSeed } from "@/lib/hooks/annotation/use-workspace-hydration-seed"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -434,15 +433,87 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   const initialCanvasSetupRef = useRef(false)
 
-  useWorkspaceHydrationSeed({
-    noteId,
-    workspaceMainPosition,
-    hydrationSuccess: primaryHydrationStatus.success,
-    canvasItems,
-    setCanvasItems,
-    getItemNoteId,
-    workspaceSeededNotesRef,
-  })
+  // CRITICAL: This effect updates main panel positions from workspace
+  // It should ONLY run for BRAND NEW notes (first time opening), NOT when switching between already-open notes!
+  useEffect(() => {
+    // Check if main panel for this note already exists in canvasItems
+    const mainPanelExists = canvasItems.some(item => {
+      if (item.itemType === "panel" && item.panelId === "main") {
+        const itemNoteId = getItemNoteId(item)
+        return itemNoteId === noteId
+      }
+      return false
+    })
+
+    const alreadySeeded = workspaceSeededNotesRef.current.has(noteId)
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'workspaceSeedAppliedRef_effect_triggered',
+      metadata: {
+        noteId,
+        mainPanelExists,
+        workspaceSeedApplied: alreadySeeded,
+        hasWorkspacePosition: !!workspaceMainPosition,
+        workspacePosition: workspaceMainPosition,
+        hydrationSuccess: primaryHydrationStatus.success,
+        willUpdatePosition: !alreadySeeded && !!workspaceMainPosition && !primaryHydrationStatus.success,
+        seededNotes: Array.from(workspaceSeededNotesRef.current),
+      }
+    })
+
+    if (alreadySeeded) return
+    if (!workspaceMainPosition) return
+    if (primaryHydrationStatus.success) return
+    debugLog({
+      component: 'AnnotationCanvas',
+      action: 'WORKSPACE_SEED_UPDATING_POSITIONS',
+      metadata: {
+        noteId,
+        workspaceMainPosition,
+        reason: 'workspace_seed_applied_new_note'
+      }
+    })
+
+    let applied = false
+    setCanvasItems(prev => {
+      let changed = false
+      const next = prev.map(item => {
+        if (item.itemType === "panel" && item.panelId === "main") {
+          const itemNoteId = getItemNoteId(item)
+          if (itemNoteId === noteId) {
+            const samePosition =
+              item.position?.x === workspaceMainPosition.x &&
+              item.position?.y === workspaceMainPosition.y
+            if (samePosition) {
+              applied = true
+              return item
+            }
+            changed = true
+            applied = true
+            return { ...item, position: workspaceMainPosition }
+          }
+        }
+        return item
+      })
+      if (changed) {
+        applied = true
+        return next
+      }
+      return prev
+    })
+    if (applied) {
+      workspaceSeededNotesRef.current.add(noteId)
+      debugLog({
+        component: 'AnnotationCanvas',
+        action: 'workspace_seed_applied_from_workspace_effect',
+        metadata: {
+          noteId,
+          seedPosition: workspaceMainPosition,
+          seededNotes: Array.from(workspaceSeededNotesRef.current),
+        },
+      })
+    }
+  }, [noteId, workspaceMainPosition, primaryHydrationStatus.success, getItemNoteId, canvasItems])
 
   // Enable camera persistence (debounced)
   useCameraPersistence({
