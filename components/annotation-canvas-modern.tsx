@@ -47,6 +47,10 @@ import { useWorkspaceHydrationSeed } from "@/lib/hooks/annotation/use-workspace-
 import { useDefaultMainPanelPersistence } from "@/lib/hooks/annotation/use-default-main-panel-persistence"
 import { useCollaborativeNoteInitialization } from "@/lib/hooks/annotation/use-collaborative-note-initialization"
 import { useSelectionGuards } from "@/lib/hooks/annotation/use-selection-guards"
+import { useCanvasDragListeners } from "@/lib/hooks/annotation/use-canvas-drag-listeners"
+import { useStickyOverlay } from "@/lib/hooks/annotation/use-sticky-overlay"
+import { useCanvasInteractionCapture } from "@/lib/hooks/annotation/use-canvas-interaction-capture"
+import { usePanelCloseHandler } from "@/lib/hooks/annotation/use-panel-close-handler"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -624,22 +628,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }
   }, [])
 
-  const captureInteractionPoint = useCallback((event: { clientX: number; clientY: number }, source: 'canvas' | 'keyboard' | 'toolbar' = 'canvas') => {
-    const point = { x: event.clientX, y: event.clientY }
-    lastCanvasEventRef.current = point
-    if (typeof window !== 'undefined') {
-      ;(window as any).__canvasLastInteraction = point
-      ;(window as any).__canvasLastInteractionSource = source
-    }
-  }, [])
-
-  const handleCanvasMouseMoveCapture = useCallback((event: React.MouseEvent) => {
-    captureInteractionPoint(event)
-  }, [captureInteractionPoint])
-
-  const handleCanvasWheelCapture = useCallback((event: React.WheelEvent) => {
-    captureInteractionPoint(event)
-  }, [captureInteractionPoint])
+  const {
+    captureInteractionPoint,
+    handleMouseMoveCapture: handleCanvasMouseMoveCapture,
+    handleWheelCapture: handleCanvasWheelCapture,
+  } = useCanvasInteractionCapture({
+    lastInteractionRef: lastCanvasEventRef,
+  })
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     captureInteractionPoint(e)
@@ -665,7 +660,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     e.preventDefault()
   }
 
-  const handleCanvasMouseMove = (e: MouseEvent) => {
+  const handleCanvasMouseMove = useCallback((e: MouseEvent) => {
     captureInteractionPoint(e)
     // CRITICAL FIX: Use ref to avoid infinite loop
     // Reading from canvasStateRef prevents useEffect from re-running
@@ -682,13 +677,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       lastMouseX: e.clientX,
       lastMouseY: e.clientY,
     }))
-  }
+  }, [captureInteractionPoint, updateCanvasTransform])
 
-  const handleCanvasMouseUp = () => {
+  const handleCanvasMouseUp = useCallback(() => {
     setCanvasState(prev => ({ ...prev, isDragging: false }))
     document.body.style.userSelect = ''
     disableSelectionGuards()
-  }
+  }, [disableSelectionGuards, setCanvasState])
 
   const handleWheel = (e: React.WheelEvent) => {
     // Only zoom if Shift key is held down
@@ -716,197 +711,36 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }))
   }
 
-  useEffect(() => {
-    document.addEventListener('mousemove', handleCanvasMouseMove)
-    document.addEventListener('mouseup', handleCanvasMouseUp)
+  useCanvasDragListeners({
+    isDragging: canvasState.isDragging,
+    onMouseMove: handleCanvasMouseMove,
+    onMouseUp: handleCanvasMouseUp,
+  })
 
-    return () => {
-      document.removeEventListener('mousemove', handleCanvasMouseMove)
-      document.removeEventListener('mouseup', handleCanvasMouseUp)
-    }
-  }, [canvasState.isDragging])
-  // NOTE: lastMouseX/lastMouseY deliberately excluded from dependencies
-  // We read them via canvasStateRef to avoid infinite loop when dragging updates mouse position
+  const handleOverlayMount = useCallback(
+    (overlay: HTMLDivElement) => {
+      setStickyOverlayEl(overlay)
+    },
+    [setStickyOverlayEl],
+  )
 
-  useEffect(() => {
-    if (typeof document === 'undefined') return
+  const handleOverlayUnmount = useCallback(() => {
+    setStickyOverlayEl(null)
+  }, [setStickyOverlayEl])
 
-    const overlay = document.createElement('div')
-    overlay.id = 'sticky-note-overlay-root'
-    overlay.style.position = 'fixed'
-    overlay.style.inset = '0'
-    overlay.style.pointerEvents = 'none'
-    overlay.style.zIndex = '12000'
-    overlay.style.display = 'block'
+  useStickyOverlay(handleOverlayMount, handleOverlayUnmount)
 
-    document.body.appendChild(overlay)
-    setStickyOverlayEl(overlay)
-
-    return () => {
-      document.body.removeChild(overlay)
-      setStickyOverlayEl(null)
-    }
-  }, [])
-
-  const handlePanelClose = (panelId: string, panelNoteId?: string) => {
-    let storeKeyToDelete: string | undefined
-    const closedAt = new Date().toISOString()
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'panel_close_start',
-      metadata: {
-        panelId,
-        panelNoteId,
-        currentNoteId: noteId,
-        canvasItemsCount: canvasItems.length
-      },
-      content_preview: `Closing panel ${panelId} (note: ${panelNoteId || noteId})`
-    })
-
-    setCanvasItems(prev => {
-      const filtered = prev.filter(item => {
-        if (isPanel(item) && item.panelId === panelId) {
-          const itemNoteId = getItemNoteId(item) || panelNoteId
-          if (!panelNoteId || itemNoteId === panelNoteId) {
-            storeKeyToDelete = item.storeKey ?? (itemNoteId ? ensurePanelKey(itemNoteId, panelId) : undefined)
-
-            debugLog({
-              component: 'AnnotationCanvas',
-              action: 'panel_removed_from_items',
-              metadata: {
-                panelId,
-                itemNoteId,
-                storeKey: item.storeKey,
-                storeKeyToDelete,
-                position: item.position
-              },
-              content_preview: `Removed panel ${panelId} from canvasItems`
-            })
-
-            return false
-          }
-        }
-        return true
-      })
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'panel_close_items_updated',
-        metadata: {
-          panelId,
-          beforeCount: prev.length,
-          afterCount: filtered.length,
-          removedCount: prev.length - filtered.length
-        },
-        content_preview: `canvasItems: ${prev.length} → ${filtered.length}`
-      })
-
-      return filtered
-    })
-
-    const targetNoteId = panelNoteId || noteId
-    if (!targetNoteId) {
-      console.warn('[AnnotationCanvas] Cannot close panel without note id', panelId)
-      return
-    }
-
-    const storeKey = storeKeyToDelete ?? ensurePanelKey(targetNoteId, panelId)
-    const existingPanelData = dataStore.get(storeKey)
-    const existingRevision = existingPanelData?.revisionToken
-    const parentId = existingPanelData?.parentId
-
-    if (existingPanelData) {
-      dataStore.update(storeKey, { state: 'closed', closedAt })
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'panel_state_marked_closed',
-        metadata: {
-          panelId,
-          noteId: targetNoteId,
-          storeKey,
-          parentId,
-          revisionToken: existingRevision
-        }
-      })
-    }
-
-    if (branchesMap?.has(storeKey)) {
-      const branchData = branchesMap.get(storeKey)
-      branchesMap.set(storeKey, { ...branchData, state: 'closed', closedAt })
-    }
-
-    const removeBranchReference = (ownerNoteId: string, ownerPanelId: string) => {
-      const ownerKey = ensurePanelKey(ownerNoteId, ownerPanelId)
-      const ownerData = dataStore.get(ownerKey)
-      if (ownerData?.branches?.length) {
-        const filtered = ownerData.branches.filter((childId: string) => childId !== panelId)
-        if (filtered.length !== ownerData.branches.length) {
-          dataStore.update(ownerKey, { branches: filtered })
-        }
-      }
-
-      if (branchesMap?.has(ownerKey)) {
-        const ownerBranch = branchesMap.get(ownerKey)
-        const ownerBranches = ownerBranch?.branches
-        if (Array.isArray(ownerBranches)) {
-          const filtered = ownerBranches.filter((childId: string) => childId !== panelId)
-          if (filtered.length !== ownerBranches.length) {
-            branchesMap.set(ownerKey, { ...ownerBranch, branches: filtered })
-          }
-        }
-      }
-    }
-
-    if (panelId !== 'main') {
-      removeBranchReference(targetNoteId, 'main')
-      if (parentId && parentId !== 'main') {
-        removeBranchReference(targetNoteId, parentId)
-      }
-    }
-
-    if (layerManagerApi.manager.getNode(storeKey)) {
-      layerManagerApi.manager.removeNode(storeKey)
-    }
-
-    // CRITICAL: Also remove panel from state.panels Map so it can be reopened later
-    // CRITICAL FIX: Use composite key (storeKey) not just panelId
-    dispatch({
-      type: 'REMOVE_PANEL',
-      payload: { id: storeKey }  // Use composite key "noteId::panelId" not just "panelId"
-    })
-
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(`note-data-${targetNoteId}:invalidated`, Date.now().toString())
-      } catch (error) {
-        console.warn('[AnnotationCanvas] Failed to mark snapshot tombstone', error)
-      }
-    }
-
-    if (panelId === 'main') {
-      closeNote(targetNoteId, { persist: true }).catch(error => {
-        console.warn('[AnnotationCanvas] Failed to persist workspace close', error)
-      })
-    }
-
-    persistPanelUpdate({
-      panelId,
-      storeKey,
-      state: 'closed',
-      expectedRevision: existingRevision
-    }).catch(err => {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'panel_close_state_persist_failed',
-        metadata: {
-          panelId,
-          noteId: targetNoteId,
-          error: err instanceof Error ? err.message : 'Unknown error'
-        }
-      })
-    })
-  }
+  const handlePanelClose = usePanelCloseHandler({
+    noteId,
+    setCanvasItems,
+    getItemNoteId,
+    dataStore,
+    branchesMap,
+    layerManager: layerManagerApi.manager,
+    dispatch,
+    persistPanelUpdate,
+    closeNote,
+  })
 
   const handleCreatePanel = (panelId: string, parentPanelId?: string, parentPosition?: { x: number, y: number }, sourceNoteId?: string, isPreview?: boolean, coordinateSpace?: 'screen' | 'world') => {
     const targetNoteId = sourceNoteId || noteId
