@@ -44,6 +44,7 @@ import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-s
 import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
 import { useWorkspaceHydrationSeed } from "@/lib/hooks/annotation/use-workspace-hydration-seed"
+import { useDefaultMainPanelPersistence } from "@/lib/hooks/annotation/use-default-main-panel-persistence"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -499,193 +500,20 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     [noteId, cameraUserId]
   )
 
-  // Persist main panel if it doesn't exist in database (first-time note open)
-  useEffect(() => {
-    if (primaryHydrationStatus.success) {
-      const hasMainPanel = primaryHydrationStatus.panels.some(p => p.id === 'main')
-
-      if (!hasMainPanel && !mainPanelSeededRef.current) {
-        // Main panel doesn't exist in database - persist it with CENTERED position
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'persisting_default_main_panel',
-          metadata: { noteId }
-        })
-
-        // Calculate a centered position instead of using offscreen default
-        const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1920
-        const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 1080
-
-        // CRITICAL FIX: Find the main panel for THIS note, not just any main panel
-        const mainPanelItem = canvasItems.find(item => {
-          if (item.itemType === 'panel' && item.panelId === 'main') {
-            const itemNoteId = getItemNoteId(item)
-            return itemNoteId === noteId
-          }
-          return false
-        })
-
-        const screenDimensions = getPanelDimensions('main')
-        const worldPanelWidth = screenDimensions.width / canvasState.zoom
-        const worldPanelHeight = screenDimensions.height / canvasState.zoom
-
-        // Calculate world position that will appear centered with current viewport
-        // Screen center position (where we want panel center to appear)
-        const screenCenterX = viewportWidth / 2
-        const screenCenterY = viewportHeight / 2
-
-        // Convert screen position to world position
-        // screenPos = (worldPos + viewportTranslate) * zoom
-        // worldPos = (screenPos / zoom) - viewportTranslate
-        const worldCenterX = (screenCenterX / canvasState.zoom) - canvasState.translateX
-        const worldCenterY = (screenCenterY / canvasState.zoom) - canvasState.translateY
-
-        // Offset by half panel size to center the panel (not just top-left corner)
-        const centeredPosition = {
-          x: worldCenterX - (worldPanelWidth / 2),
-          y: worldCenterY - (worldPanelHeight / 2)
-        }
-
-        // Get current main panel position from canvas items (if already set)
-        const existingMainPanelPosition = mainPanelItem?.position && !isDefaultOffscreenPosition(mainPanelItem.position)
-          ? mainPanelItem.position
-          : null
-        const workspacePosition = workspaceMainPosition && !isDefaultOffscreenPosition(workspaceMainPosition)
-          ? workspaceMainPosition
-          : null
-
-        // Priority: 1) existing main panel position (if not default), 2) workspace position (if not default), 3) calculated centered position
-        const mainPosition = existingMainPanelPosition || workspacePosition || centeredPosition
-
-        const defaultMainPosition = getDefaultMainPosition()
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'NEW_NOTE_MAIN_POSITION_DETERMINED',
-          metadata: {
-            noteId,
-            mainPanelItem_position: mainPanelItem?.position,
-            workspaceMainPosition,
-            defaultMainPosition,
-            centeredPosition,
-            currentViewport: { x: canvasState.translateX, y: canvasState.translateY, zoom: canvasState.zoom },
-            finalMainPosition: mainPosition
-          }
-        })
-
-        console.log('[NEW NOTE] Main panel position determined:', {
-          'from canvasItems': mainPanelItem?.position,
-          'from workspace': workspaceMainPosition,
-          'default (offscreen)': defaultMainPosition,
-          'calculated centered': centeredPosition,
-          'current viewport': { x: canvasState.translateX, y: canvasState.translateY },
-          'FINAL POSITION USED': mainPosition
-        })
-
-        // Update canvas items to use the final position (especially if we calculated a centered position)
-        if (!mainPanelItem?.position || isDefaultOffscreenPosition(mainPanelItem.position)) {
-          // Main panel is using default offscreen position or doesn't exist - update it to centered position
-          const currentPosition = mainPanelItem?.position
-          if (!currentPosition || currentPosition.x !== mainPosition.x || currentPosition.y !== mainPosition.y) {
-            setCanvasItems(prev =>
-              prev.map(item => {
-                // CRITICAL FIX: Only update the main panel for THIS noteId, not all main panels!
-                const itemNoteId = getItemNoteId(item)
-                if (item.itemType === 'panel' && item.panelId === 'main' && itemNoteId === noteId) {
-                  return { ...item, position: mainPosition }
-                }
-                return item
-              })
-            )
-            debugLog({
-              component: 'AnnotationCanvas',
-              action: 'NEW_NOTE_CANVAS_POSITION_UPDATED',
-              metadata: { noteId, mainPosition },
-            })
-          }
-        }
-
-        const cameraForConversion = {
-          x: canvasState.translateX,
-          y: canvasState.translateY
-        }
-        const screenPosition = worldToScreen(mainPosition, cameraForConversion, canvasState.zoom)
-
-        const mainStoreKey = ensurePanelKey(noteId, 'main')
-        const mainBranch = dataStore.get(mainStoreKey)
-        const resolvedTitle =
-          (mainBranch && typeof mainBranch.title === 'string' && mainBranch.title.trim().length > 0
-            ? mainBranch.title
-            : mainPanelItem?.title) ?? undefined
-
-        const seedReason = existingMainPanelPosition
-          ? 'existing_position'
-          : workspacePosition
-            ? 'workspace_position'
-            : 'centered_position'
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'workspace_main_panel_seeded',
-          metadata: {
-            noteId,
-            seedReason,
-            screenDimensions,
-            worldPanelSize: { width: worldPanelWidth, height: worldPanelHeight },
-            mainPosition,
-            viewport: {
-              translateX: canvasState.translateX,
-              translateY: canvasState.translateY,
-              zoom: canvasState.zoom
-            }
-          }
-        })
-
-        persistPanelCreate({
-          panelId: 'main',
-          storeKey: ensurePanelKey(noteId, 'main'),  // Composite key for multi-note support
-          type: 'editor',
-          position: screenPosition,
-          size: { width: screenDimensions.width, height: screenDimensions.height },
-          zIndex: 0,
-          title: resolvedTitle,
-          metadata: { annotationType: 'main' }
-        }).catch(err => {
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'main_panel_persist_failed',
-            metadata: { error: err instanceof Error ? err.message : 'Unknown error' }
-          })
-        })
-
-        void updateMainPosition(noteId, mainPosition).catch(err => {
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'workspace_main_position_update_failed',
-            metadata: {
-              error: err instanceof Error ? err.message : 'Unknown error',
-              noteId
-            }
-          })
-        })
-
-        mainPanelSeededRef.current = true
-      }
-    }
-  }, [
-    primaryHydrationStatus.success,
-    primaryHydrationStatus.panels,
+  useDefaultMainPanelPersistence({
     noteId,
+    hydrationStatus: primaryHydrationStatus,
     canvasItems,
-    persistPanelCreate,
+    setCanvasItems,
+    getItemNoteId,
     workspaceMainPosition,
+    canvasStateRef,
+    getPanelDimensions,
+    persistPanelCreate,
+    dataStore,
     updateMainPosition,
-    // CRITICAL FIX: DO NOT include canvasState.zoom/translateX/translateY
-    // Including viewport state causes this effect to re-run on every camera pan,
-    // which recalculates positions and causes panels to jump when switching tabs!
-    // This effect should ONLY run when hydration completes or note changes.
-    dataStore
-  ])
+    mainPanelSeededRef,
+  })
 
   // Selection guards to prevent text highlighting during canvas drag
   const selectionGuardsRef = useRef<{
