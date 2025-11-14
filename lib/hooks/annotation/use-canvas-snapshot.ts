@@ -16,6 +16,7 @@ import { dedupeCanvasItems } from "@/lib/canvas/dedupe-canvas-items"
 import { panToPanel } from "@/lib/canvas/pan-animations"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { useSnapshotCameraSync } from "@/lib/hooks/annotation/use-snapshot-camera-sync"
 
 type HydrationPanel = {
   id: string
@@ -58,6 +59,7 @@ export type UseCanvasSnapshotOptions = {
   updateDedupeWarnings: (warnings: ReturnType<typeof dedupeCanvasItems>["warnings"], options?: { append?: boolean }) => void
   primaryHydrationStatus: HydrationResult
   dataStore: DataStore
+  persistCameraSnapshot?: (camera: { x: number; y: number; zoom: number }) => void | Promise<void>
 }
 
 export function useCanvasSnapshot({
@@ -88,7 +90,14 @@ export function useCanvasSnapshot({
   updateDedupeWarnings,
   primaryHydrationStatus,
   dataStore,
+  persistCameraSnapshot,
 }: UseCanvasSnapshotOptions) {
+  const applySnapshotCamera = useSnapshotCameraSync({
+    noteId,
+    setCanvasState,
+    persistCameraSnapshot,
+  })
+
   useEffect(() => {
     setIsStateLoaded(false)
 
@@ -392,31 +401,15 @@ export function useCanvasSnapshot({
     isRestoringSnapshotRef.current = true
 
     const isNewlyOpened = freshNoteSeeds?.[noteId] !== undefined
+    const showConnections =
+      typeof viewport.showConnections === "boolean" ? viewport.showConnections : undefined
 
-    setCanvasState(prev => ({
-      ...prev,
+    void applySnapshotCamera({
+      translateX: restoredTranslateX,
+      translateY: restoredTranslateY,
       zoom: restoredZoom,
-      ...(isNewlyOpened
-        ? {}
-        : {
-            translateX: restoredTranslateX,
-            translateY: restoredTranslateY,
-          }),
-      showConnections:
-        typeof viewport.showConnections === "boolean" ? viewport.showConnections : prev.showConnections,
-    }))
-
-    debugLog({
-      component: "AnnotationCanvas",
-      action: "snapshot_camera_restoration",
-      metadata: {
-        noteId,
-        isNewlyOpened,
-        restoredCamera: isNewlyOpened
-          ? "skipped"
-          : { translateX: restoredTranslateX, translateY: restoredTranslateY, zoom: restoredZoom },
-        reason: isNewlyOpened ? "newly_opened_will_be_centered" : "reload_or_tab_switch",
-      },
+      showConnections,
+      isNewlyOpened,
     })
 
     requestAnimationFrame(() => {
@@ -652,6 +645,7 @@ export function useCanvasSnapshot({
     onSnapshotLoadComplete,
     onSnapshotSettled,
     activeWorkspaceVersion,
+    applySnapshotCamera,
   ])
 }
 

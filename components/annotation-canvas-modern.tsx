@@ -55,6 +55,7 @@ import { useCameraSnapshotPersistence } from "@/lib/hooks/annotation/use-camera-
 import { useCanvasContextSync } from "@/lib/hooks/annotation/use-canvas-context-sync"
 import { useWorkspaceSeedRegistry } from "@/lib/hooks/annotation/use-workspace-seed-registry"
 import { usePanelCentering } from "@/lib/hooks/annotation/use-panel-centering"
+import { usePanelCreationEvents } from "@/lib/hooks/annotation/use-panel-creation-events"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -523,6 +524,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     updateDedupeWarnings,
     primaryHydrationStatus,
     dataStore,
+    persistCameraSnapshot,
   })
 
   // Cleanup auto-save timer on unmount
@@ -904,62 +906,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     [uniqueNoteIds, noteId]
   )
 
-  // Subscribe to panel creation events
-  useEffect(() => {
-    const handlePanelEvent = (event: CustomEvent) => {
-      if (event.detail?.panelId) {
-        handleCreatePanel(
-          event.detail.panelId,
-          event.detail.parentPanelId,
-          event.detail.parentPosition,
-          event.detail.noteId,
-          false, // isPreview
-          event.detail.coordinateSpace // Pass coordinate space flag
-        )
-      }
-    }
-    
-    const handlePreviewPanelEvent = (event: CustomEvent) => {
-      console.log('[AnnotationCanvas] Received preview-panel event:', event.detail)
-
-      if (event.detail?.panelId) {
-        // Create a temporary preview panel
-        // Use previewPosition if provided (viewport-relative), otherwise use parentPosition
-        const position = event.detail.previewPosition || event.detail.parentPosition
-
-        console.log('[AnnotationCanvas] Creating preview panel:', {
-          panelId: event.detail.panelId,
-          position,
-          isPreview: true
-        })
-
-        handleCreatePanel(
-          event.detail.panelId,
-          event.detail.parentPanelId,
-          position,
-          event.detail.noteId,
-          true  // isPreview = true, forces use of provided position
-        )
-      }
-    }
-    
-    const handleRemovePreviewPanelEvent = (event: CustomEvent) => {
-      if (event.detail?.panelId) {
-        // Remove the preview panel
-        handlePanelClose(event.detail.panelId)
-      }
-    }
-
-    window.addEventListener('create-panel' as any, handlePanelEvent)
-    window.addEventListener('preview-panel' as any, handlePreviewPanelEvent)
-    window.addEventListener('remove-preview-panel' as any, handleRemovePreviewPanelEvent)
-    
-    return () => {
-      window.removeEventListener('create-panel' as any, handlePanelEvent)
-      window.removeEventListener('preview-panel' as any, handlePreviewPanelEvent)
-      window.removeEventListener('remove-preview-panel' as any, handleRemovePreviewPanelEvent)
-    }
-  }, [noteId]) // Add noteId dependency to ensure we're using the correct note
+  usePanelCreationEvents({
+    noteId,
+    handleCreatePanel,
+    handlePanelClose,
+  })
 
   // Create viewport snapshot for auto-save
   const viewportSnapshot = useMemo(
