@@ -6,7 +6,8 @@ Current Work
 - Status: in_progress
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
-Recent Activity (showing last 10 of 198)
+Recent Activity (showing last 10 of 199)
+- commit [2025-11-14 03:01Z] e360588: small jumped spec when they first created
 - commit [2025-11-14 02:48Z] f31d08e: no stacking and no jumping stage
 - commit [2025-11-13 23:13Z] a5d51b1: continue peeling off
 - commit [2025-11-13 22:05Z] 132705a: refactoring annotation canvas
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 198)
 - commit [2025-11-13 02:49Z] 6ae0fcf: next: Extract the remaining inline overlays
 - commit [2025-11-13 02:19Z] b19b7e7: phase 4
 - commit [2025-11-12 23:17Z] 28106ed: manual testing
-- commit [2025-11-12 21:34Z] 040765d: overlay persistence refs, preview portal, toolbar props
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-14 02:48Z] f31d08e: no stacking and no jumping stage
+- commit [2025-11-14 03:01Z] e360588: small jumped spec when they first created

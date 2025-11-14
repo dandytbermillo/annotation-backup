@@ -36,7 +36,7 @@ import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
 import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
 import { useCanvasSnapshot } from "@/lib/hooks/annotation/use-canvas-snapshot"
-import { useHydrationPanelBuilder, useHydrationPanelMerge } from "@/lib/hooks/annotation/use-hydration-panel-builder"
+import { useHydrationPanelBuilder } from "@/lib/hooks/annotation/use-hydration-panel-builder"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
@@ -540,9 +540,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     mainOnlyNoteSet,
     canvasStateRef,
   })
-  const mergeHydratedPanels = useHydrationPanelMerge({
-    getItemNoteId,
-  })
 
   const hydratedNotesRef = useRef<Set<string>>(new Set())
   const lastHydratedNoteRef = useRef<string | null>(null)
@@ -589,10 +586,39 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     const { newItems } = buildResult
 
     setCanvasItems(prev => {
-      const { itemsToAdd, nextItems } = mergeHydratedPanels({
-        prevItems: prev,
-        newItems,
-        targetNoteId,
+      const existingStoreKeys = new Set(
+        prev
+          .filter(item => item.itemType === 'panel')
+          .map(item => {
+            if (item.storeKey) {
+              return item.storeKey
+            }
+            const resolvedNoteId = getItemNoteId(item) ?? targetNoteId
+            const resolvedPanelId = item.panelId ?? 'main'
+            return ensurePanelKey(resolvedNoteId, resolvedPanelId)
+          })
+      )
+
+      const itemsToAdd = newItems.filter(item => {
+        const key = item.storeKey ?? ensurePanelKey(
+          item.noteId ?? targetNoteId,
+          item.panelId ?? 'main'
+        )
+        if (existingStoreKeys.has(key)) {
+          debugLog({
+            component: 'AnnotationCanvas',
+            action: 'HYDRATION_SKIPPED_DUPLICATE',
+            metadata: {
+              noteId: targetNoteId,
+              panelId: item.panelId,
+              storeKey: key,
+              reason: 'panel_already_exists_in_canvas'
+            }
+          })
+          return false
+        }
+        existingStoreKeys.add(key)
+        return true
       })
 
       if (itemsToAdd.length > 0) {
@@ -602,7 +628,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           metadata: {
             noteId: targetNoteId,
             addedCount: itemsToAdd.length,
-            totalItems: nextItems.length,
+            totalItems: prev.length + itemsToAdd.length,
             addedPanels: itemsToAdd.map(p => ({
               panelId: p.panelId,
               position: p.position,
@@ -610,7 +636,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             }))
           }
         })
-        return nextItems
+        return [...prev, ...itemsToAdd]
       }
 
       return prev
@@ -686,7 +712,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         onFreshNoteHydrated?.(targetNoteId)
       })
     }
-  }, [buildHydratedPanels, canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated, setCanvasItems, initialCanvasSetupRef, mergeHydratedPanels])
+  }, [buildHydratedPanels, canvasItems, dispatch, getItemNoteId, resolveWorkspacePosition, freshNoteSet, onFreshNoteHydrated, setCanvasItems, initialCanvasSetupRef])
 
   useEffect(() => {
     if (!noteId) return

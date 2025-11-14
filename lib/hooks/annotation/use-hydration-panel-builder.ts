@@ -154,3 +154,136 @@ export function useHydrationPanelBuilder({
     [mainOnlyNoteSet, canvasStateRef],
   )
 }
+
+type UseHydrationPanelMergeOptions = {
+  getItemNoteId: (item: CanvasItem) => string | null
+}
+
+type HydrationPanelMergeInput = {
+  prevItems: CanvasItem[]
+  newItems: CanvasItem[]
+  targetNoteId: string
+}
+
+type HydrationPanelMergeResult = {
+  itemsToAdd: CanvasItem[]
+  nextItems: CanvasItem[]
+}
+
+export function useHydrationPanelMerge({ getItemNoteId }: UseHydrationPanelMergeOptions) {
+  return useCallback(
+    ({ prevItems, newItems, targetNoteId }: HydrationPanelMergeInput): HydrationPanelMergeResult => {
+      if (newItems.length === 0) {
+        return { itemsToAdd: [], nextItems: prevItems }
+      }
+
+      const existingStoreKeys = new Set(
+        prevItems
+          .filter(item => item.itemType === "panel")
+          .map(item => {
+            if (item.storeKey) {
+              return item.storeKey
+            }
+            const resolvedNoteId = getItemNoteId(item) ?? targetNoteId
+            const resolvedPanelId = item.panelId ?? "main"
+            return ensurePanelKey(resolvedNoteId, resolvedPanelId)
+          }),
+      )
+
+      const itemsToAdd: CanvasItem[] = []
+
+      newItems.forEach(item => {
+        const key =
+          item.storeKey ?? ensurePanelKey(item.noteId ?? targetNoteId, item.panelId ?? "main")
+
+        if (existingStoreKeys.has(key)) {
+          debugLog({
+            component: "AnnotationCanvas",
+            action: "HYDRATION_SKIPPED_DUPLICATE",
+            metadata: {
+              noteId: targetNoteId,
+              panelId: item.panelId,
+              storeKey: key,
+              reason: "panel_already_exists_in_canvas",
+            },
+          })
+          return
+        }
+
+        existingStoreKeys.add(key)
+        itemsToAdd.push(item)
+      })
+
+      const nextItems = itemsToAdd.length > 0 ? [...prevItems, ...itemsToAdd] : prevItems
+      return { itemsToAdd, nextItems }
+    },
+    [getItemNoteId],
+  )
+}
+
+type UseHydrationDispatchOptions = {
+  dispatch: Dispatch<any>
+  getItemNoteId: (item: CanvasItem) => string | null
+  workspaceSeededNotesRef: MutableRefObject<Set<string>>
+}
+
+type HydrationDispatchInput = {
+  itemsToAdd: CanvasItem[]
+  workspaceMainPosition: { x: number; y: number } | null
+  mainPanelExists: boolean
+  targetNoteId: string
+  initialCanvasSetupRef: MutableRefObject<boolean>
+}
+
+export function useHydrationDispatcher({
+  dispatch,
+  getItemNoteId,
+  workspaceSeededNotesRef,
+}: UseHydrationDispatchOptions) {
+  return useCallback(
+    ({
+      itemsToAdd,
+      workspaceMainPosition,
+      mainPanelExists,
+      targetNoteId,
+      initialCanvasSetupRef,
+    }: HydrationDispatchInput) => {
+      itemsToAdd.forEach(item => {
+        if (isPanel(item)) {
+          const panelKey = item.storeKey ?? ensurePanelKey(item.noteId ?? targetNoteId, item.panelId ?? "main")
+          dispatch({
+            type: "ADD_PANEL",
+            payload: {
+              id: panelKey,
+              panel: { element: null, branchId: item.panelId },
+            },
+          })
+          debugLog({
+            component: "AnnotationCanvas",
+            action: "added_hydrated_panel_to_state",
+            metadata: {
+              panelId: item.panelId,
+              noteId: item.noteId,
+              compositeKey: panelKey,
+            },
+            content_preview: `Added hydrated panel ${panelKey} to state.panels for connection lines`,
+          })
+        }
+      })
+
+      if (!initialCanvasSetupRef.current && workspaceMainPosition && !mainPanelExists) {
+        workspaceSeededNotesRef.current.add(targetNoteId)
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "workspace_seed_applied_during_hydration",
+          metadata: {
+            noteId: targetNoteId,
+            seedPosition: workspaceMainPosition,
+            seededNotes: Array.from(workspaceSeededNotesRef.current),
+          },
+        })
+      }
+    },
+    [dispatch, getItemNoteId, workspaceSeededNotesRef],
+  )
+}
