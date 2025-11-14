@@ -36,7 +36,7 @@ import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
 import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
 import { useCanvasSnapshot } from "@/lib/hooks/annotation/use-canvas-snapshot"
-import { useHydrationPanelBuilder, useHydrationPanelMerge } from "@/lib/hooks/annotation/use-hydration-panel-builder"
+import { useHydrationPanelBuilder, useHydrationPanelMerge, useHydrationDispatcher } from "@/lib/hooks/annotation/use-hydration-panel-builder"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from "./canvas/canvas-workspace-context"
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
@@ -543,6 +543,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const mergeHydratedPanels = useHydrationPanelMerge({
     getItemNoteId,
   })
+  const dispatchHydratedPanels = useHydrationDispatcher({
+    dispatch,
+    workspaceSeededNotesRef,
+  })
 
   const hydratedNotesRef = useRef<Set<string>>(new Set())
   const lastHydratedNoteRef = useRef<string | null>(null)
@@ -616,29 +620,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       return prev
     })
 
-    newItems.forEach(item => {
-      if (isPanel(item)) {
-        const panelKey = item.storeKey ?? ensurePanelKey(item.noteId ?? targetNoteId, item.panelId ?? 'main')
-        dispatch({
-          type: 'ADD_PANEL',
-          payload: {
-            id: panelKey,
-            panel: { element: null, branchId: item.panelId }
-          }
-        })
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'added_hydrated_panel_to_state',
-          metadata: {
-            panelId: item.panelId,
-            noteId: item.noteId,
-            compositeKey: panelKey
-          },
-          content_preview: `Added hydrated panel ${panelKey} to state.panels for connection lines`
-        })
-      }
-    })
-
     if (!initialCanvasSetupRef.current && workspaceMainForTarget && !mainPanelExists) {
       setCanvasItems(prev =>
         prev.map(item => {
@@ -651,17 +632,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           return item
         })
       )
-      workspaceSeededNotesRef.current.add(targetNoteId)
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'workspace_seed_applied_during_hydration',
-        metadata: {
-          noteId: targetNoteId,
-          seedPosition: workspaceMainForTarget,
-          seededNotes: Array.from(workspaceSeededNotesRef.current),
-        },
-      })
     }
+
+    dispatchHydratedPanels({
+      itemsToAdd: newItems,
+      workspaceMainPosition: workspaceMainForTarget,
+      mainPanelExists,
+      targetNoteId,
+      initialCanvasSetupRef,
+    })
 
     hydratedNotesRef.current.add(targetNoteId)
     lastHydratedNoteRef.current = targetNoteId

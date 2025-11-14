@@ -1,12 +1,12 @@
 "use client"
 
 import { useCallback } from "react"
-import type { MutableRefObject } from "react"
+import type { MutableRefObject, Dispatch } from "react"
 
 import type { HydrationStatus } from "@/lib/hooks/use-canvas-hydration"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { worldToScreen } from "@/lib/canvas/coordinate-utils"
-import { createPanelItem, type CanvasItem, type PanelType } from "@/types/canvas-items"
+import { createPanelItem, type CanvasItem, type PanelType, isPanel } from "@/types/canvas-items"
 import { debugLog } from "@/lib/utils/debug-logger"
 
 export type HydrationPanelBuildRequest = {
@@ -223,7 +223,6 @@ export function useHydrationPanelMerge({ getItemNoteId }: UseHydrationPanelMerge
 
 type UseHydrationDispatchOptions = {
   dispatch: Dispatch<any>
-  getItemNoteId: (item: CanvasItem) => string | null
   workspaceSeededNotesRef: MutableRefObject<Set<string>>
 }
 
@@ -237,7 +236,6 @@ type HydrationDispatchInput = {
 
 export function useHydrationDispatcher({
   dispatch,
-  getItemNoteId,
   workspaceSeededNotesRef,
 }: UseHydrationDispatchOptions) {
   return useCallback(
@@ -284,6 +282,6 @@ export function useHydrationDispatcher({
         })
       }
     },
-    [dispatch, getItemNoteId, workspaceSeededNotesRef],
+    [dispatch, workspaceSeededNotesRef],
   )
 }
