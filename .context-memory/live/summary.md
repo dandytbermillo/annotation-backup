@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-14 20:37Z] b12df6e: repeat this treatment for the remaining large effects (camera persistence, snapshot settling, etc.)
 - commit [2025-11-14 20:21Z] c6f4883: works
 - commit [2025-11-14 05:35Z] caa91ca: address missing branches
 - commit [2025-11-14 05:02Z] ad41f81: still working
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-14 02:48Z] f31d08e: no stacking and no jumping stage
 - commit [2025-11-13 23:13Z] a5d51b1: continue peeling off
 - commit [2025-11-13 22:05Z] 132705a: refactoring annotation canvas
-- commit [2025-11-13 20:02Z] cd912be: fixing the popups conflict
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-14 20:21Z] c6f4883: works
+- commit [2025-11-14 20:37Z] b12df6e: repeat this treatment for the remaining large effects (camera persistence, snapshot settling, etc.)

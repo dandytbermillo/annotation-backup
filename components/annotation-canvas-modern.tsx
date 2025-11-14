@@ -45,6 +45,8 @@ import { Z_INDEX } from "@/lib/constants/z-index"
 import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
 import { useWorkspaceHydrationSeed } from "@/lib/hooks/annotation/use-workspace-hydration-seed"
 import { useDefaultMainPanelPersistence } from "@/lib/hooks/annotation/use-default-main-panel-persistence"
+import { useCollaborativeNoteInitialization } from "@/lib/hooks/annotation/use-collaborative-note-initialization"
+import { useSelectionGuards } from "@/lib/hooks/annotation/use-selection-guards"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -515,25 +517,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     mainPanelSeededRef,
   })
 
-  // Selection guards to prevent text highlighting during canvas drag
-  const selectionGuardsRef = useRef<{
-    onSelectStart: (e: Event) => void;
-    onDragStart: (e: Event) => void;
-    prevUserSelect: string;
-  } | null>(null)
-
-  const enableSelectionGuards = useCallback(() => {
-    if (typeof document === 'undefined') return
-    if (selectionGuardsRef.current) return
-    const onSelectStart = (e: Event) => { e.preventDefault() }
-    const onDragStart = (e: Event) => { e.preventDefault() }
-    selectionGuardsRef.current = { onSelectStart, onDragStart, prevUserSelect: document.body.style.userSelect }
-    document.documentElement.classList.add('dragging-no-select')
-    document.body.style.userSelect = 'none'
-    document.addEventListener('selectstart', onSelectStart, true)
-    document.addEventListener('dragstart', onDragStart, true)
-    try { window.getSelection()?.removeAllRanges?.() } catch {}
-  }, [])
+  const { enableSelectionGuards, disableSelectionGuards } = useSelectionGuards()
 
   // CRITICAL FIX: Memoize minimap navigation callback to prevent infinite loop
   // The inline callback was being recreated on every render, causing minimap's
@@ -594,85 +578,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     noteId
   ])
 
-  const disableSelectionGuards = useCallback(() => {
-    if (typeof document === 'undefined') return
-    const g = selectionGuardsRef.current
-    if (!g) return
-    document.removeEventListener('selectstart', g.onSelectStart, true)
-    document.removeEventListener('dragstart', g.onDragStart, true)
-    document.documentElement.classList.remove('dragging-no-select')
-    document.body.style.userSelect = g.prevUserSelect || ''
-    selectionGuardsRef.current = null
-  }, [])
-
-  useEffect(() => {
-    // Note: We no longer clear editor docs when switching notes
-    // The composite key system (noteId-panelId) already isolates docs between notes
-    // This allows content to load immediately when switching back to a previously viewed note
-    
-    // Check if we're in plain mode (explicit flag; avoids provider init race)
-    const isPlainMode = isPlainModeActive()
-    
-    if (!isPlainMode) {
-      // Initialize collaboration provider with YJS persistence
-      const provider = UnifiedProvider.getInstance()
-      
-      // Set the current note context
-      provider.setCurrentNote(noteId)
-      
-      // Check if this is a new note (check localStorage for existing data)
-      const existingData = localStorage.getItem(`note-data-${noteId}`)
-      const isNewNote = !existingData
-      
-      console.log('[AnnotationCanvas] Initializing note:', {
-        noteId,
-        hasExistingData: !!existingData,
-        isNewNote
-      })
-      
-      // CRITICAL FIX: Use workspaceMainPosition instead of legacy {2000, 1500}
-      // This ensures provider initialization uses the computed viewport-centered position
-      const initialPosition = workspaceMainPosition ?? getDefaultMainPosition()
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'provider_init_position',
-        metadata: {
-          noteId,
-          workspaceMainPosition,
-          initialPosition,
-          isNewNote
-        }
-      })
-
-      // Define default data for new notes
-      const defaultData = {
-        'main': {
-          title: 'New Document',
-          type: 'main',
-          content: '', // Empty content for new documents
-          branches: [],
-          position: initialPosition,  // Use computed position, not hardcoded legacy
-          isEditable: true,
-          // Mark as new to force edit mode
-          isNew: isNewNote
-        }
-      }
-
-      console.log('[AnnotationCanvas] Default data for main panel:', defaultData.main)
-
-      // Initialize with defaults - the provider will merge with existing data if any
-      // For new notes, this sets empty content
-      // For existing notes, this preserves their content
-      provider.initializeDefaultData(noteId, defaultData)
-    }
-
-    return () => {
-      // Don't destroy note when switching - only cleanup when truly unmounting
-      // The provider's smart cache management will handle memory efficiently
-      // This allows content to persist when switching between notes
-    }
-  }, [noteId])
+  useCollaborativeNoteInitialization({
+    noteId,
+    workspaceMainPosition,
+    provider,
+  })
 
   useCanvasSnapshot({
     noteId,
