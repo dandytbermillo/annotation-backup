@@ -534,3 +534,4 @@
 {"ts":"2025-11-14T20:21:17.583Z","type":"commit","sha":"c6f4883de723805f7e42feef8d871216c0dc2ca3","files_changed":6,"message":"works"}
 {"ts":"2025-11-14T20:37:41.154Z","type":"commit","sha":"b12df6ef646bb3f08eb8675c5dbd83a2b6110a9b","files_changed":6,"message":"repeat this treatment for the remaining large effects (camera persistence, snapshot settling, etc.)"}
 {"ts":"2025-11-14T20:53:48.152Z","type":"commit","sha":"1697998a4e0f9fa85a61d3ba1445afe3ddf89c62","files_changed":7,"message":"still works"}
+{"ts":"2025-11-14T21:43:09.787Z","type":"commit","sha":"dd3abb37f6c5c3a0d82e2556f775204837ee794c","files_changed":11,"message":"the Console Error"}

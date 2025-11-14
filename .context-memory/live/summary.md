@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Refactored annotation-app data-store helpers into [REDACTED] and reran npm run test -- --runTestsByPath __tests__/unit/popup-overlay.test.ts after type-check.
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-14 21:43Z] dd3abb3: the Console Error
 - commit [2025-11-14 20:53Z] 1697998: still works
 - commit [2025-11-14 20:37Z] b12df6e: repeat this treatment for the remaining large effects (camera persistence, snapshot settling, etc.)
 - commit [2025-11-14 20:21Z] c6f4883: works
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-14 04:03Z] e299252: still working
 - commit [2025-11-14 03:01Z] e360588: small jumped spec when they first created
 - commit [2025-11-14 02:48Z] f31d08e: no stacking and no jumping stage
-- commit [2025-11-13 23:13Z] a5d51b1: continue peeling off
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-14 20:53Z] 1697998: still works
+- commit [2025-11-14 21:43Z] dd3abb3: the Console Error
