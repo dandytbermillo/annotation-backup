@@ -1,8 +1,7 @@
 "use client"
 
 import { debugLog } from "@/lib/utils/debug-logger"
-
-export type WorkspacePosition = { x: number; y: number }
+import type { WorkspacePosition } from "@/lib/workspace/types"
 
 export type WorkspacePersistUpdate = {
   noteId: string

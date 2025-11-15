@@ -16,16 +16,27 @@ import {
   persistWorkspaceUpdates,
   type WorkspacePersistUpdate,
 } from "@/lib/workspace/persist-workspace"
-import {
-  SHARED_WORKSPACE_ID,
-  type NoteWorkspace,
-  type OpenWorkspaceNote,
-  type WorkspacePosition,
-} from "@/lib/workspace/types"
-import { useWorkspaceHydrationLoader } from "@/lib/hooks/annotation/use-workspace-hydration-loader"
 
-export { SHARED_WORKSPACE_ID }
-export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
+export interface NoteWorkspace {
+  dataStore: DataStore
+  events: EventEmitter
+  layerManager: LayerManager
+  loadedNotes: Set<string>  // Track which notes have been initialized to prevent re-init on mount/unmount
+}
+
+export const SHARED_WORKSPACE_ID = "__workspace__"
+
+export interface WorkspacePosition {
+  x: number
+  y: number
+}
+
+export interface OpenWorkspaceNote {
+  noteId: string
+  mainPosition: WorkspacePosition | null
+  updatedAt: string | null
+  version: number
+}
 
 export interface OpenNoteOptions {
   mainPosition?: WorkspacePosition | null
@@ -240,21 +251,323 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     [syncPendingToStorage, extractVersionUpdates, applyVersionUpdates, setWorkspaceError],
   )
 
-  const refreshWorkspace = useWorkspaceHydrationLoader({
-    featureEnabled: FEATURE_ENABLED,
-    sharedWorkspaceId: SHARED_WORKSPACE_ID,
-    getWorkspace,
-    ensureWorkspaceForOpenNotes,
-    setOpenNotes: notes => setOpenNotes(notes),
-    workspaceVersionsRef,
-    pendingPersistsRef,
-    positionCacheRef,
-    persistWorkspaceVersions,
-    setWorkspaceError: error => setWorkspaceError(error),
-    setIsWorkspaceLoading: value => setIsWorkspaceLoading(value),
-    setIsHydrating: value => setIsHydrating(value),
-    setIsWorkspaceReady: value => setIsWorkspaceReady(value),
-  })
+  const refreshWorkspace = useCallback(async () => {
+    const hydrationStartTime = Date.now()
+    setIsWorkspaceLoading(true)
+    setIsHydrating(true)
+
+    try {
+      const response = await fetch("/api/canvas/workspace", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      })
+
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || "Failed to load canvas workspace")
+      }
+
+      const result = await response.json()
+      const notes = Array.isArray(result?.openNotes) ? result.openNotes : []
+
+      if (FEATURE_ENABLED) {
+        // New path: Ordered toolbar with full snapshot replay (TDD §3)
+        const panels = Array.isArray(result?.panels) ? result.panels : []
+
+        const normalized: OpenWorkspaceNote[] = notes.map((note: any) => {
+          const rawPosition = note?.mainPosition
+          const rawX = Number(rawPosition?.x)
+          const rawY = Number(rawPosition?.y)
+          const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+          const versionValue = Number(note?.version ?? 0)
+          const version = Number.isFinite(versionValue) ? versionValue : 0
+
+          return {
+            noteId: String(note.noteId),
+            mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
+            updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
+            version,
+          }
+        })
+
+        workspaceVersionsRef.current.clear()
+        normalized.forEach(entry => {
+          workspaceVersionsRef.current.set(entry.noteId, entry.version)
+        })
+        persistWorkspaceVersions()
+
+        // Pre-populate dataStore for all panels (TDD §4.1 line 177)
+        const workspace = getWorkspace(SHARED_WORKSPACE_ID)
+
+        // Load branches for all open notes
+        const uniqueNoteIds = [...new Set(panels.map((p: any) => String(p.noteId)))] as string[]
+        const branchesByNote = new Map<string, any[]>()
+
+        console.log('[Workspace] Loading branches for notes:', uniqueNoteIds)
+        console.log('[Workspace] All panels:', panels.map((p: any) => ({
+          noteId: p.noteId,
+          panelId: p.panelId,
+          type: p.type
+        })))
+
+        for (const noteId of uniqueNoteIds) {
+          try {
+            const url = `/api/postgres-offline/branches?noteId=${noteId}`
+            console.log(`[Workspace] Fetching branches from: ${url}`)
+            const response = await fetch(url)
+            console.log(`[Workspace] Response status:`, response.status, response.statusText)
+
+            if (response.ok) {
+              const data = await response.json()
+              console.log(`[Workspace] Response data for ${noteId}:`, data)
+              console.log(`[Workspace] Data is array?`, Array.isArray(data))
+              console.log(`[Workspace] Data type:`, typeof data)
+              console.log(`[Workspace] Data.branches:`, data.branches)
+
+              // API returns array directly, not wrapped in object
+              const branches = Array.isArray(data) ? data : (data.branches || [])
+              console.log(`[Workspace] Extracted branches:`, branches)
+              branchesByNote.set(noteId, branches)
+              console.log(`[Workspace] Loaded ${branches.length} branches for note ${noteId}:`, branches)
+            } else {
+              console.warn(`[Workspace] Failed to load branches for ${noteId}: ${response.status} ${response.statusText}`)
+            }
+          } catch (error) {
+            console.warn(`[Workspace] Failed to load branches for note ${noteId}:`, error)
+          }
+        }
+
+        console.log('[Workspace] All branches loaded:', branchesByNote)
+
+        // Helper to normalize branch ID from database format to UI format
+        const normalizeBranchId = (rawId: string | null | undefined): string => {
+          if (!rawId) return ''
+          if (rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          return `branch-${rawId}`
+        }
+
+        // Helper to normalize parent ID from database format to UI format
+        const normalizeParentId = (rawId: string | null | undefined): string => {
+          if (!rawId || rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          return `branch-${rawId}`
+        }
+
+        // Helper to normalize panel IDs returned from the workspace API
+        const normalizePanelId = (rawId: string, panelType?: string): string => {
+          if (!rawId) return rawId
+          if (rawId === 'main') return 'main'
+          if (rawId.startsWith('branch-')) return rawId
+          if (panelType && ['branch', 'context', 'annotation'].includes(panelType)) {
+            return `branch-${rawId}`
+          }
+          return rawId
+        }
+
+        // First, store all branch objects in dataStore with their composite keys
+        branchesByNote.forEach((branches, noteId) => {
+          branches.forEach((branchObj: any) => {
+            // Transform DB UUID to UI format: database stores raw UUID, UI expects "branch-{uuid}"
+            const branchPanelId = normalizeBranchId(branchObj.id)
+            const branchKey = `${noteId}::${branchPanelId}`
+
+            // CRITICAL: Normalize parentId to match UI format
+            // Database stores raw UUID or "main", but UI expects "branch-{uuid}" or "main"
+            const normalizedParent = normalizeParentId(branchObj.parentId)
+
+            workspace.dataStore.set(branchKey, {
+              id: branchPanelId,  // Use UI format to match panel expectations
+              type: branchObj.type || 'note',
+              title: branchObj.title || '',
+              originalText: branchObj.originalText || '',
+              metadata: branchObj.metadata || {},
+              anchors: branchObj.anchors,
+              parentId: normalizedParent,  // Use normalized parentId with "branch-" prefix
+              branches: [],  // Branch panels don't have children
+            })
+          })
+        })
+
+        // Seed panels from snapshot (prevents (2000,1500) default jump)
+        panels.forEach((panel: any) => {
+          const normalizedPanelId = normalizePanelId(panel.panelId, panel.type)
+          const normalizedParentId = normalizeParentId(panel.parentId)
+
+          const legacyPanelKey = `${panel.noteId}::${panel.panelId}`
+          const panelKey = `${panel.noteId}::${normalizedPanelId}`
+
+          let existing = workspace.dataStore.get(panelKey)
+          if (!existing && legacyPanelKey !== panelKey) {
+            const legacyEntry = workspace.dataStore.get(legacyPanelKey)
+            if (legacyEntry) {
+              workspace.dataStore.delete(legacyPanelKey)
+              existing = legacyEntry
+            }
+          }
+
+          // Skip if already exists (idempotent - TDD §4.1 line 197)
+          if (existing) {
+            return
+          }
+
+          // Get branches for this note
+          const noteBranches = branchesByNote.get(panel.noteId) || []
+
+          console.log(`[Workspace] Looking up branches for panel ${panelKey}:`, {
+            panelNoteId: panel.noteId,
+            hasBranchesInMap: branchesByNote.has(panel.noteId),
+            branchesMapKeys: Array.from(branchesByNote.keys()),
+            noteBranches: noteBranches,
+            noteBranchesCount: noteBranches.length
+          })
+
+          // Extract branch IDs for this specific panel based on parent_id
+          // Main panel gets branches where parentId = "main"
+          // Branch panels get branches where parentId = "branch-{branchId}"
+          const expectedParentId = normalizedPanelId === 'main'
+            ? 'main'
+            : normalizedPanelId
+
+          const branchIds = noteBranches
+            .filter((b: any) => normalizeParentId(b.parentId) === expectedParentId)
+            .map((b: any) => normalizeBranchId(b.id))  // Future-proof: handles both raw UUIDs and pre-prefixed IDs
+
+          console.log(`[Workspace] Setting dataStore for ${panelKey}:`, {
+            panelId: normalizedPanelId,
+            type: panel.type,
+            expectedParentId,
+            branchCount: branchIds.length,
+            branchIds,
+            allBranchesForNote: noteBranches.map((b: any) => ({ id: b.id, parentId: b.parentId }))
+          })
+
+          workspace.dataStore.set(panelKey, {
+            id: normalizedPanelId,
+            type: panel.type,
+            title: panel.title || '',
+            position: { x: panel.positionXWorld, y: panel.positionYWorld },
+            dimensions: { width: panel.widthWorld, height: panel.heightWorld },
+            zIndex: panel.zIndex,
+            metadata: {
+              ...(panel.metadata || {}),
+              ...(normalizedPanelId !== 'main' && normalizedParentId
+                ? { parentId: normalizedParentId, parentPanelId: normalizedParentId }
+                : {})
+            },
+            parentId: normalizedPanelId === 'main' ? null : normalizedParentId,
+            worldPosition: { x: panel.positionXWorld, y: panel.positionYWorld },
+            worldSize: { width: panel.widthWorld, height: panel.heightWorld },
+            branches: branchIds,  // Array of branch ID strings
+          })
+
+          // Mark as loaded
+          workspace.loadedNotes.add(panel.noteId)
+        })
+
+        ensureWorkspaceForOpenNotes(normalized)
+        setOpenNotes(normalized)
+
+        // Emit telemetry (TDD §8)
+        const hydrationDuration = Date.now() - hydrationStartTime
+        const componentBreakdown: Record<string, number> = {}
+
+        panels.forEach((panel: any) => {
+          const type = panel.type === 'main' || panel.type === 'branch' ? 'note' : panel.type
+          componentBreakdown[type] = (componentBreakdown[type] || 0) + 1
+        })
+
+        try {
+          await debugLog({
+            component: 'CanvasWorkspace',
+            action: 'workspace_toolbar_state_rehydrated',
+            metadata: {
+              workspaceId: SHARED_WORKSPACE_ID,
+              focusedNoteId: notes.find((n: any) => n.isFocused)?.noteId || null,
+              tabOrder: notes.map((n: any) => n.noteId),
+              panelCount: panels.length,
+              componentBreakdown,
+              snapshotTimestamp: new Date().toISOString(),
+              hydrationDurationMs: hydrationDuration
+            }
+          })
+        } catch (logError) {
+          console.warn('[CanvasWorkspace] Failed to emit hydration telemetry:', logError)
+        }
+      } else {
+        // Legacy path: Unordered loading (TDD §5.4 line 228)
+        const normalized: OpenWorkspaceNote[] = notes.map((note: any) => {
+          const rawPosition = note?.mainPosition
+          const rawX = Number(rawPosition?.x)
+          const rawY = Number(rawPosition?.y)
+          const hasValidPosition = Number.isFinite(rawX) && Number.isFinite(rawY)
+          const versionValue = Number(note?.version ?? 0)
+          const version = Number.isFinite(versionValue) ? versionValue : 0
+
+          return {
+            noteId: String(note.noteId),
+            mainPosition: hasValidPosition ? { x: rawX, y: rawY } : null,
+            updatedAt: note?.updatedAt ? String(note.updatedAt) : null,
+            version,
+          }
+        })
+
+        workspaceVersionsRef.current.clear()
+        normalized.forEach(entry => {
+          workspaceVersionsRef.current.set(entry.noteId, entry.version)
+        })
+        persistWorkspaceVersions()
+
+        const merged: OpenWorkspaceNote[] = [...normalized]
+
+        // First, apply position cache (all known positions)
+        positionCacheRef.current.forEach((position, noteId) => {
+          if (!position) return
+          const existingIndex = merged.findIndex(note => note.noteId === noteId)
+          if (existingIndex >= 0) {
+            merged[existingIndex] = {
+              ...merged[existingIndex],
+              mainPosition: position,
+            }
+          }
+        })
+
+        // Then, override with pending persists (unsaved changes take priority)
+        pendingPersistsRef.current.forEach((position, noteId) => {
+          if (!position) return
+          const existingIndex = merged.findIndex(note => note.noteId === noteId)
+          if (existingIndex >= 0) {
+            merged[existingIndex] = {
+              ...merged[existingIndex],
+              mainPosition: position,
+            }
+          } else {
+            console.log(`[DEBUG refreshWorkspace] Adding note ${noteId} from pending only:`, position)
+            merged.push({
+              noteId,
+              mainPosition: position,
+              updatedAt: null,
+              version: workspaceVersionsRef.current.get(noteId) ?? 0,
+            })
+          }
+        })
+
+        ensureWorkspaceForOpenNotes(merged)
+        setOpenNotes(merged)
+      }
+
+      setWorkspaceError(null)
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error))
+      setWorkspaceError(err)
+      throw err
+    } finally {
+      setIsWorkspaceLoading(false)
+      setIsWorkspaceReady(true)
+      setIsHydrating(false)
+    }
+  }, [ensureWorkspaceForOpenNotes, getWorkspace, persistWorkspaceVersions])
 
   const clearScheduledPersist = useCallback((noteId: string) => {
     const existing = scheduledPersistRef.current.get(noteId)
