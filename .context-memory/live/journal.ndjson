@@ -561,3 +561,4 @@
 {"ts":"2025-11-15T02:25:11.909Z","type":"commit","sha":"34935e8f31089fc1f9cc64a0d93bae81042489f1","files_changed":6,"message":"Extracted the sticky overlay element wiring into useStickyOverlayElement,"}
 {"ts":"2025-11-15T02:34:34.033Z","type":"commit","sha":"de1598e7f502964a2f347eac9fba50fc6e95178a","files_changed":6,"message":"canvas-workspace-context.tsx"}
 {"ts":"2025-11-15T02:48:23.587Z","type":"commit","sha":"aa9fe3fcb5efd240cba1dad8041c943ba86d7050","files_changed":8,"message":"ould be splitting canvas- workspace-context.tsx’s API client/hydration blocks into modules similar to what we just did f"}
+{"ts":"2025-11-15T03:02:38.230Z","type":"commit","sha":"ab0c14c34a619f528bc7de8746f1ecd0ef0ccbb1","files_changed":8,"message":"by extracting the openNote/closeNote flows or the workspace"}

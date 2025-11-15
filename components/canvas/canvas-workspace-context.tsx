@@ -23,6 +23,7 @@ import {
   type WorkspacePosition,
 } from "@/lib/workspace/types"
 import { useWorkspaceHydrationLoader } from "@/lib/hooks/annotation/use-workspace-hydration-loader"
+import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-note-manager"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -346,184 +347,20 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const openNote = useCallback(
-    async (noteId: string, options?: OpenNoteOptions) => {
-      const { mainPosition = null, persist = true, persistPosition = true } = options ?? {}
-      const pendingPosition = pendingPersistsRef.current.get(noteId) ?? null
-      const cachedPosition = positionCacheRef.current.get(noteId) ?? null
-
-      // Calculate smart default position: place new notes on the right side of existing panels
-      const calculateSmartDefaultPosition = (): WorkspacePosition => {
-        const fallbackCenter = (() => {
-          const { width, height } = DEFAULT_PANEL_DIMENSIONS
-          if (typeof window === 'undefined') {
-            return { x: 0, y: 0 }
-          }
-          return {
-            x: Math.round(window.innerWidth / 2 - width / 2),
-            y: Math.round(window.innerHeight / 2 - height / 2),
-          }
-        })()
-
-        if (typeof window === 'undefined') return fallbackCenter
-
-        // Find all panels currently in the DOM
-        const allPanels = document.querySelectorAll('[data-store-key]')
-        if (allPanels.length === 0) return fallbackCenter
-
-        let rightmostX = 0
-        let rightmostY = fallbackCenter.y
-        let rightmostWidth = DEFAULT_PANEL_DIMENSIONS.width
-
-        allPanels.forEach(panel => {
-          const style = window.getComputedStyle(panel as HTMLElement)
-          const rect = (panel as HTMLElement).getBoundingClientRect()
-          const panelX = parseFloat(style.left) || 0
-          const panelY = parseFloat(style.top) || fallbackCenter.y
-          const panelWidth = rect.width || DEFAULT_PANEL_DIMENSIONS.width
-
-          // Find the rightmost panel (x + width is the furthest right)
-          if (panelX + panelWidth > rightmostX + rightmostWidth) {
-            rightmostX = panelX
-            rightmostY = panelY
-            rightmostWidth = panelWidth
-          }
-        })
-
-        // Place new note on the right side with a 50px gap
-        const gap = 50
-        return {
-          x: Math.round(rightmostX + rightmostWidth + gap),
-          y: Math.round(rightmostY),
-        }
-      }
-
-      const smartDefaultPosition = mainPosition ?? pendingPosition ?? cachedPosition ?? calculateSmartDefaultPosition()
-      const normalizedPosition = smartDefaultPosition
-      if (normalizedPosition) {
-        positionCacheRef.current.set(noteId, normalizedPosition)
-        syncPositionCacheToStorage()
-      }
-      const positionToPersist = persistPosition ? normalizedPosition : null
-
-      console.log(`[DEBUG openNote] Position resolution for ${noteId}:`, {
-        mainPosition,
-        pendingPosition,
-        cachedPosition,
-        smartDefaultPosition,
-        normalizedPosition,
-      })
-      if (!noteId) {
-        return
-      }
-
-      let alreadyOpen = false
-
-      setOpenNotes(prev => {
-        const exists = prev.some(note => note.noteId === noteId)
-        alreadyOpen = exists
-        if (exists) {
-          return prev.map(note =>
-            note.noteId === noteId
-              ? {
-                  ...note,
-                  mainPosition: mainPosition ?? note.mainPosition ?? normalizedPosition,
-                }
-              : note,
-          )
-        }
-        const version = workspaceVersionsRef.current.get(noteId) ?? 0
-        const next: OpenWorkspaceNote = {
-          noteId,
-          mainPosition: normalizedPosition,
-          updatedAt: null,
-          version,
-        }
-
-        return [...prev, next]
-      })
-
-      ensureWorkspaceForOpenNotes([{
-        noteId,
-        mainPosition: normalizedPosition,
-        updatedAt: null,
-        version: workspaceVersionsRef.current.get(noteId) ?? 0,
-      }])
-
-      const shouldPersist = persist && (!alreadyOpen || !!positionToPersist)
-
-      if (shouldPersist) {
-        const payload: { noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null } = {
-          noteId,
-          isOpen: true,
-        }
-        if (positionToPersist) {
-          payload.mainPosition = positionToPersist
-        }
-        try {
-          const versionUpdates = await persistWorkspace([payload])
-          applyVersionUpdates(versionUpdates)
-          clearScheduledPersist(noteId)
-          // Don't call refreshWorkspace - position is already in local state
-          // This prevents unnecessary "Syncing..." UI flashing and potential loops
-        } catch (error) {
-          console.warn('[CanvasWorkspace] Immediate workspace persist failed, scheduling retry', {
-            noteId,
-            error: error instanceof Error ? error.message : String(error),
-          })
-          if (positionToPersist) {
-            pendingPersistsRef.current.set(noteId, positionToPersist)
-            scheduleWorkspacePersist(noteId, positionToPersist)
-          }
-        }
-      }
-    },
-    [ensureWorkspaceForOpenNotes, persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, applyVersionUpdates, syncPositionCacheToStorage],
-  )
-
-  const closeNote = useCallback(
-    async (noteId: string, options?: CloseNoteOptions) => {
-      if (!noteId) {
-        return
-      }
-
-      const { persist = true, removeWorkspace: remove = true } = options ?? {}
-
-      setOpenNotes(prev => prev.filter(note => note.noteId !== noteId))
-
-      if (remove) {
-        workspacesRef.current.delete(noteId)
-      }
-
-      if (persist) {
-        const versionUpdates = await persistWorkspace([{ noteId, isOpen: false }])
-        applyVersionUpdates(versionUpdates)
-        invalidateLocalSnapshot(noteId)
-        // Persist main panel state as closed so hydration does not revive it
-        try {
-          await fetch(`/api/canvas/layout/${noteId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              updates: [
-                {
-                  id: "main",
-                  state: "closed"
-                }
-              ]
-            })
-          })
-        } catch (error) {
-          console.warn("[CanvasWorkspace] Failed to mark main panel closed", {
-            noteId,
-            error: error instanceof Error ? error.message : String(error)
-          })
-        }
-        // Don't call refreshWorkspace - note is already removed from local state
-      }
-    },
-    [persistWorkspace, applyVersionUpdates, invalidateLocalSnapshot],
-  )
+  const { openNote, closeNote } = useWorkspaceNoteManager({
+    setOpenNotes,
+    ensureWorkspaceForOpenNotes,
+    workspaceVersionsRef,
+    positionCacheRef,
+    pendingPersistsRef,
+    persistWorkspace,
+    scheduleWorkspacePersist,
+    clearScheduledPersist,
+    applyVersionUpdates,
+    syncPositionCacheToStorage,
+    workspacesRef,
+    invalidateLocalSnapshot,
+  })
 
   const updateMainPosition = useCallback(
     async (noteId: string, position: WorkspacePosition, persist = true) => {

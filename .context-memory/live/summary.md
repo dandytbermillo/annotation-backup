@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Centralized AddComponent menu control into useAddComponentMenu hook with tests. — Hook manages internal vs external show state and exposes toggle/close helpers — ModernAnnotationCanvas wires the hook and passes close handler to AddComponentMenu — Added __tests__/unit/use-add-component-menu.test.tsx and expanded focused Jest run
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-15 03:02Z] ab0c14c: by extracting the openNote/closeNote flows or the workspace
 - commit [2025-11-15 02:48Z] aa9fe3f: ould be splitting canvas- workspace-context.tsx’s API client/hydration blocks into modules similar to what we just did f
 - commit [2025-11-15 02:34Z] de1598e: canvas-workspace-context.tsx
 - commit [2025-11-15 02:25Z] 34935e8: Extracted the sticky overlay element wiring into useStickyOverlayElement,
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - note [2025-11-15 01:18Z]: Centralized AddComponent menu control into useAddComponentMenu hook with tests. — Hook manages internal vs external show state and exposes toggle/close helpers — ModernAnnotationCanvas wires the hook and passes close handler to AddComponentMenu — Added __tests__/unit/use-add-component-menu.test.tsx and expanded focused Jest run
 - note [2025-11-15 01:16Z]: Extracted main-only panel filter into a hook with tests. — Added use-main-only-panel-filter to encapsulate the filtering effect — ModernAnnotationCanvas now invokes the hook instead of hosting the effect inline — Created __tests__/unit/use-main-only-panel-filter.test.tsx and reran targeted Jest suite
 - note [2025-11-15 01:13Z]: Moved viewport change logger into hook with tests. — Added use-viewport-change-logger with debug logging and removed inline effect — ModernAnnotationCanvas now calls the hook to track camera translations — Created unit test verifying logging triggers and inert path
-- note [2025-11-15 00:17Z]: Pulled PanelsRenderer into [REDACTED]-renderer.tsx with coverage. — New component encapsulates plain vs Yjs lookup, workspace restore hints, and logging — ModernAnnotationCanvas now imports PanelsRenderer; inline definition removed — Jest suite (sticky overlay, workspace resolver, main-panel restore, component creation) re-run
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-15 02:48Z] aa9fe3f: ould be splitting canvas- workspace-context.tsx’s API client/hydration blocks into modules similar to what we just did f
+- commit [2025-11-15 03:02Z] ab0c14c: by extracting the openNote/closeNote flows or the workspace
