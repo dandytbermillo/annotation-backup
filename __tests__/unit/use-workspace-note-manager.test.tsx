@@ -4,6 +4,11 @@ import TestRenderer, { act } from "react-test-renderer"
 import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-note-manager"
 import type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition } from "@/lib/workspace/types"
 import type { WorkspaceVersionUpdate } from "@/lib/workspace/persist-workspace"
+import { getSmartWorkspacePosition } from "@/lib/workspace/get-smart-workspace-position"
+
+jest.mock("@/lib/workspace/get-smart-workspace-position", () => ({
+  getSmartWorkspacePosition: jest.fn(() => ({ x: 480, y: 320 })),
+}))
 
 type ManagerHandle = {
   openNote: (noteId: string, options?: any) => Promise<void>
@@ -173,5 +178,18 @@ describe("useWorkspaceNoteManager", () => {
     )
     expect(ref.current!.getOpenNotes()).toHaveLength(0)
     expect(props.workspacesRef.current.has("note-3")).toBe(false)
+  })
+
+  it("uses the shared smart workspace position when no cached coordinates exist", async () => {
+    const props = createHarnessProps()
+    const ref = await renderManager(props)
+
+    ;(getSmartWorkspacePosition as jest.Mock).mockReturnValue({ x: 111, y: 222 })
+
+    await act(async () => {
+      await ref.current!.openNote("note-4")
+    })
+
+    expect(props.positionCacheRef.current.get("note-4")).toEqual({ x: 111, y: 222 })
   })
 })

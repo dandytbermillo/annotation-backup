@@ -5,8 +5,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
 import { LayerManager } from "@/lib/canvas/layer-manager"
-import { debugLog } from "@/lib/utils/debug-logger"
-import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
 import {
   syncMapToStorage,
   persistWorkspaceVersions as persistVersionsToStorage,
@@ -24,6 +22,9 @@ import {
 } from "@/lib/workspace/types"
 import { useWorkspaceHydrationLoader } from "@/lib/hooks/annotation/use-workspace-hydration-loader"
 import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-note-manager"
+import { useWorkspaceMainPositionUpdater } from "@/lib/hooks/annotation/use-workspace-main-position-updater"
+import { useWorkspaceUnloadPersistence } from "@/lib/hooks/annotation/use-workspace-unload-persistence"
+import { useWorkspaceVersionTracker } from "@/lib/hooks/annotation/use-workspace-version-tracker"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -84,16 +85,6 @@ const FEATURE_ENABLED = typeof window !== 'undefined' &&
 
 type WorkspaceVersionUpdate = { noteId: string; version: number }
 
-const computeViewportCenteredPosition = (): WorkspacePosition => {
-  const { width, height } = DEFAULT_PANEL_DIMENSIONS
-  if (typeof window === 'undefined') {
-    return { x: 0, y: 0 }
-  }
-  return {
-    x: Math.round(window.innerWidth / 2 - width / 2),
-    y: Math.round(window.innerHeight / 2 - height / 2),
-  }
-}
 
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
@@ -362,56 +353,20 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     invalidateLocalSnapshot,
   })
 
-  const updateMainPosition = useCallback(
-    async (noteId: string, position: WorkspacePosition, persist = true) => {
-      await debugLog({
-        component: 'CanvasWorkspace',
-        action: 'update_main_position_called',
-        metadata: { noteId, position, persist },
-      })
+  const { updateMainPosition } = useWorkspaceMainPositionUpdater({
+    setOpenNotes,
+    positionCacheRef,
+    syncPositionCacheToStorage,
+    persistWorkspace,
+    applyVersionUpdates,
+    clearScheduledPersist,
+    scheduleWorkspacePersist,
+  })
 
-      // ALWAYS cache the position immediately to localStorage
-      positionCacheRef.current.set(noteId, position)
-      syncPositionCacheToStorage()
-
-      setOpenNotes(prev =>
-        prev.map(note =>
-          note.noteId === noteId
-            ? {
-                ...note,
-                mainPosition: position,
-              }
-            : note,
-        ),
-      )
-
-      if (persist) {
-        try {
-          const versionUpdates = await persistWorkspace([{ noteId, isOpen: true, mainPosition: position }])
-          applyVersionUpdates(versionUpdates)
-          clearScheduledPersist(noteId)
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'update_main_position_persist_succeeded',
-            metadata: { noteId },
-          })
-          // SUCCESS: Don't refresh workspace - position is already in local state
-          // Refreshing causes unnecessary loading states and potential loops
-        } catch (error) {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'update_main_position_persist_failed',
-            metadata: {
-              noteId,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          })
-          scheduleWorkspacePersist(noteId, position)
-        }
-      }
-    },
-    [persistWorkspace, scheduleWorkspacePersist, clearScheduledPersist, syncPositionCacheToStorage, applyVersionUpdates],
-  )
+  const { getWorkspaceVersion, updateWorkspaceVersion } = useWorkspaceVersionTracker({
+    workspaceVersionsRef,
+    applyVersionUpdates,
+  })
 
   const getPendingPosition = useCallback((noteId: string): WorkspacePosition | null => {
     const position = pendingPersistsRef.current.get(noteId)
@@ -425,102 +380,13 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     return { ...position }
   }, [])
 
-  const getWorkspaceVersion = useCallback((noteId: string): number | null => {
-    const value = workspaceVersionsRef.current.get(noteId)
-    return typeof value === 'number' ? value : null
-  }, [])
-
-  const updateWorkspaceVersion = useCallback((noteId: string, version: number) => {
-    applyVersionUpdates([{ noteId, version }])
-  }, [applyVersionUpdates])
-
-  useEffect(() => {
-    const persistActiveNotes = () => {
-      if (pendingPersistsRef.current.size === 0) {
-        return
-      }
-
-      if (FEATURE_ENABLED) {
-        // New path: Use sendBeacon with flush endpoint (TDD §5.1 line 216)
-        const updates = Array.from(pendingPersistsRef.current.entries()).map(([noteId, position]) => ({
-          noteId,
-          mainPositionX: position.x,
-          mainPositionY: position.y,
-        }))
-
-        if (updates.length === 0) return
-
-        const body = JSON.stringify(updates)
-
-        // Check sendBeacon payload size (64KB limit, use 60KB for safety)
-        if (body.length > 60 * 1024) {
-          console.warn('[CanvasWorkspace] Beacon payload exceeds size limit, truncating to first update')
-          // Truncate to just the first update to stay within limit
-          const truncatedBody = JSON.stringify([updates[0]])
-          const blob = new Blob([truncatedBody], { type: 'application/json' })
-          try {
-            navigator.sendBeacon('/api/canvas/workspace/flush', blob)
-          } catch (error) {
-            console.warn('[CanvasWorkspace] sendBeacon failed:', error)
-          }
-          return
-        }
-
-        try {
-          // sendBeacon for emergency flush (TDD §5.7)
-          // Use Blob with correct Content-Type to ensure proper parsing
-          const blob = new Blob([body], { type: 'application/json' })
-          navigator.sendBeacon('/api/canvas/workspace/flush', blob)
-        } catch (error) {
-          // Silent - nothing we can do during unload
-          console.warn('[CanvasWorkspace] sendBeacon failed:', error)
-        }
-      } else {
-        // Legacy path: Use keepalive fetch
-        const payload = Array.from(pendingPersistsRef.current.entries()).map(([noteId, position]) => ({
-          noteId,
-          isOpen: true,
-          mainPosition: position,
-        }))
-
-        if (payload.length === 0) return
-
-        const body = JSON.stringify({ notes: payload })
-
-        try {
-          void fetch('/api/canvas/workspace', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body,
-            keepalive: true,
-          })
-        } catch (error) {
-          // Silent - nothing we can do during unload
-        }
-      }
-    }
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        persistActiveNotes()
-      }
-    }
-
-    window.addEventListener('beforeunload', persistActiveNotes)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    return () => {
-      // Clear shared batch timer (TDD §5.1)
-      if (pendingBatchRef.current !== null) {
-        clearTimeout(pendingBatchRef.current)
-        pendingBatchRef.current = null
-      }
-      scheduledPersistRef.current.forEach(timeout => clearTimeout(timeout))
-      scheduledPersistRef.current.clear()
-      window.removeEventListener('beforeunload', persistActiveNotes)
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [openNotes])
+  useWorkspaceUnloadPersistence({
+    pendingPersistsRef,
+    pendingBatchRef,
+    scheduledPersistRef,
+    featureEnabled: FEATURE_ENABLED,
+    openNotes,
+  })
 
   useEffect(() => {
     // Initial load happens once; callers can refresh as needed later.
