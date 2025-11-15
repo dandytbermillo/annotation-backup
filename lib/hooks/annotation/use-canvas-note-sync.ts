@@ -10,6 +10,36 @@ import type { DataStore } from "@/lib/data-store"
 
 import type { CanvasItem } from "@/types/canvas-items"
 
+export function getStoredPanelPosition(
+  dataStore: DataStore | null,
+  branchesMap: Map<string, any> | null,
+  targetNoteId: string | null | undefined,
+  panelId: string | null | undefined,
+) {
+  if (!targetNoteId || !panelId) {
+    return null
+  }
+
+  const storeKey = ensurePanelKey(targetNoteId, panelId)
+  const stored = dataStore?.get(storeKey) ?? branchesMap?.get(storeKey)
+  if (!stored) {
+    return null
+  }
+
+  const worldPosition = stored.worldPosition ?? stored.position
+  if (
+    worldPosition &&
+    typeof worldPosition.x === "number" &&
+    typeof worldPosition.y === "number" &&
+    Number.isFinite(worldPosition.x) &&
+    Number.isFinite(worldPosition.y)
+  ) {
+    return { x: worldPosition.x, y: worldPosition.y }
+  }
+
+  return null
+}
+
 type UseCanvasNoteSyncOptions = {
   hasNotes: boolean
   noteIds: string[]
@@ -41,31 +71,9 @@ export function useCanvasNoteSync({
   branchesMap,
   hydrationStateKey,
 }: UseCanvasNoteSyncOptions) {
-  const getStoredPanelPosition = useCallback(
-    (targetNoteId: string | null | undefined, panelId: string | null | undefined) => {
-      if (!targetNoteId || !panelId) {
-        return null
-      }
-
-    const storeKey = ensurePanelKey(targetNoteId, panelId)
-    const stored = dataStore?.get(storeKey) ?? branchesMap?.get(storeKey)
-    if (!stored) {
-      return null
-    }
-
-    const worldPosition = stored.worldPosition ?? stored.position
-    if (
-      worldPosition &&
-      typeof worldPosition.x === "number" &&
-      typeof worldPosition.y === "number" &&
-      Number.isFinite(worldPosition.x) &&
-      Number.isFinite(worldPosition.y)
-    ) {
-      return { x: worldPosition.x, y: worldPosition.y }
-    }
-
-      return null
-    },
+  const resolveStoredPanelPosition = useCallback(
+    (targetNoteId: string | null | undefined, panelId: string | null | undefined) =>
+      getStoredPanelPosition(dataStore, branchesMap, targetNoteId, panelId),
     [dataStore, branchesMap],
   )
   useEffect(() => {
@@ -126,7 +134,7 @@ export function useCanvasNoteSync({
         }
 
         if (item.itemType === "panel" && item.panelId && itemNoteId) {
-          const storedPosition = getStoredPanelPosition(itemNoteId, item.panelId)
+          const storedPosition = resolveStoredPanelPosition(itemNoteId, item.panelId)
           if (storedPosition) {
             const samePosition =
               item.position?.x === storedPosition.x && item.position?.y === storedPosition.y
@@ -154,7 +162,7 @@ export function useCanvasNoteSync({
         const targetStoreKey = ensurePanelKey(id, "main")
 
         if (existing) {
-          const storedPosition = getStoredPanelPosition(id, "main")
+          const storedPosition = resolveStoredPanelPosition(id, "main")
           const nextPosition = storedPosition ?? existing.position
           const needsMetaUpdate =
             existing.noteId !== id ||
@@ -186,7 +194,7 @@ export function useCanvasNoteSync({
           }
         } else {
           const seedPosition = freshNoteSeeds[id] ?? null
-          const storedPosition = getStoredPanelPosition(id, "main")
+          const storedPosition = resolveStoredPanelPosition(id, "main")
           const targetPosition =
             seedPosition ??
             resolveWorkspacePosition(id) ??
@@ -265,7 +273,7 @@ export function useCanvasNoteSync({
     setCanvasItems,
     getItemNoteId,
     resolveWorkspacePosition,
-    getStoredPanelPosition,
+    resolveStoredPanelPosition,
     hydrationStateKey,
   ])
 }

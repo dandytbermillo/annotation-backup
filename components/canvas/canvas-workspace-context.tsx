@@ -7,6 +7,15 @@ import { EventEmitter } from "@/lib/event-emitter"
 import { LayerManager } from "@/lib/canvas/layer-manager"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { DEFAULT_PANEL_DIMENSIONS } from "@/lib/canvas/panel-metrics"
+import {
+  syncMapToStorage,
+  persistWorkspaceVersions as persistVersionsToStorage,
+  applyWorkspaceVersionUpdates,
+} from "@/lib/workspace/workspace-storage"
+import {
+  persistWorkspaceUpdates,
+  type WorkspacePersistUpdate,
+} from "@/lib/workspace/persist-workspace"
 
 export interface NoteWorkspace {
   dataStore: DataStore
@@ -115,92 +124,24 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const BATCH_DEBOUNCE_MS = 300 // TDD §5.1 line 216
 
   const syncPendingToStorage = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const entries = Array.from(pendingPersistsRef.current.entries())
-    if (entries.length === 0) {
-      window.localStorage.removeItem(PENDING_STORAGE_KEY)
-      return
-    }
-
-    try {
-      window.localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(entries))
-    } catch (error) {
-      console.warn('[CanvasWorkspace] Failed to persist pending map to storage', error)
-    }
+    syncMapToStorage(PENDING_STORAGE_KEY, pendingPersistsRef)
   }, [])
 
   const syncPositionCacheToStorage = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const entries = Array.from(positionCacheRef.current.entries())
-    if (entries.length === 0) {
-      window.localStorage.removeItem(POSITION_CACHE_KEY)
-      return
-    }
-
-    try {
-      window.localStorage.setItem(POSITION_CACHE_KEY, JSON.stringify(entries))
-    } catch (error) {
-      console.warn('[CanvasWorkspace] Failed to persist position cache to storage', error)
-    }
+    syncMapToStorage(POSITION_CACHE_KEY, positionCacheRef)
   }, [])
 
   const persistWorkspaceVersions = useCallback(() => {
-    if (typeof window === 'undefined') return
-
-    const entries = Array.from(workspaceVersionsRef.current.entries())
-    try {
-      if (entries.length === 0) {
-        window.localStorage.removeItem(WORKSPACE_VERSION_CACHE_KEY)
-      } else {
-        window.localStorage.setItem(WORKSPACE_VERSION_CACHE_KEY, JSON.stringify(entries))
-      }
-    } catch (error) {
-      console.warn('[CanvasWorkspace] Failed to persist workspace versions to storage', error)
-    }
+    persistVersionsToStorage(WORKSPACE_VERSION_CACHE_KEY, workspaceVersionsRef)
   }, [])
 
-  const applyVersionUpdates = useCallback((updates: WorkspaceVersionUpdate[]) => {
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return
-    }
-
-    let mutated = false
-
-    updates.forEach(update => {
-      if (!update || typeof update.noteId !== 'string') {
-        return
-      }
-      const parsedVersion = Number(update.version)
-      if (!Number.isFinite(parsedVersion)) {
-        return
-      }
-
-      const prevVersion = workspaceVersionsRef.current.get(update.noteId)
-      if (prevVersion === parsedVersion) {
-        return
-      }
-
-      workspaceVersionsRef.current.set(update.noteId, parsedVersion)
-      mutated = true
-    })
-
-    if (!mutated) {
-      return
-    }
-
-    setOpenNotes(prev =>
-      prev.map(note => {
-        const updatedVersion = workspaceVersionsRef.current.get(note.noteId)
-        if (updatedVersion === undefined || updatedVersion === note.version) {
-          return note
-        }
-        return { ...note, version: updatedVersion }
-      }),
-    )
-    persistWorkspaceVersions()
-  }, [persistWorkspaceVersions])
+  const applyVersionUpdates = useCallback(
+    (updates: WorkspaceVersionUpdate[]) => {
+      applyWorkspaceVersionUpdates(updates, workspaceVersionsRef, setOpenNotes)
+      persistWorkspaceVersions()
+    },
+    [setOpenNotes, persistWorkspaceVersions],
+  )
 
   const extractVersionUpdates = useCallback((payload: any): WorkspaceVersionUpdate[] => {
     if (!payload) {
@@ -298,246 +239,16 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const persistWorkspace = useCallback(
     async (updates: Array<{ noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null }>) => {
-      if (updates.length === 0) {
-        return []
-      }
-
-      updates.forEach(update => {
-        if (update.isOpen && update.mainPosition) {
-          pendingPersistsRef.current.set(update.noteId, update.mainPosition)
-        } else {
-          pendingPersistsRef.current.delete(update.noteId)
-        }
+      return persistWorkspaceUpdates(updates as WorkspacePersistUpdate[], {
+        featureEnabled: FEATURE_ENABLED,
+        pendingPersistsRef,
+        syncPendingToStorage,
+        extractVersionUpdates,
+        applyVersionUpdates,
+        setWorkspaceError,
       })
-      syncPendingToStorage()
-
-      try {
-        await debugLog({
-          component: 'CanvasWorkspace',
-          action: 'persist_attempt',
-          metadata: { updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })) },
-        })
-
-        if (FEATURE_ENABLED) {
-          // New path: Use POST /update with optimistic locking retry (TDD §5.1)
-          // Map to server's expected schema
-          const updatePayload = {
-            updates: updates.map(update => {
-              // Close operation
-              if (!update.isOpen) {
-                return {
-                  noteId: update.noteId,
-                  isOpen: false,
-                }
-              }
-
-              // Position update
-              if (update.mainPosition) {
-                return {
-                  noteId: update.noteId,
-                  mainPositionX: update.mainPosition.x,
-                  mainPositionY: update.mainPosition.y,
-                }
-              }
-
-              // Fallback (shouldn't happen, but handle gracefully)
-              return {
-                noteId: update.noteId,
-              }
-            }),
-          }
-
-          let retries = 0
-          const maxRetries = 3
-
-          while (retries <= maxRetries) {
-            const response = await fetch("/api/canvas/workspace/update", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              keepalive: true,
-              body: JSON.stringify(updatePayload),
-            })
-
-            const rawBody = await response.text()
-
-            if (response.ok) {
-              // Success - clear pending
-              updates.forEach(update => {
-                if (update.isOpen && update.mainPosition) {
-                  pendingPersistsRef.current.delete(update.noteId)
-                }
-              })
-              syncPendingToStorage()
-
-              await debugLog({
-                component: 'CanvasWorkspace',
-                action: 'workspace_snapshot_persisted',
-                metadata: {
-                  noteIds: updates.map(u => u.noteId),
-                  retryCount: retries,
-                },
-              })
-
-              let parsedPayload: any = null
-              try {
-                parsedPayload = rawBody ? JSON.parse(rawBody) : null
-              } catch (parseError) {
-                console.warn('[CanvasWorkspace] Failed to parse workspace/update payload', parseError)
-              }
-
-              if (parsedPayload) {
-                const versionUpdates = extractVersionUpdates(parsedPayload)
-                applyVersionUpdates(versionUpdates)
-              }
-
-              setWorkspaceError(null)
-              return parsedPayload ? extractVersionUpdates(parsedPayload) : []
-            }
-
-            // Handle 409 Conflict (optimistic lock failure) - TDD §5.2
-            if (response.status === 409 && retries < maxRetries) {
-              retries++
-              await debugLog({
-                component: 'CanvasWorkspace',
-                action: 'persist_retry_conflict',
-                metadata: {
-                  retryCount: retries,
-                  maxRetries,
-                },
-              })
-              // Wait 50ms before retry
-              await new Promise(resolve => setTimeout(resolve, 50))
-              continue
-            }
-
-            // All other errors or max retries exceeded
-            const trimmedMessage = rawBody.trim()
-            const statusMessage = `${response.status} ${response.statusText}`.trim()
-            const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
-
-            await debugLog({
-              component: 'CanvasWorkspace',
-              action: 'persist_failed',
-              metadata: {
-                status: response.status,
-                statusText: response.statusText,
-                payload: updatePayload,
-                retries,
-                message: combinedMessage,
-              },
-            })
-
-            const err = new Error(combinedMessage)
-            ;(err as any).status = response.status
-            throw err
-          }
-        } else {
-          // Legacy path: Use PATCH endpoint with original schema
-          const patchPayload = {
-            notes: updates.map(update => ({
-              noteId: update.noteId,
-              isOpen: update.isOpen,
-              mainPosition: update.mainPosition ?? undefined,
-            })),
-          }
-
-          const response = await fetch("/api/canvas/workspace", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            keepalive: true,
-            body: JSON.stringify(patchPayload),
-          })
-
-          const rawBody = await response.text()
-
-          if (!response.ok) {
-            const trimmedMessage = rawBody.trim()
-            const statusMessage = `${response.status} ${response.statusText}`.trim()
-            const combinedMessage = trimmedMessage || statusMessage || "Failed to persist workspace update"
-
-            await debugLog({
-              component: 'CanvasWorkspace',
-              action: 'persist_failed',
-              metadata: {
-                status: response.status,
-                statusText: response.statusText,
-                payload: patchPayload,
-                message: combinedMessage,
-              },
-            })
-
-            const err = new Error(combinedMessage)
-            ;(err as any).status = response.status
-            throw err
-          }
-
-          updates.forEach(update => {
-            if (update.isOpen && update.mainPosition) {
-              pendingPersistsRef.current.delete(update.noteId)
-            }
-          })
-          syncPendingToStorage()
-
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_succeeded',
-            metadata: {
-              noteIds: updates.map(u => u.noteId),
-            },
-          })
-
-          let parsedPayload: any = null
-          try {
-            parsedPayload = rawBody ? JSON.parse(rawBody) : null
-          } catch (parseError) {
-            console.warn('[CanvasWorkspace] Failed to parse workspace PATCH payload', parseError)
-          }
-
-          if (parsedPayload) {
-            const versionUpdates = extractVersionUpdates(parsedPayload)
-            applyVersionUpdates(versionUpdates)
-            setWorkspaceError(null)
-            return versionUpdates
-          }
-
-          setWorkspaceError(null)
-          return []
-        }
-      } catch (error) {
-        const err = error instanceof Error ? error : new Error(String(error))
-        const status = (err as any).status
-
-        if (status === 404 || status === 409) {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_retry_scheduled',
-            metadata: {
-              status,
-              updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })),
-              pending: Array.from(pendingPersistsRef.current.entries()),
-              message: err.message,
-            },
-          })
-        } else {
-          await debugLog({
-            component: 'CanvasWorkspace',
-            action: 'persist_error',
-            metadata: {
-              status,
-              updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })),
-              pending: Array.from(pendingPersistsRef.current.entries()),
-              message: err.message,
-            },
-          })
-          setWorkspaceError(err)
-        }
-
-        throw err
-      }
-
-      return []
     },
-    [syncPendingToStorage, extractVersionUpdates, applyVersionUpdates],
+    [syncPendingToStorage, extractVersionUpdates, applyVersionUpdates, setWorkspaceError],
   )
 
   const refreshWorkspace = useCallback(async () => {
