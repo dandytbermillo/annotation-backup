@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Centralized AddComponent menu control into useAddComponentMenu hook with tests. — Hook manages internal vs external show state and exposes toggle/close helpers — ModernAnnotationCanvas wires the hook and passes close handler to AddComponentMenu — Added __tests__/unit/use-add-component-menu.test.tsx and expanded focused Jest run
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-15 21:00Z] 8ddb637: successfully implemented
 - commit [2025-11-15 20:14Z] 545fee9: implement optimistic-overlay-hydration-plan
 - commit [2025-11-15 19:39Z] 39964f6: working stage 12-15 12:39
 - commit [2025-11-15 03:02Z] ab0c14c: by extracting the openNote/closeNote flows or the workspace
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-15 02:02Z] 984704d: works
 - commit [2025-11-15 01:57Z] 94f9e65: fixed :directly on top of its parent or at the viewport center before snappin g to the correct world position.
 - commit [2025-11-15 01:39Z] 690b58f: fixing the “recentering” bug
-- note [2025-11-15 01:18Z]: Centralized AddComponent menu control into useAddComponentMenu hook with tests. — Hook manages internal vs external show state and exposes toggle/close helpers — ModernAnnotationCanvas wires the hook and passes close handler to AddComponentMenu — Added __tests__/unit/use-add-component-menu.test.tsx and expanded focused Jest run
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-15 20:14Z] 545fee9: implement optimistic-overlay-hydration-plan
+- commit [2025-11-15 21:00Z] 8ddb637: successfully implemented

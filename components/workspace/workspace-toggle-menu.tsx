@@ -6,6 +6,7 @@ import type { OverlayWorkspaceSummary } from "@/lib/adapters/overlay-layout-adap
 
 type WorkspaceToggleMenuProps = {
   statusLabel: string
+  statusHelperText?: string | null
   isOpen: boolean
   onToggleMenu: () => void
   onCreateWorkspace: () => void
@@ -23,6 +24,7 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
   function WorkspaceToggleMenu(
     {
       statusLabel,
+      statusHelperText,
       isOpen,
       onToggleMenu,
       onCreateWorkspace,
@@ -68,6 +70,11 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
             <span className="text-lg font-semibold leading-none">+</span>
           </button>
         </div>
+        {statusHelperText ? (
+          <div className="rounded-full bg-slate-900/70 px-3 py-1 text-xs text-slate-200 pointer-events-none select-none">
+            {statusHelperText}
+          </div>
+        ) : null}
 
         {isOpen && (
           <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">

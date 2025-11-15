@@ -902,9 +902,9 @@ const initialWorkspaceSyncRef = useRef(false)
     ? 'Hydrating...'
     : isWorkspaceListLoading
     ? 'Loading...'
-    : overlayOptimisticHydrationEnabled && overlayStatusLabel
-    ? overlayStatusLabel
     : currentWorkspaceName
+  const workspaceDisplayLabel =
+    overlayOptimisticHydrationEnabled && overlayStatusLabel ? currentWorkspaceName : workspaceStatusLabel
 
   useEffect(() => {
     if (!overlayPersistenceActive) {
@@ -1186,7 +1186,8 @@ const initialWorkspaceSyncRef = useRef(false)
       <WorkspaceToggleMenu
         ref={workspaceToggleRef}
         className="pointer-events-auto"
-        statusLabel={workspaceStatusLabel}
+        statusLabel={workspaceDisplayLabel}
+        statusHelperText={overlayOptimisticHydrationEnabled ? overlayStatusLabel : null}
         isOpen={workspaceMenuOpen}
         onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
         onCreateWorkspace={handleCreateWorkspace}
