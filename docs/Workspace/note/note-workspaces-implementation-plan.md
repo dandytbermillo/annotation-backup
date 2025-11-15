@@ -137,11 +137,12 @@ Goal: extend the existing workspace concept to the note canvas so users can snap
 ---
 
 ## 5. Telemetry
-- Events to log via `debugLog`:
-  - `note_workspace_load_start` / `finish` (workspaceId, duration, noteCount)
-  - `note_workspace_save` (duration, openNoteCount, cameraApplied)
-  - `note_workspace_user_switch` (from / to IDs)
-- Correlate HTTP metrics (e.g., status codes) in Grafana.
+- Events to log via `debugLog` (structure mirrors overlay telemetry):
+  - `note_workspace_load_start` `{ workspaceId, requestedAt, trigger: 'app_load' | 'user_switch' }`
+  - `note_workspace_load_finish` `{ workspaceId, durationMs, noteCount, cameraApplied: boolean, error?: string }`
+  - `note_workspace_save_start` / `finish` `{ workspaceId, dirtyFields: string[], durationMs, payloadBytes }`
+  - `note_workspace_user_switch` `{ fromWorkspaceId, toWorkspaceId, noteCountBefore, noteCountAfter }`
+- Emit Grafana metrics for API latency (`note_workspace_api_latency_ms`) and error counts. Ensure no PII (workspace names hashed client-side if needed).
 
 ---
 
@@ -152,9 +153,10 @@ Goal: extend the existing workspace concept to the note canvas so users can snap
 - Adapter tests with mocked fetch to ensure revision headers handled.
 
 ### Integration / Playwright
-- Add `playwright/note-workspace.spec.ts` covering:
-  - Create workspace, open a few notes, switch to another workspace and back → layout restored.
-  - Delete non-default workspace → list updates, fallback to default.
+- Add `playwright/note-workspace.spec.ts` with deterministic flows:
+  1. **Hydration parity:** stub `/api/note-workspaces/:id` to return two different payloads (A/B). Open app, switch from default (A) to workspace B; assert that the set of `.note-panel` elements matches payload B (IDs, positions within ±2px, zoom). Switch back to A and re-assert.
+  2. **Autosave:** stub `PATCH /api/note-workspaces/:id` and intercept requests. Drag a note, wait for debounce; verify request payload contains updated coordinates and fires within 3 s of drag end.
+  3. **Delete fallback:** create a workspace via API, delete it from menu, assert list count decreases and default workspace becomes active (chip shows “Default”).
 
 ### Manual QA
 - Short checklist: create, rename, delete workspace; autosave on layout change; ensure flag-off build behaves exactly like before.

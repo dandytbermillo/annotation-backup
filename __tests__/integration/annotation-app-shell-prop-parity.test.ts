@@ -381,7 +381,9 @@ jest.mock("@/lib/hooks/annotation/use-workspace-panel-positions", () => ({
   useWorkspacePanelPositions: () => ({
     logWorkspaceNotePositions: jest.fn(),
     resolveMainPanelPosition: jest.fn(),
-    hasRenderedMainPanel: { current: true },
+    hasRenderedMainPanel: jest.fn(() => true),
+    panelSnapshotVersion: 0,
+    getPanelSnapshot: jest.fn(() => null),
   }),
 }))
 

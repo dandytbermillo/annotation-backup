@@ -1,4 +1,5 @@
-import { useCallback } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
 
 type PanelPosition = { x: number; y: number }
@@ -7,6 +8,8 @@ type SharedWorkspace = {
   dataStore?: {
     get(key: string): any
     has?(key: string): boolean
+    on(event: string, listener: (key?: string) => void): void
+    off(event: string, listener: (key?: string) => void): void
   } | null
 } | null
 
@@ -20,6 +23,12 @@ type WorkspacePanelPositionDeps = {
   debugLog: (event: { component: string; action: string; metadata?: Record<string, unknown> }) => void
 }
 
+export type WorkspacePanelSnapshot = {
+  size: { width: number; height: number } | null
+  zIndex: number | null
+  isPinned: boolean
+}
+
 const normalizePosition = (value: any): PanelPosition | null => {
   if (!value || typeof value !== "object") return null
   const { x, y } = value as { x?: number; y?: number }
@@ -27,6 +36,15 @@ const normalizePosition = (value: any): PanelPosition | null => {
     return null
   }
   return { x, y }
+}
+
+const normalizeSize = (value: any): { width: number; height: number } | null => {
+  if (!value || typeof value !== "object") return null
+  const { width, height } = value as { width?: number; height?: number }
+  if (typeof width !== "number" || typeof height !== "number") {
+    return null
+  }
+  return { width, height }
 }
 
 const resolveFromDataStore = (sharedWorkspace: SharedWorkspace, noteId: string): PanelPosition | null => {
@@ -56,6 +74,12 @@ export function useWorkspacePanelPositions({
   getCachedPosition,
   debugLog,
 }: WorkspacePanelPositionDeps) {
+  const [panelSnapshotVersion, setPanelSnapshotVersion] = useState(0)
+  const watchedPanelKeys = useMemo(
+    () => sortedOpenNotes.map((note) => ensurePanelKey(note.noteId, "main")),
+    [sortedOpenNotes],
+  )
+
   const logWorkspaceNotePositions = useCallback(
     (context: string) => {
       const dataStore = sharedWorkspace?.dataStore
@@ -87,6 +111,31 @@ export function useWorkspacePanelPositions({
     [sharedWorkspace, sortedOpenNotes, activeNoteId, debugLog],
   )
 
+  const getPanelSnapshot = useCallback(
+    (noteId: string): WorkspacePanelSnapshot | null => {
+      if (!noteId) return null
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return null
+      const storeKey = ensurePanelKey(noteId, "main")
+      const record = dataStore.get(storeKey)
+      if (!record || typeof record !== "object") {
+        return null
+      }
+      const size =
+        normalizeSize((record as any).size) ??
+        normalizeSize((record as any).dimensions) ??
+        null
+      const zIndex = typeof (record as any).zIndex === "number" ? (record as any).zIndex : null
+      const isPinned = Boolean((record as any).isPinned)
+      return {
+        size,
+        zIndex,
+        isPinned,
+      }
+    },
+    [sharedWorkspace],
+  )
+
   const resolveMainPanelPosition = useCallback(
     (noteId: string): PanelPosition | null => {
       if (!noteId) return null
@@ -112,6 +161,30 @@ export function useWorkspacePanelPositions({
     [getPendingPosition, getCachedPosition, openNotes, sharedWorkspace],
   )
 
+  useEffect(() => {
+    const dataStore = sharedWorkspace?.dataStore
+    if (
+      !dataStore ||
+      typeof dataStore.on !== "function" ||
+      typeof dataStore.off !== "function" ||
+      watchedPanelKeys.length === 0
+    ) {
+      return undefined
+    }
+    const keySet = new Set(watchedPanelKeys)
+    const handleMutation = (key?: string) => {
+      if (!key) return
+      if (!keySet.has(String(key))) return
+      setPanelSnapshotVersion((prev) => prev + 1)
+    }
+    dataStore.on("set", handleMutation)
+    dataStore.on("update", handleMutation)
+    return () => {
+      dataStore.off("set", handleMutation)
+      dataStore.off("update", handleMutation)
+    }
+  }, [sharedWorkspace, watchedPanelKeys])
+
   const hasRenderedMainPanel = useCallback(
     (noteId: string | null | undefined): boolean => {
       if (!noteId) return false
@@ -136,5 +209,7 @@ export function useWorkspacePanelPositions({
     logWorkspaceNotePositions,
     resolveMainPanelPosition,
     hasRenderedMainPanel,
+    panelSnapshotVersion,
+    getPanelSnapshot,
   }
 }
