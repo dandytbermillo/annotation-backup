@@ -19,12 +19,12 @@ import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
-import { CanvasItem, createComponentItem, isComponent, isPanel } from "@/types/canvas-items"
+import { CanvasItem, isPanel } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
-import { worldToScreen, screenToWorld } from "@/lib/canvas/coordinate-utils"
+import { worldToScreen } from "@/lib/canvas/coordinate-utils"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
@@ -57,6 +57,8 @@ import { useWorkspaceSeedRegistry } from "@/lib/hooks/annotation/use-workspace-s
 import { usePanelCentering } from "@/lib/hooks/annotation/use-panel-centering"
 import { usePanelCreationEvents } from "@/lib/hooks/annotation/use-panel-creation-events"
 import { usePanelCreationHandler } from "@/lib/hooks/annotation/use-panel-creation-handler"
+import { useMainPanelRestore } from "@/lib/hooks/annotation/use-main-panel-restore"
+import { useComponentCreationHandler } from "@/lib/hooks/annotation/use-component-creation-handler"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -605,63 +607,17 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     persistPanelCreate,
     persistPanelUpdate,
   })
-  
-  // Handle adding components
-  const handleAddComponent = (type: string, position?: { x: number; y: number }) => {
-    console.log('[Canvas] handleAddComponent called with type:', type, 'position:', position)
-
-    // Calculate position - center of viewport in world coordinates
-    // The canvas translate is the offset, so we need to negate it to get world position
-    const viewportCenterX = window.innerWidth / 2
-    const viewportCenterY = window.innerHeight / 2
-
-    // Convert from screen space to world space
-    // World position = (Screen position - Canvas translate) / zoom
-    const worldX = (-canvasState.translateX + viewportCenterX) / canvasState.zoom
-    const worldY = (-canvasState.translateY + viewportCenterY) / canvasState.zoom
-
-    // Center the component (component is ~350px wide, ~300px tall)
-    const finalPosition = position || {
-      x: worldX - 175,
-      y: worldY - 150
-    }
-
-    const stickyScreenPosition = position || {
-      x: viewportCenterX - 175,
-      y: viewportCenterY - 150
-    }
-
-    console.log('[Canvas] Creating component at position:', type === 'sticky-note' ? stickyScreenPosition : finalPosition)
-
-    const newComponent = createComponentItem(
-      type as 'calculator' | 'timer' | 'sticky-note' | 'dragtest' | 'perftest',
-      type === 'sticky-note' ? stickyScreenPosition : finalPosition
-    )
-
-    console.log('[Canvas] Created component:', newComponent)
-    console.log('[Canvas] Adding to canvasItems')
-    setCanvasItems(prev => [...prev, newComponent])
-  }
-  
-  const handleComponentClose = (id: string) => {
-    setCanvasItems(prev => prev.filter(item => item.id !== id))
-  }
-  
-  const handleComponentPositionChange = (id: string, position: { x: number; y: number }) => {
-    setCanvasItems(prev => prev.map(item => 
-      item.id === id ? { ...item, position } : item
-    ))
-  }
-
-  const componentItems = useMemo(() => canvasItems.filter(isComponent), [canvasItems])
-  const stickyNoteItems = useMemo(
-    () => componentItems.filter(item => item.componentType === 'sticky-note'),
-    [componentItems]
-  )
-  const floatingComponents = useMemo(
-    () => componentItems.filter(item => item.componentType !== 'sticky-note'),
-    [componentItems]
-  )
+  const {
+    handleAddComponent,
+    handleComponentClose,
+    handleComponentPositionChange,
+    stickyNoteItems,
+    floatingComponents,
+  } = useComponentCreationHandler({
+    canvasState,
+    canvasItems,
+    setCanvasItems,
+  })
 
   const uniqueNoteIds = useMemo(
     () => Array.from(new Set(noteIds.filter((id): id is string => typeof id === 'string' && id.length > 0))),
@@ -712,55 +668,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     dispatch,
   })
 
-  const handleRestoreMainPosition = useCallback(
-    (targetNoteId: string, persistedPosition: { x: number; y: number }) => {
-      const storeKey = ensurePanelKey(targetNoteId, 'main')
-      const normalizedPosition = { x: persistedPosition.x, y: persistedPosition.y }
-
-      setCanvasItems(prev =>
-        prev.map(item => {
-          if (item.itemType === 'panel' && item.panelId === 'main') {
-            const itemNoteId = getItemNoteId(item)
-            if (itemNoteId === targetNoteId) {
-              return { ...item, position: normalizedPosition }
-            }
-          }
-          return item
-        }),
-      )
-
-      if (dataStore) {
-        try {
-          dataStore.update(storeKey, { position: normalizedPosition })
-        } catch (error) {
-          console.warn('[AnnotationCanvas] Failed to update dataStore for restore', error)
-        }
-      }
-
-      persistPanelUpdate({
-        panelId: 'main',
-        storeKey,
-        position: normalizedPosition,
-        coordinateSpace: 'world',
-      }).catch(error => {
-        console.warn('[AnnotationCanvas] Failed to persist panel during restore', error)
-      })
-
-      void updateMainPosition(targetNoteId, normalizedPosition).catch(error => {
-        console.error('[AnnotationCanvas] Failed to update workspace main position during restore', error)
-      })
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'restore_main_position',
-        metadata: { noteId: targetNoteId, position: normalizedPosition },
-      })
-
-      onMainOnlyLayoutHandled?.(targetNoteId)
-      centerOnPanel(storeKey)
-    },
-    [centerOnPanel, dataStore, getItemNoteId, onMainOnlyLayoutHandled, persistPanelUpdate, setCanvasItems, updateMainPosition],
-  )
+  const { handleRestoreMainPosition } = useMainPanelRestore({
+    setCanvasItems,
+    getItemNoteId,
+    dataStore,
+    persistPanelUpdate,
+    updateMainPosition,
+    onMainOnlyLayoutHandled,
+    centerOnPanel,
+  })
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
