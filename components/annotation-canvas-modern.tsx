@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
-import { createPortal } from "react-dom"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import type { DataStore } from "@/lib/data-store"
 import { IsolationProvider } from "@/lib/isolation/context"
@@ -18,7 +17,6 @@ import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
-import { StickyNoteOverlayPanel } from "./canvas/sticky-note-overlay-panel"
 import { CanvasItem, isPanel } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
@@ -59,6 +57,8 @@ import { usePanelCreationEvents } from "@/lib/hooks/annotation/use-panel-creatio
 import { usePanelCreationHandler } from "@/lib/hooks/annotation/use-panel-creation-handler"
 import { useMainPanelRestore } from "@/lib/hooks/annotation/use-main-panel-restore"
 import { useComponentCreationHandler } from "@/lib/hooks/annotation/use-component-creation-handler"
+import { useWorkspacePositionResolver } from "@/lib/hooks/annotation/use-workspace-position-resolver"
+import { useStickyNoteOverlayPanels } from "@/lib/hooks/annotation/use-sticky-note-overlay-panels"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -189,65 +189,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const isDefaultOffscreenPosition = useCallback((position: { x: number; y: number } | null | undefined) => {
     return isDefaultMainPosition(position)
   }, [])
-
-  const resolveWorkspacePosition = useCallback((targetNoteId: string): { x: number; y: number } | null => {
-    // CRITICAL FIX: Check workspace mainPosition FIRST (set by openWorkspaceNote)
-    // This ensures that newly computed viewport-centered positions override any stale cached positions
-    const workspaceEntry = workspaceNoteMap.get(targetNoteId)
-    if (workspaceEntry?.mainPosition && !isDefaultOffscreenPosition(workspaceEntry.mainPosition)) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'resolve_workspace_position_from_entry',
-        metadata: {
-          targetNoteId,
-          position: workspaceEntry.mainPosition,
-          source: 'workspaceEntry.mainPosition'
-        }
-      })
-      return workspaceEntry.mainPosition
-    }
-
-    const pending = getPendingPosition(targetNoteId)
-    if (pending && !isDefaultOffscreenPosition(pending)) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'resolve_workspace_position_from_pending',
-        metadata: {
-          targetNoteId,
-          position: pending,
-          source: 'pendingPosition'
-        }
-      })
-      return pending
-    }
-
-    const cached = getCachedPosition(targetNoteId)
-    if (cached && !isDefaultOffscreenPosition(cached)) {
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'resolve_workspace_position_from_cache',
-        metadata: {
-          targetNoteId,
-          position: cached,
-          source: 'cachedPosition'
-        }
-      })
-      return cached
-    }
-
-    debugLog({
-      component: 'AnnotationCanvas',
-      action: 'resolve_workspace_position_null',
-      metadata: {
-        targetNoteId,
-        source: 'none_found'
-      }
-    })
-
-    return null
-  }, [workspaceNoteMap, getPendingPosition, getCachedPosition, isDefaultOffscreenPosition])
-
-  const workspaceMainPosition = useMemo(() => resolveWorkspacePosition(noteId), [noteId, resolveWorkspacePosition])
+  const { resolveWorkspacePosition, workspaceMainPosition } = useWorkspacePositionResolver({
+    noteId,
+    workspaceNoteMap,
+    getPendingPosition,
+    getCachedPosition,
+    isDefaultOffscreenPosition,
+  })
   const getItemNoteId = useCallback((item: CanvasItem): string | null => {
     if (item.noteId) return item.noteId
     if (item.storeKey) {
@@ -618,6 +566,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     canvasItems,
     setCanvasItems,
   })
+  const { stickyNoteOverlayPortal } = useStickyNoteOverlayPanels({
+    stickyOverlayEl,
+    stickyNoteItems,
+    onClose: handleComponentClose,
+    onPositionChange: handleComponentPositionChange,
+  })
 
   const uniqueNoteIds = useMemo(
     () => Array.from(new Set(noteIds.filter((id): id is string => typeof id === 'string' && id.length > 0))),
@@ -962,18 +916,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           </div>
         </div>
 
-        {stickyOverlayEl && stickyNoteItems.length > 0 && createPortal(
-          stickyNoteItems.map(component => (
-            <StickyNoteOverlayPanel
-              key={component.id}
-              id={component.id}
-              position={component.position}
-              onClose={handleComponentClose}
-              onPositionChange={handleComponentPositionChange}
-            />
-          )),
-          stickyOverlayEl
-        )}
+        {stickyNoteOverlayPortal}
 
         {/* Annotation Toolbar - controlled by Actions button */}
         <AnnotationToolbar />
