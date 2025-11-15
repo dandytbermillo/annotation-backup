@@ -947,7 +947,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
   const hasPopups = popups.size > 0;
   const overlayInteractive = hasPopups && !isLocked;
-  const overlayStatusText = hydrationStatusLabel ?? (isLocked ? 'Workspace hydrating…' : null);
+  const overlayStatusText = !optimisticHydrationEnabled && isLocked ? 'Workspace hydrating…' : null;
   const showHydrationVeil = optimisticHydrationEnabled && hydrationVeilActive;
 
   const renderOverlayMinimap = () =>
