@@ -53,6 +53,7 @@ import { useWorkspacePreviewPortal } from "@/lib/hooks/annotation/use-workspace-
 import { useWorkspaceFloatingToolbar } from "@/lib/hooks/annotation/use-workspace-floating-toolbar"
 import { useWorkspaceOverlayProps } from "@/lib/hooks/annotation/use-workspace-overlay-props"
 import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-toolbar-props"
+import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -76,6 +77,9 @@ const DEFAULT_CAMERA: OverlayCameraState = { x: 0, y: 0, scale: 1 }
 
 const camerasEqual = (a: OverlayCameraState, b: OverlayCameraState) =>
   a.x === b.x && a.y === b.y && a.scale === b.scale
+
+const formatOverlaySyncLabel = (date: Date) =>
+  `Overlay synced at ${new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date)}`
 
 const DEFAULT_POPUP_WIDTH = 300
 const DEFAULT_POPUP_HEIGHT = 400
@@ -205,6 +209,10 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
   // Overlay popups state - persists independently of toolbar (like activeNoteId)
   const latestCameraRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
   const prevCameraForSaveRef = useRef<OverlayCameraState>(DEFAULT_CAMERA)
+  const overlayCameraFromUserRef = useRef<{ transform: OverlayCameraState; timestamp: number }>({
+    transform: DEFAULT_CAMERA,
+    timestamp: 0,
+  })
   const knowledgeBaseWorkspace = useKnowledgeBaseWorkspace()
   const {
     workspaceId: knowledgeBaseWorkspaceId,
@@ -222,8 +230,20 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
 
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isWorkspaceLayoutLoading, setIsWorkspaceLayoutLoading] = useState(false)
+  const [overlayStatusLabel, setOverlayStatusLabel] = useState<string | null>(null)
+  const [hydrationVeilActive, setHydrationVeilActive] = useState(false)
+  const hydrationVeilTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hasShownHydrationVeilRef = useRef(false)
   const workspacesLoadedRef = useRef(false)
   const lastDiagnosticsHashRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (hydrationVeilTimeoutRef.current) {
+        clearTimeout(hydrationVeilTimeoutRef.current)
+      }
+    }
+  }, [])
   const fetchNotePreview = useCallback(
     async (noteId: string) => {
       const response = await fetchWithKnowledgeBase(`/api/items/${noteId}`)
@@ -476,8 +496,60 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
 
   // Persistence state for overlay layout
   const overlayPersistenceEnabled = isOverlayPersistenceEnabled()
+  const overlayOptimisticHydrationEnabled = isOverlayOptimisticHydrationEnabled()
   const overlayPersistenceActive = overlayPersistenceEnabled && shouldLoadOverlay
   const shouldShowWorkspaceToggle = overlayPersistenceActive && shouldShowSidebar
+
+  useEffect(() => {
+    overlayCameraFromUserRef.current = { transform: DEFAULT_CAMERA, timestamp: 0 }
+    if (overlayOptimisticHydrationEnabled) {
+      setOverlayStatusLabel(null)
+    }
+  }, [currentWorkspaceId, overlayOptimisticHydrationEnabled])
+
+  const overlayPopupCount = overlayPopups.length
+
+  useEffect(() => {
+    if (!overlayOptimisticHydrationEnabled || !overlayPersistenceActive) {
+      setOverlayStatusLabel(null)
+      setHydrationVeilActive(false)
+      if (hydrationVeilTimeoutRef.current) {
+        clearTimeout(hydrationVeilTimeoutRef.current)
+        hydrationVeilTimeoutRef.current = null
+      }
+      return
+    }
+
+    if (isWorkspaceLayoutLoading) {
+      setOverlayStatusLabel("Hydrating overlay…")
+      if (!hasShownHydrationVeilRef.current && overlayPopupCount === 0) {
+        setHydrationVeilActive(true)
+        if (hydrationVeilTimeoutRef.current) {
+          clearTimeout(hydrationVeilTimeoutRef.current)
+        }
+        hydrationVeilTimeoutRef.current = setTimeout(() => {
+          setHydrationVeilActive(false)
+          hydrationVeilTimeoutRef.current = null
+          hasShownHydrationVeilRef.current = true
+        }, 200)
+      }
+      return
+    }
+
+    setHydrationVeilActive(false)
+    if (hydrationVeilTimeoutRef.current) {
+      clearTimeout(hydrationVeilTimeoutRef.current)
+      hydrationVeilTimeoutRef.current = null
+      hasShownHydrationVeilRef.current = true
+    }
+
+    setOverlayStatusLabel(formatOverlaySyncLabel(new Date()))
+  }, [
+    overlayOptimisticHydrationEnabled,
+    overlayPersistenceActive,
+    isWorkspaceLayoutLoading,
+    overlayPopupCount,
+  ])
 
   const {
     overlayAdapterRef,
@@ -488,6 +560,9 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     saveInFlightRef,
     saveTimeoutRef,
     isInitialLoadRef,
+    layoutLoadStartedAtRef,
+    hydrationRunIdRef,
+    layoutDirtyRef,
   } = useOverlayPersistenceRefs()
 
   const { applyOverlayLayout } = useOverlayLayoutPersistence({
@@ -495,6 +570,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     currentWorkspaceId,
     overlayPopups,
     overlayPopupsLength: overlayPopups.length,
+    optimisticHydrationEnabled: overlayOptimisticHydrationEnabled,
     setOverlayPopups,
     fetchGlobalFolder,
     fetchGlobalChildren,
@@ -515,7 +591,55 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     prevCameraForSaveRef,
     setIsWorkspaceLayoutLoading,
     defaultCamera: DEFAULT_CAMERA,
+    overlayCameraFromUserRef,
+    layoutLoadStartedAtRef,
+    hydrationRunIdRef,
+    layoutDirtyRef,
   })
+
+  const hydrationUserDragLoggedRef = useRef(false)
+
+  const handleOverlayUserCameraTransform = useCallback(
+    (snapshot: { transform: OverlayCameraState; timestamp: number }) => {
+      overlayCameraFromUserRef.current = snapshot
+      if (!overlayOptimisticHydrationEnabled) {
+        return
+      }
+      if (!isWorkspaceLayoutLoading) {
+        return
+      }
+      layoutDirtyRef.current = true
+      if (hydrationUserDragLoggedRef.current) {
+        return
+      }
+      hydrationUserDragLoggedRef.current = true
+      const startedAt = layoutLoadStartedAtRef.current
+      const delta =
+        startedAt > 0 ? Math.max(0, snapshot.timestamp - startedAt) : snapshot.timestamp
+      void debugLog({
+        component: "PopupOverlay",
+        action: "overlay_layout_user_drag_during_hydrate",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          firstDragMsSinceStart: delta,
+        },
+      })
+    },
+    [
+      overlayOptimisticHydrationEnabled,
+      isWorkspaceLayoutLoading,
+      layoutDirtyRef,
+      layoutLoadStartedAtRef,
+      currentWorkspaceId,
+      debugLog,
+    ],
+  )
+
+  useEffect(() => {
+    if (!isWorkspaceLayoutLoading) {
+      hydrationUserDragLoggedRef.current = false
+    }
+  }, [isWorkspaceLayoutLoading])
 
   // Debug: Log persistence state on mount
   useEffect(() => {
@@ -730,6 +854,7 @@ const initialWorkspaceSyncRef = useRef(false)
     scheduleLayoutSave,
     saveTimeoutRef,
     pendingLayoutRef,
+    layoutDirtyRef,
   })
 
   const {
@@ -777,6 +902,8 @@ const initialWorkspaceSyncRef = useRef(false)
     ? 'Hydrating...'
     : isWorkspaceListLoading
     ? 'Loading...'
+    : overlayOptimisticHydrationEnabled && overlayStatusLabel
+    ? overlayStatusLabel
     : currentWorkspaceName
 
   useEffect(() => {
@@ -1151,6 +1278,10 @@ const initialWorkspaceSyncRef = useRef(false)
     isPopupLayerActive,
     backdropStyle,
     currentWorkspaceId,
+    optimisticHydrationEnabled: overlayOptimisticHydrationEnabled,
+    hydrationStatusLabel: overlayStatusLabel,
+    hydrationVeilActive,
+    onUserCameraTransform: handleOverlayUserCameraTransform,
     knowledgeBaseWorkspace,
     moveCascadeState,
     onToggleMoveCascade: handleToggleMoveCascade,

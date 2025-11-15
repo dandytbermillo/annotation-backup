@@ -15,6 +15,9 @@ type OverlayPersistenceRefs = {
   saveInFlightRef: MutableRefObject<boolean>
   saveTimeoutRef: MutableRefObject<NodeJS.Timeout | null>
   isInitialLoadRef: MutableRefObject<boolean>
+  layoutLoadStartedAtRef: MutableRefObject<number>
+  hydrationRunIdRef: MutableRefObject<string | null>
+  layoutDirtyRef: MutableRefObject<boolean>
 }
 
 export function useOverlayPersistenceRefs(): OverlayPersistenceRefs {
@@ -26,6 +29,9 @@ export function useOverlayPersistenceRefs(): OverlayPersistenceRefs {
   const saveInFlightRef = useRef(false)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isInitialLoadRef = useRef(false)
+  const layoutLoadStartedAtRef = useRef(0)
+  const hydrationRunIdRef = useRef<string | null>(null)
+  const layoutDirtyRef = useRef(false)
 
   return {
     overlayAdapterRef,
@@ -36,5 +42,8 @@ export function useOverlayPersistenceRefs(): OverlayPersistenceRefs {
     saveInFlightRef,
     saveTimeoutRef,
     isInitialLoadRef,
+    layoutLoadStartedAtRef,
+    hydrationRunIdRef,
+    layoutDirtyRef,
   }
 }

@@ -18,6 +18,7 @@ type UseOverlayLayoutPersistenceOptions = {
   currentWorkspaceId: string | null
   overlayPopups: OverlayPopup[]
   overlayPopupsLength: number
+  optimisticHydrationEnabled: boolean
   setOverlayPopups: Dispatch<SetStateAction<OverlayPopup[]>>
   fetchGlobalFolder: (folderId: string) => Promise<any | null>
   fetchGlobalChildren: (folderId: string) => Promise<any[] | null>
@@ -38,10 +39,14 @@ type UseOverlayLayoutPersistenceOptions = {
   prevCameraForSaveRef: MutableRefObject<OverlayCameraState>
   setIsWorkspaceLayoutLoading: Dispatch<SetStateAction<boolean>>
   defaultCamera: OverlayCameraState
+  overlayCameraFromUserRef: MutableRefObject<{ transform: OverlayCameraState; timestamp: number }>
+  layoutLoadStartedAtRef: MutableRefObject<number>
+  hydrationRunIdRef: MutableRefObject<string | null>
+  layoutDirtyRef: MutableRefObject<boolean>
 }
 
 type UseOverlayLayoutPersistenceResult = {
-  applyOverlayLayout: (layout: OverlayLayoutPayload) => void
+  applyOverlayLayout: (layout: OverlayLayoutPayload, options?: { reason?: "hydrate" | "conflict" }) => void
 }
 
 export function useOverlayLayoutPersistence({
@@ -49,6 +54,7 @@ export function useOverlayLayoutPersistence({
   currentWorkspaceId,
   overlayPopups,
   overlayPopupsLength,
+  optimisticHydrationEnabled,
   setOverlayPopups,
   fetchGlobalFolder,
   fetchGlobalChildren,
@@ -69,14 +75,23 @@ export function useOverlayLayoutPersistence({
   prevCameraForSaveRef,
   setIsWorkspaceLayoutLoading,
   defaultCamera,
+  overlayCameraFromUserRef,
+  layoutLoadStartedAtRef,
+  hydrationRunIdRef,
+  layoutDirtyRef,
 }: UseOverlayLayoutPersistenceOptions): UseOverlayLayoutPersistenceResult {
   const [pendingDiagnostics, setPendingDiagnostics] = useState<OverlayLayoutDiagnostics | null>(null)
   const diagnosticsRef = useRef<OverlayLayoutDiagnostics | null>(null)
   const diagnosticsHashRef = useRef<string | null>(null)
+  const overlayPopupsRef = useRef(overlayPopups)
 
   useEffect(() => {
     diagnosticsRef.current = pendingDiagnostics
   }, [pendingDiagnostics])
+
+  useEffect(() => {
+    overlayPopupsRef.current = overlayPopups
+  }, [overlayPopups])
 
   const handleRepairMismatchedPopups = useCallback(() => {
     const diagnostics = diagnosticsRef.current
@@ -135,7 +150,8 @@ export function useOverlayLayoutPersistence({
   }, [handleRepairMismatchedPopups])
 
   const applyOverlayLayout = useCallback(
-    (layout: OverlayLayoutPayload) => {
+    (layout: OverlayLayoutPayload, options?: { reason?: "hydrate" | "conflict" }) => {
+      const reason = options?.reason ?? "hydrate"
       const diagnostics = layout.diagnostics ?? null
       const mismatchCount = diagnostics?.workspaceMismatches?.length ?? 0
       const missingCount = diagnostics?.missingFolders?.length ?? 0
@@ -214,128 +230,216 @@ export function useOverlayLayoutPersistence({
       }
 
       const savedCamera = layout.camera ?? defaultCamera
+      const shouldEvaluateOptimisticCamera = optimisticHydrationEnabled && reason === "hydrate"
+      let cameraApplied = true
+
       if (layerContext?.setTransform) {
         const currentTransform = layerContext.transforms.popups || defaultCamera
         const camerasEqual =
           currentTransform.x === savedCamera.x &&
           currentTransform.y === savedCamera.y &&
           currentTransform.scale === savedCamera.scale
-        if (!camerasEqual) {
+
+        const userMovedDuringHydration =
+          shouldEvaluateOptimisticCamera &&
+          overlayCameraFromUserRef.current.timestamp > 0 &&
+          overlayCameraFromUserRef.current.timestamp >= layoutLoadStartedAtRef.current
+
+        if (userMovedDuringHydration) {
+          cameraApplied = false
+        }
+
+        if (cameraApplied && !camerasEqual) {
           layerContext.setTransform("popups", savedCamera)
         }
+
+        if (!cameraApplied) {
+          layoutDirtyRef.current = true
+        }
       }
-      latestCameraRef.current = savedCamera
-      prevCameraForSaveRef.current = savedCamera
+
+      const activeCamera =
+        cameraApplied || !layerContext
+          ? savedCamera
+          : layerContext.transforms.popups || overlayCameraFromUserRef.current.transform || latestCameraRef.current
+
+      latestCameraRef.current = activeCamera
+      prevCameraForSaveRef.current = activeCamera
+      overlayCameraFromUserRef.current = {
+        transform: activeCamera,
+        timestamp: overlayCameraFromUserRef.current.timestamp,
+      }
+
+      if (optimisticHydrationEnabled) {
+        void debugLog({
+          component: "PopupOverlay",
+          action: "overlay_camera_applied",
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            applied: cameraApplied,
+            reason,
+          },
+        })
+      }
+
       const { popups: hydratedPopups, hash: coreHash } = buildHydratedOverlayLayout(layout, savedCamera)
       lastSavedLayoutHashRef.current = coreHash
 
+      let mergedPopups: OverlayPopup[] = []
       if (hydratedPopups.length === 0) {
         setOverlayPopups([])
-        return
-      }
+      } else {
+        const normalizedPopups = (hydratedPopups as OverlayPopup[]).map((popup) => ({
+          ...popup,
+          sizeMode:
+            popup.sizeMode ??
+            (Number.isFinite(popup.width) || Number.isFinite(popup.height) ? "auto" : "default"),
+        }))
 
-      const restoredPopups = (hydratedPopups as OverlayPopup[]).map((popup) => ({
-        ...popup,
-        sizeMode:
-          popup.sizeMode ??
-          (Number.isFinite(popup.width) || Number.isFinite(popup.height) ? "auto" : "default"),
-      }))
-      setOverlayPopups(restoredPopups)
+        mergedPopups = normalizedPopups
+        if (optimisticHydrationEnabled) {
+          const existingById = new Map(overlayPopupsRef.current.map((popup) => [popup.id, popup]))
+          mergedPopups = normalizedPopups.map((popup) => {
+            const existing = existingById.get(popup.id)
+            if (!existing) return popup
 
-      const popupsNeedingFetch = restoredPopups.filter((popup) => popup.isLoading && popup.folderId)
-      if (popupsNeedingFetch.length === 0) {
-        return
-      }
-
-      popupsNeedingFetch.forEach(async (popup) => {
-        if (!popup.folderId) return
-
-        try {
-          const responseData = await fetchGlobalFolder(popup.folderId)
-          if (!responseData) return
-          const folderData = responseData.item || responseData
-
-          const cachedColor = popup.folder?.color
-          let effectiveColor = folderData.color || cachedColor
-
-          if (!effectiveColor) {
-            const initialParentId = folderData.parentId ?? folderData.parent_id
-            if (initialParentId) {
-              try {
-                let currentParentId = initialParentId
-                let depth = 0
-                const maxDepth = 10
-
-                while (currentParentId && !effectiveColor && depth < maxDepth) {
-                  const parentResponse = await fetchWithKnowledgeBase(`/api/items/${currentParentId}`)
-                  if (!parentResponse.ok) break
-
-                  const parentData = await parentResponse.json()
-                  const parent = parentData.item || parentData
-
-                  if (parent.color) {
-                    effectiveColor = parent.color
-                    break
-                  }
-
-                  currentParentId = parent.parentId ?? parent.parent_id
-                  depth++
-                }
-              } catch (error) {
-                console.warn("[Popup Restore] Failed to fetch ancestor color:", error)
+            if (existing.isDragging) {
+              return {
+                ...popup,
+                canvasPosition: existing.canvasPosition ?? popup.canvasPosition,
+                position: (existing as any).position ?? (popup as any).position,
+                width: existing.width ?? popup.width,
+                height: existing.height ?? popup.height,
+                isDragging: true,
               }
             }
-          }
 
-          const childItems = await fetchGlobalChildren(popup.folderId)
-          if (!childItems) return
-          const children = childItems.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            type: item.type,
-            icon: item.icon || (item.type === "folder" ? "📁" : "📄"),
-            color: item.color,
-            path: item.path,
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt,
-            hasChildren: item.type === "folder",
-            level: popup.level + 1,
-            children: [],
-            parentId: item.parentId ?? item.parent_id,
-          }))
+            const unchanged =
+              existing.canvasPosition?.x === popup.canvasPosition?.x &&
+              existing.canvasPosition?.y === popup.canvasPosition?.y &&
+              existing.width === popup.width &&
+              existing.height === popup.height
 
-          setOverlayPopups((prev) =>
-            prev.map((p) => {
-              if (p.id !== popup.id) return p
-              return {
-                ...p,
-                folder: {
-                  id: folderData.id,
-                  name: folderData.name,
-                  type: "folder" as const,
-                  level: popup.level,
-                  color: effectiveColor,
-                  path: folderData.path,
-                  children,
-                },
-                children,
-                isLoading: false,
-              }
-            }),
-          )
-        } catch (error) {
-          if (isDebugEnabled()) {
-            debugLog({
-              component: "AnnotationApp",
-              action: "folder_load_failed",
-              metadata: {
-                folderId: popup.folderId,
-                error: error instanceof Error ? error.message : "Unknown error",
-              },
-            })
-          }
+            return unchanged ? existing : popup
+          })
         }
-      })
+
+        setOverlayPopups(mergedPopups)
+
+        const popupsNeedingFetch = mergedPopups.filter((popup) => popup.isLoading && popup.folderId)
+
+        popupsNeedingFetch.forEach(async (popup) => {
+          if (!popup.folderId) return
+
+          try {
+            const responseData = await fetchGlobalFolder(popup.folderId)
+            if (!responseData) return
+            const folderData = responseData.item || responseData
+
+            const cachedColor = popup.folder?.color
+            let effectiveColor = folderData.color || cachedColor
+
+            if (!effectiveColor) {
+              const initialParentId = folderData.parentId ?? folderData.parent_id
+              if (initialParentId) {
+                try {
+                  let currentParentId = initialParentId
+                  let depth = 0
+                  const maxDepth = 10
+
+                  while (currentParentId && !effectiveColor && depth < maxDepth) {
+                    const parentResponse = await fetchWithKnowledgeBase(`/api/items/${currentParentId}`)
+                    if (!parentResponse.ok) break
+
+                    const parentData = await parentResponse.json()
+                    const parent = parentData.item || parentData
+
+                    if (parent.color) {
+                      effectiveColor = parent.color
+                      break
+                    }
+
+                    currentParentId = parent.parentId ?? parent.parent_id
+                    depth++
+                  }
+                } catch (error) {
+                  console.warn("[Popup Restore] Failed to fetch ancestor color:", error)
+                }
+              }
+            }
+
+            const childItems = await fetchGlobalChildren(popup.folderId)
+            if (!childItems) return
+            const children = childItems.map((item: any) => ({
+              id: item.id,
+              name: item.name,
+              type: item.type,
+              icon: item.icon || (item.type === "folder" ? "📁" : "📄"),
+              color: item.color,
+              path: item.path,
+              createdAt: item.createdAt,
+              updatedAt: item.updatedAt,
+              hasChildren: item.type === "folder",
+              level: popup.level + 1,
+              children: [],
+              parentId: item.parentId ?? item.parent_id,
+            }))
+
+            setOverlayPopups((prev) =>
+              prev.map((p) => {
+                if (p.id !== popup.id) return p
+                return {
+                  ...p,
+                  folder: {
+                    id: folderData.id,
+                    name: folderData.name,
+                    type: "folder" as const,
+                    level: popup.level,
+                    color: effectiveColor,
+                    path: folderData.path,
+                    children,
+                  },
+                  children,
+                  isLoading: false,
+                }
+              }),
+            )
+          } catch (error) {
+            if (isDebugEnabled()) {
+              debugLog({
+                component: "AnnotationApp",
+                action: "folder_load_failed",
+                metadata: {
+                  folderId: popup.folderId,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                },
+              })
+            }
+          }
+        })
+      }
+
+      if (optimisticHydrationEnabled && reason === "hydrate") {
+        const startedAt = layoutLoadStartedAtRef.current
+        const durationMs =
+          startedAt > 0
+            ? Math.max(
+                0,
+                (typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt,
+              )
+            : 0
+        layoutLoadStartedAtRef.current = 0
+        void debugLog({
+          component: "PopupOverlay",
+          action: "overlay_layout_hydrate_finish",
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            durationMs,
+            cameraApplied,
+            skippedReason: cameraApplied ? undefined : "user_moved",
+          },
+        })
+      }
     },
     [
       currentWorkspaceId,
@@ -349,10 +453,15 @@ export function useOverlayLayoutPersistence({
       lastSavedLayoutHashRef,
       layerContext,
       latestCameraRef,
+      optimisticHydrationEnabled,
+      overlayCameraFromUserRef,
       pendingDiagnostics,
       prevCameraForSaveRef,
       setOverlayPopups,
       toast,
+      layoutDirtyRef,
+      layoutLoadStartedAtRef,
+      hydrationRunIdRef,
     ],
   )
 
@@ -385,12 +494,26 @@ export function useOverlayLayoutPersistence({
     if (!adapter) return
 
     let cancelled = false
+    const hydrationId = `${currentWorkspaceId ?? "default"}-${Date.now()}`
+    hydrationRunIdRef.current = hydrationId
+    layoutLoadStartedAtRef.current = typeof performance !== "undefined" ? performance.now() : Date.now()
     setIsWorkspaceLayoutLoading(true)
+
+    if (optimisticHydrationEnabled) {
+      void debugLog({
+        component: "PopupOverlay",
+        action: "overlay_layout_hydrate_start",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          beganAt: new Date().toISOString(),
+        },
+      })
+    }
 
     void (async () => {
       try {
         const envelope = await adapter.loadLayout()
-        if (cancelled) return
+        if (cancelled || hydrationRunIdRef.current !== hydrationId) return
 
         if (!envelope) {
           layoutRevisionRef.current = null
@@ -409,9 +532,9 @@ export function useOverlayLayoutPersistence({
         })
 
         isInitialLoadRef.current = true
-        applyOverlayLayout(envelope.layout)
+        applyOverlayLayout(envelope.layout, { reason: "hydrate" })
       } catch (error) {
-        if (!cancelled) {
+        if (!cancelled && hydrationRunIdRef.current === hydrationId) {
           console.error("[AnnotationApp] Failed to load overlay layout:", error)
           layoutLoadedRef.current = true
           toast({
@@ -421,8 +544,10 @@ export function useOverlayLayoutPersistence({
           })
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && hydrationRunIdRef.current === hydrationId) {
           setIsWorkspaceLayoutLoading(false)
+          hydrationRunIdRef.current = null
+          layoutLoadStartedAtRef.current = 0
         }
       }
     })()
@@ -437,11 +562,14 @@ export function useOverlayLayoutPersistence({
     layoutRevisionRef,
     overlayAdapterRef,
     overlayPersistenceActive,
+    optimisticHydrationEnabled,
     setIsWorkspaceLayoutLoading,
     setOverlayPopups,
     toast,
     lastSavedLayoutHashRef,
     isInitialLoadRef,
+    layoutLoadStartedAtRef,
+    hydrationRunIdRef,
   ])
 
   useEffect(() => {

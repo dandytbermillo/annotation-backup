@@ -37,6 +37,7 @@ import { useOverlayViewport } from './popup-overlay/hooks/useOverlayViewport';
 import { useConnectionLines } from './popup-overlay/hooks/useConnectionLines';
 import { usePopupMeasurements } from './popup-overlay/hooks/usePopupMeasurements';
 import type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData } from './popup-overlay/types';
+import type { OverlayCameraState } from '@/lib/types/overlay-layout';
 export type { PreviewChildEntry, PreviewEntry, PreviewStatus, PopupChildNode, PopupData };
 
 interface PopupOverlayProps {
@@ -79,6 +80,10 @@ interface PopupOverlayProps {
   activeMoveCascadeParentId?: string | null;
   moveCascadeChildIds?: string[];
   onToggleMoveCascade?: (popupId: string) => void;
+  hydrationStatusLabel?: string | null;
+  hydrationVeilActive?: boolean;
+  optimisticHydrationEnabled?: boolean;
+  onUserCameraTransform?: (snapshot: { transform: OverlayCameraState; timestamp: number }) => void;
 }
 
 /**
@@ -113,6 +118,10 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   activeMoveCascadeParentId = null,
   moveCascadeChildIds = [],
   onToggleMoveCascade,
+  hydrationStatusLabel = null,
+  hydrationVeilActive = false,
+  optimisticHydrationEnabled = false,
+  onUserCameraTransform,
 }) => {
   const {
     workspaceId: knowledgeBaseWorkspaceId,
@@ -717,6 +726,15 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const [isOverlayHovered, setIsOverlayHovered] = useState(false);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  useEffect(() => {
+    if (!debugLoggingEnabled) return;
+    const stack = new Error().stack?.split('\n').slice(1, 4).join('\n');
+    debugLog('PopupOverlay', 'overlay_lock_state_changed', {
+      isLocked,
+      stack,
+    });
+  }, [debugLog, debugLoggingEnabled, isLocked]);
+
   // Check if the pointer event is on empty space (not on interactive elements)
   const isOverlayEmptySpace = useCallback((event: React.PointerEvent) => {
     const target = event.target as HTMLElement;
@@ -745,6 +763,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
     isOverlayEmptySpace,
     overlayFullSpanEnabled,
     tracePointerLog,
+    onUserCameraTransform,
   });
 
   const {
@@ -928,6 +947,8 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
   const overlayBox = overlayBounds ?? { top: 0, left: 0, width: typeof window !== 'undefined' ? window.innerWidth : 0, height: typeof window !== 'undefined' ? window.innerHeight : 0 };
   const hasPopups = popups.size > 0;
   const overlayInteractive = hasPopups && !isLocked;
+  const overlayStatusText = hydrationStatusLabel ?? (isLocked ? 'Workspace hydrating…' : null);
+  const showHydrationVeil = optimisticHydrationEnabled && hydrationVeilActive;
 
   const renderOverlayMinimap = () =>
     overlayMinimapEnabled ? (
@@ -947,7 +968,7 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       className={`${isPanning ? 'popup-overlay-panning' : ''}`}
       data-panning={isPanning.toString()}
       data-locked={isLocked ? 'true' : 'false'}
-      aria-busy={isLocked}
+      aria-busy={Boolean(overlayStatusText)}
       style={{
         position: 'fixed',
         top: overlayBox.top,
@@ -982,13 +1003,16 @@ export const PopupOverlay: React.FC<PopupOverlayProps> = ({
       }}
       onContextMenu={onContextMenu}
     >
-      {isLocked && (
+      {overlayStatusText && (
         <div className="popup-overlay-lock-banner">
           <div className="popup-overlay-lock-pill">
             <span className="popup-overlay-lock-dot" />
-            Workspace hydrating…
+            {overlayStatusText}
           </div>
         </div>
+      )}
+      {showHydrationVeil && (
+        <div className="absolute inset-0 pointer-events-none bg-white/40 dark:bg-slate-900/30 transition-opacity duration-200" />
       )}
       {/* Transform container - applies pan/zoom to all children */}
       <div ref={containerRef} className="absolute inset-0" style={containerStyle}>

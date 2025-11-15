@@ -3,6 +3,7 @@ import type { MouseEvent } from "react"
 
 import type { KnowledgeBaseWorkspaceApi } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
 import type { MoveCascadeState } from "@/lib/hooks/annotation/use-popup-overlay-state"
+import type { OverlayCameraState } from "@/lib/types/overlay-layout"
 
 type AnyHandler = (...args: any[]) => any
 
@@ -32,6 +33,10 @@ type UseWorkspaceOverlayPropsOptions = {
   isPopupLayerActive: boolean
   backdropStyle: string
   currentWorkspaceId: string | null
+  optimisticHydrationEnabled: boolean
+  hydrationStatusLabel: string | null
+  hydrationVeilActive: boolean
+  onUserCameraTransform: (snapshot: { transform: OverlayCameraState; timestamp: number }) => void
   knowledgeBaseWorkspace: KnowledgeBaseWorkspaceApi
   moveCascadeState: MoveCascadeState
   onToggleMoveCascade: AnyHandler
@@ -64,6 +69,10 @@ export function useWorkspaceOverlayProps({
   isPopupLayerActive,
   backdropStyle,
   currentWorkspaceId,
+  optimisticHydrationEnabled,
+  hydrationStatusLabel,
+  hydrationVeilActive,
+  onUserCameraTransform,
   knowledgeBaseWorkspace,
   moveCascadeState,
   onToggleMoveCascade,
@@ -92,10 +101,14 @@ export function useWorkspaceOverlayProps({
       onContextMenu,
       onPopupPositionChange,
       onResizePopup,
-      isLocked: isWorkspaceLayoutLoading,
+      isLocked: optimisticHydrationEnabled ? false : isWorkspaceLayoutLoading,
       sidebarOpen: isPopupLayerActive,
       backdropStyle,
       workspaceId: currentWorkspaceId,
+      optimisticHydrationEnabled,
+      hydrationStatusLabel,
+      hydrationVeilActive,
+      onUserCameraTransform,
       knowledgeBaseWorkspace,
       activeMoveCascadeParentId: moveCascadeState.parentId,
       moveCascadeChildIds: moveCascadeState.childIds,
@@ -112,6 +125,9 @@ export function useWorkspaceOverlayProps({
       isPopupLayerActive,
       isWorkspaceLayoutLoading,
       knowledgeBaseWorkspace,
+      hydrationStatusLabel,
+      hydrationVeilActive,
+      optimisticHydrationEnabled,
       moveCascadeState,
       onBulkMove,
       onCancelClose,
@@ -130,6 +146,7 @@ export function useWorkspaceOverlayProps({
       onPopupPositionChange,
       onResizePopup,
       onSelectNote,
+      onUserCameraTransform,
       onDeleteSelected,
       onToggleMoveCascade,
       onTogglePin,

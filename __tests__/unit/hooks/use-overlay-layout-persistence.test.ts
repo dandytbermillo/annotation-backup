@@ -74,12 +74,21 @@ describe('useOverlayLayoutPersistence', () => {
     const isInitialLoadRef = createRef(false)
     const latestCameraRef = createRef<OverlayCameraState>(DEFAULT_CAMERA)
     const prevCameraForSaveRef = createRef<OverlayCameraState>(DEFAULT_CAMERA)
+    const overlayCameraFromUserRef = createRef<{ transform: OverlayCameraState; timestamp: number }>({
+      transform: DEFAULT_CAMERA,
+      timestamp: 0,
+    })
+    const layoutLoadStartedAtRef = createRef(0)
+    const hydrationRunIdRef = createRef<string | null>(null)
+    const layoutDirtyRef = createRef(false)
 
     const { result } = renderHook(() =>
       useOverlayLayoutPersistence({
         overlayPersistenceActive: false,
         currentWorkspaceId: 'workspace-1',
+        overlayPopups: stateRef.current,
         overlayPopupsLength: 0,
+        optimisticHydrationEnabled: false,
         setOverlayPopups: setter,
         fetchGlobalFolder,
         fetchGlobalChildren,
@@ -100,6 +109,10 @@ describe('useOverlayLayoutPersistence', () => {
         prevCameraForSaveRef,
         setIsWorkspaceLayoutLoading: jest.fn(),
         defaultCamera: DEFAULT_CAMERA,
+        overlayCameraFromUserRef,
+        layoutLoadStartedAtRef,
+        hydrationRunIdRef,
+        layoutDirtyRef,
       }),
     )
 
@@ -158,5 +171,148 @@ describe('useOverlayLayoutPersistence', () => {
 
     expect(layerContext.setTransform).toHaveBeenCalledWith('popups', layout.camera)
     expect(lastSavedLayoutHashRef.current).not.toBeNull()
+  })
+
+  it('applies saved camera when no user drag occurred during hydration', async () => {
+    const { stateRef, setter } = createOverlaySetter()
+    const layerContext = {
+      setTransform: jest.fn(),
+      transforms: { popups: DEFAULT_CAMERA },
+      activeLayer: 'popups',
+    } as unknown as LayerContextValue
+
+    const refs = {
+      overlayAdapterRef: createRef<OverlayLayoutAdapter | null>(null),
+      layoutLoadedRef: createRef(false),
+      layoutRevisionRef: createRef<string | null>(null),
+      lastSavedLayoutHashRef: createRef<string | null>(null),
+      pendingLayoutRef: createRef<PendingSnapshot | null>(null),
+      saveInFlightRef: createRef(false),
+      saveTimeoutRef: createRef<NodeJS.Timeout | null>(null),
+      isInitialLoadRef: createRef(false),
+      latestCameraRef: createRef<OverlayCameraState>(DEFAULT_CAMERA),
+      prevCameraForSaveRef: createRef<OverlayCameraState>(DEFAULT_CAMERA),
+      overlayCameraFromUserRef: createRef<{ transform: OverlayCameraState; timestamp: number }>({
+        transform: DEFAULT_CAMERA,
+        timestamp: 0,
+      }),
+      layoutLoadStartedAtRef: createRef(0),
+      hydrationRunIdRef: createRef<string | null>(null),
+      layoutDirtyRef: createRef(false),
+    }
+
+    const debugLog = jest.fn()
+    const { result } = renderHook(() =>
+      useOverlayLayoutPersistence({
+        overlayPersistenceActive: false,
+        currentWorkspaceId: 'workspace-1',
+        overlayPopups: stateRef.current,
+        overlayPopupsLength: 0,
+        optimisticHydrationEnabled: true,
+        setOverlayPopups: setter,
+        fetchGlobalFolder: jest.fn(),
+        fetchGlobalChildren: jest.fn(),
+        fetchWithKnowledgeBase: jest.fn(),
+        toast: jest.fn() as unknown as typeof ToastFn,
+        layerContext,
+        debugLog,
+        isDebugEnabled: () => false,
+        ...refs,
+        setIsWorkspaceLayoutLoading: jest.fn(),
+        defaultCamera: DEFAULT_CAMERA,
+      }),
+    )
+
+    await act(async () => {
+      result.current.applyOverlayLayout({
+        schemaVersion: '2.2.0',
+        popups: [],
+        inspectors: [],
+        lastSavedAt: new Date().toISOString(),
+        camera: { x: 25, y: 10, scale: 1.5 },
+      })
+    })
+
+    expect(layerContext.setTransform).toHaveBeenCalledWith('popups', { x: 25, y: 10, scale: 1.5 })
+    expect(refs.layoutDirtyRef.current).toBe(false)
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'overlay_camera_applied',
+        metadata: expect.objectContaining({ applied: true }),
+      }),
+    )
+  })
+
+  it('skips saved camera when user drag timestamp beats hydration start', async () => {
+    const { stateRef, setter } = createOverlaySetter()
+    const layerContext = {
+      setTransform: jest.fn(),
+      transforms: { popups: { x: 5, y: 5, scale: 1 } },
+      activeLayer: 'popups',
+    } as unknown as LayerContextValue
+
+    const overlayCameraFromUserRef = createRef<{ transform: OverlayCameraState; timestamp: number }>({
+      transform: { x: 80, y: 40, scale: 1.1 },
+      timestamp: 500,
+    })
+
+    const refs = {
+      overlayAdapterRef: createRef<OverlayLayoutAdapter | null>(null),
+      layoutLoadedRef: createRef(false),
+      layoutRevisionRef: createRef<string | null>(null),
+      lastSavedLayoutHashRef: createRef<string | null>(null),
+      pendingLayoutRef: createRef<PendingSnapshot | null>(null),
+      saveInFlightRef: createRef(false),
+      saveTimeoutRef: createRef<NodeJS.Timeout | null>(null),
+      isInitialLoadRef: createRef(false),
+      latestCameraRef: createRef<OverlayCameraState>(DEFAULT_CAMERA),
+      prevCameraForSaveRef: createRef<OverlayCameraState>(DEFAULT_CAMERA),
+      layoutLoadStartedAtRef: createRef(100),
+      hydrationRunIdRef: createRef<string | null>(null),
+      layoutDirtyRef: createRef(false),
+    }
+
+    const debugLog = jest.fn()
+
+    const { result } = renderHook(() =>
+      useOverlayLayoutPersistence({
+        overlayPersistenceActive: false,
+        currentWorkspaceId: 'workspace-1',
+        overlayPopups: stateRef.current,
+        overlayPopupsLength: 0,
+        optimisticHydrationEnabled: true,
+        setOverlayPopups: setter,
+        fetchGlobalFolder: jest.fn(),
+        fetchGlobalChildren: jest.fn(),
+        fetchWithKnowledgeBase: jest.fn(),
+        toast: jest.fn() as unknown as typeof ToastFn,
+        layerContext,
+        debugLog,
+        isDebugEnabled: () => false,
+        overlayCameraFromUserRef,
+        ...refs,
+        setIsWorkspaceLayoutLoading: jest.fn(),
+        defaultCamera: DEFAULT_CAMERA,
+      }),
+    )
+
+    await act(async () => {
+      result.current.applyOverlayLayout({
+        schemaVersion: '2.2.0',
+        popups: [],
+        inspectors: [],
+        lastSavedAt: new Date().toISOString(),
+        camera: { x: -10, y: -20, scale: 2 },
+      })
+    })
+
+    expect(layerContext.setTransform).not.toHaveBeenCalled()
+    expect(refs.layoutDirtyRef.current).toBe(true)
+    expect(debugLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'overlay_camera_applied',
+        metadata: expect.objectContaining({ applied: false }),
+      }),
+    )
   })
 })

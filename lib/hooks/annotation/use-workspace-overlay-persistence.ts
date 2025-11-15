@@ -29,6 +29,7 @@ export type UseWorkspaceOverlayPersistenceOptions = {
   scheduleLayoutSave: (immediate: boolean) => void
   saveTimeoutRef: MutableRefObject<NodeJS.Timeout | null>
   pendingLayoutRef: MutableRefObject<{ payload: OverlayLayoutPayload; hash: string } | null>
+  layoutDirtyRef: MutableRefObject<boolean>
 }
 
 export function useWorkspaceOverlayPersistence({
@@ -44,6 +45,7 @@ export function useWorkspaceOverlayPersistence({
   scheduleLayoutSave,
   saveTimeoutRef,
   pendingLayoutRef,
+  layoutDirtyRef,
 }: UseWorkspaceOverlayPersistenceOptions) {
   const prevPopupsRef = useRef<OverlayPopup[]>([])
   const needsSaveAfterInteractionRef = useRef(false)
@@ -112,6 +114,10 @@ export function useWorkspaceOverlayPersistence({
     }
 
     if (!changed) {
+      if (layoutDirtyRef.current && !overlayPanning && !draggingActive) {
+        layoutDirtyRef.current = false
+        scheduleLayoutSave(false)
+      }
       console.log("[AnnotationApp] Save skipped: no changes detected")
       prevPopupsRef.current = overlayPopups
       needsSaveAfterInteractionRef.current = false
@@ -132,6 +138,7 @@ export function useWorkspaceOverlayPersistence({
 
     prevPopupsRef.current = overlayPopups
     needsSaveAfterInteractionRef.current = false
+    layoutDirtyRef.current = false
     scheduleLayoutSave(isExistenceChange)
   }, [
     overlayPopups,
@@ -142,6 +149,7 @@ export function useWorkspaceOverlayPersistence({
     layoutLoadedRef,
     saveTimeoutRef,
     scheduleLayoutSave,
+    layoutDirtyRef,
   ])
 
   useEffect(() => {

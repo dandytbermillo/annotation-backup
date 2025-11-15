@@ -18,6 +18,7 @@ interface UseOverlayPanStateParams {
   isOverlayEmptySpace: (event: React.PointerEvent) => boolean;
   overlayFullSpanEnabled: boolean;
   tracePointerLog: PointerLogger;
+  onUserCameraTransform?: (payload: { transform: Transform; timestamp: number }) => void;
 }
 
 interface UseOverlayPanStateResult {
@@ -42,6 +43,7 @@ export function useOverlayPanState({
   isOverlayEmptySpace,
   overlayFullSpanEnabled,
   tracePointerLog,
+  onUserCameraTransform,
 }: UseOverlayPanStateParams): UseOverlayPanStateResult {
   const [transform, setTransform] = useState<Transform>(IDENTITY_TRANSFORM);
   const [isPanning, setIsPanning] = useState(false);
@@ -89,6 +91,15 @@ export function useOverlayPanState({
       document.head.appendChild(style);
     }
   }, []);
+
+  const notifyUserCamera = useCallback(
+    (nextTransform: Transform) => {
+      if (!onUserCameraTransform) return;
+      const timestamp = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      onUserCameraTransform({ transform: nextTransform, timestamp });
+    },
+    [onUserCameraTransform],
+  );
 
   const enableSelectionGuards = useCallback(() => {
     if (typeof document === 'undefined') return;
@@ -330,7 +341,13 @@ export function useOverlayPanState({
       }
 
       if (hasSharedCamera && layerCtx) {
+        transformRef.current = {
+          ...transformRef.current,
+          x: transformRef.current.x + deltaX,
+          y: transformRef.current.y + deltaY,
+        };
         layerCtx.updateTransformByDelta('popups', { dx: deltaX, dy: deltaY });
+        notifyUserCamera(transformRef.current);
       } else {
         transformRef.current = {
           ...transformRef.current,
@@ -352,11 +369,12 @@ export function useOverlayPanState({
             }
           });
         }
+        notifyUserCamera(transformRef.current);
       }
 
       lastMouseRef.current = { x: event.clientX, y: event.clientY };
     },
-    [engaged, hasSharedCamera, layerCtx, tracePointerLog]
+    [engaged, hasSharedCamera, layerCtx, notifyUserCamera, tracePointerLog]
   );
 
   const handlePointerUp = useCallback(

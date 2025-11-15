@@ -22,7 +22,7 @@ type UseOverlayLayoutSaveQueueOptions = {
   pendingLayoutRef: MutableRefObject<PendingSnapshot | null>
   saveTimeoutRef: MutableRefObject<NodeJS.Timeout | null>
   saveInFlightRef: MutableRefObject<boolean>
-  applyOverlayLayout: (layout: OverlayLayoutPayload) => void
+  applyOverlayLayout: (layout: OverlayLayoutPayload, options?: { reason?: "hydrate" | "conflict" }) => void
   draggingPopup: string | null
   defaultCamera: OverlayCameraState
   defaultWidth: number
@@ -174,7 +174,7 @@ export function useOverlayLayoutSaveQueue({
           inspectors: envelope.layout.inspectors,
           camera: envelope.layout.camera ?? defaultCamera,
         })
-        applyOverlayLayout(envelope.layout)
+        applyOverlayLayout(envelope.layout, { reason: "conflict" })
         console.log("[AnnotationApp] Resolved layout conflict from database")
       } else {
         if (isDebugEnabled()) {
