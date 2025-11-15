@@ -44,7 +44,7 @@ import { useDefaultMainPanelPersistence } from "@/lib/hooks/annotation/use-defau
 import { useCollaborativeNoteInitialization } from "@/lib/hooks/annotation/use-collaborative-note-initialization"
 import { useSelectionGuards } from "@/lib/hooks/annotation/use-selection-guards"
 import { useCanvasDragListeners } from "@/lib/hooks/annotation/use-canvas-drag-listeners"
-import { useStickyOverlay } from "@/lib/hooks/annotation/use-sticky-overlay"
+import { useStickyOverlayElement } from "@/lib/hooks/annotation/use-sticky-overlay-element"
 import { useCanvasInteractionCapture } from "@/lib/hooks/annotation/use-canvas-interaction-capture"
 import { useCanvasPointerHandlers } from "@/lib/hooks/annotation/use-canvas-pointer-handlers"
 import { useMinimapNavigation } from "@/lib/hooks/annotation/use-minimap-navigation"
@@ -286,12 +286,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     getItemNoteId,
   })
   
-  const { showAddComponentMenu, toggleAddComponentMenu, closeAddComponentMenu, setInternalShowAddComponentMenu } =
-    useAddComponentMenu({
-      externalShowAddComponentMenu,
-      onToggleAddComponentMenu,
-    })
-  const [stickyOverlayEl, setStickyOverlayEl] = useState<HTMLElement | null>(null)
+  const { showAddComponentMenu, toggleAddComponentMenu, closeAddComponentMenu } = useAddComponentMenu({
+    externalShowAddComponentMenu,
+    onToggleAddComponentMenu,
+  })
+  const stickyOverlayEl = useStickyOverlayElement()
 
   // Canvas state persistence - Get provider instances for hydration
   const layerManagerApi = useLayerManager()
@@ -483,19 +482,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     onMouseMove: handleCanvasMouseMove,
     onMouseUp: handleCanvasMouseUp,
   })
-
-  const handleOverlayMount = useCallback(
-    (overlay: HTMLDivElement) => {
-      setStickyOverlayEl(overlay)
-    },
-    [setStickyOverlayEl],
-  )
-
-  const handleOverlayUnmount = useCallback(() => {
-    setStickyOverlayEl(null)
-  }, [setStickyOverlayEl])
-
-  useStickyOverlay(handleOverlayMount, handleOverlayUnmount)
 
   const handlePanelClose = usePanelCloseHandler({
     noteId,
