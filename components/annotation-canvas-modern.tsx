@@ -62,6 +62,8 @@ import { useStickyNoteOverlayPanels } from "@/lib/hooks/annotation/use-sticky-no
 import { useViewportChangeLogger } from "@/lib/hooks/annotation/use-viewport-change-logger"
 import { useMainOnlyPanelFilter } from "@/lib/hooks/annotation/use-main-only-panel-filter"
 import { useAddComponentMenu } from "@/lib/hooks/annotation/use-add-component-menu"
+import { useDedupeWarningBanner } from "@/lib/hooks/annotation/use-dedupe-warning-banner"
+import { useCanvasOutlineDebug } from "@/lib/hooks/annotation/use-canvas-outline-debug"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -291,6 +293,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     onToggleAddComponentMenu,
   })
   const stickyOverlayEl = useStickyOverlayElement()
+  const {
+    hasWarnings,
+    visibleWarnings,
+    extraCount: dedupeExtraCount,
+    dismissWarnings,
+  } = useDedupeWarningBanner({
+    dedupeWarnings,
+    updateDedupeWarnings,
+  })
 
   // Canvas state persistence - Get provider instances for hydration
   const layerManagerApi = useLayerManager()
@@ -622,16 +633,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }
   }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent, resolveWorkspacePosition, dataStore, noteId])
 
-  useEffect(() => {
-    debugLog({
-      component: 'AnnotationApp',
-      action: 'canvas_outline_applied',
-      metadata: {
-        outline: 'rgba(99, 102, 241, 0.85) solid 4px',
-        outlineOffset: '6px'
-      }
-    })
-  }, [])
+  useCanvasOutlineDebug()
 
   return (
     <>
@@ -655,7 +657,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           transition: 'opacity 0.3s ease',
         }}
       >
-        {dedupeWarnings.length > 0 && (
+        {hasWarnings && (
           <div className="fixed top-4 right-4 z-[1100] max-w-sm rounded-md border border-amber-500/80 bg-white/95 p-4 shadow-lg text-sm text-amber-900">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -666,22 +668,22 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
               </div>
               <button
                 type="button"
-                onClick={() => updateDedupeWarnings([], { append: false })}
+                onClick={dismissWarnings}
                 className="text-xs font-medium text-amber-700 hover:text-amber-800"
               >
                 Dismiss
               </button>
             </div>
             <ul className="mt-2 space-y-1">
-              {dedupeWarnings.slice(0, 5).map((warning, index) => (
+              {visibleWarnings.map((warning, index) => (
                 <li key={`${warning.code}-${warning.storeKey ?? warning.panelId ?? index}`} className="leading-snug">
                   {warning.message}
                 </li>
               ))}
             </ul>
-            {dedupeWarnings.length > 5 && (
+            {dedupeExtraCount > 0 && (
               <p className="mt-2 text-xs text-amber-700">
-                +{dedupeWarnings.length - 5} more warning{dedupeWarnings.length - 5 === 1 ? '' : 's'} logged to console.
+                +{dedupeExtraCount} more warning{dedupeExtraCount === 1 ? '' : 's'} logged to console.
               </p>
             )}
           </div>
