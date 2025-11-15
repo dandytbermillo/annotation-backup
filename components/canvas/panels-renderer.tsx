@@ -18,6 +18,7 @@ interface PanelsRendererProps {
   onClose: (id: string, noteId?: string) => void
   resolveWorkspacePosition?: (noteId: string) => { x: number; y: number } | null
   onRestorePanelPosition?: (noteId: string, position: { x: number; y: number }) => void
+  hydrationReady?: boolean
 }
 
 export const PanelsRenderer = memo(function PanelsRenderer({
@@ -27,6 +28,7 @@ export const PanelsRenderer = memo(function PanelsRenderer({
   onClose,
   resolveWorkspacePosition,
   onRestorePanelPosition,
+  hydrationReady = true,
 }: PanelsRendererProps) {
   const isPlainMode = isPlainModeActive()
   const seenStoreKeys = new Set<string>()
@@ -84,6 +86,10 @@ export const PanelsRenderer = memo(function PanelsRenderer({
             isNew: branch.isNew,
             isEditable: branch.isEditable,
           })
+        }
+
+        if (!hydrationReady && panelId !== "main") {
+          return null
         }
 
         const workspacePosition =

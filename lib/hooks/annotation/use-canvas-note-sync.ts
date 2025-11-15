@@ -1,11 +1,12 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useCallback } from "react"
 
 import { createPanelItem } from "@/types/canvas-items"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
 import { getDefaultMainPosition, isDefaultMainPosition } from "@/lib/canvas/canvas-defaults"
 import { debugLog } from "@/lib/utils/debug-logger"
+import type { DataStore } from "@/lib/data-store"
 
 import type { CanvasItem } from "@/types/canvas-items"
 
@@ -20,6 +21,9 @@ type UseCanvasNoteSyncOptions = {
   setCanvasItems: React.Dispatch<React.SetStateAction<CanvasItem[]>>
   getItemNoteId: (item: CanvasItem) => string | null
   resolveWorkspacePosition: (noteId: string) => { x: number; y: number } | null
+  dataStore: DataStore | null
+  branchesMap: Map<string, any> | null
+  hydrationStateKey: number | string | boolean
 }
 
 export function useCanvasNoteSync({
@@ -33,7 +37,37 @@ export function useCanvasNoteSync({
   setCanvasItems,
   getItemNoteId,
   resolveWorkspacePosition,
+  dataStore,
+  branchesMap,
+  hydrationStateKey,
 }: UseCanvasNoteSyncOptions) {
+  const getStoredPanelPosition = useCallback(
+    (targetNoteId: string | null | undefined, panelId: string | null | undefined) => {
+      if (!targetNoteId || !panelId) {
+        return null
+      }
+
+    const storeKey = ensurePanelKey(targetNoteId, panelId)
+    const stored = dataStore?.get(storeKey) ?? branchesMap?.get(storeKey)
+    if (!stored) {
+      return null
+    }
+
+    const worldPosition = stored.worldPosition ?? stored.position
+    if (
+      worldPosition &&
+      typeof worldPosition.x === "number" &&
+      typeof worldPosition.y === "number" &&
+      Number.isFinite(worldPosition.x) &&
+      Number.isFinite(worldPosition.y)
+    ) {
+      return { x: worldPosition.x, y: worldPosition.y }
+    }
+
+      return null
+    },
+    [dataStore, branchesMap],
+  )
   useEffect(() => {
     debugLog({
       component: "AnnotationCanvas",
@@ -91,6 +125,26 @@ export function useCanvasNoteSync({
           return
         }
 
+        if (item.itemType === "panel" && item.panelId && itemNoteId) {
+          const storedPosition = getStoredPanelPosition(itemNoteId, item.panelId)
+          if (storedPosition) {
+            const samePosition =
+              item.position?.x === storedPosition.x && item.position?.y === storedPosition.y
+            otherItems.push(
+              samePosition
+                ? item
+                : {
+                    ...item,
+                    position: storedPosition,
+                  },
+            )
+            if (!samePosition) {
+              changed = true
+            }
+            return
+          }
+        }
+
         otherItems.push(item)
       })
 
@@ -100,7 +154,13 @@ export function useCanvasNoteSync({
         const targetStoreKey = ensurePanelKey(id, "main")
 
         if (existing) {
-          const needsMetaUpdate = existing.noteId !== id || existing.storeKey !== targetStoreKey
+          const storedPosition = getStoredPanelPosition(id, "main")
+          const nextPosition = storedPosition ?? existing.position
+          const needsMetaUpdate =
+            existing.noteId !== id ||
+            existing.storeKey !== targetStoreKey ||
+            (storedPosition !== null &&
+              (existing.position?.x !== nextPosition?.x || existing.position?.y !== nextPosition?.y))
 
           if (needsMetaUpdate) {
             debugLog({
@@ -110,13 +170,13 @@ export function useCanvasNoteSync({
                 noteId: id,
                 existingNoteId: existing.noteId,
                 existingPosition: existing.position,
-                keepingPosition: true,
+                keepingPosition: storedPosition === null,
               },
             })
 
             nextMainItems.push({
               ...existing,
-              position: existing.position,
+              position: nextPosition,
               noteId: id,
               storeKey: targetStoreKey,
             })
@@ -126,9 +186,11 @@ export function useCanvasNoteSync({
           }
         } else {
           const seedPosition = freshNoteSeeds[id] ?? null
+          const storedPosition = getStoredPanelPosition(id, "main")
           const targetPosition =
             seedPosition ??
             resolveWorkspacePosition(id) ??
+            storedPosition ??
             getDefaultMainPosition()
 
           debugLog({
@@ -203,5 +265,7 @@ export function useCanvasNoteSync({
     setCanvasItems,
     getItemNoteId,
     resolveWorkspacePosition,
+    getStoredPanelPosition,
+    hydrationStateKey,
   ])
 }

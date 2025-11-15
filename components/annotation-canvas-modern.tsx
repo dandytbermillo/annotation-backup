@@ -267,19 +267,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
   const mainPanelSeededRef = useRef(false)
-
-  useCanvasNoteSync({
-    hasNotes,
-    noteIds,
-    noteId,
-    canvasItemsLength: canvasItems.length,
-    mainOnlyNoteSet,
-    freshNoteSeeds,
-    onConsumeFreshNoteSeed,
-    setCanvasItems,
-    getItemNoteId,
-    resolveWorkspacePosition,
-  })
+  const provider = useMemo(() => UnifiedProvider.getInstance(), [])
+  const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
 
   useWorkspaceSeedRegistry({
     noteId,
@@ -305,8 +294,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const [stickyOverlayEl, setStickyOverlayEl] = useState<HTMLElement | null>(null)
 
   // Canvas state persistence - Get provider instances for hydration
-  const provider = useMemo(() => UnifiedProvider.getInstance(), [])
-  const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
   const layerManagerApi = useLayerManager()
   const cameraUserId = useCameraUserId()
 
@@ -325,6 +312,22 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   })
 
   const initialCanvasSetupRef = useRef(false)
+
+  useCanvasNoteSync({
+    hasNotes,
+    noteIds,
+    noteId,
+    canvasItemsLength: canvasItems.length,
+    mainOnlyNoteSet,
+    freshNoteSeeds,
+    onConsumeFreshNoteSeed,
+    setCanvasItems,
+    getItemNoteId,
+    resolveWorkspacePosition,
+    dataStore,
+    branchesMap,
+    hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}`,
+  })
 
   useWorkspaceHydrationSeed({
     noteId,
@@ -856,6 +859,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           resolveWorkspacePosition={resolveWorkspacePosition}
           onRestorePanelPosition={handleRestoreMainPosition}
           onClose={handlePanelClose}
+          hydrationReady={primaryHydrationStatus.success}
         />
             
             {/* Component Panels */}
