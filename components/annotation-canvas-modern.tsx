@@ -4,7 +4,6 @@ import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallba
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import type { DataStore } from "@/lib/data-store"
 import { IsolationProvider } from "@/lib/isolation/context"
-import { CanvasPanel } from "./canvas/canvas-panel"
 import { AnnotationToolbar } from "./canvas/annotation-toolbar"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import { isPlainModeActive } from "@/lib/collab-mode"
@@ -17,7 +16,8 @@ import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
-import { CanvasItem, isPanel } from "@/types/canvas-items"
+import { PanelsRenderer } from "./canvas/panels-renderer"
+import { CanvasItem } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
@@ -59,6 +59,9 @@ import { useMainPanelRestore } from "@/lib/hooks/annotation/use-main-panel-resto
 import { useComponentCreationHandler } from "@/lib/hooks/annotation/use-component-creation-handler"
 import { useWorkspacePositionResolver } from "@/lib/hooks/annotation/use-workspace-position-resolver"
 import { useStickyNoteOverlayPanels } from "@/lib/hooks/annotation/use-sticky-note-overlay-panels"
+import { useViewportChangeLogger } from "@/lib/hooks/annotation/use-viewport-change-logger"
+import { useMainOnlyPanelFilter } from "@/lib/hooks/annotation/use-main-only-panel-filter"
+import { useAddComponentMenu } from "@/lib/hooks/annotation/use-add-component-menu"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -249,34 +252,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     initialStateFactory: getInitialCanvasState,
   })
 
-  // Track viewport changes for debugging
-  const previousViewportRef = useRef({ x: canvasState.translateX, y: canvasState.translateY })
-
-  useEffect(() => {
-    const prev = previousViewportRef.current
-    const changed = prev.x !== canvasState.translateX || prev.y !== canvasState.translateY
-
-    if (changed) {
-      const stack = new Error().stack
-      const caller = stack?.split('\n')[3] || 'unknown'
-
-      debugLog({
-        component: 'AnnotationCanvas',
-        action: 'viewport_changed',
-        metadata: {
-          noteId,
-          from: { x: prev.x, y: prev.y },
-          to: { x: canvasState.translateX, y: canvasState.translateY },
-          delta: { x: canvasState.translateX - prev.x, y: canvasState.translateY - prev.y },
-          zoom: canvasState.zoom,
-          caller: caller.trim(),
-          isDragging: canvasState.isDragging
-        }
-      })
-
-      previousViewportRef.current = { x: canvasState.translateX, y: canvasState.translateY }
-    }
-  }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, noteId])
+  useViewportChangeLogger({ noteId, canvasState })
 
   // Unified canvas items state
   const workspaceSeededNotesRef = useRef<Set<string>>(new Set())
@@ -290,7 +266,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
-  const [internalShowAddComponentMenu, setInternalShowAddComponentMenu] = useState(false)
   const mainPanelSeededRef = useRef(false)
 
   useCanvasNoteSync({
@@ -315,31 +290,18 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const isRestoringSnapshotRef = useRef(false)
   const skipNextContextSyncRef = useRef(false)
 
-  useEffect(() => {
-    if (!mainOnlyNoteIds || mainOnlyNoteIds.length === 0) {
-      return
-    }
-
-    setCanvasItems(prev => {
-      let changed = false
-      const filtered = prev.filter(item => {
-        if (item.itemType !== 'panel' || item.panelId === 'main') {
-          return true
-        }
-        const itemNoteId = getItemNoteId(item)
-        if (itemNoteId && mainOnlyNoteSet.has(itemNoteId)) {
-          changed = true
-          return false
-        }
-        return true
-      })
-      return changed ? filtered : prev
-    })
-  }, [mainOnlyNoteIds, mainOnlyNoteSet, setCanvasItems, getItemNoteId])
+  useMainOnlyPanelFilter({
+    mainOnlyNoteIds,
+    mainOnlyNoteSet,
+    setCanvasItems,
+    getItemNoteId,
+  })
   
-  // Use external control if provided, otherwise use internal state
-  const showAddComponentMenu = externalShowAddComponentMenu !== undefined ? externalShowAddComponentMenu : internalShowAddComponentMenu
-  const toggleAddComponentMenu = onToggleAddComponentMenu || (() => setInternalShowAddComponentMenu(!internalShowAddComponentMenu))
+  const { showAddComponentMenu, toggleAddComponentMenu, closeAddComponentMenu, setInternalShowAddComponentMenu } =
+    useAddComponentMenu({
+      externalShowAddComponentMenu,
+      onToggleAddComponentMenu,
+    })
   const [stickyOverlayEl, setStickyOverlayEl] = useState<HTMLElement | null>(null)
 
   // Canvas state persistence - Get provider instances for hydration
@@ -789,13 +751,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         {/* Add Components Menu */}
         <AddComponentMenu 
           visible={showAddComponentMenu}
-          onClose={() => {
-            if (onToggleAddComponentMenu && externalShowAddComponentMenu) {
-              onToggleAddComponentMenu()
-            } else {
-              setInternalShowAddComponentMenu(false)
-            }
-          }}
+          onClose={closeAddComponentMenu}
           onAddComponent={handleAddComponent}
         />
 
@@ -954,120 +910,4 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
 
 ModernAnnotationCanvas.displayName = 'ModernAnnotationCanvas'
 
-// Renders panels using plain dataStore in plain mode, Yjs map otherwise
-function PanelsRenderer({
-  defaultNoteId,
-  canvasItems,
-  dataStore,
-  onClose,
-  resolveWorkspacePosition,
-  onRestorePanelPosition,
-}: {
-  defaultNoteId: string
-  canvasItems: CanvasItem[]
-  dataStore: DataStore
-  onClose: (id: string, noteId?: string) => void
-  resolveWorkspacePosition?: (noteId: string) => { x: number; y: number } | null
-  onRestorePanelPosition?: (noteId: string, position: { x: number; y: number }) => void
-}) {
-  const isPlainMode = isPlainModeActive()
-  const seenStoreKeys = new Set<string>()
-  
-  // Yjs access only when not in plain mode
-  const provider = UnifiedProvider.getInstance()
-  if (!isPlainMode) {
-    provider.setCurrentNote(defaultNoteId)
-  }
-  const branchesMap = !isPlainMode ? provider.getBranchesMap() : null
-  
-  const panels = canvasItems.filter(isPanel)
-  
-  return (
-    <>
-      {panels.map((panel) => {
-        const panelId = panel.panelId!
-        const panelNoteId = panel.noteId ?? defaultNoteId
-        const storeKey = panel.storeKey ?? ensurePanelKey(panelNoteId, panelId)
-        const branch = isPlainMode ? dataStore.get(storeKey) : branchesMap?.get(storeKey)
-        if (!branch) {
-          console.warn(
-            `[PanelsRenderer] Branch ${panelId} (note=${panelNoteId}, storeKey=${storeKey}) not found in ${isPlainMode ? 'plain' : 'yjs'} store`,
-          )
-          return null
-        }
-
-        if (seenStoreKeys.has(storeKey)) {
-          console.warn(
-            `[PanelsRenderer] Duplicate store key detected; skipping render`,
-            { panelId, panelNoteId, storeKey },
-          )
-          return null
-        }
-        seenStoreKeys.add(storeKey)
-
-        if (isDebugEnabled()) {
-          // Debug: Log branch type being passed to CanvasPanel
-          debugLog({
-            component: 'AnnotationCanvas',
-            action: 'rendering_panel',
-            metadata: {
-              panelId,
-              branchType: branch.type,
-              branchDbType: branch.dbType,
-              branchMetadata: branch.metadata,
-              isPlainMode,
-            },
-          })
-
-          console.log(`[PanelsRenderer] Rendering panel ${panelId}:`, {
-            hasContent: !!branch.content,
-            contentLength: typeof branch.content === 'string' ? branch.content.length : 'N/A',
-            isNew: branch.isNew,
-            isEditable: branch.isEditable,
-          })
-        }
-
-        // CRITICAL FIX: Only use workspacePosition for MAIN panel
-        // Branch panels should use their own branch.position, NOT the main panel's workspace position
-        const workspacePosition = (panelId === 'main') ? (resolveWorkspacePosition?.(panelNoteId) ?? null) : null
-        const position = workspacePosition ?? branch.position ?? getDefaultMainPosition()
-
-        debugLog({
-          component: 'AnnotationCanvas',
-          action: 'panel_position_resolution',
-          metadata: {
-            panelId,
-            panelNoteId,
-            branchPosition: branch.position,
-            workspacePosition,
-            finalPosition: position
-          }
-        })
-        const shouldOfferRestore =
-          panelId === 'main' &&
-          workspacePosition &&
-          (Math.round(workspacePosition.x) !== Math.round(position.x) ||
-            Math.round(workspacePosition.y) !== Math.round(position.y))
-
-        return (
-          <CanvasPanel
-            key={storeKey}
-            panelId={panelId}
-            branch={branch}
-            position={position}
-            noteId={panelNoteId}
-            onClose={() => onClose(panelId, panelNoteId)}
-            canRestorePosition={Boolean(shouldOfferRestore)}
-            onRestorePosition={
-              shouldOfferRestore && workspacePosition && onRestorePanelPosition
-                ? () => onRestorePanelPosition(panelNoteId, workspacePosition)
-                : undefined
-            }
-          />
-        )
-      })}
-    </>
-  )
-}
-
-export default ModernAnnotationCanvas 
+export default ModernAnnotationCanvas
