@@ -6,6 +6,7 @@ const DEFAULT_PAYLOAD: NoteWorkspacePayload = {
   openNotes: [],
   activeNoteId: null,
   camera: { x: 0, y: 0, scale: 1 },
+  panels: [],
 }
 
 let schemaReadyPromise: Promise<void> | null = null
@@ -74,6 +75,64 @@ const sanitizePayload = (payload: NoteWorkspacePayload | null | undefined): Note
     return { ...DEFAULT_PAYLOAD, camera: { ...DEFAULT_PAYLOAD.camera }, openNotes: [] }
   }
 
+  const sanitizePanelSnapshot = (
+    panels: NoteWorkspacePayload["panels"],
+  ): NoteWorkspacePayload["panels"] => {
+    if (!Array.isArray(panels)) return []
+    return panels
+      .map((panel) => {
+        if (!panel || typeof panel !== "object") return null
+        const noteId = typeof panel.noteId === "string" ? panel.noteId : null
+        const panelId = typeof (panel as any).panelId === "string" ? (panel as any).panelId : null
+        if (!noteId || !panelId) return null
+        const position =
+          panel.position && typeof panel.position === "object"
+            ? {
+                x: Number((panel.position as any).x) || 0,
+                y: Number((panel.position as any).y) || 0,
+              }
+            : null
+        const size =
+          panel.size && typeof panel.size === "object"
+            ? {
+                width: Number((panel.size as any).width) || 0,
+                height: Number((panel.size as any).height) || 0,
+              }
+            : null
+        const worldPosition =
+          panel.worldPosition && typeof panel.worldPosition === "object"
+            ? {
+                x: Number((panel.worldPosition as any).x) || 0,
+                y: Number((panel.worldPosition as any).y) || 0,
+              }
+            : null
+        const worldSize =
+          panel.worldSize && typeof panel.worldSize === "object"
+            ? {
+                width: Number((panel.worldSize as any).width) || 0,
+                height: Number((panel.worldSize as any).height) || 0,
+              }
+            : null
+        const metadata =
+          panel.metadata && typeof panel.metadata === "object" ? (panel.metadata as Record<string, unknown>) : null
+        const branches = Array.isArray(panel.branches) ? panel.branches.map((entry) => String(entry)) : null
+        return {
+          noteId,
+          panelId,
+          type: typeof panel.type === "string" ? panel.type : null,
+          position,
+          size,
+          zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
+          metadata,
+          parentId: typeof panel.parentId === "string" ? panel.parentId : null,
+          branches,
+          worldPosition,
+          worldSize,
+        }
+      })
+      .filter((panel): panel is NoteWorkspacePayload["panels"][number] => Boolean(panel))
+  }
+
   const openNotes = Array.isArray(payload.openNotes)
     ? payload.openNotes
         .map((panel) => {
@@ -107,6 +166,7 @@ const sanitizePayload = (payload: NoteWorkspacePayload | null | undefined): Note
     openNotes,
     activeNoteId,
     camera,
+    panels: sanitizePanelSnapshot(payload.panels),
   }
 }
 

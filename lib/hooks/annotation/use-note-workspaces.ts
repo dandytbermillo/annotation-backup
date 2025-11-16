@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
 
 import type { LayerContextValue } from "@/components/canvas/layer-provider"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import { isNoteWorkspaceEnabled } from "@/lib/flags/note"
 import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
 import type { WorkspacePanelSnapshot } from "@/lib/hooks/annotation/use-workspace-panel-positions"
-import type { NoteWorkspacePayload } from "@/lib/types/note-workspace"
+import type { NoteWorkspacePayload, NoteWorkspacePanelSnapshot } from "@/lib/types/note-workspace"
+import type { NoteWorkspace } from "@/lib/workspace/types"
 
 type DebugLogger = (event: {
   component: string
@@ -16,6 +18,24 @@ type DebugLogger = (event: {
 }) => void | Promise<void>
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
+
+const normalizePoint = (value: any): { x: number; y: number } | null => {
+  if (!value || typeof value !== "object") return null
+  const { x, y } = value as { x?: number; y?: number }
+  if (typeof x !== "number" || typeof y !== "number") {
+    return null
+  }
+  return { x, y }
+}
+
+const normalizeSize = (value: any): { width: number; height: number } | null => {
+  if (!value || typeof value !== "object") return null
+  const { width, height } = value as { width?: number; height?: number }
+  if (typeof width !== "number" || typeof height !== "number") {
+    return null
+  }
+  return { width, height }
+}
 
 export type NoteWorkspaceSlot = {
   noteId: string
@@ -37,6 +57,7 @@ type UseNoteWorkspaceOptions = {
   setCanvasState?: Dispatch<SetStateAction<CanvasState>>
   onUnavailable?: () => void
   debugLog?: DebugLogger
+  sharedWorkspace: NoteWorkspace | null
 }
 
 type UseNoteWorkspaceResult = {
@@ -78,6 +99,7 @@ export function useNoteWorkspaces({
   setCanvasState,
   onUnavailable,
   debugLog: debugLogger,
+  sharedWorkspace,
 }: UseNoteWorkspaceOptions): UseNoteWorkspaceResult {
   const flagEnabled = isNoteWorkspaceEnabled()
   const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
@@ -95,6 +117,85 @@ export function useNoteWorkspaces({
   const currentWorkspaceSummary = useMemo(
     () => workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null,
     [currentWorkspaceId, workspaces],
+  )
+
+  const collectPanelSnapshots = useCallback((): NoteWorkspacePanelSnapshot[] => {
+    const snapshots: NoteWorkspacePanelSnapshot[] = []
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore || typeof dataStore.keys !== "function") {
+      return snapshots
+    }
+    const noteIdSet = new Set(openNotes.map((note) => note.noteId))
+    for (const key of dataStore.keys() as Iterable<string>) {
+      const parsed = parsePanelKey(String(key))
+      const noteId = parsed?.noteId
+      const panelId = parsed?.panelId ?? "main"
+      if (!noteId || !noteIdSet.has(noteId)) continue
+      const record = dataStore.get(key)
+      if (!record || typeof record !== "object") continue
+      const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
+      const size = normalizeSize((record as any).dimensions) ?? normalizeSize((record as any).worldSize)
+      const branches = Array.isArray((record as any).branches)
+        ? (record as any).branches.map((entry: unknown) => String(entry))
+        : null
+      if (!position && !size && !branches && typeof (record as any).zIndex !== "number") {
+        continue
+      }
+      snapshots.push({
+        noteId,
+        panelId,
+        type: typeof (record as any).type === "string" ? (record as any).type : null,
+        position,
+        size,
+        zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
+        metadata:
+          (record as any).metadata && typeof (record as any).metadata === "object"
+            ? (record as any).metadata
+            : null,
+        parentId: typeof (record as any).parentId === "string" ? (record as any).parentId : null,
+        branches,
+        worldPosition: normalizePoint((record as any).worldPosition),
+        worldSize: normalizeSize((record as any).worldSize),
+      })
+    }
+    return snapshots
+  }, [openNotes, sharedWorkspace])
+
+  const applyPanelSnapshots = useCallback(
+    (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
+      if (!panels || panels.length === 0) return
+      const dataStore = sharedWorkspace?.dataStore
+      if (!dataStore) return
+      if (typeof dataStore.keys === "function") {
+        const keysToRemove: string[] = []
+        for (const key of dataStore.keys() as Iterable<string>) {
+          const parsed = parsePanelKey(String(key))
+          if (parsed?.noteId && targetNoteIds.has(parsed.noteId)) {
+            keysToRemove.push(String(key))
+          }
+        }
+        keysToRemove.forEach((key) => {
+          dataStore.delete(key)
+        })
+      }
+      panels.forEach((panel) => {
+        if (!panel.noteId || !panel.panelId || !targetNoteIds.has(panel.noteId)) return
+        const key = ensurePanelKey(panel.noteId, panel.panelId)
+        dataStore.set(key, {
+          id: panel.panelId,
+          type: panel.type ?? "note",
+          position: panel.position ?? panel.worldPosition ?? null,
+          dimensions: panel.size ?? panel.worldSize ?? null,
+          zIndex: panel.zIndex ?? undefined,
+          metadata: panel.metadata ?? undefined,
+          parentId: panel.parentId ?? null,
+          branches: panel.branches ?? [],
+          worldPosition: panel.worldPosition ?? panel.position ?? null,
+          worldSize: panel.worldSize ?? panel.size ?? null,
+        })
+      })
+    },
+    [sharedWorkspace],
   )
 
   const featureEnabled = flagEnabled && !isUnavailable
@@ -134,6 +235,7 @@ export function useNoteWorkspaces({
           }
         : layerContext?.transforms.notes ?? DEFAULT_CAMERA
     lastCameraRef.current = cameraTransform
+    const panelSnapshots = collectPanelSnapshots()
     return {
       schemaVersion: "1.0.0",
       openNotes: openNotes.map((note) => {
@@ -148,6 +250,7 @@ export function useNoteWorkspaces({
       }),
       activeNoteId,
       camera: cameraTransform,
+      panels: panelSnapshots,
     }
   }, [
     activeNoteId,
@@ -160,6 +263,8 @@ export function useNoteWorkspaces({
     layerContext?.transforms.notes?.x,
     layerContext?.transforms.notes?.y,
     layerContext?.transforms.notes?.scale,
+    collectPanelSnapshots,
+    panelSnapshotVersion,
   ])
 
   const persistWorkspaceNow = useCallback(async () => {
@@ -230,6 +335,7 @@ export function useNoteWorkspaces({
         const record = await adapterRef.current.loadWorkspace(workspaceId)
         isHydratingRef.current = true
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
+        applyPanelSnapshots(record.payload.panels, targetIds)
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
           .map((note) =>
@@ -284,7 +390,7 @@ export function useNoteWorkspaces({
         setIsLoading(false)
       }
     },
-    [closeWorkspaceNote, layerContext, openNotes, openWorkspaceNote, setActiveNoteId],
+    [applyPanelSnapshots, closeWorkspaceNote, layerContext, openNotes, openWorkspaceNote, setActiveNoteId],
   )
 
   useEffect(() => {
@@ -393,6 +499,7 @@ export function useNoteWorkspaces({
           openNotes: [],
           activeNoteId: null,
           camera: DEFAULT_CAMERA,
+          panels: [],
         },
       })
       setWorkspaces((prev) => [...prev, workspace])

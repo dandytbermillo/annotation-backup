@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
-import { ensurePanelKey } from "@/lib/canvas/composite-id"
+import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 
 type PanelPosition = { x: number; y: number }
 
@@ -75,10 +75,6 @@ export function useWorkspacePanelPositions({
   debugLog,
 }: WorkspacePanelPositionDeps) {
   const [panelSnapshotVersion, setPanelSnapshotVersion] = useState(0)
-  const watchedPanelKeys = useMemo(
-    () => sortedOpenNotes.map((note) => ensurePanelKey(note.noteId, "main")),
-    [sortedOpenNotes],
-  )
 
   const logWorkspaceNotePositions = useCallback(
     (context: string) => {
@@ -163,27 +159,43 @@ export function useWorkspacePanelPositions({
 
   useEffect(() => {
     const dataStore = sharedWorkspace?.dataStore
-    if (
-      !dataStore ||
-      typeof dataStore.on !== "function" ||
-      typeof dataStore.off !== "function" ||
-      watchedPanelKeys.length === 0
-    ) {
+    if (!dataStore || typeof dataStore.on !== "function" || typeof dataStore.off !== "function") {
       return undefined
     }
-    const keySet = new Set(watchedPanelKeys)
+    const noteIdSet = new Set(sortedOpenNotes.map((note) => note.noteId))
+    if (noteIdSet.size === 0) {
+      return undefined
+    }
+    const handleMutationIdle = () => {
+      setPanelSnapshotVersion((prev) => prev + 1)
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const scheduleMutation = () => {
+      if (timeoutId) return
+      timeoutId = setTimeout(() => {
+        timeoutId = null
+        handleMutationIdle()
+      }, 0)
+    }
     const handleMutation = (key?: string) => {
       if (!key) return
-      if (!keySet.has(String(key))) return
-      setPanelSnapshotVersion((prev) => prev + 1)
+      const parsed = parsePanelKey(String(key))
+      if (parsed?.noteId && noteIdSet.has(parsed.noteId)) {
+        scheduleMutation()
+      }
     }
     dataStore.on("set", handleMutation)
     dataStore.on("update", handleMutation)
+    dataStore.on("delete", handleMutation)
     return () => {
       dataStore.off("set", handleMutation)
       dataStore.off("update", handleMutation)
+      dataStore.off("delete", handleMutation)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
     }
-  }, [sharedWorkspace, watchedPanelKeys])
+  }, [sharedWorkspace, sortedOpenNotes])
 
   const hasRenderedMainPanel = useCallback(
     (noteId: string | null | undefined): boolean => {

@@ -6,6 +6,20 @@ export type NoteWorkspacePanel = {
   isPinned?: boolean
 }
 
+export type NoteWorkspacePanelSnapshot = {
+  noteId: string
+  panelId: string
+  type?: string | null
+  position?: { x: number; y: number } | null
+  size?: { width: number; height: number } | null
+  zIndex?: number | null
+  metadata?: Record<string, unknown> | null
+  parentId?: string | null
+  branches?: string[] | null
+  worldPosition?: { x: number; y: number } | null
+  worldSize?: { width: number; height: number } | null
+}
+
 export type NoteWorkspaceCamera = {
   x: number
   y: number
@@ -17,6 +31,7 @@ export type NoteWorkspacePayload = {
   openNotes: NoteWorkspacePanel[]
   activeNoteId: string | null
   camera: NoteWorkspaceCamera
+  panels: NoteWorkspacePanelSnapshot[]
 }
 
 export type NoteWorkspaceRecord = {

@@ -573,3 +573,4 @@
 {"ts":"2025-11-15T23:47:46.958Z","type":"commit","sha":"94366e9f0a0575fe03e604d5e025a5aba74e190f","files_changed":19,"message":"still implementing"}
 {"ts":"2025-11-15T23:50:52Z","type":"note","summary":"Added note workspace fallback + telemetry.","details":["useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails","useWorkspacePanelPositions already exposed metadata; shell now passes debugLog/onUnavailable to the hook"]}
 {"ts":"2025-11-16T00:12:00.417Z","type":"commit","sha":"ef9d855cf5b1edbfe3a182dd4536cdf7189fece7","files_changed":7,"message":"still fixing"}
+{"ts":"2025-11-16T02:21:58.791Z","type":"commit","sha":"0fef2f445e6bc6c676fa86a098bf4217fe68f618","files_changed":8,"message":"canvas persistence layer note-workspace–aware solution implemented"}

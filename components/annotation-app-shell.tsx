@@ -383,6 +383,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     setCanvasState,
     onUnavailable: handleNoteWorkspaceUnavailable,
     debugLog,
+    sharedWorkspace,
   })
 
   const currentNoteWorkspace = useMemo(
