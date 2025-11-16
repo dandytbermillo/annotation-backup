@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-16 02:52Z] ba94dc0: disappearing panels are tied to how we rehydrate panel snapshots in the new note-
 - commit [2025-11-16 02:21Z] 0fef2f4: canvas persistence layer note-workspace–aware solution implemented
 - commit [2025-11-16 00:12Z] ef9d855: still fixing
 - note [2025-11-15 23:50Z]: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - note [2025-11-15 23:19Z]: Verified note workspace backend/front chunk and reran type-check. — Reviewed new Postgres repo + /api/note-workspaces routes with placeholder user id — Confirmed WorkspaceToggleMenu + useNoteWorkspaces inline rename wiring with backups — Ran npm run type-check (tsconfig.type-check.json)
 - commit [2025-11-15 21:53Z] 3528d9f: overlay popup hydrating fix implemented
 - commit [2025-11-15 21:17Z] 836490e: still working
-- commit [2025-11-15 21:00Z] 8ddb637: successfully implemented
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-16 02:21Z] 0fef2f4: canvas persistence layer note-workspace–aware solution implemented
+- commit [2025-11-16 02:52Z] ba94dc0: disappearing panels are tied to how we rehydrate panel snapshots in the new note-

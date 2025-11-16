@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect, type Dispatch, type SetStateAction } from "react"
 
 import type { LayerContextValue } from "@/components/canvas/layer-provider"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -41,6 +41,7 @@ export type NoteWorkspaceSlot = {
   noteId: string
   mainPosition?: { x: number; y: number } | null
 }
+const existingOpenSnapshot = new Map<string, boolean>()
 
 type UseNoteWorkspaceOptions = {
   openNotes: NoteWorkspaceSlot[]
@@ -103,6 +104,8 @@ export function useNoteWorkspaces({
 }: UseNoteWorkspaceOptions): UseNoteWorkspaceResult {
   const flagEnabled = isNoteWorkspaceEnabled()
   const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
+  const panelSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
+  const workspaceSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -119,18 +122,25 @@ export function useNoteWorkspaces({
     [currentWorkspaceId, workspaces],
   )
 
-  const collectPanelSnapshots = useCallback((): NoteWorkspacePanelSnapshot[] => {
+  const emitDebugLog = useCallback(
+    (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
+      if (!debugLogger) return
+      void debugLogger(payload)
+    },
+    [debugLogger],
+  )
+
+  const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
     const snapshots: NoteWorkspacePanelSnapshot[] = []
     const dataStore = sharedWorkspace?.dataStore
     if (!dataStore || typeof dataStore.keys !== "function") {
       return snapshots
     }
-    const noteIdSet = new Set(openNotes.map((note) => note.noteId))
     for (const key of dataStore.keys() as Iterable<string>) {
       const parsed = parsePanelKey(String(key))
       const noteId = parsed?.noteId
       const panelId = parsed?.panelId ?? "main"
-      if (!noteId || !noteIdSet.has(noteId)) continue
+      if (!noteId) continue
       const record = dataStore.get(key)
       if (!record || typeof record !== "object") continue
       const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
@@ -159,7 +169,72 @@ export function useNoteWorkspaces({
       })
     }
     return snapshots
-  }, [openNotes, sharedWorkspace])
+  }, [sharedWorkspace])
+
+  const getAllPanelSnapshots = useCallback((): NoteWorkspacePanelSnapshot[] => {
+    if (currentWorkspaceId && workspaceSnapshotsRef.current.has(currentWorkspaceId)) {
+      return workspaceSnapshotsRef.current.get(currentWorkspaceId) ?? []
+    }
+    if (panelSnapshotsRef.current.size > 0) {
+      return Array.from(panelSnapshotsRef.current.values()).flat()
+    }
+    return collectPanelSnapshotsFromDataStore()
+  }, [collectPanelSnapshotsFromDataStore, currentWorkspaceId])
+
+  const updatePanelSnapshotMap = useCallback(
+    (panels: NoteWorkspacePanelSnapshot[], reason: string) => {
+      if (panels.length === 0) return
+      const next = new Map(panelSnapshotsRef.current)
+      panels.forEach((panel) => {
+        if (!panel.noteId) return
+        const existing = next.get(panel.noteId) ?? []
+        const filtered = existing.filter((entry) => entry.panelId !== panel.panelId)
+        filtered.push(panel)
+        next.set(panel.noteId, filtered)
+      })
+      panelSnapshotsRef.current = next
+      if (currentWorkspaceId) {
+        workspaceSnapshotsRef.current.set(currentWorkspaceId, Array.from(next.values()).flat())
+      }
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "panel_snapshot_updated",
+        metadata: {
+          reason,
+          panelCount: panels.length,
+          noteIds: Array.from(new Set(panels.map((panel) => panel.noteId))),
+        },
+      })
+    },
+    [emitDebugLog],
+  )
+
+  useEffect(() => {
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore || typeof dataStore.on !== "function" || typeof dataStore.off !== "function") {
+      return undefined
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    const handleMutation = () => {
+      if (timeoutId) return
+      timeoutId = setTimeout(() => {
+        timeoutId = null
+        const snapshots = collectPanelSnapshotsFromDataStore()
+        updatePanelSnapshotMap(snapshots, "datastore_mutation")
+      }, 100)
+    }
+    dataStore.on("set", handleMutation)
+    dataStore.on("update", handleMutation)
+    dataStore.on("delete", handleMutation)
+    return () => {
+      dataStore.off("set", handleMutation)
+      dataStore.off("update", handleMutation)
+      dataStore.off("delete", handleMutation)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [collectPanelSnapshotsFromDataStore, sharedWorkspace, updatePanelSnapshotMap])
 
   const applyPanelSnapshots = useCallback(
     (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
@@ -198,15 +273,25 @@ export function useNoteWorkspaces({
     [sharedWorkspace],
   )
 
-  const featureEnabled = flagEnabled && !isUnavailable
-
-  const emitDebugLog = useCallback(
-    (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
-      if (!debugLogger) return
-      void debugLogger(payload)
+  const rehydratePanelsForNote = useCallback(
+    (noteId: string, workspaceId?: string) => {
+      if (workspaceId && workspaceSnapshotsRef.current.has(workspaceId)) {
+        const perWorkspace = workspaceSnapshotsRef.current
+          .get(workspaceId)!
+          .filter((panel) => panel.noteId === noteId)
+        if (perWorkspace.length > 0) {
+          applyPanelSnapshots(perWorkspace, new Set([noteId]))
+          return
+        }
+      }
+      const stored = panelSnapshotsRef.current.get(noteId)
+      if (!stored || stored.length === 0) return
+      applyPanelSnapshots(stored, new Set([noteId]))
     },
-    [debugLogger],
+    [applyPanelSnapshots],
   )
+
+  const featureEnabled = flagEnabled && !isUnavailable
 
   const markUnavailable = useCallback(
     (reason?: string) => {
@@ -235,7 +320,8 @@ export function useNoteWorkspaces({
           }
         : layerContext?.transforms.notes ?? DEFAULT_CAMERA
     lastCameraRef.current = cameraTransform
-    const panelSnapshots = collectPanelSnapshots()
+    const panelSnapshots = getAllPanelSnapshots()
+    updatePanelSnapshotMap(panelSnapshots, "build_payload")
     return {
       schemaVersion: "1.0.0",
       openNotes: openNotes.map((note) => {
@@ -263,8 +349,9 @@ export function useNoteWorkspaces({
     layerContext?.transforms.notes?.x,
     layerContext?.transforms.notes?.y,
     layerContext?.transforms.notes?.scale,
-    collectPanelSnapshots,
+    getAllPanelSnapshots,
     panelSnapshotVersion,
+    updatePanelSnapshotMap,
   ])
 
   const persistWorkspaceNow = useCallback(async () => {
@@ -335,7 +422,10 @@ export function useNoteWorkspaces({
         const record = await adapterRef.current.loadWorkspace(workspaceId)
         isHydratingRef.current = true
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
-        applyPanelSnapshots(record.payload.panels, targetIds)
+        const incomingPanels = record.payload.panels ?? []
+        updatePanelSnapshotMap(incomingPanels, "hydrate_workspace")
+        workspaceSnapshotsRef.current.set(workspaceId, incomingPanels)
+        applyPanelSnapshots(incomingPanels, targetIds)
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
           .map((note) =>
@@ -589,11 +679,93 @@ export function useNoteWorkspaces({
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       if (workspaceId === currentWorkspaceId) return
-       flushPendingSave()
+      flushPendingSave()
+      if (workspaceSnapshotsRef.current.has(workspaceId)) {
+        const panels = workspaceSnapshotsRef.current.get(workspaceId) ?? []
+        if (panels.length > 0) {
+          applyPanelSnapshots(panels, new Set(panels.map((panel) => panel.noteId)))
+        }
+      }
       setCurrentWorkspaceId(workspaceId)
     },
-    [currentWorkspaceId, flushPendingSave],
+    [applyPanelSnapshots, currentWorkspaceId, flushPendingSave],
   )
+
+  useLayoutEffect(() => {
+    if (!featureEnabled) return
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore) return
+    const missingNotes: string[] = []
+    openNotes.forEach((note) => {
+      const snapshots = panelSnapshotsRef.current.get(note.noteId)
+      if (!snapshots || snapshots.length === 0) {
+        return
+      }
+      const hasMissingPanel = snapshots.some((panel) => {
+        const key = ensurePanelKey(panel.noteId, panel.panelId)
+        let exists = false
+        if (typeof dataStore.has === "function") {
+          try {
+            exists = Boolean(dataStore.has(key))
+          } catch {
+            exists = false
+          }
+        }
+        if (!exists) {
+          exists = Boolean(dataStore.get(key))
+        }
+        return !exists
+      })
+      if (hasMissingPanel) {
+        missingNotes.push(note.noteId)
+      }
+    })
+    if (missingNotes.length === 0) return
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "panel_snapshot_missing",
+      metadata: {
+        noteIds: missingNotes,
+        reason: "open_notes_check",
+      },
+    })
+    missingNotes.forEach((noteId) => {
+      rehydratePanelsForNote(noteId)
+    })
+  }, [featureEnabled, openNotes, panelSnapshotVersion, sharedWorkspace, rehydratePanelsForNote, emitDebugLog])
+
+  useEffect(() => {
+    if (!featureEnabled || !activeNoteId) return
+    const snapshots = panelSnapshotsRef.current.get(activeNoteId)
+    if (!snapshots || snapshots.length === 0) return
+    const dataStore = sharedWorkspace?.dataStore
+    if (!dataStore) return
+    const hasAllPanels = snapshots.every((panel) => {
+      const key = ensurePanelKey(panel.noteId, panel.panelId)
+      let exists = false
+      if (typeof dataStore.has === "function") {
+        try {
+          exists = Boolean(dataStore.has(key))
+        } catch {
+          exists = false
+        }
+      }
+      if (!exists) {
+        exists = Boolean(dataStore.get(key))
+      }
+      return exists
+    })
+    if (hasAllPanels) return
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "panel_snapshot_missing",
+      metadata: {
+        noteIds: [activeNoteId],
+        reason: "active_note_check",
+      },
+    })
+    rehydratePanelsForNote(activeNoteId)
+  }, [activeNoteId, featureEnabled, rehydratePanelsForNote, sharedWorkspace, emitDebugLog])
 
   return {
     featureEnabled,

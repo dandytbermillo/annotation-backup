@@ -10,7 +10,6 @@ type WorkspacePositionMapRef = MutableRefObject<Map<string, WorkspacePosition>>
 
 interface WorkspaceHydrationLoaderOptions {
   featureEnabled: boolean
-  skipRemoteHydration?: boolean
   sharedWorkspaceId: string
   getWorkspace: (noteId: string) => NoteWorkspace
   ensureWorkspaceForOpenNotes: (notes: OpenWorkspaceNote[]) => void
@@ -30,7 +29,6 @@ type HydrationRuntimeOptions = WorkspaceHydrationLoaderOptions & { fetchImpl: ty
 
 export function useWorkspaceHydrationLoader({
   featureEnabled,
-  skipRemoteHydration = false,
   sharedWorkspaceId,
   getWorkspace,
   ensureWorkspaceForOpenNotes,
@@ -48,7 +46,6 @@ export function useWorkspaceHydrationLoader({
   return useCallback(() => {
     return hydrateWorkspace({
       featureEnabled,
-      skipRemoteHydration,
       sharedWorkspaceId,
       getWorkspace,
       ensureWorkspaceForOpenNotes,
@@ -66,7 +63,6 @@ export function useWorkspaceHydrationLoader({
   }, [
     ensureWorkspaceForOpenNotes,
     featureEnabled,
-    skipRemoteHydration,
     fetchImpl,
     getWorkspace,
     persistWorkspaceVersions,
@@ -84,7 +80,6 @@ export function useWorkspaceHydrationLoader({
 
 export async function hydrateWorkspace({
   featureEnabled,
-  skipRemoteHydration = false,
   sharedWorkspaceId,
   getWorkspace,
   ensureWorkspaceForOpenNotes,
@@ -102,18 +97,6 @@ export async function hydrateWorkspace({
   const hydrationStartTime = Date.now()
   setIsWorkspaceLoading(true)
   setIsHydrating(true)
-
-  if (skipRemoteHydration) {
-    setOpenNotes([])
-    ensureWorkspaceForOpenNotes([])
-    workspaceVersionsRef.current.clear()
-    persistWorkspaceVersions()
-    setWorkspaceError(null)
-    setIsWorkspaceLoading(false)
-    setIsWorkspaceReady(true)
-    setIsHydrating(false)
-    return
-  }
 
   try {
     const response = await fetchImpl("/api/canvas/workspace", {

@@ -237,7 +237,6 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const refreshWorkspace = useWorkspaceHydrationLoader({
     featureEnabled: FEATURE_ENABLED,
-    skipRemoteHydration: NOTE_WORKSPACES_ENABLED,
     sharedWorkspaceId: SHARED_WORKSPACE_ID,
     getWorkspace,
     ensureWorkspaceForOpenNotes,
