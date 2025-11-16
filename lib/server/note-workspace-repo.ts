@@ -8,6 +8,43 @@ const DEFAULT_PAYLOAD: NoteWorkspacePayload = {
   camera: { x: 0, y: 0, scale: 1 },
 }
 
+let schemaReadyPromise: Promise<void> | null = null
+
+async function ensureSchemaReady(): Promise<void> {
+  if (schemaReadyPromise) {
+    return schemaReadyPromise
+  }
+  schemaReadyPromise = (async () => {
+    await serverPool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`)
+    await serverPool.query(`
+      CREATE TABLE IF NOT EXISTS note_workspaces (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL,
+        name TEXT NOT NULL DEFAULT 'Workspace',
+        payload JSONB NOT NULL DEFAULT '{"schemaVersion":"1.0.0","openNotes":[],"activeNoteId":null,"camera":{"x":0,"y":0,"scale":1}}'::jsonb,
+        revision UUID NOT NULL DEFAULT gen_random_uuid(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        is_default BOOLEAN NOT NULL DEFAULT FALSE
+      )
+    `)
+    await serverPool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS note_workspaces_unique_default_per_user
+        ON note_workspaces(user_id)
+        WHERE is_default
+    `)
+    await serverPool.query(`
+      CREATE INDEX IF NOT EXISTS note_workspaces_open_notes_idx
+        ON note_workspaces
+        USING GIN ((payload->'openNotes'))
+    `)
+  })().catch((error) => {
+    schemaReadyPromise = null
+    throw error
+  })
+  return schemaReadyPromise
+}
+
 type NoteWorkspaceRow = {
   id: string
   name: string
@@ -95,6 +132,7 @@ async function insertWorkspace({
   payload?: NoteWorkspacePayload
   isDefault: boolean
 }): Promise<NoteWorkspaceRecord> {
+  await ensureSchemaReady()
   const trimmedName = name?.trim()
   const workspaceName =
     trimmedName && trimmedName.length > 0 ? trimmedName : isDefault ? DEFAULT_WORKSPACE_NAME : "Workspace"
@@ -110,6 +148,7 @@ async function insertWorkspace({
 }
 
 async function ensureDefaultWorkspace(userId: string): Promise<void> {
+  await ensureSchemaReady()
   const existingDefault = await serverPool.query<{ id: string }>(
     `SELECT id FROM note_workspaces WHERE user_id = $1 AND is_default = TRUE LIMIT 1`,
     [userId],
@@ -146,6 +185,7 @@ async function ensureDefaultWorkspace(userId: string): Promise<void> {
 }
 
 export async function listNoteWorkspaces(userId: string): Promise<NoteWorkspaceRecord[]> {
+  await ensureSchemaReady()
   await ensureDefaultWorkspace(userId)
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
     `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
@@ -159,6 +199,7 @@ export async function listNoteWorkspaces(userId: string): Promise<NoteWorkspaceR
 }
 
 export async function getNoteWorkspaceById(userId: string, workspaceId: string): Promise<NoteWorkspaceRecord | null> {
+  await ensureSchemaReady()
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
     `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
             jsonb_array_length(payload->'openNotes') AS note_count
@@ -176,6 +217,7 @@ export async function createNoteWorkspaceRecord(
   name: string | undefined,
   payload: NoteWorkspacePayload,
 ): Promise<NoteWorkspaceRecord> {
+  await ensureSchemaReady()
   return insertWorkspace({ userId, name, payload, isDefault: false })
 }
 
@@ -186,6 +228,7 @@ export async function saveNoteWorkspaceRecord(input: {
   revision: string
   name?: string
 }): Promise<NoteWorkspaceRecord> {
+  await ensureSchemaReady()
   const normalizedPayload = sanitizePayload(input.payload)
   const { rowCount, rows } = await serverPool.query<NoteWorkspaceRow>(
     `UPDATE note_workspaces
@@ -205,6 +248,7 @@ export async function saveNoteWorkspaceRecord(input: {
 }
 
 export async function deleteNoteWorkspaceRecord(userId: string, workspaceId: string): Promise<void> {
+  await ensureSchemaReady()
   const lookup = await serverPool.query<{ is_default: boolean }>(
     `SELECT is_default FROM note_workspaces WHERE user_id = $1 AND id = $2`,
     [userId, workspaceId],

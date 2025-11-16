@@ -37,9 +37,16 @@ export function AnnotationWorkspaceView({
       <div className="flex h-full w-full">
         {sidebar ?? (sidebarProps ? <WorkspaceSidebar {...sidebarProps} /> : null)}
         <div className="flex flex-1 flex-col overflow-hidden">
+          {workspaceToggle ? (
+            <div
+              className="relative flex-none"
+              style={{ minHeight: "64px", pointerEvents: "none" }}
+            >
+              {workspaceToggle}
+            </div>
+          ) : null}
           {toolbar ?? (toolbarProps ? <WorkspaceToolbarStrip {...toolbarProps} /> : null)}
           <div className="relative flex-1" onContextMenu={onMainAreaContextMenu}>
-            {workspaceToggle}
             {canvasArea
               ? canvasArea
               : canvasProps

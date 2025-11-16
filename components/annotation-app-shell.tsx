@@ -360,6 +360,14 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     debugLog,
   })
 
+  const handleNoteWorkspaceUnavailable = useCallback(() => {
+    toast({
+      variant: "destructive",
+      title: "Note workspaces unavailable",
+      description: "Saving layouts is disabled until the service is available.",
+    })
+  }, [])
+
   const noteWorkspaceState = useNoteWorkspaces({
     openNotes,
     activeNoteId,
@@ -373,6 +381,8 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     panelSnapshotVersion,
     canvasState,
     setCanvasState,
+    onUnavailable: handleNoteWorkspaceUnavailable,
+    debugLog,
   })
 
   const currentNoteWorkspace = useMemo(

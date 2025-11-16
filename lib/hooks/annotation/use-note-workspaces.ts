@@ -7,6 +7,14 @@ import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-st
 import type { WorkspacePanelSnapshot } from "@/lib/hooks/annotation/use-workspace-panel-positions"
 import type { NoteWorkspacePayload } from "@/lib/types/note-workspace"
 
+type DebugLogger = (event: {
+  component: string
+  action: string
+  content_preview?: string
+  metadata?: Record<string, unknown>
+  note_id?: string | null
+}) => void | Promise<void>
+
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 
 export type NoteWorkspaceSlot = {
@@ -27,10 +35,13 @@ type UseNoteWorkspaceOptions = {
   panelSnapshotVersion: number
   canvasState: CanvasState | null
   setCanvasState?: Dispatch<SetStateAction<CanvasState>>
+  onUnavailable?: () => void
+  debugLog?: DebugLogger
 }
 
 type UseNoteWorkspaceResult = {
   featureEnabled: boolean
+  isUnavailable: boolean
   workspaces: NoteWorkspaceSummary[]
   isLoading: boolean
   statusHelperText: string | null
@@ -65,8 +76,10 @@ export function useNoteWorkspaces({
   panelSnapshotVersion,
   canvasState,
   setCanvasState,
+  onUnavailable,
+  debugLog: debugLogger,
 }: UseNoteWorkspaceOptions): UseNoteWorkspaceResult {
-  const featureEnabled = isNoteWorkspaceEnabled()
+  const flagEnabled = isNoteWorkspaceEnabled()
   const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
@@ -75,10 +88,40 @@ export function useNoteWorkspaces({
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isHydratingRef = useRef(false)
   const lastCameraRef = useRef(DEFAULT_CAMERA)
+  const [isUnavailable, setIsUnavailable] = useState(false)
+  const unavailableNoticeShownRef = useRef(false)
+  const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
 
   const currentWorkspaceSummary = useMemo(
     () => workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null,
     [currentWorkspaceId, workspaces],
+  )
+
+  const featureEnabled = flagEnabled && !isUnavailable
+
+  const emitDebugLog = useCallback(
+    (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
+      if (!debugLogger) return
+      void debugLogger(payload)
+    },
+    [debugLogger],
+  )
+
+  const markUnavailable = useCallback(
+    (reason?: string) => {
+      if (!flagEnabled) return
+      setIsUnavailable(true)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "api_unavailable",
+        metadata: { reason: reason ?? null },
+      })
+      if (!unavailableNoticeShownRef.current) {
+        unavailableNoticeShownRef.current = true
+        onUnavailable?.()
+      }
+    },
+    [emitDebugLog, flagEnabled, onUnavailable],
   )
 
   const buildPayload = useCallback((): NoteWorkspacePayload => {
@@ -219,14 +262,23 @@ export function useNoteWorkspaces({
   )
 
   useEffect(() => {
-    if (!featureEnabled) return
+    if (!flagEnabled || isUnavailable) return
     adapterRef.current = new NoteWorkspaceAdapter()
     let cancelled = false
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "list_start",
+    })
     ;(async () => {
       try {
         const list = await adapterRef.current!.listWorkspaces()
         if (cancelled) return
         setWorkspaces(list)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "list_success",
+          metadata: { count: list.length },
+        })
         if (!currentWorkspaceId) {
           const defaultWorkspace = list.find((workspace) => workspace.isDefault) ?? list[0]
           if (defaultWorkspace) {
@@ -234,8 +286,17 @@ export function useNoteWorkspaces({
           }
         }
       } catch (error) {
-        console.error("[NoteWorkspace] failed to list", error)
+        console.warn(
+          "[NoteWorkspace] failed to list",
+          error instanceof Error ? error.message : error,
+        )
         setWorkspaces([])
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "list_error",
+          metadata: { error: error instanceof Error ? error.message : String(error) },
+        })
+        markUnavailable(error instanceof Error ? error.message : undefined)
       }
     })()
     return () => {
@@ -244,11 +305,12 @@ export function useNoteWorkspaces({
         clearTimeout(saveTimeoutRef.current)
       }
     }
-  }, [featureEnabled, currentWorkspaceId])
+  }, [flagEnabled, isUnavailable, currentWorkspaceId, emitDebugLog, markUnavailable])
 
   useEffect(() => {
-    if (!featureEnabled || !isWorkspaceReady) return
-    if (!currentWorkspaceId) return
+    if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return
+    if (lastHydratedWorkspaceIdRef.current === currentWorkspaceId) return
+    lastHydratedWorkspaceIdRef.current = currentWorkspaceId
     hydrateWorkspace(currentWorkspaceId)
   }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady])
 
@@ -345,6 +407,7 @@ export function useNoteWorkspaces({
 
   return {
     featureEnabled,
+    isUnavailable,
     workspaces,
     isLoading,
     statusHelperText,

@@ -8,19 +8,21 @@ import {
 } from "@/lib/server/note-workspace-repo"
 import type { NoteWorkspacePayload } from "@/lib/types/note-workspace"
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const userId = resolveNoteWorkspaceUserId(request)
   if (userId === "invalid") {
     return NextResponse.json({ error: "Invalid userId" }, { status: 400 })
   }
-  const workspace = await getNoteWorkspaceById(userId, params.id)
+  const workspace = await getNoteWorkspaceById(userId, id)
   if (!workspace) {
     return NextResponse.json({ error: "Workspace not found" }, { status: 404 })
   }
   return NextResponse.json({ workspace })
 }
 
-export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const userId = resolveNoteWorkspaceUserId(request)
   if (userId === "invalid") {
     return NextResponse.json({ error: "Invalid userId" }, { status: 400 })
@@ -35,7 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     }
     const workspace = await saveNoteWorkspaceRecord({
       userId,
-      workspaceId: params.id,
+      workspaceId: id,
       payload,
       revision,
       name,
@@ -55,13 +57,14 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
   const userId = resolveNoteWorkspaceUserId(request)
   if (userId === "invalid") {
     return NextResponse.json({ error: "Invalid userId" }, { status: 400 })
   }
   try {
-    await deleteNoteWorkspaceRecord(userId, params.id)
+    await deleteNoteWorkspaceRecord(userId, id)
     return NextResponse.json({}, { status: 204 })
   } catch (error) {
     if (error instanceof Error) {
