@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-16 00:12Z] ef9d855: still fixing
 - note [2025-11-15 23:50Z]: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 - commit [2025-11-15 23:47Z] 94366e9: still implementing
 - note [2025-11-15 23:46Z]: Extended note workspace serialization with panel metadata + canvas triggers. — [REDACTED] now exposes getPanelSnapshot + version ticks by listening to the shared dataStore — useNoteWorkspaces consumes the snapshot+canvasState for size/z-index/pin info and syncs camera via setCanvasState — annotation-app-shell passes the new hooks and tests were updated; npm run type-check
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-15 21:17Z] 836490e: still working
 - commit [2025-11-15 21:00Z] 8ddb637: successfully implemented
 - commit [2025-11-15 20:14Z] 545fee9: implement optimistic-overlay-hydration-plan
-- commit [2025-11-15 19:39Z] 39964f6: working stage 12-15 12:39
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-15 23:47Z] 94366e9: still implementing
+- commit [2025-11-16 00:12Z] ef9d855: still fixing

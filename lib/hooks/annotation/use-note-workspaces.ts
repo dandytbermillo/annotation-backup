@@ -28,7 +28,7 @@ type UseNoteWorkspaceOptions = {
   setActiveNoteId: Dispatch<SetStateAction<string | null>>
   resolveMainPanelPosition: (noteId: string) => { x: number; y: number } | null
   openWorkspaceNote: (noteId: string, options?: { mainPosition?: { x: number; y: number } | null; persist?: boolean; persistPosition?: boolean }) => Promise<void>
-  closeWorkspaceNote: (noteId: string) => Promise<void>
+  closeWorkspaceNote: (noteId: string, options?: { persist?: boolean; removeWorkspace?: boolean }) => Promise<void>
   layerContext: LayerContextValue | null
   isWorkspaceReady: boolean
   getPanelSnapshot: (noteId: string) => WorkspacePanelSnapshot | null
@@ -162,41 +162,65 @@ export function useNoteWorkspaces({
     layerContext?.transforms.notes?.scale,
   ])
 
-  const scheduleSave = useCallback(() => {
+  const persistWorkspaceNow = useCallback(async () => {
     if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current) {
       return
     }
     if (!adapterRef.current) return
+    try {
+      const payload = buildPayload()
+      const updated = await adapterRef.current.saveWorkspace({
+        id: currentWorkspaceSummary.id,
+        payload,
+        revision: currentWorkspaceSummary.revision,
+      })
+      setWorkspaces((prev) =>
+        prev.map((workspace) =>
+          workspace.id === updated.id
+            ? {
+                ...workspace,
+                revision: updated.revision,
+                updatedAt: updated.updatedAt,
+                noteCount: updated.noteCount,
+              }
+            : workspace,
+        ),
+      )
+      setStatusHelperText(formatSyncedLabel(updated.updatedAt))
+    } catch (error) {
+      console.warn("[NoteWorkspace] save failed", error)
+    }
+  }, [buildPayload, currentWorkspaceSummary, featureEnabled])
+
+  const scheduleSave = useCallback(
+    (immediate = false) => {
+      if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current) {
+        return
+      }
+      if (!adapterRef.current) return
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
+      }
+      if (immediate) {
+        void persistWorkspaceNow()
+        return
+      }
+      saveTimeoutRef.current = setTimeout(() => {
+        saveTimeoutRef.current = null
+        void persistWorkspaceNow()
+      }, 2500)
+    },
+    [currentWorkspaceSummary, featureEnabled, persistWorkspaceNow],
+  )
+
+  const flushPendingSave = useCallback(() => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
+      saveTimeoutRef.current = null
     }
-    saveTimeoutRef.current = setTimeout(async () => {
-      if (!adapterRef.current || !currentWorkspaceSummary) return
-      try {
-        const payload = buildPayload()
-        const updated = await adapterRef.current.saveWorkspace({
-          id: currentWorkspaceSummary.id,
-          payload,
-          revision: currentWorkspaceSummary.revision,
-        })
-        setWorkspaces((prev) =>
-          prev.map((workspace) =>
-            workspace.id === updated.id
-              ? {
-                  ...workspace,
-                  revision: updated.revision,
-                  updatedAt: updated.updatedAt,
-                  noteCount: updated.noteCount,
-                }
-              : workspace,
-          ),
-        )
-        setStatusHelperText(formatSyncedLabel(updated.updatedAt))
-      } catch (error) {
-        console.warn("[NoteWorkspace] save failed", error)
-      }
-    }, 2500)
-  }, [buildPayload, currentWorkspaceSummary, featureEnabled])
+    void persistWorkspaceNow()
+  }, [persistWorkspaceNow])
 
   const hydrateWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -208,7 +232,9 @@ export function useNoteWorkspaces({
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
-          .map((note) => closeWorkspaceNote(note.noteId).catch(() => {}))
+          .map((note) =>
+            closeWorkspaceNote(note.noteId, { persist: false, removeWorkspace: false }).catch(() => {}),
+          )
         await Promise.all(closePromises)
 
         for (const panel of record.payload.openNotes) {
@@ -303,6 +329,7 @@ export function useNoteWorkspaces({
       cancelled = true
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
+        saveTimeoutRef.current = null
       }
     }
   }, [flagEnabled, isUnavailable, currentWorkspaceId, emitDebugLog, markUnavailable])
@@ -313,6 +340,32 @@ export function useNoteWorkspaces({
     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
     hydrateWorkspace(currentWorkspaceId)
   }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady])
+
+  useEffect(() => {
+    if (!featureEnabled) return
+    const handleBeforeUnload = () => {
+      flushPendingSave()
+    }
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        flushPendingSave()
+      }
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeunload", handleBeforeUnload)
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibility)
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("beforeunload", handleBeforeUnload)
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibility)
+      }
+    }
+  }, [featureEnabled, flushPendingSave])
 
   useEffect(() => {
     if (!featureEnabled || !currentWorkspaceSummary) return
@@ -332,32 +385,61 @@ export function useNoteWorkspaces({
 
   const handleCreateWorkspace = useCallback(async () => {
     if (!featureEnabled || !adapterRef.current) return
+    flushPendingSave()
     try {
-      const payload = buildPayload()
-      const workspace = await adapterRef.current.createWorkspace({ payload })
+      const workspace = await adapterRef.current.createWorkspace({
+        payload: {
+          schemaVersion: "1.0.0",
+          openNotes: [],
+          activeNoteId: null,
+          camera: DEFAULT_CAMERA,
+        },
+      })
       setWorkspaces((prev) => [...prev, workspace])
       setCurrentWorkspaceId(workspace.id)
       setStatusHelperText(formatSyncedLabel(workspace.updatedAt))
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "create_success",
+        metadata: { workspaceId: workspace.id },
+      })
     } catch (error) {
       console.error("[NoteWorkspace] create failed", error)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "create_error",
+        metadata: { error: error instanceof Error ? error.message : String(error) },
+      })
     }
-  }, [buildPayload, featureEnabled])
+  }, [emitDebugLog, featureEnabled, flushPendingSave])
 
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string) => {
       if (!adapterRef.current) return
       try {
         await adapterRef.current.deleteWorkspace(workspaceId)
-      setWorkspaces((prev) => prev.filter((workspace) => workspace.id !== workspaceId))
-      if (currentWorkspaceId === workspaceId) {
-        const fallback = workspaces.find((workspace) => workspace.id !== workspaceId)
-        setCurrentWorkspaceId(fallback?.id ?? null)
+        setWorkspaces((prev) => prev.filter((workspace) => workspace.id !== workspaceId))
+        if (currentWorkspaceId === workspaceId) {
+          const fallback = workspaces.find((workspace) => workspace.id !== workspaceId)
+          setCurrentWorkspaceId(fallback?.id ?? null)
+        }
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "delete_success",
+          metadata: { workspaceId },
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to delete workspace"
+        console.error("[NoteWorkspace] delete failed", error)
+        setStatusHelperText(message)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "delete_error",
+          metadata: { workspaceId, error: message },
+        })
       }
-    } catch (error) {
-      console.error("[NoteWorkspace] delete failed", error)
-    }
-  },
-  [currentWorkspaceId, workspaces],
+    },
+    [currentWorkspaceId, emitDebugLog, workspaces],
   )
 
   const handleRenameWorkspace = useCallback(
@@ -400,9 +482,10 @@ export function useNoteWorkspaces({
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
       if (workspaceId === currentWorkspaceId) return
+       flushPendingSave()
       setCurrentWorkspaceId(workspaceId)
     },
-    [currentWorkspaceId],
+    [currentWorkspaceId, flushPendingSave],
   )
 
   return {

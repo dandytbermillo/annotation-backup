@@ -13,6 +13,7 @@ export type WorkspaceVersionUpdate = { noteId: string; version: number }
 
 export interface PersistWorkspaceDeps {
   featureEnabled: boolean
+  skipServer?: boolean
   pendingPersistsRef: React.MutableRefObject<Map<string, WorkspacePosition>>
   syncPendingToStorage: () => void
   extractVersionUpdates: (payload: any) => WorkspaceVersionUpdate[]
@@ -24,6 +25,7 @@ export async function persistWorkspaceUpdates(
   updates: WorkspacePersistUpdate[],
   {
     featureEnabled,
+    skipServer = false,
     pendingPersistsRef,
     syncPendingToStorage,
     extractVersionUpdates,
@@ -49,6 +51,15 @@ export async function persistWorkspaceUpdates(
     action: "persist_attempt",
     metadata: { updates: updates.map(u => ({ noteId: u.noteId, isOpen: u.isOpen })) },
   })
+
+  if (skipServer) {
+    updates.forEach(update => {
+      pendingPersistsRef.current.delete(update.noteId)
+    })
+    syncPendingToStorage()
+    setWorkspaceError(null)
+    return []
+  }
 
   if (!featureEnabled) {
     setWorkspaceError(new Error("Legacy workspace persist path not supported"))

@@ -81,8 +81,18 @@ export class NoteWorkspaceAdapter {
 
   async deleteWorkspace(id: string): Promise<void> {
     const response = await fetch(`${this.endpoint}/${id}`, { method: "DELETE" })
-    if (!response.ok && response.status !== 204) {
-      throw new Error(`Failed to delete workspace: ${response.status}`)
+    if (response.status === 204) {
+      return
+    }
+    if (!response.ok) {
+      let message = `Failed to delete workspace: ${response.status}`
+      try {
+        const data = await parseJson<{ error?: string; reason?: string }>(response)
+        message = data.reason ?? data.error ?? message
+      } catch {
+        // ignore parse failures
+      }
+      throw new Error(message)
     }
   }
 }

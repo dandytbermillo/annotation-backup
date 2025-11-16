@@ -65,7 +65,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   }
   try {
     await deleteNoteWorkspaceRecord(userId, id)
-    return NextResponse.json({}, { status: 204 })
+    return new NextResponse(null, { status: 204 })
   } catch (error) {
     if (error instanceof Error) {
       if (error.message === "NOT_FOUND") {
@@ -76,6 +76,12 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       }
     }
     console.error("[note-workspace:delete]", error)
-    return NextResponse.json({ error: "Failed to delete workspace" }, { status: 400 })
+    return NextResponse.json(
+      {
+        error: "Failed to delete workspace",
+        reason: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 400 },
+    )
   }
 }

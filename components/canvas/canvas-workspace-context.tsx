@@ -25,6 +25,7 @@ import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-no
 import { useWorkspaceMainPositionUpdater } from "@/lib/hooks/annotation/use-workspace-main-position-updater"
 import { useWorkspaceUnloadPersistence } from "@/lib/hooks/annotation/use-workspace-unload-persistence"
 import { useWorkspaceVersionTracker } from "@/lib/hooks/annotation/use-workspace-version-tracker"
+import { isNoteWorkspaceEnabled } from "@/lib/flags/note"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -82,6 +83,7 @@ const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>
 // Feature flag for new ordered toolbar behavior (TDD §5.4 line 227)
 const FEATURE_ENABLED = typeof window !== 'undefined' &&
   process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY === 'enabled'
+const NOTE_WORKSPACES_ENABLED = isNoteWorkspaceEnabled()
 
 type WorkspaceVersionUpdate = { noteId: string; version: number }
 
@@ -222,6 +224,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     async (updates: Array<{ noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null }>) => {
       return persistWorkspaceUpdates(updates as WorkspacePersistUpdate[], {
         featureEnabled: FEATURE_ENABLED,
+        skipServer: NOTE_WORKSPACES_ENABLED,
         pendingPersistsRef,
         syncPendingToStorage,
         extractVersionUpdates,
@@ -234,6 +237,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const refreshWorkspace = useWorkspaceHydrationLoader({
     featureEnabled: FEATURE_ENABLED,
+    skipRemoteHydration: NOTE_WORKSPACES_ENABLED,
     sharedWorkspaceId: SHARED_WORKSPACE_ID,
     getWorkspace,
     ensureWorkspaceForOpenNotes,
