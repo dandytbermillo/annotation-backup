@@ -18,5 +18,16 @@ export function isNoteWorkspaceEnabled(): boolean {
 }
 
 export function isNoteWorkspaceV2Enabled(): boolean {
-  return ENABLED_VALUES.has(NOTE_WORKSPACE_V2_FLAG)
+  let flag = NOTE_WORKSPACE_V2_FLAG
+  if (typeof window !== "undefined") {
+    try {
+      const stored = window.localStorage.getItem("NEXT_PUBLIC_NOTE_WORKSPACES_V2")
+      if (stored) {
+        flag = stored.toLowerCase()
+      }
+    } catch {
+      // ignore storage access issues
+    }
+  }
+  return ENABLED_VALUES.has(flag)
 }

@@ -100,9 +100,6 @@ export async function hydrateWorkspace({
   skipHydration,
 }: HydrationRuntimeOptions) {
   if (skipHydration) {
-    ensureWorkspaceForOpenNotes([])
-    setOpenNotes([])
-    workspaceVersionsRef.current.clear()
     setWorkspaceError(null)
     setIsWorkspaceReady(true)
     setIsWorkspaceLoading(false)
