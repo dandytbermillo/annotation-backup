@@ -11,6 +11,7 @@ interface UseWorkspaceUnloadPersistenceOptions {
   scheduledPersistRef: MutableRefObject<Map<string, ReturnType<typeof setTimeout>>>
   featureEnabled: boolean
   openNotes: OpenWorkspaceNote[]
+  isActive?: boolean
 }
 
 export function useWorkspaceUnloadPersistence({
@@ -19,8 +20,20 @@ export function useWorkspaceUnloadPersistence({
   scheduledPersistRef,
   featureEnabled,
   openNotes,
+  isActive = true,
 }: UseWorkspaceUnloadPersistenceOptions) {
   useEffect(() => {
+    if (!isActive) {
+      return () => {
+        if (pendingBatchRef.current !== null) {
+          clearTimeout(pendingBatchRef.current)
+          pendingBatchRef.current = null
+        }
+        scheduledPersistRef.current.forEach(timeout => clearTimeout(timeout))
+        scheduledPersistRef.current.clear()
+      }
+    }
+
     const persistActiveNotes = () => {
       if (pendingPersistsRef.current.size === 0) {
         return
@@ -97,5 +110,5 @@ export function useWorkspaceUnloadPersistence({
       window.removeEventListener("beforeunload", persistActiveNotes)
       document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
-  }, [featureEnabled, openNotes, pendingBatchRef, pendingPersistsRef, scheduledPersistRef])
+  }, [featureEnabled, isActive, openNotes, pendingBatchRef, pendingPersistsRef, scheduledPersistRef])
 }

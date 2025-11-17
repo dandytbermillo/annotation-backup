@@ -575,3 +575,4 @@
 {"ts":"2025-11-16T00:12:00.417Z","type":"commit","sha":"ef9d855cf5b1edbfe3a182dd4536cdf7189fece7","files_changed":7,"message":"still fixing"}
 {"ts":"2025-11-16T02:21:58.791Z","type":"commit","sha":"0fef2f445e6bc6c676fa86a098bf4217fe68f618","files_changed":8,"message":"canvas persistence layer note-workspace–aware solution implemented"}
 {"ts":"2025-11-16T02:52:03.063Z","type":"commit","sha":"ba94dc0349c2cacdb35bec265ac77e07907253d6","files_changed":7,"message":"disappearing panels are tied to how we rehydrate panel snapshots in the new note-"}
+{"ts":"2025-11-16T06:08:07.233Z","type":"commit","sha":"930e1b08678b9770c60f97a9a8fc5e90ce779314","files_changed":5,"message":"still fixing the missing non-main panel"}

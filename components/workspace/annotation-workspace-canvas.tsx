@@ -1,16 +1,8 @@
 "use client"
 
-import dynamic from "next/dynamic"
 import { forwardRef, type ReactNode } from "react"
 
-const ModernAnnotationCanvas = dynamic(() => import("../annotation-canvas-modern"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500">
-      <div className="text-2xl font-semibold text-white animate-pulse">Loading canvas...</div>
-    </div>
-  ),
-})
+import ModernAnnotationCanvas from "../annotation-canvas-modern"
 
 export type AnnotationWorkspaceCanvasProps = {
   noteIds: string[]

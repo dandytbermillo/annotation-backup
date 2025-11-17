@@ -25,7 +25,7 @@ import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-no
 import { useWorkspaceMainPositionUpdater } from "@/lib/hooks/annotation/use-workspace-main-position-updater"
 import { useWorkspaceUnloadPersistence } from "@/lib/hooks/annotation/use-workspace-unload-persistence"
 import { useWorkspaceVersionTracker } from "@/lib/hooks/annotation/use-workspace-version-tracker"
-import { isNoteWorkspaceEnabled } from "@/lib/flags/note"
+import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -84,6 +84,7 @@ const CanvasWorkspaceContext = createContext<CanvasWorkspaceContextValue | null>
 const FEATURE_ENABLED = typeof window !== 'undefined' &&
   process.env.NEXT_PUBLIC_CANVAS_TOOLBAR_REPLAY === 'enabled'
 const NOTE_WORKSPACES_ENABLED = isNoteWorkspaceEnabled()
+const NOTE_WORKSPACES_V2_ENABLED = isNoteWorkspaceV2Enabled()
 
 type WorkspaceVersionUpdate = { noteId: string; version: number }
 
@@ -222,6 +223,9 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const persistWorkspace = useCallback(
     async (updates: Array<{ noteId: string; isOpen: boolean; mainPosition?: WorkspacePosition | null }>) => {
+      if (NOTE_WORKSPACES_V2_ENABLED) {
+        return []
+      }
       return persistWorkspaceUpdates(updates as WorkspacePersistUpdate[], {
         featureEnabled: FEATURE_ENABLED,
         skipServer: NOTE_WORKSPACES_ENABLED,
@@ -236,7 +240,8 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const refreshWorkspace = useWorkspaceHydrationLoader({
-    featureEnabled: FEATURE_ENABLED,
+    featureEnabled: FEATURE_ENABLED && !NOTE_WORKSPACES_V2_ENABLED,
+    skipHydration: NOTE_WORKSPACES_V2_ENABLED,
     sharedWorkspaceId: SHARED_WORKSPACE_ID,
     getWorkspace,
     ensureWorkspaceForOpenNotes,
@@ -320,6 +325,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       console.warn('[CanvasWorkspace] Failed to restore position cache', error)
     }
 
+    if (NOTE_WORKSPACES_V2_ENABLED) {
+      return
+    }
+
     // Restore pending persists
     try {
       const stored = window.localStorage.getItem(PENDING_STORAGE_KEY)
@@ -389,6 +398,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     scheduledPersistRef,
     featureEnabled: FEATURE_ENABLED,
     openNotes,
+    isActive: !NOTE_WORKSPACES_V2_ENABLED,
   })
 
   useEffect(() => {

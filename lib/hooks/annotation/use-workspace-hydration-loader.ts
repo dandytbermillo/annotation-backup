@@ -23,6 +23,7 @@ interface WorkspaceHydrationLoaderOptions {
   setIsHydrating: (value: boolean) => void
   setIsWorkspaceReady: (value: boolean) => void
   fetchImpl?: typeof fetch
+  skipHydration?: boolean
 }
 
 type HydrationRuntimeOptions = WorkspaceHydrationLoaderOptions & { fetchImpl: typeof fetch }
@@ -42,6 +43,7 @@ export function useWorkspaceHydrationLoader({
   setIsHydrating,
   setIsWorkspaceReady,
   fetchImpl,
+  skipHydration,
 }: WorkspaceHydrationLoaderOptions) {
   return useCallback(() => {
     return hydrateWorkspace({
@@ -59,6 +61,7 @@ export function useWorkspaceHydrationLoader({
       setIsHydrating,
       setIsWorkspaceReady,
       fetchImpl: fetchImpl ?? fetch,
+      skipHydration,
     })
   }, [
     ensureWorkspaceForOpenNotes,
@@ -75,6 +78,7 @@ export function useWorkspaceHydrationLoader({
     positionCacheRef,
     pendingPersistsRef,
     workspaceVersionsRef,
+    skipHydration,
   ])
 }
 
@@ -93,7 +97,19 @@ export async function hydrateWorkspace({
   setIsHydrating,
   setIsWorkspaceReady,
   fetchImpl,
+  skipHydration,
 }: HydrationRuntimeOptions) {
+  if (skipHydration) {
+    ensureWorkspaceForOpenNotes([])
+    setOpenNotes([])
+    workspaceVersionsRef.current.clear()
+    setWorkspaceError(null)
+    setIsWorkspaceReady(true)
+    setIsWorkspaceLoading(false)
+    setIsHydrating(false)
+    return
+  }
+
   const hydrationStartTime = Date.now()
   setIsWorkspaceLoading(true)
   setIsHydrating(true)

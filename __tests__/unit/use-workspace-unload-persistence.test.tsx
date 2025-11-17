@@ -98,4 +98,35 @@ describe("useWorkspaceUnloadPersistence", () => {
 
     root.unmount()
   })
+
+  it("does nothing when inactive", () => {
+    const refs = createRefs()
+    refs.pendingPersistsRef.current.set("note-3", { x: 1, y: 1 })
+
+    const sendBeaconMock = jest.fn().mockReturnValue(true)
+    Object.defineProperty(window.navigator, "sendBeacon", {
+      value: sendBeaconMock,
+      configurable: true,
+      writable: true,
+    })
+
+    let root: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      root = TestRenderer.create(
+        <Harness
+          pendingPersistsRef={refs.pendingPersistsRef}
+          pendingBatchRef={refs.pendingBatchRef}
+          scheduledPersistRef={refs.scheduledPersistRef}
+          featureEnabled={true}
+          openNotes={[]}
+          isActive={false}
+        />,
+      )
+    })
+
+    window.dispatchEvent(new Event("beforeunload"))
+    expect(sendBeaconMock).not.toHaveBeenCalled()
+
+    root.unmount()
+  })
 })

@@ -39,7 +39,7 @@ type OpenWorkspaceNote = (
   },
 ) => Promise<void>
 
-type CloseWorkspaceNote = (noteId: string) => Promise<void>
+type CloseWorkspaceNote = (noteId: string, options?: { persist?: boolean; removeWorkspace?: boolean }) => Promise<void>
 
 type NoteSelectionOptions = {
   initialPosition?: Point | null
@@ -417,7 +417,7 @@ export function useWorkspaceNoteSelection({
     (noteId: string) => {
       if (!noteId) return
 
-      void closeWorkspaceNote(noteId).catch(error => {
+      void closeWorkspaceNote(noteId, { persist: false, removeWorkspace: false }).catch(error => {
         console.error("[AnnotationApp] Failed to close workspace note:", error)
       })
     },
