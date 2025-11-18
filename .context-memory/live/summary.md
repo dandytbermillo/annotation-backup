@@ -7,6 +7,8 @@ Current Work
 - Last Progress: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-18 22:00Z] 2eb272e: x1
+- commit [2025-11-18 21:38Z] cfdeb51: test
 - commit [2025-11-18 20:17Z] d117276: implement guarding other autosave listeners
 - commit [2025-11-18 19:53Z] f11171b: done implementing(success)
 - commit [2025-11-18 19:33Z] 712cbe3: Note Workspace Autosave Guard Plan
@@ -15,8 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-18 03:09Z] 7c7c6f7: start implementing
 - commit [2025-11-18 03:05Z] 5bc8c4d: Two structural fixes will make this seamless, so you never have to “wait” before switching and the titles stop blinking:
 - commit [2025-11-18 02:45Z] c3107d5: still working
-- commit [2025-11-18 02:08Z] 7365ef1: default workspace is back
-- commit [2025-11-17 20:48Z] c0e13f5: feat: prepare note workspace flag for local override
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-18 20:17Z] d117276: implement guarding other autosave listeners
+- commit [2025-11-18 22:00Z] 2eb272e: x1
