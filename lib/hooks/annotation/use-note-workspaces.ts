@@ -42,6 +42,74 @@ const normalizeSize = (value: any): { width: number; height: number } | null => 
   return { width, height }
 }
 
+const roundNumber = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0
+  }
+  return Number(value.toFixed(4))
+}
+
+const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
+  const normalizePointForHash = (point: { x?: number | null; y?: number | null } | null | undefined) => {
+    if (!point || typeof point !== "object") return null
+    return {
+      x: roundNumber(point.x),
+      y: roundNumber(point.y),
+    }
+  }
+
+  const normalizeSizeForHash = (size: { width?: number | null; height?: number | null } | null | undefined) => {
+    if (!size || typeof size !== "object") return null
+    return {
+      width: roundNumber(size.width),
+      height: roundNumber(size.height),
+    }
+  }
+
+  const normalizedOpenNotes = [...payload.openNotes]
+    .map((entry) => ({
+      noteId: entry.noteId ?? "",
+      position: normalizePointForHash(entry.position as any),
+      size: normalizeSizeForHash(entry.size as any),
+      zIndex: typeof entry.zIndex === "number" ? entry.zIndex : null,
+      isPinned: Boolean(entry.isPinned),
+    }))
+    .sort((a, b) => a.noteId.localeCompare(b.noteId))
+
+  const normalizedPanels = [...payload.panels]
+    .map((panel) => ({
+      noteId: panel.noteId ?? "",
+      panelId: panel.panelId ?? "",
+      type: panel.type ?? null,
+      position: normalizePointForHash(panel.position),
+      size: normalizeSizeForHash(panel.size),
+      zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
+      metadata: panel.metadata ?? null,
+      parentId: panel.parentId ?? null,
+      branches: Array.isArray(panel.branches) ? [...panel.branches].sort() : null,
+      worldPosition: normalizePointForHash(panel.worldPosition),
+      worldSize: normalizeSizeForHash(panel.worldSize),
+    }))
+    .sort((a, b) => {
+      const byNote = a.noteId.localeCompare(b.noteId)
+      if (byNote !== 0) return byNote
+      return a.panelId.localeCompare(b.panelId)
+    })
+
+  const normalizedCamera = {
+    x: roundNumber(payload.camera?.x),
+    y: roundNumber(payload.camera?.y),
+    scale: roundNumber(payload.camera?.scale ?? 1),
+  }
+
+  return JSON.stringify({
+    activeNoteId: payload.activeNoteId ?? null,
+    camera: normalizedCamera,
+    openNotes: normalizedOpenNotes,
+    panels: normalizedPanels,
+  })
+}
+
 export type NoteWorkspaceSlot = {
   noteId: string
   mainPosition?: { x: number; y: number } | null
@@ -114,6 +182,7 @@ export function useNoteWorkspaces({
   const workspaceSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
   const snapshotOwnerWorkspaceIdRef = useRef<string | null>(null)
   const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
+  const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -536,6 +605,20 @@ export function useNoteWorkspaces({
     if (!adapterRef.current) return
     try {
       const payload = buildPayload()
+      const payloadHash = serializeWorkspacePayload(payload)
+      const previousHash = lastSavedPayloadHashRef.current.get(currentWorkspaceSummary.id)
+      if (previousHash === payloadHash) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_skip_no_changes",
+          metadata: {
+            workspaceId: currentWorkspaceSummary.id,
+            panelCount: payload.panels.length,
+            openCount: payload.openNotes.length,
+          },
+        })
+        return
+      }
       const updated = await adapterRef.current.saveWorkspace({
         id: currentWorkspaceSummary.id,
         payload,
@@ -550,6 +633,7 @@ export function useNoteWorkspaces({
           openCount: payload.openNotes.length,
         },
       })
+      lastSavedPayloadHashRef.current.set(currentWorkspaceSummary.id, payloadHash)
       setWorkspaces((prev) =>
         prev.map((workspace) =>
           workspace.id === updated.id
@@ -574,7 +658,7 @@ export function useNoteWorkspaces({
         },
       })
     }
-  }, [buildPayload, currentWorkspaceSummary, featureEnabled])
+  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled])
 
   const scheduleSave = useCallback(
     (options?: { immediate?: boolean; reason?: string }) => {
@@ -706,6 +790,7 @@ export function useNoteWorkspaces({
             : workspace,
         ),
         )
+        lastSavedPayloadHashRef.current.set(workspaceId, serializeWorkspacePayload(record.payload))
         emitDebugLog({
           component: "NoteWorkspace",
           action: "hydrate_success",
