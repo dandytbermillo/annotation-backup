@@ -110,6 +110,45 @@ const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
   })
 }
 
+const serializePanelSnapshots = (panels: NoteWorkspacePanelSnapshot[]): string => {
+  const normalizePointForHash = (point: { x?: number | null; y?: number | null } | null | undefined) => {
+    if (!point || typeof point !== "object") return null
+    return {
+      x: roundNumber(point.x),
+      y: roundNumber(point.y),
+    }
+  }
+
+  const normalizeSizeForHash = (size: { width?: number | null; height?: number | null } | null | undefined) => {
+    if (!size || typeof size !== "object") return null
+    return {
+      width: roundNumber(size.width),
+      height: roundNumber(size.height),
+    }
+  }
+
+  const normalizedPanels = panels
+    .map((panel) => ({
+      noteId: panel.noteId ?? "",
+      panelId: panel.panelId ?? "",
+      type: panel.type ?? null,
+      position: normalizePointForHash(panel.position),
+      size: normalizeSizeForHash(panel.size),
+      zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
+      parentId: panel.parentId ?? null,
+      branches: Array.isArray(panel.branches) ? [...panel.branches].sort() : null,
+      worldPosition: normalizePointForHash(panel.worldPosition),
+      worldSize: normalizeSizeForHash(panel.worldSize),
+    }))
+    .sort((a, b) => {
+      const byNote = a.noteId.localeCompare(b.noteId)
+      if (byNote !== 0) return byNote
+      return a.panelId.localeCompare(b.panelId)
+    })
+
+  return JSON.stringify(normalizedPanels)
+}
+
 export type NoteWorkspaceSlot = {
   noteId: string
   mainPosition?: { x: number; y: number } | null
@@ -183,6 +222,7 @@ export function useNoteWorkspaces({
   const snapshotOwnerWorkspaceIdRef = useRef<string | null>(null)
   const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
+  const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -324,6 +364,19 @@ export function useNoteWorkspaces({
       timeoutId = setTimeout(() => {
         timeoutId = null
         const snapshots = collectPanelSnapshotsFromDataStore()
+        const snapshotHash = serializePanelSnapshots(snapshots)
+        if (snapshotHash === lastPanelSnapshotHashRef.current) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "panel_snapshot_skip_no_changes",
+            metadata: {
+              workspaceId: snapshotOwnerWorkspaceIdRef.current,
+              panelCount: snapshots.length,
+            },
+          })
+          return
+        }
+        lastPanelSnapshotHashRef.current = snapshotHash
         updatePanelSnapshotMap(snapshots, "datastore_mutation")
       }, 100)
     }
@@ -338,7 +391,7 @@ export function useNoteWorkspaces({
         clearTimeout(timeoutId)
       }
     }
-  }, [collectPanelSnapshotsFromDataStore, sharedWorkspace, updatePanelSnapshotMap])
+  }, [collectPanelSnapshotsFromDataStore, emitDebugLog, sharedWorkspace, updatePanelSnapshotMap])
 
   const applyPanelSnapshots = useCallback(
     (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
@@ -373,6 +426,7 @@ export function useNoteWorkspaces({
           worldSize: panel.worldSize ?? panel.size ?? null,
         })
       })
+      lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
     },
     [sharedWorkspace],
   )
@@ -385,6 +439,7 @@ export function useNoteWorkspaces({
     const snapshots = collectPanelSnapshotsFromDataStore()
     updatePanelSnapshotMap(snapshots, "workspace_switch_capture")
     workspaceSnapshotsRef.current.set(workspaceId, snapshots)
+    lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshots)
     if (v2Enabled) {
       cacheWorkspaceSnapshot({
         workspaceId,
@@ -724,6 +779,7 @@ export function useNoteWorkspaces({
         const incomingPanels = record.payload.panels ?? []
         updatePanelSnapshotMap(incomingPanels, "hydrate_workspace")
         workspaceSnapshotsRef.current.set(workspaceId, incomingPanels)
+        lastPanelSnapshotHashRef.current = serializePanelSnapshots(incomingPanels)
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         applyPanelSnapshots(incomingPanels, targetIds)
         const closePromises = openNotes
