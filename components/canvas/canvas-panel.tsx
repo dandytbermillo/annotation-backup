@@ -64,6 +64,7 @@ interface CanvasPanelProps {
   noteId?: string
   onRestorePosition?: () => void
   canRestorePosition?: boolean
+  titleOverride?: string | null
 }
 
 export function CanvasPanel({
@@ -75,6 +76,7 @@ export function CanvasPanel({
   noteId,
   onRestorePosition,
   canRestorePosition,
+  titleOverride = null,
 }: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
   const { getWorkspace: getCanvasWorkspace } = useCanvasWorkspace()
@@ -1304,6 +1306,9 @@ export function CanvasPanel({
 
   // Generate title for branch panels if not set
   const getPanelTitle = () => {
+    if (panelId === "main" && typeof titleOverride === "string" && titleOverride.trim().length > 0) {
+      return titleOverride
+    }
     if (currentBranch.title) {
       return currentBranch.title
     }

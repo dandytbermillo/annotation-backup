@@ -27,6 +27,7 @@ export type AnnotationWorkspaceCanvasProps = {
   skipSnapshotForNote?: string | null
   onSnapshotSettled?: (noteId: string) => void
   isNotesExplorerOpen?: boolean
+  noteTitleMap?: Map<string, string> | null
   children?: ReactNode
 }
 
@@ -48,6 +49,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     skipSnapshotForNote,
     onSnapshotSettled,
     isNotesExplorerOpen = false,
+    noteTitleMap = null,
     children,
   },
   ref,
@@ -71,6 +73,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       onSnapshotLoadComplete={onSnapshotLoadComplete}
       skipSnapshotForNote={skipSnapshotForNote}
       onSnapshotSettled={onSnapshotSettled}
+      noteTitleMap={noteTitleMap}
     >
       {children}
     </ModernAnnotationCanvas>

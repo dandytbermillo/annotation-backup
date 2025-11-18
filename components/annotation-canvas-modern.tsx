@@ -99,6 +99,7 @@ interface ModernAnnotationCanvasProps {
   children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
   freshNoteIds?: string[]
   onFreshNoteHydrated?: (noteId: string) => void
+  noteTitleMap?: Map<string, string> | null
 }
 
 interface CanvasImperativeHandle {
@@ -167,7 +168,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   skipSnapshotForNote,
   onSnapshotSettled,
   freshNoteIds = [],
-  onFreshNoteHydrated
+  onFreshNoteHydrated,
+  noteTitleMap = null,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -848,6 +850,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           onRestorePanelPosition={handleRestoreMainPosition}
           onClose={handlePanelClose}
           hydrationReady={primaryHydrationStatus.success}
+          noteTitleMap={noteTitleMap}
         />
             
             {/* Component Panels */}
