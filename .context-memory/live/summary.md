@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-18 06:02Z] ed1e9e5: note title blinking fix
 - commit [2025-11-18 05:17Z] 4ffff89: still working
 - commit [2025-11-18 03:09Z] 7c7c6f7: start implementing
 - commit [2025-11-18 03:05Z] 5bc8c4d: Two structural fixes will make this seamless, so you never have to “wait” before switching and the titles stop blinking:
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-16 06:08Z] 930e1b0: still fixing the missing non-main panel
 - commit [2025-11-16 02:52Z] ba94dc0: disappearing panels are tied to how we rehydrate panel snapshots in the new note-
 - commit [2025-11-16 02:21Z] 0fef2f4: canvas persistence layer note-workspace–aware solution implemented
-- commit [2025-11-16 00:12Z] ef9d855: still fixing
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-18 05:17Z] 4ffff89: still working
+- commit [2025-11-18 06:02Z] ed1e9e5: note title blinking fix
