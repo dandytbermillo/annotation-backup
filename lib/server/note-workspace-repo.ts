@@ -120,6 +120,7 @@ const sanitizePayload = (payload: NoteWorkspacePayload | null | undefined): Note
           noteId,
           panelId,
           type: typeof panel.type === "string" ? panel.type : null,
+          title: typeof (panel as any).title === "string" ? (panel as any).title : null,
           position,
           size,
           zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,

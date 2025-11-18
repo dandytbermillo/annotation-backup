@@ -1320,6 +1320,7 @@ const initialWorkspaceSyncRef = useRef(false)
       skipSnapshotForNote={skipSnapshotForNote}
       onSnapshotSettled={handleSnapshotSettled}
       noteTitleMap={noteTitleMapRef.current}
+      workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
     >
       {showNotesWidget && (
         <CanvasAwareFloatingToolbar

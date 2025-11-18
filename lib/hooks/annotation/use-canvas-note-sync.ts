@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useRef } from "react"
 
 import { createPanelItem } from "@/types/canvas-items"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
@@ -54,6 +54,7 @@ type UseCanvasNoteSyncOptions = {
   dataStore: DataStore | null
   branchesMap: Map<string, any> | null
   hydrationStateKey: number | string | boolean
+  workspaceSnapshotRevision?: number
 }
 
 export function useCanvasNoteSync({
@@ -70,13 +71,17 @@ export function useCanvasNoteSync({
   dataStore,
   branchesMap,
   hydrationStateKey,
+  workspaceSnapshotRevision = 0,
 }: UseCanvasNoteSyncOptions) {
+  const lastSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
   const resolveStoredPanelPosition = useCallback(
     (targetNoteId: string | null | undefined, panelId: string | null | undefined) =>
       getStoredPanelPosition(dataStore, branchesMap, targetNoteId, panelId),
     [dataStore, branchesMap],
   )
   useEffect(() => {
+    const revisionChanged = lastSnapshotRevisionRef.current !== workspaceSnapshotRevision
+    lastSnapshotRevisionRef.current = workspaceSnapshotRevision
     debugLog({
       component: "AnnotationCanvas",
       action: "noteIds_sync_effect_triggered",
@@ -95,7 +100,7 @@ export function useCanvasNoteSync({
 
     setCanvasItems(prev => {
       const allowedNoteIds = new Set(noteIds)
-      let changed = false
+      let changed = revisionChanged
 
       const mainByNote = new Map<string, CanvasItem>()
       const otherItems: CanvasItem[] = []
@@ -275,5 +280,6 @@ export function useCanvasNoteSync({
     resolveWorkspacePosition,
     resolveStoredPanelPosition,
     hydrationStateKey,
+    workspaceSnapshotRevision,
   ])
 }

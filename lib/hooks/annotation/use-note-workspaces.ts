@@ -81,6 +81,7 @@ const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
       noteId: panel.noteId ?? "",
       panelId: panel.panelId ?? "",
       type: panel.type ?? null,
+      title: panel.title ?? null,
       position: normalizePointForHash(panel.position),
       size: normalizeSizeForHash(panel.size),
       zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
@@ -132,6 +133,7 @@ const serializePanelSnapshots = (panels: NoteWorkspacePanelSnapshot[]): string =
       noteId: panel.noteId ?? "",
       panelId: panel.panelId ?? "",
       type: panel.type ?? null,
+      title: panel.title ?? null,
       position: normalizePointForHash(panel.position),
       size: normalizeSizeForHash(panel.size),
       zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
@@ -180,6 +182,7 @@ type UseNoteWorkspaceResult = {
   isLoading: boolean
   statusHelperText: string | null
   currentWorkspaceId: string | null
+  snapshotRevision: number
   selectWorkspace: (workspaceId: string) => void
   createWorkspace: () => void
   deleteWorkspace: (workspaceId: string) => void
@@ -233,6 +236,10 @@ export function useNoteWorkspaces({
   const [isUnavailable, setIsUnavailable] = useState(false)
   const unavailableNoticeShownRef = useRef(false)
   const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
+  const [snapshotRevision, setSnapshotRevision] = useState(0)
+  const bumpSnapshotRevision = useCallback(() => {
+    setSnapshotRevision((prev) => prev + 1)
+  }, [])
 
   const currentWorkspaceSummary = useMemo(
     () => workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null,
@@ -291,6 +298,7 @@ export function useNoteWorkspaces({
         noteId,
         panelId,
         type: typeof (record as any).type === "string" ? (record as any).type : null,
+        title: typeof (record as any).title === "string" ? (record as any).title : null,
         position,
         size,
         zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
@@ -419,6 +427,7 @@ export function useNoteWorkspaces({
           position: panel.position ?? panel.worldPosition ?? null,
           dimensions: panel.size ?? panel.worldSize ?? null,
           zIndex: panel.zIndex ?? undefined,
+          title: panel.title ?? undefined,
           metadata: panel.metadata ?? undefined,
           parentId: panel.parentId ?? null,
           branches: panel.branches ?? [],
@@ -551,6 +560,7 @@ export function useNoteWorkspaces({
           activeNoteId: nextActive,
         },
       })
+      bumpSnapshotRevision()
     },
     [
       applyPanelSnapshots,
@@ -561,6 +571,7 @@ export function useNoteWorkspaces({
       openWorkspaceNote,
       setActiveNoteId,
       setCanvasState,
+      bumpSnapshotRevision,
     ],
   )
 
@@ -857,6 +868,7 @@ export function useNoteWorkspaces({
             durationMs: Date.now() - hydrateStart,
           },
         })
+        bumpSnapshotRevision()
       } catch (error) {
         console.error("[NoteWorkspace] hydrate failed", error)
         emitDebugLog({
@@ -881,6 +893,7 @@ export function useNoteWorkspaces({
       openNotes,
       openWorkspaceNote,
       setActiveNoteId,
+      bumpSnapshotRevision,
     ],
   )
 
@@ -1219,6 +1232,7 @@ export function useNoteWorkspaces({
     isLoading,
     statusHelperText,
     currentWorkspaceId,
+    snapshotRevision,
     selectWorkspace: handleSelectWorkspace,
     createWorkspace: handleCreateWorkspace,
     deleteWorkspace: handleDeleteWorkspace,

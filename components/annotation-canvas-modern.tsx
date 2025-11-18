@@ -100,6 +100,7 @@ interface ModernAnnotationCanvasProps {
   freshNoteIds?: string[]
   onFreshNoteHydrated?: (noteId: string) => void
   noteTitleMap?: Map<string, string> | null
+  workspaceSnapshotRevision?: number
 }
 
 interface CanvasImperativeHandle {
@@ -170,6 +171,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   freshNoteIds = [],
   onFreshNoteHydrated,
   noteTitleMap = null,
+  workspaceSnapshotRevision = 0,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -339,6 +341,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     dataStore,
     branchesMap,
     hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}`,
+    workspaceSnapshotRevision,
   })
 
   useWorkspaceHydrationSeed({

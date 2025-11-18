@@ -10,6 +10,7 @@ export type NoteWorkspacePanelSnapshot = {
   noteId: string
   panelId: string
   type?: string | null
+  title?: string | null
   position?: { x: number; y: number } | null
   size?: { width: number; height: number } | null
   zIndex?: number | null
