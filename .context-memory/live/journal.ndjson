@@ -579,3 +579,4 @@
 {"ts":"2025-11-17T20:48:03.473Z","type":"commit","sha":"c0e13f59283eebab49a5a3d0f79f6e75276f7e47","files_changed":2,"message":"feat: prepare note workspace flag for local override"}
 {"ts":"2025-11-18T02:08:42.577Z","type":"commit","sha":"7365ef1e46b8a16d82706dde03032c115629953d","files_changed":16,"message":"default workspace is back"}
 {"ts":"2025-11-18T02:45:43.934Z","type":"commit","sha":"c3107d5021ec2de7168e998b7ef58004fbcc44e5","files_changed":3,"message":"still working"}
+{"ts":"2025-11-18T03:05:39.529Z","type":"commit","sha":"5bc8c4d6d213b81ff1f29578a7b4f0da13d1290b","files_changed":4,"message":"Two structural fixes will make this seamless, so you never have to “wait” before switching and the titles stop blinking:"}

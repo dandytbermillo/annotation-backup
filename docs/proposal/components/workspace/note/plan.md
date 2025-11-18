@@ -5,7 +5,7 @@ Remove the “wait for panels to finish initializing” requirement and eliminat
 
 ## Current Issues
 1. `useCanvasNoteSync` only checks the open note IDs. When you switch workspaces and the note set stays the same, the effect returns the previous `canvasItems` array (`setCanvasItems_SKIPPED_SAME_REF`), so React never re-renders branch panels even though the workspace snapshot contains them. That’s why branch panels vanish if you switch before the title sync finishes—the render layer never consumes the new snapshot.
-2. Autosave runs every second, calling `buildPayload()` and `getPanelSnapshot()` for every open note. This re-applies panel metadata and causes `WidgetStudioConnections`/panel headers to re-render, which makes note titles blink even when nothing changed.
+2. Autosave runs every second, calling `buildPayload()` and `getPanelSnapshot()` for every open note. This re-applies panel metadata and causes `WidgetStudioConnections`/panel headers to re-render, which makes the **main note titles** blink even when nothing changed (branch panel titles don’t blink because they aren’t tied to the note title map).
 
 ## Implementation Steps
 
@@ -18,7 +18,7 @@ Remove the “wait for panels to finish initializing” requirement and eliminat
   - Ensure the effect short-circuits only when both the note ID list and revision are unchanged.
 
 ### 2. Autosave/Title Render Debounce
-- **Memoize panel header props**: In `CanvasPanel` (and any header components), wrap the title props in `useMemo`/`React.memo` so identical titles don’t trigger re-renders.
+- **Memoize main note header props**: In the main note header component (not branch panels), wrap the title props in `useMemo`/`React.memo` so identical titles don’t trigger re-renders. Branch titles already stay stable, so focus on the note title path.
 - **Throttle `WidgetStudioConnections` updates**: Ensure we only emit “parent/branch found” logs or rerender connectors when the actual panel metadata changes. Track the last serialized panel snapshot per panel ID and skip reapplying when identical.
 - **Autosave cadence**: Keep the current save frequency but avoid running `updatePanelSnapshotMap` when there are no changes (e.g., compare the newly serialized snapshot hash to the previous one). This prevents unnecessary `panel_snapshot_updated` events and reduces header blinking.
 
