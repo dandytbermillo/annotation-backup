@@ -7,6 +7,7 @@ Current Work
 - Last Progress: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
 
 Recent Activity (showing last 10 of 200)
+- commit [2025-11-18 03:09Z] 7c7c6f7: start implementing
 - commit [2025-11-18 03:05Z] 5bc8c4d: Two structural fixes will make this seamless, so you never have to “wait” before switching and the titles stop blinking:
 - commit [2025-11-18 02:45Z] c3107d5: still working
 - commit [2025-11-18 02:08Z] 7365ef1: default workspace is back
@@ -16,7 +17,6 @@ Recent Activity (showing last 10 of 200)
 - commit [2025-11-16 02:21Z] 0fef2f4: canvas persistence layer note-workspace–aware solution implemented
 - commit [2025-11-16 00:12Z] ef9d855: still fixing
 - note [2025-11-15 23:50Z]: Added note workspace fallback + telemetry. — useNoteWorkspaces now tracks API availability, emits debugLog events, and hides the feature (triggering a toast) when /api/note-workspaces fails — [REDACTED] already exposed metadata; shell now passes debugLog/onUnavailable to the hook
-- commit [2025-11-15 23:47Z] 94366e9: still implementing
 
 Recent Chat
 - (none)
@@ -35,4 +35,4 @@ Health Snapshot
 - (no recent data)
 
 Latest Implementation
-- commit [2025-11-18 03:05Z] 5bc8c4d: Two structural fixes will make this seamless, so you never have to “wait” before switching and the titles stop blinking:
+- commit [2025-11-18 03:09Z] 7c7c6f7: start implementing

@@ -1,0 +1,82 @@
+  Eliminate the legacy “single global workspace” so note workspaces persist and hydrate
+  their own layouts exactly like overlay workspaces.
+
+  ———
+
+  1. Flag & Bootstrapping
+
+  - Define NEXT_PUBLIC_NOTE_WORKSPACES_V2 in lib/flags/note.ts.
+  - When the flag is off, keep existing behavior untouched (global CanvasWorkspace).
+  - When the flag is on, skip persistWorkspaceUpdates and the /api/canvas/workspace hydrate
+    path entirely—the new note-workspace engine takes over.
+
+  ———
+
+  2. Capture State Per Workspace
+
+  - Build lib/note-workspaces/state.ts (or similar) to hold:
+      - openNotes per workspace ID
+      - Panel snapshots (all panels, not just main) per workspace ID
+      - Camera transform per workspace ID
+      - Active note ID
+  - Expose helpers:
+    captureWorkspace(workspaceId, dataStore, openNotes, camera) → returns
+    NoteWorkspacePayload
+    installWorkspace(workspaceId, payload) → writes panels into the shared dataStore, sets
+    camera, and returns { openNotes, activeNoteId }.
+
+  ———
+
+  3. Adapter & Hook Changes
+
+  - Extend NoteWorkspacePayload to include full panel metadata (panelId, type,
+    worldPosition, worldSize, metadata, parentId).
+  - In useNoteWorkspaces:
+      - On every mutation (note open/close, panel drag/resize) update the state module for
+        the current workspace.
+      - When autosave fires, call captureWorkspace(currentWorkspaceId) and
+        NoteWorkspaceAdapter.saveWorkspace.
+      - When switching workspaces:
+          1. captureWorkspace(currentWorkspaceId) and queue a save (same as overlay).
+          2. NoteWorkspaceAdapter.loadWorkspace(targetId) → installWorkspace(targetId,
+             payload) (clears dataStore, replays panels).
+          3. Open notes from the payload by calling openWorkspaceNote with { persist:
+             false }.
+  - Remove any writes to /api/canvas/workspace while the V2 flag is enabled.
+
+  ———
+
+  4. Hydration Loader Adjustments
+
+  - Update useWorkspaceHydrationLoader so that when NEXT_PUBLIC_NOTE_WORKSPACES_V2 is
+    true, it doesn’t fetch /api/canvas/workspace at all. Instead, useNoteWorkspaces calls
+
+  - Ensure the workspace toggle, toolbar, and autosave indicators reflect the new
+    persistence flow (single source: note workspace payload).
+  - Keep the overlay toggle completely separate—note workspaces don’t affect overlay
+    workspaces or vice versa.
+
+  ———
+
+  6. Testing & Rollout
+
+  - Unit tests:
+      - State module: capture/install round-trips.
+      - useNoteWorkspaces: switching workspaces replays branch panels, camera, active note.
+  - Integration/Playwright tests:
+      - Create branch panel in workspace A, switch to B (open notes there), switch back →
+        branch panel restored without reload.
+      - Reload app: workspace A hydrates to the saved layout without touching /api/canvas/
+        workspace.
+  - Telemetry (debugLog):
+      - note_workspace_hydrate_start/finish with panel counts.
+      - note_workspace_save events with payload size and workspace ID.
+  - Rollout:
+      1. Ship behind NEXT_PUBLIC_NOTE_WORKSPACES_V2=false.
+      2. Enable flag in staging, verify dashboards/logs.
+      3. Enable in production once parity is confirmed; later remove the legacy global
+         workspace path.
+
+  Once this plan is implemented, note workspaces no longer rely on the single global
+  CanvasWorkspace and behave exactly like overlay workspaces.
+
