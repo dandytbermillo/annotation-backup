@@ -366,38 +366,33 @@ export function useNoteWorkspaces({
     if (!dataStore || typeof dataStore.on !== "function" || typeof dataStore.off !== "function") {
       return undefined
     }
-    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
     const handleMutation = () => {
-      if (timeoutId) return
-      timeoutId = setTimeout(() => {
-        timeoutId = null
-        const snapshots = collectPanelSnapshotsFromDataStore()
-        const snapshotHash = serializePanelSnapshots(snapshots)
-        if (snapshotHash === lastPanelSnapshotHashRef.current) {
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "panel_snapshot_skip_no_changes",
-            metadata: {
-              workspaceId: snapshotOwnerWorkspaceIdRef.current,
-              panelCount: snapshots.length,
-            },
-          })
-          return
-        }
-        lastPanelSnapshotHashRef.current = snapshotHash
-        updatePanelSnapshotMap(snapshots, "datastore_mutation")
-      }, 100)
+      const snapshots = collectPanelSnapshotsFromDataStore()
+      const snapshotHash = serializePanelSnapshots(snapshots)
+      if (snapshotHash === lastPanelSnapshotHashRef.current) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_snapshot_skip_no_changes",
+          metadata: {
+            workspaceId: snapshotOwnerWorkspaceIdRef.current,
+            panelCount: snapshots.length,
+          },
+        })
+        return
+      }
+      lastPanelSnapshotHashRef.current = snapshotHash
+      updatePanelSnapshotMap(snapshots, "datastore_mutation")
     }
+
     dataStore.on("set", handleMutation)
     dataStore.on("update", handleMutation)
     dataStore.on("delete", handleMutation)
+
     return () => {
       dataStore.off("set", handleMutation)
       dataStore.off("update", handleMutation)
       dataStore.off("delete", handleMutation)
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
     }
   }, [collectPanelSnapshotsFromDataStore, emitDebugLog, sharedWorkspace, updatePanelSnapshotMap])
 
