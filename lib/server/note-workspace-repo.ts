@@ -244,6 +244,21 @@ async function ensureDefaultWorkspace(userId: string): Promise<void> {
   ])
 }
 
+export async function ensureDefaultWorkspaceRecord(userId: string): Promise<NoteWorkspaceRecord | null> {
+  await ensureDefaultWorkspace(userId)
+  const { rows } = await serverPool.query<NoteWorkspaceRow>(
+    `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
+            jsonb_array_length(payload->'openNotes') AS note_count
+       FROM note_workspaces
+      WHERE user_id = $1 AND is_default = TRUE
+      LIMIT 1`,
+    [userId],
+  )
+  const row = rows[0]
+  if (!row) return null
+  return mapRowToRecord(row)
+}
+
 export async function listNoteWorkspaces(userId: string): Promise<NoteWorkspaceRecord[]> {
   await ensureSchemaReady()
   await ensureDefaultWorkspace(userId)

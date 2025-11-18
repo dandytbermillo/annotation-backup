@@ -80,6 +80,8 @@ type FloatingToolbarProps = {
   refreshRecentNotes?: number // Increment this counter to trigger recent notes refresh (fixes stale list when toolbar stays open)
   onToggleConstellationPanel?: () => void // Callback to toggle constellation panel visibility
   showConstellationPanel?: boolean // Whether constellation panel is currently visible
+  workspaceReady?: boolean
+  workspaceName?: string | null
   // Canvas context props (provided by CanvasAwareFloatingToolbar wrapper)
   canvasState?: any // CanvasState from useCanvas()
   canvasDispatch?: React.Dispatch<any> // dispatch from useCanvas()
@@ -200,12 +202,13 @@ const ACTION_ITEMS = [
   { label: "⭐ Promote", desc: "Create promote branch", type: "promote" as const },
 ]
 
-export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, knowledgeBaseWorkspace }: FloatingToolbarProps) {
+export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, knowledgeBaseWorkspace, workspaceReady = true, workspaceName = null }: FloatingToolbarProps) {
   const {
     workspaceId: knowledgeBaseWorkspaceId,
     appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
     withWorkspaceHeaders: withKnowledgeBaseHeaders,
     withWorkspacePayload: withKnowledgeBasePayload,
+    fetchWithWorkspace: fetchWithKnowledgeBaseRaw,
   } = knowledgeBaseWorkspace
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState({ left: x, top: y })
@@ -252,6 +255,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const folderPopupsRef = useRef<FolderPopup[]>([]) // Ref to access current state in callbacks
   const popupIdCounter = useRef(0)
   const hoverTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const workspaceDiscoveryPromiseRef = useRef<Promise<string | null> | null>(null)
 
   // Note preview state
 
@@ -261,8 +265,116 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   const [orgFolderCreationError, setOrgFolderCreationError] = useState<string | null>(null)
   const [orgFolderCreationLoading, setOrgFolderCreationLoading] = useState(false)
   const fetchWithKnowledgeBase = useCallback(
-    (input: RequestInfo | URL, init?: RequestInit) => fetch(input, withKnowledgeBaseHeaders(init)),
-    [withKnowledgeBaseHeaders]
+    (input: RequestInfo | URL, init?: RequestInit) => fetchWithKnowledgeBaseRaw(input, init),
+    [fetchWithKnowledgeBaseRaw]
+  )
+
+  const ensureKnowledgeBaseWorkspaceReady = useCallback(async (): Promise<string | null> => {
+    if (knowledgeBaseWorkspaceId) {
+      debugLog({
+        component: "FloatingToolbar",
+        action: "workspace_ready_cached",
+        metadata: { source: "state", workspaceId: knowledgeBaseWorkspaceId },
+      })
+      return knowledgeBaseWorkspaceId
+    }
+
+    if (workspaceDiscoveryPromiseRef.current) {
+      debugLog({
+        component: "FloatingToolbar",
+        action: "workspace_discovery_join",
+      })
+      return workspaceDiscoveryPromiseRef.current
+    }
+
+    debugLog({
+      component: "FloatingToolbar",
+      action: "workspace_discovery_start",
+      metadata: { endpoint: "/api/items?parentId=null" },
+    })
+    workspaceDiscoveryPromiseRef.current = (async () => {
+      try {
+        const rootUrl = appendKnowledgeBaseWorkspaceParam("/api/items?parentId=null", null)
+        const response = await fetchWithKnowledgeBase(rootUrl)
+        if (!response.ok) {
+          console.warn("[FloatingToolbar] Unable to discover knowledge base workspace", response.status)
+          debugLog({
+            component: "FloatingToolbar",
+            action: "workspace_discovery_error",
+            metadata: { status: response.status },
+          })
+          return null
+        }
+        const data = await response.json().catch(() => null)
+        const resolvedWorkspaceId =
+          data && typeof data.workspaceId === "string" && data.workspaceId.length > 0
+            ? data.workspaceId
+            : null
+        if (resolvedWorkspaceId) {
+          knowledgeBaseWorkspace.resolveWorkspaceId(resolvedWorkspaceId)
+          debugLog({
+            component: "FloatingToolbar",
+            action: "workspace_discovery_success",
+            metadata: { workspaceId: resolvedWorkspaceId },
+          })
+        }
+        return resolvedWorkspaceId
+      } catch (error) {
+        console.warn("[FloatingToolbar] Failed to resolve knowledge base workspace", error)
+        debugLog({
+          component: "FloatingToolbar",
+          action: "workspace_discovery_exception",
+          metadata: { error: error instanceof Error ? error.message : String(error) },
+        })
+        return null
+      } finally {
+        workspaceDiscoveryPromiseRef.current = null
+      }
+    })()
+
+    return workspaceDiscoveryPromiseRef.current
+  }, [appendKnowledgeBaseWorkspaceParam, fetchWithKnowledgeBase, knowledgeBaseWorkspace, knowledgeBaseWorkspaceId])
+
+  useEffect(() => {
+    if (!knowledgeBaseWorkspaceId) {
+      void ensureKnowledgeBaseWorkspaceReady()
+    }
+  }, [ensureKnowledgeBaseWorkspaceReady, knowledgeBaseWorkspaceId])
+
+  const waitForWorkspaceId = useCallback(
+    async (timeoutMs = 5000): Promise<string | null> => {
+      const start = Date.now()
+      let attempt = 0
+      debugLog({
+        component: "FloatingToolbar",
+        action: "workspace_wait_start",
+        metadata: { timeoutMs },
+      })
+      while (Date.now() - start < timeoutMs) {
+        if (knowledgeBaseWorkspaceId) {
+          return knowledgeBaseWorkspaceId
+        }
+        const resolved = await ensureKnowledgeBaseWorkspaceReady()
+        if (resolved) {
+          return resolved
+        }
+        attempt += 1
+        const delay = Math.min(1000, 250 * attempt)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+        debugLog({
+          component: "FloatingToolbar",
+          action: "workspace_wait_retry",
+          metadata: { attempt, delay },
+        })
+      }
+      debugLog({
+        component: "FloatingToolbar",
+        action: "workspace_wait_timeout",
+        metadata: { elapsedMs: Date.now() - start },
+      })
+      return knowledgeBaseWorkspaceId ?? null
+    },
+    [ensureKnowledgeBaseWorkspaceReady, knowledgeBaseWorkspaceId],
   )
 
   const fetchNotePreview = useCallback(
@@ -1479,11 +1591,29 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
 
     setIsCreatingNote(true)
     try {
+      debugLog({
+        component: "FloatingToolbar",
+        action: "create_note_click",
+        metadata: { hasWorkspaceId: Boolean(knowledgeBaseWorkspaceId), workspaceId: knowledgeBaseWorkspaceId ?? null, workspaceName },
+      })
+      let targetWorkspaceId = knowledgeBaseWorkspaceId
+      if (!targetWorkspaceId) {
+        targetWorkspaceId = await waitForWorkspaceId(8000)
+      }
+      if (!targetWorkspaceId) {
+        throw new Error("WORKSPACE_UNAVAILABLE")
+      }
+
       const result = await createNote({
-        workspaceId: knowledgeBaseWorkspaceId ?? undefined
+        workspaceId: targetWorkspaceId ?? undefined,
       })
 
       if (result.success && result.noteId) {
+       debugLog({
+         component: "FloatingToolbar",
+         action: "create_note_success",
+          metadata: { noteId: result.noteId, workspaceId: targetWorkspaceId, workspaceName },
+       })
         // Open the newly created note
         onSelectNote?.(result.noteId, {
           source: 'toolbar-create'
@@ -1494,8 +1624,22 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         throw new Error(result.error || 'Failed to create note')
       }
     } catch (error) {
-      console.error('[FloatingToolbar] Failed to create note:', error)
-      alert('Failed to create note. Please try again.')
+      if (error instanceof Error && error.message === "WORKSPACE_UNAVAILABLE") {
+        alert('Workspace is still loading. Please try again in a moment.')
+       debugLog({
+         component: "FloatingToolbar",
+         action: "create_note_workspace_unavailable",
+          metadata: { workspaceId: targetWorkspaceId ?? null, workspaceName },
+       })
+      } else {
+        console.error('[FloatingToolbar] Failed to create note:', error)
+        alert('Failed to create note. Please try again.')
+       debugLog({
+         component: "FloatingToolbar",
+         action: "create_note_error",
+          metadata: { error: error instanceof Error ? error.message : String(error), workspaceId: knowledgeBaseWorkspaceId ?? null, workspaceName },
+       })
+      }
     } finally {
       setIsCreatingNote(false)
     }

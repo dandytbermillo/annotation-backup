@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   appendWorkspaceParam as baseAppendWorkspaceParam,
   withWorkspaceHeaders as baseWithWorkspaceHeaders,
@@ -75,7 +75,65 @@ export function useKnowledgeBaseWorkspace(
   options: KnowledgeBaseWorkspaceHookOptions = {},
 ): KnowledgeBaseWorkspaceApi {
   const { initialWorkspaceId = null, fetcher = fetch } = options
-  const [workspaceId, setWorkspaceId] = useState<string | null>(initialWorkspaceId)
+  const STORAGE_KEY = "kb-workspace-id"
+  const [workspaceId, setWorkspaceId] = useState<string | null>(() => {
+    if (initialWorkspaceId) return initialWorkspaceId
+    if (typeof window === "undefined") return null
+    try {
+      const cached = window.localStorage.getItem(STORAGE_KEY)
+      if (cached && cached.trim().length > 0) {
+        return cached
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  })
+  const discoveryRef = useRef<Promise<string | null> | null>(null)
+
+  useEffect(() => {
+    if (workspaceId) return
+    if (discoveryRef.current) return
+
+    let cancelled = false
+
+    const discoverWorkspace = async () => {
+      try {
+        const response = await fetcher("/api/items?parentId=null", { cache: "no-store" })
+        if (!response.ok) return null
+        const data = await response.json().catch(() => null)
+        const nextWorkspaceId =
+          data && typeof data.workspaceId === "string" && data.workspaceId.length > 0
+            ? data.workspaceId
+            : null
+        if (!cancelled && nextWorkspaceId) {
+          setWorkspaceId(nextWorkspaceId)
+        }
+        return nextWorkspaceId
+      } catch (error) {
+        console.warn("[useKnowledgeBaseWorkspace] Failed to auto-resolve workspace", error)
+        return null
+      } finally {
+        discoveryRef.current = null
+      }
+    }
+
+    discoveryRef.current = discoverWorkspace()
+
+    return () => {
+      cancelled = true
+    }
+  }, [fetcher, workspaceId])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!workspaceId) return
+    try {
+      window.localStorage.setItem(STORAGE_KEY, workspaceId)
+    } catch {
+      // ignore storage errors
+    }
+  }, [workspaceId])
 
   return useMemo(
     () =>

@@ -942,7 +942,16 @@ const initialWorkspaceSyncRef = useRef(false)
   const workspaceDisplayLabel =
     overlayOptimisticHydrationEnabled && overlayStatusLabel ? currentWorkspaceName : workspaceStatusLabel
 
-  const noteWorkspaceStatusLabel = currentNoteWorkspace?.name ?? 'Note Workspace'
+  const fallbackNoteWorkspaceName = useMemo(() => {
+    const defaultWorkspace = noteWorkspaceState.workspaces.find((workspace) => workspace.isDefault)
+    if (defaultWorkspace?.name) {
+      return defaultWorkspace.name
+    }
+    const firstWorkspace = noteWorkspaceState.workspaces[0]
+    return firstWorkspace?.name ?? null
+  }, [noteWorkspaceState.workspaces])
+
+  const noteWorkspaceStatusLabel = currentNoteWorkspace?.name ?? fallbackNoteWorkspaceName ?? "Note Workspace"
 
   useEffect(() => {
     if (!overlayPersistenceActive) {
@@ -1119,12 +1128,17 @@ const initialWorkspaceSyncRef = useRef(false)
 
   // Track note creation state to prevent double-clicks
   const [isCreatingNoteFromToolbar, setIsCreatingNoteFromToolbar] = useState(false)
+  const [pendingNoteCreation, setPendingNoteCreation] = useState(false)
+
+  const noteWorkspaceReady =
+    !noteWorkspaceState.featureEnabled || Boolean(noteWorkspaceState.currentWorkspaceId)
+  const noteWorkspaceBusy =
+    noteWorkspaceState.featureEnabled && (!noteWorkspaceReady || noteWorkspaceState.isLoading)
 
   // Handler for creating new note from workspace toolbar
   // Reuses the same logic as floating toolbar's "+ Note" button
-  const handleNewNoteFromToolbar = useCallback(async () => {
-    if (isCreatingNoteFromToolbar) return // Prevent double-clicks
-
+  const executeToolbarNoteCreation = useCallback(async () => {
+    if (isCreatingNoteFromToolbar) return
     setIsCreatingNoteFromToolbar(true)
     try {
       const result = await createNote({
@@ -1144,7 +1158,27 @@ const initialWorkspaceSyncRef = useRef(false)
     } finally {
       setIsCreatingNoteFromToolbar(false)
     }
-  }, [isCreatingNoteFromToolbar, handleNoteSelect, currentWorkspaceId])
+  }, [currentWorkspaceId, handleNoteSelect, isCreatingNoteFromToolbar])
+
+  const handleNewNoteFromToolbar = useCallback(() => {
+    if (isCreatingNoteFromToolbar) return
+    if (noteWorkspaceBusy) {
+      setPendingNoteCreation(true)
+      toast({
+        title: "Workspace still loading",
+        description: "The note will be created as soon as the workspace is ready.",
+      })
+      return
+    }
+    void executeToolbarNoteCreation()
+  }, [executeToolbarNoteCreation, isCreatingNoteFromToolbar, noteWorkspaceBusy])
+
+  useEffect(() => {
+    if (!noteWorkspaceBusy && pendingNoteCreation) {
+      setPendingNoteCreation(false)
+      void executeToolbarNoteCreation()
+    }
+  }, [noteWorkspaceBusy, pendingNoteCreation, executeToolbarNoteCreation])
 
   // Handler for opening settings from workspace toolbar
   const handleSettingsFromToolbar = useCallback(() => {
@@ -1198,7 +1232,7 @@ const initialWorkspaceSyncRef = useRef(false)
   const workspaceToolbarProps = useWorkspaceToolbarProps({
     notes: sortedOpenNotes,
     activeNoteId,
-    isWorkspaceLoading,
+    isWorkspaceLoading: isWorkspaceLoading || noteWorkspaceBusy,
     isCreatingNote: isCreatingNoteFromToolbar,
     formatNoteLabel,
     onActivateNote: handleNoteSelect,
@@ -1304,6 +1338,12 @@ const initialWorkspaceSyncRef = useRef(false)
           onToggleConstellationPanel={toggleConstellationView}
           showConstellationPanel={showConstellationPanel}
           knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+          workspaceReady={noteWorkspaceReady}
+          workspaceName={
+            noteWorkspaceState.workspaces.find(
+              (entry) => entry.id === noteWorkspaceState.currentWorkspaceId,
+            )?.name ?? null
+          }
         />
       )}
     </AnnotationWorkspaceCanvas>

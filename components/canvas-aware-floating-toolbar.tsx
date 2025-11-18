@@ -33,9 +33,12 @@ import { createPortal } from "react-dom"
  * - Manual event subscriptions
  * - Force re-render hacks (canvasUpdateTrigger)
  */
-export function CanvasAwareFloatingToolbar(
-  props: Omit<ComponentProps<typeof FloatingToolbar>, 'canvasState' | 'canvasDispatch' | 'canvasDataStore'>
-) {
+type CanvasAwareFloatingToolbarProps = Omit<
+  ComponentProps<typeof FloatingToolbar>,
+  "canvasState" | "canvasDispatch" | "canvasDataStore"
+>
+
+export function CanvasAwareFloatingToolbar(props: CanvasAwareFloatingToolbarProps) {
   // Access canvas context - this hook call is safe because CanvasAwareFloatingToolbar
   // is rendered as a child of ModernAnnotationCanvas, inside <CanvasProvider>
   const { state, dispatch, dataStore, noteId } = useCanvas()

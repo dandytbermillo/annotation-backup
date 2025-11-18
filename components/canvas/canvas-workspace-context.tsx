@@ -239,7 +239,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     [syncPendingToStorage, extractVersionUpdates, applyVersionUpdates, setWorkspaceError],
   )
 
-  const refreshWorkspace = useWorkspaceHydrationLoader({
+  const legacyRefreshWorkspace = useWorkspaceHydrationLoader({
     featureEnabled: FEATURE_ENABLED && !NOTE_WORKSPACES_V2_ENABLED,
     skipHydration: NOTE_WORKSPACES_V2_ENABLED,
     sharedWorkspaceId: SHARED_WORKSPACE_ID,
@@ -256,6 +256,14 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     setIsWorkspaceReady: value => setIsWorkspaceReady(value),
   })
 
+  const noopRefreshWorkspace = useCallback(async () => {
+    setIsWorkspaceLoading(false)
+    setIsWorkspaceReady(true)
+    setIsHydrating(false)
+  }, [])
+
+  const refreshWorkspace = NOTE_WORKSPACES_V2_ENABLED ? noopRefreshWorkspace : legacyRefreshWorkspace
+
   const clearScheduledPersist = useCallback((noteId: string) => {
     const existing = scheduledPersistRef.current.get(noteId)
     if (existing !== undefined) {
@@ -266,6 +274,9 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
 
   const scheduleWorkspacePersist = useCallback(
     (noteId: string, position: WorkspacePosition) => {
+      if (NOTE_WORKSPACES_V2_ENABLED) {
+        return
+      }
       // Add to pending batch queue
       pendingPersistsRef.current.set(noteId, position)
       syncPendingToStorage()
@@ -396,13 +407,18 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     pendingPersistsRef,
     pendingBatchRef,
     scheduledPersistRef,
-    featureEnabled: FEATURE_ENABLED,
+    featureEnabled: FEATURE_ENABLED && !NOTE_WORKSPACES_V2_ENABLED,
     openNotes,
     isActive: !NOTE_WORKSPACES_V2_ENABLED,
   })
 
   useEffect(() => {
-    // Initial load happens once; callers can refresh as needed later.
+    if (NOTE_WORKSPACES_V2_ENABLED) {
+      setIsWorkspaceReady(true)
+      setIsWorkspaceLoading(false)
+      setIsHydrating(false)
+      return
+    }
     if (!isWorkspaceReady) {
       refreshWorkspace().catch(error => {
         console.error("[CanvasWorkspaceProvider] Failed to load workspace:", error)

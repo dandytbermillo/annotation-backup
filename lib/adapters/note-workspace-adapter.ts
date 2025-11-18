@@ -51,6 +51,15 @@ export class NoteWorkspaceAdapter {
     return data.workspace
   }
 
+  async ensureDefaultWorkspace(): Promise<NoteWorkspaceRecord> {
+    const response = await fetch(`${this.endpoint}/seed-default`, { method: "POST" })
+    if (!response.ok) {
+      throw new Error(`Failed to ensure default workspace: ${response.status}`)
+    }
+    const data = await parseJson<{ workspace: NoteWorkspaceRecord }>(response)
+    return data.workspace
+  }
+
   async loadWorkspace(id: string): Promise<NoteWorkspaceRecord> {
     const response = await fetch(`${this.endpoint}/${id}`, { cache: "no-store" })
     if (!response.ok) {
