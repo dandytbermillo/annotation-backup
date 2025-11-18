@@ -1,6 +1,6 @@
 # Note Workspace Snapshot Stabilization Plan
 
-## Goals
+## Goal
 Remove the “wait for panels to finish initializing” requirement and eliminate the title blinking by making the note canvas follow the same overlay-style snapshot behavior: every workspace switch rehydrates the saved payload immediately, and autosave/title sync renders happen only when data actually changes.
 
 ## Current Issues
