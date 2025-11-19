@@ -90,6 +90,19 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       const key = storeKey || panelId
       const parsedKey = storeKey ? parsePanelKey(storeKey) : null
       const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
+      const persistStart = Date.now()
+      debugLog({
+        component: 'PanelPersistence',
+        action: 'branch_trace_panel_update_start',
+        metadata: {
+          panelId,
+          noteId: effectiveNoteId,
+          hasPosition: Boolean(position),
+          hasSize: Boolean(size),
+          coordinateSpace,
+          timestampMs: persistStart
+        }
+      })
 
       // Get current panel data for revision token
       const currentData = dataStore.get(key)
@@ -212,6 +225,18 @@ export function usePanelPersistence(options: PanelPersistOptions) {
             metadata: { panelId, noteId: effectiveNoteId }
           })
         })
+        debugLog({
+          component: 'PanelPersistence',
+          action: 'branch_trace_panel_update_commit',
+          metadata: {
+            panelId,
+            noteId: effectiveNoteId,
+            wrotePosition: Boolean(worldPosition),
+            wroteSize: Boolean(worldSize),
+            durationMs: Date.now() - persistStart,
+            timestampMs: Date.now()
+          }
+        })
       } catch (error) {
         debugLog({
           component: 'PanelPersistence',
@@ -219,7 +244,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           metadata: {
             error: error instanceof Error ? error.message : 'Unknown error',
             panelId,
-            noteId: effectiveNoteId
+            noteId: effectiveNoteId,
+            durationMs: Date.now() - persistStart
           }
         })
 

@@ -226,6 +226,7 @@ export function useNoteWorkspaces({
   const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
+  const lastSaveReasonRef = useRef<string>("initial_schedule")
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -355,6 +356,9 @@ export function useNoteWorkspaces({
           reason,
           panelCount: panels.length,
           noteIds: Array.from(new Set(panels.map((panel) => panel.noteId))),
+          workspaceId: ownerId,
+          timestampMs: Date.now(),
+          cachedWorkspaceCount: workspaceSnapshotsRef.current.size,
         },
       })
     },
@@ -438,6 +442,17 @@ export function useNoteWorkspaces({
   const captureCurrentWorkspaceSnapshot = useCallback(() => {
     const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId
     if (!workspaceId) return
+    const captureStartedAt = Date.now()
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "snapshot_capture_start",
+      metadata: {
+        workspaceId,
+        openNoteCount: openNotes.length,
+        activeNoteId,
+        timestampMs: captureStartedAt,
+      },
+    })
     const previousOwner = snapshotOwnerWorkspaceIdRef.current
     snapshotOwnerWorkspaceIdRef.current = workspaceId
     const snapshots = collectPanelSnapshotsFromDataStore()
@@ -464,11 +479,29 @@ export function useNoteWorkspaces({
       lastPreviewedSnapshotRef.current.delete(workspaceId)
     }
     snapshotOwnerWorkspaceIdRef.current = previousOwner ?? workspaceId
+    const cameraSource = canvasState
+      ? "canvas_state"
+      : layerContext?.transforms.notes
+        ? "layer_transform"
+        : "default_camera"
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "snapshot_capture_complete",
+      metadata: {
+        workspaceId,
+        panelCount: snapshots.length,
+        openNoteCount: openNotes.length,
+        durationMs: Date.now() - captureStartedAt,
+        cameraSource,
+        timestampMs: Date.now(),
+      },
+    })
   }, [
     activeNoteId,
     canvasState,
     collectPanelSnapshotsFromDataStore,
     currentWorkspaceId,
+    emitDebugLog,
     layerContext?.transforms.notes,
     openNotes,
     resolveMainPanelPosition,
@@ -664,24 +697,39 @@ export function useNoteWorkspaces({
       return
     }
     if (!adapterRef.current) return
+    const saveStart = Date.now()
+    const workspaceId = currentWorkspaceSummary.id
+    const reason = lastSaveReasonRef.current
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "save_attempt",
+      metadata: {
+        workspaceId,
+        reason,
+        timestampMs: saveStart,
+        openCount: openNotes.length,
+      },
+    })
     try {
       const payload = buildPayload()
       const payloadHash = serializeWorkspacePayload(payload)
-      const previousHash = lastSavedPayloadHashRef.current.get(currentWorkspaceSummary.id)
+      const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
       if (previousHash === payloadHash) {
         emitDebugLog({
           component: "NoteWorkspace",
           action: "save_skip_no_changes",
           metadata: {
-            workspaceId: currentWorkspaceSummary.id,
+            workspaceId,
             panelCount: payload.panels.length,
             openCount: payload.openNotes.length,
+            durationMs: Date.now() - saveStart,
+            reason,
           },
         })
         return
       }
       const updated = await adapterRef.current.saveWorkspace({
-        id: currentWorkspaceSummary.id,
+        id: workspaceId,
         payload,
         revision: currentWorkspaceSummary.revision,
       })
@@ -689,12 +737,14 @@ export function useNoteWorkspaces({
         component: "NoteWorkspace",
         action: "save_success",
         metadata: {
-          workspaceId: currentWorkspaceSummary.id,
+          workspaceId,
           panelCount: payload.panels.length,
           openCount: payload.openNotes.length,
+          durationMs: Date.now() - saveStart,
+          reason,
         },
       })
-      lastSavedPayloadHashRef.current.set(currentWorkspaceSummary.id, payloadHash)
+      lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
       setWorkspaces((prev) =>
         prev.map((workspace) =>
           workspace.id === updated.id
@@ -714,12 +764,14 @@ export function useNoteWorkspaces({
         component: "NoteWorkspace",
         action: "save_error",
         metadata: {
-          workspaceId: currentWorkspaceSummary.id,
+          workspaceId,
           error: error instanceof Error ? error.message : String(error),
+          durationMs: Date.now() - saveStart,
+          reason,
         },
       })
     }
-  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled])
+  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, openNotes.length])
 
   const scheduleSave = useCallback(
     (options?: { immediate?: boolean; reason?: string }) => {
@@ -732,6 +784,7 @@ export function useNoteWorkspaces({
         clearTimeout(saveTimeoutRef.current)
         saveTimeoutRef.current = null
       }
+      lastSaveReasonRef.current = reason
       emitDebugLog({
         component: "NoteWorkspace",
         action: "save_schedule",
@@ -759,6 +812,7 @@ export function useNoteWorkspaces({
         clearTimeout(saveTimeoutRef.current)
         saveTimeoutRef.current = null
       }
+      lastSaveReasonRef.current = reason
       emitDebugLog({
         component: "NoteWorkspace",
         action: "save_flush",

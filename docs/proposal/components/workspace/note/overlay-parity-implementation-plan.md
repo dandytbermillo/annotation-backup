@@ -32,6 +32,8 @@ Deliver overlay-style persistence for note workspaces so they no longer depend o
    - Case B: wait 3 s before switching → capture logs.
    - Determine exact delta (e.g., `updatePanelSnapshotMap` fires late) to inform readiness gate.
 
+_Status:_ initial tracing hooks (CanvasPanel mount/content readiness, panel persistence commit/start, snapshot capture/save attempts) landed with this change so we can begin collecting the timelines for Cases A/B.
+
 ### Phase 2 – Ready Signal & State Module
 1. Create `lib/note-workspaces/state.ts`:
    - Tracks `openNotes`, `panelSnapshots`, `camera`, `activeNoteId`, and a `snapshotRevision`.

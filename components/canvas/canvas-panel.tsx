@@ -722,6 +722,7 @@ export function CanvasPanel({
   const [lastBranchUpdate, setLastBranchUpdate] = useState(Date.now())
   const forceUpdate = useReducer(() => ({}), {})[1]
   const [isContentLoading, setIsContentLoading] = useState(true)
+  const contentReadyLoggedRef = useRef(false)
   const [isHighlighting, setIsHighlighting] = useState(false)
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const defaultShadow = isIsolated ? '0 8px 32px rgba(239, 68, 68, 0.25)' : '0 8px 32px rgba(0,0,0,0.15)'
@@ -749,6 +750,39 @@ export function CanvasPanel({
   
   // Use noteId from props or context
   const currentNoteId = noteId || contextNoteId
+  const mountTraceMetadataRef = useRef<{ branchType: string | null } | null>(null)
+  if (!mountTraceMetadataRef.current) {
+    mountTraceMetadataRef.current = {
+      branchType: typeof branch?.type === "string" ? branch.type : null,
+    }
+  }
+
+  useEffect(() => {
+    const timestampMs = Date.now()
+    debugLog({
+      component: "CanvasPanel",
+      action: "branch_trace_panel_mount",
+      metadata: {
+        panelId,
+        noteId: currentNoteId ?? null,
+        isMain: panelId === "main",
+        branchType: mountTraceMetadataRef.current?.branchType ?? null,
+        timestampMs,
+      },
+    })
+    return () => {
+      debugLog({
+        component: "CanvasPanel",
+        action: "branch_trace_panel_unmount",
+        metadata: {
+          panelId,
+          noteId: currentNoteId ?? null,
+          isMain: panelId === "main",
+          timestampMs: Date.now(),
+        },
+      })
+    }
+  }, [panelId, currentNoteId])
   
   // Blur editor when switching to popup layer
   // RAF-throttled drag state
@@ -1060,9 +1094,30 @@ export function CanvasPanel({
       // Content is loaded, allow rendering
       setIsContentLoading(false)
     }
-    
+
     checkDocLoading()
   }, [currentNoteId, panelId, isPlainMode])
+  useEffect(() => {
+    if (isContentLoading) {
+      contentReadyLoggedRef.current = false
+      return
+    }
+    if (contentReadyLoggedRef.current) {
+      return
+    }
+    contentReadyLoggedRef.current = true
+    debugLog({
+      component: "CanvasPanel",
+      action: "branch_trace_content_ready",
+      metadata: {
+        panelId,
+        noteId: currentNoteId ?? null,
+        isMain: panelId === "main",
+        mode: isPlainMode ? "plain" : "collab",
+        timestampMs: Date.now(),
+      },
+    })
+  }, [isContentLoading, isPlainMode, panelId, currentNoteId])
   
   // Ensure panel position is set on mount
   useEffect(() => {
