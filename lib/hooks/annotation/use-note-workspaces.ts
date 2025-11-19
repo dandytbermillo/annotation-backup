@@ -409,7 +409,7 @@ export function useNoteWorkspaces({
   }, [collectPanelSnapshotsFromDataStore, emitDebugLog, sharedWorkspace, updatePanelSnapshotMap])
 
   const waitForPanelSnapshotReadiness = useCallback(
-    async (reason: string) => {
+    async (reason: string, maxWaitMs = 800) => {
       if (!featureEnabled || !v2Enabled) return
       const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId
       if (!workspaceId) return
@@ -424,7 +424,7 @@ export function useNoteWorkspaces({
           reason,
         },
       })
-      const ready = await waitForWorkspaceSnapshotReady(workspaceId, 800)
+      const ready = await waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs)
       emitDebugLog({
         component: "NoteWorkspace",
         action: ready ? "snapshot_pending_resolved" : "snapshot_pending_timeout",
@@ -1285,6 +1285,7 @@ export function useNoteWorkspaces({
     (workspaceId: string) => {
       if (workspaceId === currentWorkspaceId) return
       const run = async () => {
+        await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
         await captureCurrentWorkspaceSnapshot()
         flushPendingSave("workspace_switch")
         snapshotOwnerWorkspaceIdRef.current = null
