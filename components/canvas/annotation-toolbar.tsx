@@ -313,6 +313,16 @@ export function AnnotationToolbar() {
 
     // Create the panel for the new branch with smart position
     // NOTE: smartPosition is already in world-space (read from style.left/top which are world coords)
+    debugLog({
+      component: "AnnotationToolbar",
+      action: "dispatch_create_panel_event",
+      metadata: {
+        panelId: panel,
+        branchId,
+        noteId: panelNoteId,
+        position: smartPosition,
+      },
+    })
     window.dispatchEvent(new CustomEvent('create-panel', {
       detail: {
         panelId: branchId,

@@ -22,6 +22,10 @@ import { debugLog } from '@/lib/utils/debug-logger'
 import type { CanvasItem } from '@/types/canvas-items'
 import { resolvePanelDimensions, type PanelDimensions } from '@/lib/canvas/panel-metrics'
 import { useCanvasWorkspace } from '@/components/canvas/canvas-workspace-context'
+import {
+  markPanelPersistencePending,
+  markPanelPersistenceReady,
+} from "@/lib/note-workspaces/state"
 
 export interface PanelPersistOptions {
   /** Data store instance */
@@ -196,6 +200,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       }
 
       // Commit transaction with API persistence
+      markPanelPersistencePending(effectiveNoteId, panelId)
       try {
         await transaction.commit(async () => {
           const response = await fetch(`/api/canvas/layout/${effectiveNoteId}`, {
@@ -262,6 +267,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           action: 'queued_for_offline',
           metadata: { panelId, noteId: effectiveNoteId }
         })
+      } finally {
+        markPanelPersistenceReady(effectiveNoteId, panelId)
       }
     },
     [dataStore, branchesMap, layerManager, noteId, userId, state.canvasState, getWorkspaceVersion]
@@ -334,6 +341,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         }
       })
 
+      markPanelPersistencePending(effectiveNoteId, panelId)
       try {
         const response = await fetch('/api/canvas/panels', {
           method: 'POST',
@@ -387,6 +395,8 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           action: 'panel_creation_queued',
           metadata: { panelId, noteId: effectiveNoteId }
         })
+      } finally {
+        markPanelPersistenceReady(effectiveNoteId, panelId)
       }
     },
     [noteId, userId, state.canvasState, getWorkspaceVersion]

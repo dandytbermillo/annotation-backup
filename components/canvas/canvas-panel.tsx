@@ -3031,9 +3031,20 @@ export function CanvasPanel({
     // Get position for the new panel
     const parentPosition = calculateBranchPanelPosition()
     
+    debugLog({
+      component: "CanvasPanel",
+      action: "dispatch_create_panel_event",
+      metadata: {
+        panelId,
+        branchId,
+        noteId,
+        hasParentPosition: Boolean(parentPosition),
+      },
+    })
+    
     // Dispatch event to create panel with parent position
-    window.dispatchEvent(new CustomEvent('create-panel', { 
-      detail: { 
+    window.dispatchEvent(new CustomEvent('create-panel', {
+      detail: {
         panelId: branchId,
         parentPanelId: panelId,
         parentPosition: parentPosition,
@@ -3042,6 +3053,102 @@ export function CanvasPanel({
       bubbles: true 
     }))
   }
+
+  const triggerAnnotationFromPanelTools = useCallback(
+    (annotationType: 'note' | 'explore' | 'promote') => {
+      const closePanels = () => {
+        setShowToolsDropdown(false)
+        setActiveToolPanel(null)
+      }
+
+      if (typeof window !== "undefined" && (window as any).app?.createAnnotation) {
+        try {
+          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
+            detail: { panelId, noteId: effectiveNoteId },
+          }))
+          ;(window as any).app.createAnnotation(annotationType)
+          debugLog({
+            component: "CanvasPanel",
+            action: "panel_tools_call_app_create_annotation",
+            metadata: {
+              type: annotationType,
+              panelId,
+              noteId: effectiveNoteId,
+            },
+          })
+          closePanels()
+          return
+        } catch (error) {
+          debugLog({
+            component: "CanvasPanel",
+            action: "panel_tools_call_app_failed",
+            metadata: {
+              type: annotationType,
+              panelId,
+              noteId: effectiveNoteId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
+        }
+      }
+
+      const annotationToolbar = document.getElementById('annotation-toolbar')
+      const buttonSelector = `.annotation-btn.${annotationType}`
+      const annotationButton = annotationToolbar?.querySelector(buttonSelector) as HTMLButtonElement | null
+      if (annotationButton) {
+        debugLog({
+          component: "CanvasPanel",
+          action: "panel_tools_trigger_annotation",
+          metadata: {
+            type: annotationType,
+            panelId,
+            noteId: effectiveNoteId,
+            selector: buttonSelector,
+          },
+        })
+        window.dispatchEvent(
+          new CustomEvent('set-annotation-panel', {
+            detail: { panelId, noteId: effectiveNoteId },
+          }),
+        )
+        setTimeout(() => {
+          try {
+            annotationButton.click()
+          } catch (error) {
+            debugLog({
+              component: "CanvasPanel",
+              action: "panel_tools_annotation_click_failed",
+              metadata: {
+                type: annotationType,
+                panelId,
+                noteId: effectiveNoteId,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            })
+          }
+        }, 10)
+      } else {
+        debugLog({
+          component: "CanvasPanel",
+          action: "panel_tools_annotation_button_missing",
+          metadata: {
+            type: annotationType,
+            panelId,
+            noteId: effectiveNoteId,
+            selector: buttonSelector,
+            toolbarFound: Boolean(annotationToolbar),
+          },
+        })
+        window.dispatchEvent(
+          new CustomEvent('set-annotation-panel', {
+            detail: { panelId: null, noteId: null },
+          }),
+        )
+      }
+      closePanels()
+    },
+    [effectiveNoteId, panelId],
+  )
 
   return (
     <>
@@ -4362,26 +4469,7 @@ export function CanvasPanel({
                     {/* Note Button */}
                     <button
                       onClick={() => {
-                        // Trigger annotation creation directly from this panel
-                        const annotationToolbar = document.getElementById('annotation-toolbar')
-                        const noteButton = annotationToolbar?.querySelector('.annotation-btn.note') as HTMLButtonElement
-                        if (noteButton) {
-                          // Store the current panel ID so annotation-toolbar knows which panel to use
-                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId, noteId: effectiveNoteId }
-                          }))
-                          // Wait for the event to be processed before clicking
-                          setTimeout(() => noteButton.click(), 10)
-                        } else {
-                          // Button not found, clear any pending override
-                          console.warn('[CanvasPanel] Note button not found, clearing override')
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId: null, noteId: null }
-                          }))
-                        }
-                        setShowToolsDropdown(false)
-                        setActiveToolPanel(null)
+                        triggerAnnotationFromPanelTools('note')
                       }}
                       style={{
                         flex: 1,
@@ -4416,24 +4504,7 @@ export function CanvasPanel({
                     {/* Explore Button */}
                     <button
                       onClick={() => {
-                        const annotationToolbar = document.getElementById('annotation-toolbar')
-                        const exploreButton = annotationToolbar?.querySelector('.annotation-btn.explore') as HTMLButtonElement
-                        if (exploreButton) {
-                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId, noteId: effectiveNoteId }
-                          }))
-                          // Wait for the event to be processed before clicking
-                          setTimeout(() => exploreButton.click(), 10)
-                        } else {
-                          // Button not found, clear any pending override
-                          console.warn('[CanvasPanel] Explore button not found, clearing override')
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId: null, noteId: null }
-                          }))
-                        }
-                        setShowToolsDropdown(false)
-                        setActiveToolPanel(null)
+                        triggerAnnotationFromPanelTools('explore')
                       }}
                       style={{
                         flex: 1,
@@ -4468,24 +4539,7 @@ export function CanvasPanel({
                     {/* Promote Button */}
                     <button
                       onClick={() => {
-                        const annotationToolbar = document.getElementById('annotation-toolbar')
-                        const promoteButton = annotationToolbar?.querySelector('.annotation-btn.promote') as HTMLButtonElement
-                        if (promoteButton) {
-                          console.log('[CanvasPanel] Dispatching set-annotation-panel event:', { panelId, noteId: effectiveNoteId })
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId, noteId: effectiveNoteId }
-                          }))
-                          // Wait for the event to be processed before clicking
-                          setTimeout(() => promoteButton.click(), 10)
-                        } else {
-                          // Button not found, clear any pending override
-                          console.warn('[CanvasPanel] Promote button not found, clearing override')
-                          window.dispatchEvent(new CustomEvent('set-annotation-panel', {
-                            detail: { panelId: null, noteId: null }
-                          }))
-                        }
-                        setShowToolsDropdown(false)
-                        setActiveToolPanel(null)
+                        triggerAnnotationFromPanelTools('promote')
                       }}
                       style={{
                         flex: 1,

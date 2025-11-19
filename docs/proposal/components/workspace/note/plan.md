@@ -6,6 +6,7 @@ Remove the “wait for panels to finish initializing” requirement and eliminat
 ## Current Issues
 1. **(Open)** `useCanvasNoteSync` only checks the open note IDs. When you switch workspaces and the note set stays the same, the effect returns the previous `canvasItems` array (`setCanvasItems_SKIPPED_SAME_REF`), so React never re-renders branch panels even though the workspace snapshot contains them. That’s why branch panels vanish if you switch before the snapshot mutation finishes—the render layer never consumes the new snapshot.
 2. **(Resolved)** Autosave used to run every second, calling `buildPayload()` and `getPanelSnapshot()` for every open note. This re-applied panel metadata and caused `WidgetStudioConnections`/panel headers to re-render, which made the **main note titles** blink even when nothing changed. Guarding the autosave path (payload hashing + skip logs) now makes autosave a no-op in the steady state, so titles stay stable.
+3. **(New)** Branch creation from the note header’s Tools → Actions menu relied on invisible `.annotation-btn.*` toolbar buttons that were often absent, so `create-panel` events never fired. As of 2025‑11‑19, both the floating toolbar and panel Tools menu call `window.app.createAnnotation(type)` before falling back to those buttons, ensuring branch creation emits `panel_pending/panel_ready` events even when the annotation toolbar is hidden. Hydration still needs to re-read these persisted branch panels when switching back.
 
 ## Implementation Steps
 

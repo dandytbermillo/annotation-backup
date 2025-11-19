@@ -577,14 +577,40 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
   // Insert annotation (note, explore, promote)
   // This triggers the existing AnnotationToolbar's createAnnotation logic
   const insertAnnotation = (type: 'note' | 'explore' | 'promote') => {
-    console.log('[FloatingToolbar] Triggering annotation creation:', type)
+    debugLog({
+      component: "FloatingToolbar",
+      action: "insert_annotation",
+      metadata: { type },
+    })
 
     // Dispatch the annotation creation event that the AnnotationToolbar listens for
     // The AnnotationToolbar component has buttons that call createAnnotation(type)
     // We can trigger the same by clicking the corresponding button programmatically
+    if (typeof window !== "undefined" && (window as any).app?.createAnnotation) {
+      try {
+        ;(window as any).app.createAnnotation(type)
+        debugLog({
+          component: "FloatingToolbar",
+          action: "insert_annotation_call_app",
+          metadata: { type },
+        })
+        return
+      } catch (error) {
+        debugLog({
+          component: "FloatingToolbar",
+          action: "insert_annotation_app_call_failed",
+          metadata: { type, error: error instanceof Error ? error.message : String(error) },
+        })
+      }
+    }
+
     const toolbar = document.getElementById('annotation-toolbar')
     if (!toolbar) {
-      console.warn('[FloatingToolbar] annotation-toolbar not found in DOM')
+      debugLog({
+        component: "FloatingToolbar",
+        action: "insert_annotation_toolbar_missing",
+        metadata: { type },
+      })
       return
     }
 
@@ -593,10 +619,18 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     const button = toolbar.querySelector(buttonSelector) as HTMLButtonElement
 
     if (button) {
-      console.log('[FloatingToolbar] Clicking annotation button:', type)
+      debugLog({
+        component: "FloatingToolbar",
+        action: "insert_annotation_click_button",
+        metadata: { type },
+      })
       button.click()
     } else {
-      console.warn('[FloatingToolbar] Annotation button not found:', buttonSelector)
+      debugLog({
+        component: "FloatingToolbar",
+        action: "insert_annotation_button_missing",
+        metadata: { type, selector: buttonSelector },
+      })
     }
   }
 
@@ -1590,13 +1624,13 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     if (isCreatingNote) return // Prevent double-clicks
 
     setIsCreatingNote(true)
+    let targetWorkspaceId = knowledgeBaseWorkspaceId ?? null
     try {
       debugLog({
         component: "FloatingToolbar",
         action: "create_note_click",
         metadata: { hasWorkspaceId: Boolean(knowledgeBaseWorkspaceId), workspaceId: knowledgeBaseWorkspaceId ?? null, workspaceName },
       })
-      let targetWorkspaceId = knowledgeBaseWorkspaceId
       if (!targetWorkspaceId) {
         targetWorkspaceId = await waitForWorkspaceId(8000)
       }

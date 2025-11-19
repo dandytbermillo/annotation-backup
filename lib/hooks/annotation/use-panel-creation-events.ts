@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 type PanelEventDetail = {
   panelId?: string
@@ -45,12 +46,26 @@ export function usePanelCreationEvents({
       return
     }
 
+    const logPanelEvent = (action: string, detail?: PanelEventDetail) => {
+      void debugLog({
+        component: "AnnotationCanvas",
+        action,
+        metadata: {
+          panelId: detail?.panelId ?? null,
+          noteId: detail?.noteId ?? null,
+          parentPanelId: detail?.parentPanelId ?? null,
+          hasParentPosition: Boolean(detail?.parentPosition || detail?.previewPosition),
+          coordinateSpace: detail?.coordinateSpace ?? null,
+        },
+      })
+    }
+
     const handlePanelEvent = (event: Event) => {
       const detail = (event as CustomEvent<PanelEventDetail>).detail
       if (!detail?.panelId) {
         return
       }
-
+      logPanelEvent("panel_creation_event", detail)
       createPanelRef.current(
         detail.panelId,
         detail.parentPanelId,
@@ -66,7 +81,7 @@ export function usePanelCreationEvents({
       if (!detail?.panelId) {
         return
       }
-
+      logPanelEvent("panel_preview_event_dispatched", detail)
       const position = detail.previewPosition || detail.parentPosition
 
       console.log("[AnnotationCanvas] Creating preview panel:", {

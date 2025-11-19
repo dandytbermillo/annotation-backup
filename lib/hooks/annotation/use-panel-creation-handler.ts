@@ -11,6 +11,7 @@ import { isPlainModeActive } from "@/lib/collab-mode"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { createPanelItem, isPanel, type CanvasItem, type PanelType } from "@/types/canvas-items"
 import type { PanelUpdateData } from "@/lib/hooks/use-panel-persistence"
+import { markPanelPersistencePending } from "@/lib/note-workspaces/state"
 
 type PersistPanelCreateArgs = {
   panelId: string
@@ -54,6 +55,26 @@ export function usePanelCreationHandler({
   persistPanelCreate,
   persistPanelUpdate,
 }: UsePanelCreationHandlerOptions) {
+  const emitPanelDebug = useCallback(
+    (
+      panelId: string,
+      targetNoteId: string,
+      action: string,
+      metadata: Record<string, unknown> = {},
+    ) => {
+      void debugLog({
+        component: "AnnotationCanvas",
+        action,
+        metadata: {
+          panelId,
+          noteId: targetNoteId,
+          ...metadata,
+        },
+      })
+    },
+    [],
+  )
+
   const handleCreatePanel = useCallback(
     (
       panelId: string,
@@ -229,45 +250,65 @@ export function usePanelCreationHandler({
         const persistencePosition =
           effectiveCoordinateSpace === "screen" && parentPosition ? parentPosition : position
 
-        void persistPanelCreate({
-          panelId,
-          storeKey: hydratedStoreKey,
-          type: dbPanelType,
-          position: persistencePosition,
-          size: { width: 500, height: 400 },
-          zIndex: 1,
-          title: panelTitle,
-          metadata: { annotationType: panelType },
-          coordinateSpace: effectiveCoordinateSpace,
-        }).catch(error => {
-          debugLog({
-            component: "AnnotationCanvas",
-            action: "panel_create_persist_failed",
-            metadata: {
-              panelId,
-              noteId: targetNoteId,
-              error: error instanceof Error ? error.message : "Unknown error",
-            },
+        if (isPreview) {
+          emitPanelDebug(panelId, targetNoteId, "panel_preview_event", {
+            parentPanelId,
+            hasParentPosition: Boolean(parentPosition),
           })
-        })
+        }
 
-        void persistPanelUpdate({
-          panelId,
-          storeKey: hydratedStoreKey,
-          position: persistencePosition,
-          coordinateSpace: effectiveCoordinateSpace,
-          state: "active",
-        }).catch(error => {
-          debugLog({
-            component: "AnnotationCanvas",
-            action: "panel_state_active_persist_failed",
-            metadata: {
-              panelId,
-              noteId: targetNoteId,
-              error: error instanceof Error ? error.message : "Unknown error",
-            },
+        if (!isPreview) {
+          emitPanelDebug(panelId, targetNoteId, "panel_persist_create_start")
+          markPanelPersistencePending(targetNoteId, panelId)
+          void persistPanelCreate({
+            panelId,
+            storeKey: hydratedStoreKey,
+            type: dbPanelType,
+            position: persistencePosition,
+            size: { width: 500, height: 400 },
+            zIndex: 1,
+            title: panelTitle,
+            metadata: { annotationType: panelType },
+            coordinateSpace: effectiveCoordinateSpace,
           })
-        })
+            .then(() => {
+              emitPanelDebug(panelId, targetNoteId, "panel_persist_create_success")
+            })
+            .catch((error) => {
+              debugLog({
+                component: "AnnotationCanvas",
+                action: "panel_create_persist_failed",
+                metadata: {
+                  panelId,
+                  noteId: targetNoteId,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                },
+              })
+            })
+
+          emitPanelDebug(panelId, targetNoteId, "panel_persist_activate_start")
+          void persistPanelUpdate({
+            panelId,
+            storeKey: hydratedStoreKey,
+            position: persistencePosition,
+            coordinateSpace: effectiveCoordinateSpace,
+            state: "active",
+          })
+            .then(() => {
+              emitPanelDebug(panelId, targetNoteId, "panel_persist_activate_success")
+            })
+            .catch((error) => {
+              debugLog({
+                component: "AnnotationCanvas",
+                action: "panel_state_active_persist_failed",
+                metadata: {
+                  panelId,
+                  noteId: targetNoteId,
+                  error: error instanceof Error ? error.message : "Unknown error",
+                },
+              })
+            })
+        }
 
         const alreadyExists = prevItems.find(
           item => item.itemType === "panel" && item.panelId === panelId && getItemNoteId(item) === targetNoteId,
@@ -295,6 +336,7 @@ export function usePanelCreationHandler({
       canvasState.translateY,
       canvasState.zoom,
       dataStore,
+      emitPanelDebug,
       getItemNoteId,
       noteId,
       persistPanelCreate,
