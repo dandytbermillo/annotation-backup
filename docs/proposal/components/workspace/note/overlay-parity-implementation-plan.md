@@ -35,6 +35,14 @@ Deliver overlay-style persistence for note workspaces so they no longer depend o
 _Status:_ initial tracing hooks (CanvasPanel mount/content readiness, panel persistence commit/start, snapshot capture/save attempts) landed with this change so we can begin collecting the timelines for Cases A/B. Use `node scripts/query-note-workspace-trace.js --minutes 10 --workspace <id>` to pull the new events from `debug_logs` while reproducing the fast vs. wait flows.
 _Findings:_ Floating-toolbar branch creation was calling into the annotation toolbar via DOM clicks, which silently failed whenever the buttons weren’t mounted. As of 2025‑11‑19 both the floating toolbar and panel Tools → Actions menu call `window.app.createAnnotation(type)` (with logs / button fallback), so you should now see `insert_annotation_*` / `panel_tools_call_app_create_annotation` in traces. Pending work is to ensure hydration replays those saved panels (branch still vanishes on switchback in Case A), so trace Case B (wait ≥3 s) to capture the hydration diff.
 
+_Latest Findings (post-instrumentation, 2025‑11‑19):_
+- `panel_pending` / `panel_ready` now appear when branch creation flows through `annotation-toolbar-trigger` → `usePanelCreationEvents`—the pending guard is firing.
+- When pending events fire, immediate workspace switches keep the branch; dropouts only occur if the snapshot captures before pending is emitted. Remaining work: ensure every branch creation path raises pending early enough and never bypasses the React pipeline.
+
+_Latest Findings (post-instrumentation, 2025‑11‑19):_
+- `panel_pending` / `panel_ready` now appear when branch creation flows through `annotation-toolbar-trigger` → `usePanelCreationEvents` — the pending guard is firing.
+- When pending events fire, immediate workspace switches keep the branch; dropouts only occur if the snapshot captures before pending is emitted. Remaining work: ensure every branch creation path raises pending early enough and never bypasses the React pipeline.
+
 ### Phase 2 – Ready Signal & State Module
 1. Create `lib/note-workspaces/state.ts`:
    - Tracks `openNotes`, `panelSnapshots`, `camera`, `activeNoteId`, and a `snapshotRevision`.

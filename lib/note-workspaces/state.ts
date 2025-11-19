@@ -1,3 +1,5 @@
+import { debugLog } from "@/lib/utils/debug-logger"
+
 export type NoteWorkspaceSnapshot = {
   workspaceId: string
   openNotes: Array<{ noteId: string; mainPosition?: { x: number; y: number } | null }>
@@ -52,6 +54,9 @@ const workspaceStates = new Map<string, WorkspaceState>()
 const noteWorkspaceOwners = new Map<string, string>()
 const snapshotListeners = new Set<(event: WorkspaceSnapshotEvent) => void>()
 const workspaceWaiters = new Map<string, Set<(ready: boolean) => void>>()
+const panelWorkspaceLookup = new Map<string, string>()
+
+let activeWorkspaceContext: string | null = null
 
 const createWorkspaceState = (workspaceId: string): WorkspaceState => {
   if (!workspaceStates.has(workspaceId)) {
@@ -110,6 +115,10 @@ export function clearNoteWorkspaceOwner(noteId: string) {
   noteWorkspaceOwners.delete(noteId)
 }
 
+export function setActiveWorkspaceContext(workspaceId: string | null) {
+  activeWorkspaceContext = workspaceId
+}
+
 const getWorkspaceIdForNote = (noteId: string | null | undefined): string | null => {
   if (!noteId) return null
   return noteWorkspaceOwners.get(noteId) ?? null
@@ -119,12 +128,24 @@ const getPanelKey = (noteId: string, panelId: string) => `${noteId}:${panelId}`
 
 export function markPanelPersistencePending(noteId: string | null | undefined, panelId: string | null | undefined) {
   if (!noteId || !panelId) return
-  const workspaceId = getWorkspaceIdForNote(noteId)
-  if (!workspaceId) return
+  const workspaceId = getWorkspaceIdForNote(noteId) ?? activeWorkspaceContext
+  if (!workspaceId) {
+    void debugLog({
+      component: "NoteWorkspaceState",
+      action: "panel_pending_workspace_missing",
+      metadata: {
+        noteId,
+        panelId,
+        activeWorkspaceContext,
+      },
+    })
+    return
+  }
   const state = createWorkspaceState(workspaceId)
   const key = getPanelKey(noteId, panelId)
   if (state.pendingPanels.has(key)) return
   state.pendingPanels.add(key)
+  panelWorkspaceLookup.set(key, workspaceId)
   emitEvent({
     type: "panel_pending",
     workspaceId,
@@ -137,16 +158,28 @@ export function markPanelPersistencePending(noteId: string | null | undefined, p
 
 export function markPanelPersistenceReady(noteId: string | null | undefined, panelId: string | null | undefined) {
   if (!noteId || !panelId) return
-  const workspaceId = getWorkspaceIdForNote(noteId)
-  if (!workspaceId) return
-  const state = createWorkspaceState(workspaceId)
   const key = getPanelKey(noteId, panelId)
+  const workspaceId = panelWorkspaceLookup.get(key) ?? getWorkspaceIdForNote(noteId) ?? activeWorkspaceContext
+  if (!workspaceId) {
+    void debugLog({
+      component: "NoteWorkspaceState",
+      action: "panel_ready_workspace_missing",
+      metadata: {
+        noteId,
+        panelId,
+        activeWorkspaceContext,
+      },
+    })
+    return
+  }
+  const state = createWorkspaceState(workspaceId)
   if (!state.pendingPanels.has(key)) {
     // If we never saw a pending entry, nothing to emit.
     return
   }
   state.pendingPanels.delete(key)
   state.readyPanels.add(key)
+  panelWorkspaceLookup.delete(key)
   emitEvent({
     type: "panel_ready",
     workspaceId,

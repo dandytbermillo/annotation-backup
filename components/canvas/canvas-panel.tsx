@@ -33,6 +33,7 @@ import { debugLog } from "@/lib/utils/debug-logger"
 import { useCanvasWorkspace, SHARED_WORKSPACE_ID } from "./canvas-workspace-context"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
 import { HOVER_HIGHLIGHT_DURATION_MS } from "@/lib/constants/ui-timings"
+import { isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 
 const TiptapEditorCollab = dynamic(() => import('./tiptap-editor-collab'), { ssr: false })
 
@@ -80,6 +81,7 @@ export function CanvasPanel({
 }: CanvasPanelProps) {
   const { dispatch, state, dataStore, noteId: contextNoteId, onRegisterActiveEditor, updateAnnotationType } = useCanvas()
   const { getWorkspace: getCanvasWorkspace } = useCanvasWorkspace()
+  const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const workspaceShared = getCanvasWorkspace(SHARED_WORKSPACE_ID)
   const sharedDataStore = workspaceShared.dataStore
   type UnifiedEditorHandle = TiptapEditorHandle | TiptapEditorPlainHandle
@@ -3061,7 +3063,32 @@ export function CanvasPanel({
         setActiveToolPanel(null)
       }
 
-      if (typeof window !== "undefined" && (window as any).app?.createAnnotation) {
+      const legacyAppAvailable = typeof window !== "undefined" && (window as any).app?.createAnnotation
+      if (noteWorkspaceV2Enabled) {
+        window.dispatchEvent(
+          new CustomEvent("annotation-toolbar-trigger", {
+            detail: {
+              type: annotationType,
+              panelId,
+              noteId: effectiveNoteId,
+            },
+          }),
+        )
+        closePanels()
+        return
+      }
+      if (legacyAppAvailable && noteWorkspaceV2Enabled) {
+        debugLog({
+          component: "CanvasPanel",
+          action: "panel_tools_skip_legacy_app",
+          metadata: {
+            type: annotationType,
+            panelId,
+            noteId: effectiveNoteId,
+          },
+        }).catch(() => {})
+      }
+      if (legacyAppAvailable && !noteWorkspaceV2Enabled) {
         try {
           window.dispatchEvent(new CustomEvent('set-annotation-panel', {
             detail: { panelId, noteId: effectiveNoteId },
@@ -3147,7 +3174,7 @@ export function CanvasPanel({
       }
       closePanels()
     },
-    [effectiveNoteId, panelId],
+    [effectiveNoteId, noteWorkspaceV2Enabled, panelId],
   )
 
   return (

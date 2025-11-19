@@ -19,6 +19,7 @@ import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { useNotePreviewHover } from "@/hooks/useNotePreviewHover"
 import type { KnowledgeBaseWorkspaceApi } from "@/lib/hooks/annotation/use-knowledge-base-workspace"
+import { isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 
 
 // Folder color palette - similar to sticky notes pattern
@@ -203,6 +204,7 @@ const ACTION_ITEMS = [
 ]
 
 export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onCreateOverlayPopup, onAddComponent, editorRef, activePanelId, onBackdropStyleChange, onFolderRenamed, activePanel: activePanelProp, onActivePanelChange, refreshRecentNotes, onToggleConstellationPanel, showConstellationPanel, canvasState, canvasDispatch, canvasDataStore, canvasNoteId, knowledgeBaseWorkspace, workspaceReady = true, workspaceName = null }: FloatingToolbarProps) {
+  const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const {
     workspaceId: knowledgeBaseWorkspaceId,
     appendWorkspaceParam: appendKnowledgeBaseWorkspaceParam,
@@ -586,7 +588,20 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     // Dispatch the annotation creation event that the AnnotationToolbar listens for
     // The AnnotationToolbar component has buttons that call createAnnotation(type)
     // We can trigger the same by clicking the corresponding button programmatically
-    if (typeof window !== "undefined" && (window as any).app?.createAnnotation) {
+    const legacyAppAvailable = typeof window !== "undefined" && (window as any).app?.createAnnotation
+    if (noteWorkspaceV2Enabled) {
+      window.dispatchEvent(
+        new CustomEvent("annotation-toolbar-trigger", {
+          detail: {
+            type,
+            panelId: activePanelId ?? undefined,
+            noteId: canvasNoteId ?? undefined,
+          },
+        }),
+      )
+      return
+    }
+    if (legacyAppAvailable && !noteWorkspaceV2Enabled) {
       try {
         ;(window as any).app.createAnnotation(type)
         debugLog({

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { markPanelPersistencePending } from "@/lib/note-workspaces/state"
 
 type PanelEventDetail = {
   panelId?: string
@@ -60,16 +61,19 @@ export function usePanelCreationEvents({
       })
     }
 
-    const handlePanelEvent = (event: Event) => {
-      const detail = (event as CustomEvent<PanelEventDetail>).detail
-      if (!detail?.panelId) {
-        return
-      }
-      logPanelEvent("panel_creation_event", detail)
-      createPanelRef.current(
-        detail.panelId,
-        detail.parentPanelId,
-        detail.parentPosition,
+  const handlePanelEvent = (event: Event) => {
+    const detail = (event as CustomEvent<PanelEventDetail>).detail
+    if (!detail?.panelId) {
+      return
+    }
+    const targetNoteId = detail.noteId || noteId
+    // Immediately raise pending so workspace snapshots wait for this panel
+    markPanelPersistencePending(targetNoteId, detail.panelId)
+    logPanelEvent("panel_creation_event", detail)
+    createPanelRef.current(
+      detail.panelId,
+      detail.parentPanelId,
+      detail.parentPosition,
         detail.noteId,
         false,
         detail.coordinateSpace,

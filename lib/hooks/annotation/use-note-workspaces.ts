@@ -16,6 +16,7 @@ import {
   clearNoteWorkspaceOwner,
   waitForWorkspaceSnapshotReady,
   subscribeToWorkspaceSnapshotState,
+  setActiveWorkspaceContext,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
 
@@ -683,6 +684,17 @@ export function useNoteWorkspaces({
       bumpSnapshotRevision,
     ],
   )
+
+  useEffect(() => {
+    if (!featureEnabled || !v2Enabled) {
+      setActiveWorkspaceContext(null)
+      return
+    }
+    setActiveWorkspaceContext(currentWorkspaceId ?? null)
+    return () => {
+      setActiveWorkspaceContext(null)
+    }
+  }, [featureEnabled, v2Enabled, currentWorkspaceId])
 
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) {

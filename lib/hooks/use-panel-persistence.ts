@@ -200,6 +200,15 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       }
 
       // Commit transaction with API persistence
+      void debugLog({
+        component: "PanelPersistence",
+        action: "mark_pending_call",
+        metadata: {
+          noteId: effectiveNoteId,
+          panelId,
+          source: "persist_panel_update",
+        },
+      })
       markPanelPersistencePending(effectiveNoteId, panelId)
       try {
         await transaction.commit(async () => {
@@ -268,6 +277,15 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           metadata: { panelId, noteId: effectiveNoteId }
         })
       } finally {
+        void debugLog({
+          component: "PanelPersistence",
+          action: "mark_ready_call",
+          metadata: {
+            noteId: effectiveNoteId,
+            panelId,
+            source: "persist_panel_update",
+          },
+        })
         markPanelPersistenceReady(effectiveNoteId, panelId)
       }
     },
@@ -341,6 +359,15 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         }
       })
 
+      void debugLog({
+        component: "PanelPersistence",
+        action: "mark_pending_call",
+        metadata: {
+          noteId: effectiveNoteId,
+          panelId,
+          source: "persist_panel_create",
+        },
+      })
       markPanelPersistencePending(effectiveNoteId, panelId)
       try {
         const response = await fetch('/api/canvas/panels', {
@@ -396,6 +423,15 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           metadata: { panelId, noteId: effectiveNoteId }
         })
       } finally {
+        void debugLog({
+          component: "PanelPersistence",
+          action: "mark_ready_call",
+          metadata: {
+            noteId: effectiveNoteId,
+            panelId,
+            source: "persist_panel_create",
+          },
+        })
         markPanelPersistenceReady(effectiveNoteId, panelId)
       }
     },
