@@ -234,6 +234,8 @@ export function useNoteWorkspaces({
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const ownedNotesRef = useRef<Map<string, string>>(new Map())
   const lastSaveReasonRef = useRef<string>("initial_schedule")
+  const saveInFlightRef = useRef(false)
+  const skipSavesUntilRef = useRef(0)
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -437,48 +439,6 @@ export function useNoteWorkspaces({
     },
     [currentWorkspaceId, emitDebugLog, featureEnabled, v2Enabled],
   )
-
-  useEffect(() => {
-    if (!featureEnabled || !v2Enabled) return
-    const unsubscribe = subscribeToWorkspaceSnapshotState((event) => {
-      if (event.type === "panel_pending") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_pending",
-          metadata: {
-            workspaceId: event.workspaceId,
-            noteId: event.noteId,
-            panelId: event.panelId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      } else if (event.type === "panel_ready") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_ready",
-          metadata: {
-            workspaceId: event.workspaceId,
-            noteId: event.noteId,
-            panelId: event.panelId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      } else if (event.type === "workspace_ready") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "workspace_ready",
-          metadata: {
-            workspaceId: event.workspaceId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      }
-    })
-    return unsubscribe
-  }, [emitDebugLog, featureEnabled, v2Enabled])
 
   const applyPanelSnapshots = useCallback(
     (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
@@ -819,7 +779,16 @@ export function useNoteWorkspaces({
   ])
 
   const persistWorkspaceNow = useCallback(async () => {
+    const now = Date.now()
+    if (now < skipSavesUntilRef.current) {
+      return
+    }
+    if (saveInFlightRef.current) {
+      return
+    }
+    saveInFlightRef.current = true
     if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current) {
+      saveInFlightRef.current = false
       return
     }
     if (!adapterRef.current) return
@@ -853,6 +822,7 @@ export function useNoteWorkspaces({
             reason,
           },
         })
+        saveInFlightRef.current = false
         return
       }
       const updated = await adapterRef.current.saveWorkspace({
@@ -871,6 +841,7 @@ export function useNoteWorkspaces({
           reason,
         },
       })
+      saveInFlightRef.current = false
       lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
       setWorkspaces((prev) =>
         prev.map((workspace) =>
@@ -887,18 +858,71 @@ export function useNoteWorkspaces({
       setStatusHelperText(formatSyncedLabel(updated.updatedAt))
     } catch (error) {
       console.warn("[NoteWorkspace] save failed", error)
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "save_error",
-        metadata: {
-          workspaceId,
-          error: error instanceof Error ? error.message : String(error),
-          durationMs: Date.now() - saveStart,
-          reason,
-        },
-      })
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_error",
+          metadata: {
+            workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+            durationMs: Date.now() - saveStart,
+            reason,
+          },
+        })
+        skipSavesUntilRef.current = Date.now() + 1000
+        saveInFlightRef.current = false
+        return
     }
+    saveInFlightRef.current = false
   }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, openNotes.length])
+
+  useEffect(() => {
+    if (!featureEnabled || !v2Enabled) return
+    const unsubscribe = subscribeToWorkspaceSnapshotState((event) => {
+      if (event.type === "panel_pending") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_pending",
+          metadata: {
+            workspaceId: event.workspaceId,
+            noteId: event.noteId,
+            panelId: event.panelId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "panel_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            noteId: event.noteId,
+            panelId: event.panelId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+        if (
+          event.workspaceId === currentWorkspaceId &&
+          !isHydratingRef.current
+        ) {
+          void (async () => {
+            await captureCurrentWorkspaceSnapshot()
+            lastSaveReasonRef.current = "panel_ready_auto_save"
+            await persistWorkspaceNow()
+          })()
+        }
+      }
+    })
+    return unsubscribe
+  }, [
+    captureCurrentWorkspaceSnapshot,
+    currentWorkspaceId,
+    emitDebugLog,
+    featureEnabled,
+    persistWorkspaceNow,
+    v2Enabled,
+  ])
 
   const scheduleSave = useCallback(
     (options?: { immediate?: boolean; reason?: string }) => {
@@ -1167,6 +1191,67 @@ export function useNoteWorkspaces({
       }
     }
   }, [featureEnabled, flushPendingSave])
+
+  useEffect(() => {
+    if (!featureEnabled || !v2Enabled) return
+    const unsubscribe = subscribeToWorkspaceSnapshotState((event) => {
+      if (event.type === "panel_pending") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_pending",
+          metadata: {
+            workspaceId: event.workspaceId,
+            noteId: event.noteId,
+            panelId: event.panelId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "panel_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            noteId: event.noteId,
+            panelId: event.panelId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "workspace_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+        if (
+          featureEnabled &&
+          v2Enabled &&
+          event.workspaceId === currentWorkspaceId &&
+          !isHydratingRef.current
+        ) {
+          void (async () => {
+            await captureCurrentWorkspaceSnapshot()
+            lastSaveReasonRef.current = "panel_ready_auto_save"
+            await persistWorkspaceNow()
+          })()
+        }
+      }
+    })
+    return unsubscribe
+  }, [
+    captureCurrentWorkspaceSnapshot,
+    currentWorkspaceId,
+    emitDebugLog,
+    featureEnabled,
+    persistWorkspaceNow,
+    v2Enabled,
+  ])
 
   useEffect(() => {
     if (!featureEnabled || !currentWorkspaceSummary) return

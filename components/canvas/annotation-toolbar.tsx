@@ -121,13 +121,19 @@ export function AnnotationToolbar() {
         setOverridePanelInfo(null)
       }
 
+      const noteIdForSave = panelNoteId
+      if (!noteIdForSave) {
+        console.warn("[AnnotationToolbar] Cannot create annotation without a noteId", panel)
+        return
+      }
+
       const annotationId = uuidv4()
       const branchId = `branch-${annotationId}`
       const plainProvider = getPlainProvider()
       const isPlainMode = !!plainProvider
 
       const calculateSmartPosition = () => {
-        const parentStoreKey = ensurePanelKey(panelNoteId || "", panel)
+        const parentStoreKey = ensurePanelKey(noteIdForSave, panel)
         const currentPanel = document.querySelector(`[data-store-key="${parentStoreKey}"]`) as HTMLElement | null
         let parentPosition = { x: 2000, y: 1500 }
 
@@ -157,7 +163,7 @@ export function AnnotationToolbar() {
         },
       }).catch(() => {})
 
-      const draftBranch = createAnnotationBranch(type, panel, panelNoteId || "", text, smartPosition)
+      const draftBranch = createAnnotationBranch(type, panel, noteIdForSave, text, smartPosition)
       const initialPreview = buildBranchPreview(draftBranch.content, text)
 
       const branchData = {
@@ -170,15 +176,15 @@ export function AnnotationToolbar() {
         metadata: { ...draftBranch.metadata, preview: initialPreview },
       }
 
-      const branchStoreKey = ensurePanelKey(panelNoteId || "", branchId)
-      const panelStoreKey = ensurePanelKey(panelNoteId || "", panel)
+      const branchStoreKey = ensurePanelKey(noteIdForSave, branchId)
+      const panelStoreKey = ensurePanelKey(noteIdForSave, panel)
       dataStore.set(branchStoreKey, branchData)
 
-      if (isPlainMode && plainProvider && panelNoteId) {
+      if (isPlainMode && plainProvider && noteIdForSave) {
         plainProvider
           .createBranch({
             id: annotationId,
-            noteId: panelNoteId,
+            noteId: noteIdForSave,
             parentId: panel,
             type,
             title: draftBranch.title,
@@ -197,7 +203,9 @@ export function AnnotationToolbar() {
                 }
               : undefined,
           })
-          .then(() => plainProvider.saveDocument(panelNoteId, branchId, branchData.content, false, { skipBatching: true }))
+          .then(() =>
+            plainProvider.saveDocument(noteIdForSave, branchId, branchData.content, false, { skipBatching: true }),
+          )
           .catch((error) => {
             console.error("[AnnotationToolbar] Failed to create branch or persist initial content:", error)
           })
@@ -209,8 +217,8 @@ export function AnnotationToolbar() {
         }
       } else {
         const provider = UnifiedProvider.getInstance()
-        if (panelNoteId) {
-          provider.setCurrentNote(panelNoteId)
+        if (noteIdForSave) {
+          provider.setCurrentNote(noteIdForSave)
         }
         provider.addBranch(panel, branchId, branchData)
         const parentPanel = dataStore.get(panelStoreKey)
