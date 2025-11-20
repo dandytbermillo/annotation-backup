@@ -28,12 +28,15 @@ Plan
      - Marks document_saves for that note (and panels) deleted_at or deletes rows.
    - Panel delete: mark panel deleted_at (and optionally related saves) when deleting a non-main panel.
    - Workspace scoping: honor x-overlay-workspace-id and app.current_workspace_id; return 404 if workspace mismatch.
+   - Implemented: shared cascade in lib/server/note-deletion.ts; DELETE /api/postgres-offline/notes/[id] and DELETE /api/items/[id] now call it and return counts.
 4) Read filtering
    - Ensure all note/panel/item fetchers filter deleted_at IS NULL: tree/search/recent, canvas/panel loaders, overlay endpoints, versions/history reads if applicable.
    - For Yjs/plain load paths, guard against resurrecting soft-deleted docs (skip hydration if tombstoned).
+   - Implemented: search GET/POST now filters deleted notes/branches/docs; panels GET filters deleted_at; items recent already filters deleted_at.
 5) UI wiring
    - Route active UI to the canonical delete endpoint(s); remove/guard deprecated delete flows (Phase1 explorer, floating widget, etc.).
    - When deleting a non-main panel, call the panel delete API or include panel IDs in the note delete payload.
+   - Implemented: Floating toolbar delete now calls DELETE /api/postgres-offline/notes/:id for notes; folders stay on /api/items/:id.
 6) Offline/Yjs parity
    - On delete, enqueue a delete/tombstone entry so offline replay does not recreate the doc/panel.
    - Have the provider drop subdocs and cache entries when tombstoned; skip sending updates for deleted docs.
@@ -41,6 +44,7 @@ Plan
    - Add regression test: create note + panel, delete via API, reload data (items/notes/panels fetchers) -> empty; no document_saves rows returned.
    - If offline: simulate queue replay to confirm tombstones prevent recreation.
    - Manual: delete note/panel, hard refresh, verify absent in tree/search/recent and canvas.
+   - Implemented: __tests__/integration/note-delete-cascade.test.ts (passes); __tests__/integration/search-filters-deleted.test.ts (passes).
 
 Follow-through checklist (post-implementation)
 - Read-path audit: verify deleted_at filtering on all loaders (tree/search/recent, canvas/panel endpoints, overlay fetchers, search endpoints).

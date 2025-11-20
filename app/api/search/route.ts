@@ -22,6 +22,14 @@ export async function GET(request: NextRequest) {
   }
   
   try {
+    let workspaceId: string
+    try {
+      workspaceId = await WorkspaceStore.getDefaultWorkspaceId(pool)
+    } catch (error) {
+      console.error('[search GET] Failed to resolve workspace:', error)
+      return NextResponse.json({ error: 'Failed to resolve workspace' }, { status: 500 })
+    }
+
     const results: any = {
       query,
       type,
@@ -48,6 +56,7 @@ export async function GET(request: NextRequest) {
           created_at
         FROM notes
         WHERE workspace_id = $4
+          AND deleted_at IS NULL
           AND (search_vector @@ ${tsquery}
            OR title ILIKE '%' || $1 || '%')
         ORDER BY rank DESC, created_at DESC
@@ -70,7 +79,7 @@ export async function GET(request: NextRequest) {
           ds.panel_id,
           ds.version,
           n.title as note_title,
-          ts_rank(ds.search_vector, ${tsquery}) as rank,
+          ts_rank(to_tsvector('english', COALESCE(ds.document_text, '')), ${tsquery}) as rank,
           ts_headline(
             'english', 
             COALESCE(ds.document_text, ''), 
@@ -81,7 +90,8 @@ export async function GET(request: NextRequest) {
         FROM document_saves ds
         LEFT JOIN notes n ON ds.note_id = n.id
         WHERE ds.workspace_id = $4
-          AND ds.search_vector @@ ${tsquery}
+          AND to_tsvector('english', COALESCE(ds.document_text, '')) @@ ${tsquery}
+          AND n.deleted_at IS NULL
         ORDER BY rank DESC, ds.created_at DESC
         LIMIT $2 OFFSET $3`,
         [query, limit, offset, workspaceId]
@@ -116,6 +126,8 @@ export async function GET(request: NextRequest) {
         FROM branches b
         LEFT JOIN notes n ON b.note_id = n.id
         WHERE b.workspace_id = $4
+          AND b.deleted_at IS NULL
+          AND n.deleted_at IS NULL
           AND to_tsvector('english', COALESCE(b.original_text, '')) @@ ${tsquery}
         ORDER BY rank DESC, b.created_at DESC
         LIMIT $2 OFFSET $3`,
@@ -150,6 +162,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN notes n ON ds.note_id = n.id
         WHERE ds.workspace_id = $4
           AND ds.document_text % $1
+          AND n.deleted_at IS NULL
         ORDER BY similarity DESC
         LIMIT $2 OFFSET $3`,
         [query, limit, offset, workspaceId]
