@@ -4309,6 +4309,9 @@ function NotesExplorerContent({
 
 // Main export component that wraps with LayerProvider if needed
 export function NotesExplorerPhase1(props: NotesExplorerProps) {
-  // LayerProvider is provided at the app level (annotation-app.tsx)
-  return <NotesExplorerContent {...props} multiLayerEnabled={true} />
+  // Disabled deprecated component to prevent accidental use.
+  if (typeof window !== 'undefined') {
+    console.warn('[NotesExplorerPhase1] Deprecated component is disabled; no UI will render.')
+  }
+  return null
 }
