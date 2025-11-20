@@ -1,6 +1,6 @@
 # Note Workspace Overlay-Parity Implementation Plan
 
-## 0. Pre-Read & Safety
+## 0. Pre-Read and Safety
 - ✅ Read `codex/codex_needs_to_avoid/isolation-reactivity-anti-patterns.md`. Applicability: we must not couple new consumer hooks/UI to unstable provider contracts while refactoring the workspace engine. All context/APIs we add (snapshot refs, readiness flags) need backwards-compatible shims plus feature-flag guards, and we must avoid wiring UI components until the provider contract is fully stabilized.
 - Compliance plan:
   - Gate all new state modules + context fields behind `NEXT_PUBLIC_NOTE_WORKSPACES_V2`.
