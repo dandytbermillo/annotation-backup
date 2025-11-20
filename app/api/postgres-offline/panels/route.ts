@@ -59,11 +59,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const noteId = searchParams.get('note_id');
 
-    let query = 'SELECT * FROM panels';
+    let query = 'SELECT * FROM panels WHERE deleted_at IS NULL';
     const params: string[] = [];
 
     if (noteId) {
-      query += ' WHERE note_id = $1';
+      query += ' AND note_id = $1';
       params.push(noteId);
     }
 

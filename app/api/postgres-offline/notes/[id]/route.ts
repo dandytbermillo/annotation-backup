@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { serverPool } from '@/lib/db/pool'
 import { WorkspaceStore, FEATURE_WORKSPACE_SCOPING } from '@/lib/workspace/workspace-store'
+import { deleteNoteCascade } from '@/lib/server/note-deletion'
 
 // GET /api/postgres-offline/notes/[id] - Get a note by ID
 export async function GET(
@@ -15,7 +16,7 @@ export async function GET(
       const result = await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
         return client.query(
           `SELECT id, title, metadata, created_at, updated_at
-           FROM notes WHERE id = $1 AND workspace_id = $2`,
+           FROM notes WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`,
           [id, workspaceId]
         )
       })
@@ -33,7 +34,7 @@ export async function GET(
     // Legacy path without workspace scoping
     const result = await serverPool.query(
       `SELECT id, title, metadata, created_at, updated_at
-       FROM notes WHERE id = $1`,
+       FROM notes WHERE id = $1 AND deleted_at IS NULL`,
       [id]
     )
     
@@ -98,7 +99,7 @@ export async function PATCH(
         return client.query(
           `UPDATE notes 
            SET ${updates.join(', ')}
-           WHERE id = $1 AND workspace_id = $${paramIndex}
+           WHERE id = $1 AND workspace_id = $${paramIndex} AND deleted_at IS NULL
            RETURNING id, title, metadata, created_at, updated_at`,
           values
         )
@@ -118,7 +119,7 @@ export async function PATCH(
     const result = await serverPool.query(
       `UPDATE notes 
        SET ${updates.join(', ')}
-       WHERE id = $1
+       WHERE id = $1 AND deleted_at IS NULL
        RETURNING id, title, metadata, created_at, updated_at`,
       values
     )
@@ -135,6 +136,75 @@ export async function PATCH(
     console.error('[PATCH /api/postgres-offline/notes/[id]] Error:', error)
     return NextResponse.json(
       { error: 'Failed to update note' },
+      { status: 500 }
+    )
+  }
+}
+
+// DELETE /api/postgres-offline/notes/[id] - Soft delete note + panels + saves
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  let body: any = {}
+  try {
+    body = await request.json()
+  } catch {
+    body = {}
+  }
+
+  const requestedWorkspaceId =
+    (typeof body?.workspaceId === 'string' && body.workspaceId.length > 0 ? body.workspaceId : undefined) ??
+    request.headers.get('x-overlay-workspace-id') ??
+    undefined
+  const hardDelete = body?.hardDelete === true
+
+  try {
+    return await WorkspaceStore.withWorkspace(serverPool, async ({ client, workspaceId }) => {
+      let activeWorkspaceId = workspaceId
+      let resetWorkspaceAtEnd = false
+
+      if (requestedWorkspaceId && requestedWorkspaceId !== workspaceId) {
+        const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
+        if (exists.rowCount === 0) {
+          return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+        }
+        await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', requestedWorkspaceId])
+        activeWorkspaceId = requestedWorkspaceId
+        resetWorkspaceAtEnd = true
+      }
+
+      try {
+        const result = await deleteNoteCascade(client, {
+          noteId: id,
+          workspaceId: activeWorkspaceId,
+          hardDelete,
+        })
+
+        if (!result.found) {
+          return NextResponse.json({ error: 'Note not found' }, { status: 404 })
+        }
+
+        return NextResponse.json({
+          success: true,
+          workspaceId: result.workspaceId,
+          hardDelete: result.hardDelete,
+          deletedNote: result.deletedNote,
+          affectedPanels: result.affectedPanels,
+          affectedDocumentSaves: result.affectedDocumentSaves,
+          affectedItems: result.affectedItems,
+        })
+      } finally {
+        if (resetWorkspaceAtEnd) {
+          await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', workspaceId])
+        }
+      }
+    })
+  } catch (error) {
+    console.error('[DELETE /api/postgres-offline/notes/[id]] Error:', error)
+    return NextResponse.json(
+      { error: 'Failed to delete note' },
       { status: 500 }
     )
   }

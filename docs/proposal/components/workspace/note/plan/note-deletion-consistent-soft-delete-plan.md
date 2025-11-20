@@ -42,6 +42,12 @@ Plan
    - If offline: simulate queue replay to confirm tombstones prevent recreation.
    - Manual: delete note/panel, hard refresh, verify absent in tree/search/recent and canvas.
 
+Follow-through checklist (post-implementation)
+- Read-path audit: verify deleted_at filtering on all loaders (tree/search/recent, canvas/panel endpoints, overlay fetchers, search endpoints).
+- UI entry points: ensure every delete trigger (toolbar, context menus, legacy explorers/widgets) calls the canonical delete; remove/guard partial/local-only paths.
+- Panel-only delete: if direct panel deletes are exposed, add API usage and a regression test to confirm panels stay deleted and don’t hydrate.
+- Offline/Yjs: propagate deletes as tombstones/offline-queue removals so replay cannot resurrect deleted docs/panels.
+
 Risks/mitigations
 - Partial deletes across tables: wrap in one transaction and roll back on any failure.
 - Workspace leakage: enforce workspace_id in all delete/read queries.

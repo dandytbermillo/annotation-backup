@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Pool } from 'pg'
+import { WorkspaceStore } from '@/lib/workspace/workspace-store'
+import { deleteNoteCascade } from '@/lib/server/note-deletion'
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/annotation_dev'
@@ -258,26 +260,64 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
+  let body: any = {}
   try {
-    const { id } = await params
+    body = await request.json()
+  } catch {
+    body = {}
+  }
 
-    const query = `
-      UPDATE items
-      SET deleted_at = NOW()
-      WHERE id = $1 AND deleted_at IS NULL
-      RETURNING id
-    `
+  const requestedWorkspaceId =
+    (typeof body?.workspaceId === 'string' && body.workspaceId.length > 0 ? body.workspaceId : undefined) ??
+    request.headers.get('x-overlay-workspace-id') ??
+    undefined
+  const hardDelete = body?.hardDelete === true
 
-    const result = await pool.query(query, [id])
+  try {
+    return await WorkspaceStore.withWorkspace(pool, async ({ client, workspaceId }) => {
+      let activeWorkspaceId = workspaceId
+      let resetWorkspaceAtEnd = false
 
-    if (result.rows.length === 0) {
-      return NextResponse.json(
-        { error: 'Item not found' },
-        { status: 404 }
-      )
-    }
+      if (requestedWorkspaceId && requestedWorkspaceId !== workspaceId) {
+        const exists = await client.query('SELECT 1 FROM workspaces WHERE id = $1', [requestedWorkspaceId])
+        if (exists.rowCount === 0) {
+          return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+        }
+        await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', requestedWorkspaceId])
+        activeWorkspaceId = requestedWorkspaceId
+        resetWorkspaceAtEnd = true
+      }
 
-    return NextResponse.json({ success: true })
+      try {
+        const result = await deleteNoteCascade(client, {
+          noteId: id,
+          workspaceId: activeWorkspaceId,
+          hardDelete,
+        })
+
+        if (!result.found) {
+          return NextResponse.json(
+            { error: 'Item not found' },
+            { status: 404 }
+          )
+        }
+
+        return NextResponse.json({
+          success: true,
+          workspaceId: result.workspaceId,
+          hardDelete: result.hardDelete,
+          deletedNote: result.deletedNote,
+          affectedPanels: result.affectedPanels,
+          affectedDocumentSaves: result.affectedDocumentSaves,
+          affectedItems: result.affectedItems,
+        })
+      } finally {
+        if (resetWorkspaceAtEnd) {
+          await client.query('SELECT set_config($1, $2, false)', ['app.current_workspace_id', workspaceId])
+        }
+      }
+    })
   } catch (error) {
     console.error('Error deleting item:', error)
     return NextResponse.json(

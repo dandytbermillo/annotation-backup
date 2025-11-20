@@ -1137,7 +1137,7 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     }
   }
 
-  // Handle deleting selected folder
+  // Handle deleting selected folder or note (uses canonical cascade deletes)
   const handleDeleteSelectedFolder = async () => {
     if (!selectedFolderId) return
 
@@ -1152,12 +1152,21 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
     if (!confirm(confirmMsg)) return
 
     try {
-      const response = await fetchWithKnowledgeBase(`/api/items/${selectedFolderId}`, {
-        method: 'DELETE'
+      // Notes: hit canonical note delete (cascades panels/document_saves/items)
+      // Folders: delete via items API (existing behavior)
+      const endpoint =
+        folderToDelete.type === 'note'
+          ? `/api/postgres-offline/notes/${selectedFolderId}`
+          : `/api/items/${selectedFolderId}`
+
+      const response = await fetchWithKnowledgeBase(endpoint, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
       })
 
       if (!response.ok) {
-        throw new Error('Failed to delete folder')
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to delete item')
       }
 
       // Remove from orgItems
