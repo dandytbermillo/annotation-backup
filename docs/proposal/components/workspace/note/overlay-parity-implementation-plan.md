@@ -36,12 +36,8 @@ _Status:_ initial tracing hooks (CanvasPanel mount/content readiness, panel pers
 _Findings:_ Floating-toolbar branch creation was calling into the annotation toolbar via DOM clicks, which silently failed whenever the buttons weren’t mounted. As of 2025‑11‑19 both the floating toolbar and panel Tools → Actions menu call `window.app.createAnnotation(type)` (with logs / button fallback), so you should now see `insert_annotation_*` / `panel_tools_call_app_create_annotation` in traces. Pending work is to ensure hydration replays those saved panels (branch still vanishes on switchback in Case A), so trace Case B (wait ≥3 s) to capture the hydration diff.
 
 _Latest Findings (post-instrumentation, 2025‑11‑19):_
-- `panel_pending` / `panel_ready` now appear when branch creation flows through `annotation-toolbar-trigger` → `usePanelCreationEvents`—the pending guard is firing.
-- When pending events fire, immediate workspace switches keep the branch; dropouts only occur if the snapshot captures before pending is emitted. Remaining work: ensure every branch creation path raises pending early enough and never bypasses the React pipeline.
-
-_Latest Findings (post-instrumentation, 2025‑11‑19):_
 - `panel_pending` / `panel_ready` now appear when branch creation flows through `annotation-toolbar-trigger` → `usePanelCreationEvents` — the pending guard is firing.
-- When pending events fire, immediate workspace switches keep the branch; dropouts only occur if the snapshot captures before pending is emitted. Remaining work: ensure every branch creation path raises pending early enough and never bypasses the React pipeline.
+- Branches still disappear if you switch before any snapshot/save includes them: pending/ready fires, panels unmount on switch, but no `workspace_switch_capture`/save runs with the branch present. Minimap can still show the branch from the last in-memory snapshot while the rehydrated canvas omits it. Fix needs to (a) ensure switch snapshots wait for pending to clear and (b) force a snapshot/save after ready before unmount/switch when possible.
 
 ### Phase 2 – Ready Signal & State Module
 1. Create `lib/note-workspaces/state.ts`:
