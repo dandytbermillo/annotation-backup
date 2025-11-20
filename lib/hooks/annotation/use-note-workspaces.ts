@@ -1372,7 +1372,8 @@ export function useNoteWorkspaces({
       const run = async () => {
         await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
         await captureCurrentWorkspaceSnapshot()
-        flushPendingSave("workspace_switch")
+        lastSaveReasonRef.current = "workspace_switch"
+        await persistWorkspaceNow()
         snapshotOwnerWorkspaceIdRef.current = null
         const cachedSnapshot = getWorkspaceSnapshot(workspaceId)
         const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId) ?? null
@@ -1402,7 +1403,7 @@ export function useNoteWorkspaces({
       applyPanelSnapshots,
       captureCurrentWorkspaceSnapshot,
       currentWorkspaceId,
-      flushPendingSave,
+      persistWorkspaceNow,
       previewWorkspaceFromSnapshot,
       emitDebugLog,
       v2Enabled,
