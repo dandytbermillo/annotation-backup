@@ -1,6 +1,6 @@
 # Consistent Note/Panel Deletion Plan
 
-Goal: ensure deleting a note (or non-main panel) cannot reappear after reload across all modes (plain/Yjs, online/offline). Applies soft-delete by default with consistent filtering.
+Goal:  ensure deleting a note (or non-main panel) cannot reappear after reload across all modes (plain/Yjs, online/offline). Applies soft-delete by default with consistent filtering.
 
 Applicability of isolation/reactivity anti-patterns: not applicable here; we are designing API/persistence flows, not changing provider/consumer contracts or reactive hooks.
 
