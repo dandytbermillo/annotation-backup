@@ -1447,23 +1447,24 @@ export function useNoteWorkspaces({
         await captureCurrentWorkspaceSnapshot()
         lastSaveReasonRef.current = "workspace_switch"
         await persistWorkspaceNow()
-        if (v2Enabled) {
-          const targetStore = getWorkspaceDataStore(workspaceId)
-          if (targetStore && typeof targetStore.keys === "function") {
-            const keys: string[] = []
-            for (const key of targetStore.keys() as Iterable<string>) {
-              keys.push(String(key))
-            }
-            keys.forEach((key) => targetStore.delete(key))
-          }
-        }
+
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         const cachedSnapshot = getWorkspaceSnapshot(workspaceId)
         const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
         const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId) ?? null
-        if (v2Enabled && cachedSnapshot) {
-          await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot)
+
+        const applyCachedSnapshot = async () => {
+          if (v2Enabled && cachedSnapshot) {
+            await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot)
+          } else if (!v2Enabled && cachedPanels && cachedPanels.length > 0) {
+            setTimeout(() => {
+              snapshotOwnerWorkspaceIdRef.current = workspaceId
+              applyPanelSnapshots(cachedPanels, new Set(cachedPanels.map((panel) => panel.noteId)))
+            }, 0)
+          }
         }
+
+        await applyCachedSnapshot()
         setCurrentWorkspaceId(workspaceId)
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         emitDebugLog({
@@ -1476,26 +1477,29 @@ export function useNoteWorkspaces({
             cachedRevision,
           },
         })
-        if (!v2Enabled && cachedPanels && cachedPanels.length > 0) {
-          setTimeout(() => {
-            snapshotOwnerWorkspaceIdRef.current = workspaceId
-            applyPanelSnapshots(cachedPanels, new Set(cachedPanels.map((panel) => panel.noteId)))
-          }, 0)
-        }
+
         if (v2Enabled && adapterRef.current) {
           try {
             const record = await adapterRef.current.loadWorkspace(workspaceId)
             const adapterRevision = (record as any).revision ?? null
-            const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
-            if (adapterRevision && adapterRevision !== cachedRevision) {
-              const snapshot = {
-                panels: record.payload.panels ?? [],
-                openNotes: record.payload.openNotes ?? [],
-                activeNoteId: record.payload.activeNoteId ?? null,
-                camera: record.payload.camera ?? DEFAULT_CAMERA,
-              }
+            const adapterSnapshot = {
+              panels: record?.payload?.panels ?? [],
+              openNotes: record?.payload?.openNotes ?? [],
+              activeNoteId: record?.payload?.activeNoteId ?? null,
+              camera: record?.payload?.camera ?? DEFAULT_CAMERA,
+            }
+            const cachedRevisionValue = workspaceRevisionRef.current.get(workspaceId) ?? null
+            const shouldApplyAdapter = !cachedSnapshot || adapterRevision !== cachedRevisionValue
+
+            if (adapterRevision) {
               workspaceRevisionRef.current.set(workspaceId, adapterRevision)
-              await previewWorkspaceFromSnapshot(workspaceId, snapshot as any)
+            }
+
+            if (shouldApplyAdapter || !cachedSnapshot) {
+              await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any)
+            } else {
+              // Replay cached snapshot even if revisions match to keep the store populated
+              await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot)
             }
           } catch (error) {
             emitDebugLog({

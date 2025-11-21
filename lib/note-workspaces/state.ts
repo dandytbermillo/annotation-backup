@@ -57,6 +57,7 @@ const workspaceWaiters = new Map<string, Set<(ready: boolean) => void>>()
 const panelWorkspaceLookup = new Map<string, string>()
 
 let activeWorkspaceContext: string | null = null
+const workspaceContextListeners = new Set<(workspaceId: string | null) => void>()
 
 const createWorkspaceState = (workspaceId: string): WorkspaceState => {
   if (!workspaceStates.has(workspaceId)) {
@@ -116,7 +117,26 @@ export function clearNoteWorkspaceOwner(noteId: string) {
 }
 
 export function setActiveWorkspaceContext(workspaceId: string | null) {
+  if (activeWorkspaceContext === workspaceId) return
   activeWorkspaceContext = workspaceId
+  workspaceContextListeners.forEach((listener) => {
+    try {
+      listener(activeWorkspaceContext)
+    } catch {
+      // Ignore listener errors to avoid breaking state updates
+    }
+  })
+}
+
+export function getActiveWorkspaceContext(): string | null {
+  return activeWorkspaceContext
+}
+
+export function subscribeToActiveWorkspaceContext(listener: (workspaceId: string | null) => void) {
+  workspaceContextListeners.add(listener)
+  return () => {
+    workspaceContextListeners.delete(listener)
+  }
 }
 
 const getWorkspaceIdForNote = (noteId: string | null | undefined): string | null => {
