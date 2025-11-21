@@ -20,6 +20,7 @@ import {
   applyWorkspaceVersionUpdates,
 } from "@/lib/workspace/workspace-storage"
 import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
+import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
   persistWorkspaceUpdates,
   type WorkspacePersistUpdate,
@@ -136,7 +137,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       workspace = {
         dataStore: getWorkspaceStore(resolvedId) ?? new DataStore(),
         events: new EventEmitter(),
-        layerManager: new LayerManager(),
+        layerManager: getWorkspaceLayerManager(resolvedId) ?? new LayerManager(),
         loadedNotes: new Set<string>(),
       }
       workspacesRef.current.set(resolvedId, workspace)
@@ -147,7 +148,8 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const hasWorkspace = useCallback((noteId: string) => workspacesRef.current.has(resolveWorkspaceId(noteId)), [resolveWorkspaceId])
 
   const removeWorkspace = useCallback((noteId: string) => {
-    workspacesRef.current.delete(resolveWorkspaceId(noteId))
+    const resolvedId = resolveWorkspaceId(noteId)
+    workspacesRef.current.delete(resolvedId)
   }, [resolveWorkspaceId])
 
   const listWorkspaces = useCallback(() => Array.from(workspacesRef.current.keys()), [])

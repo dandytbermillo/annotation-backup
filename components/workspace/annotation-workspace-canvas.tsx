@@ -5,6 +5,7 @@ import { forwardRef, type ReactNode } from "react"
 import ModernAnnotationCanvas from "../annotation-canvas-modern"
 
 export type AnnotationWorkspaceCanvasProps = {
+  workspaceId?: string | null
   noteIds: string[]
   primaryNoteId: string | null
   freshNoteSeeds?: Record<string, { x: number; y: number }>
@@ -30,10 +31,12 @@ export type AnnotationWorkspaceCanvasProps = {
   noteTitleMap?: Map<string, string> | null
   workspaceSnapshotRevision?: number
   children?: ReactNode
+  onComponentChange?: () => void
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
   {
+    workspaceId,
     noteIds,
     primaryNoteId,
     freshNoteSeeds,
@@ -53,12 +56,14 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     noteTitleMap = null,
     workspaceSnapshotRevision = 0,
     children,
+    onComponentChange,
   },
   ref,
 ) {
   return (
     <ModernAnnotationCanvas
       ref={ref}
+      workspaceId={workspaceId ?? undefined}
       noteIds={noteIds}
       primaryNoteId={primaryNoteId}
       freshNoteSeeds={freshNoteSeeds}
@@ -77,6 +82,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       onSnapshotSettled={onSnapshotSettled}
       noteTitleMap={noteTitleMap}
       workspaceSnapshotRevision={workspaceSnapshotRevision}
+      onComponentChange={onComponentChange}
     >
       {children}
     </ModernAnnotationCanvas>

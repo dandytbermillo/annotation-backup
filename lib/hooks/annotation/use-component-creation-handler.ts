@@ -5,18 +5,25 @@ import type { Dispatch, SetStateAction } from "react"
 
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { createComponentItem, isComponent, type CanvasItem, type ComponentType } from "@/types/canvas-items"
+import type { LayerManager } from "@/lib/canvas/layer-manager"
 
 interface UseComponentCreationHandlerOptions {
   canvasState: CanvasViewportState
   canvasItems: CanvasItem[]
   setCanvasItems: Dispatch<SetStateAction<CanvasItem[]>>
+  layerManager?: LayerManager | null
+  onComponentChange?: () => void
 }
 
 export function useComponentCreationHandler({
   canvasState,
   canvasItems,
   setCanvasItems,
+  layerManager,
+  onComponentChange,
 }: UseComponentCreationHandlerOptions) {
+  const layerMgr = layerManager ?? null
+
   const handleAddComponent = useCallback(
     (type: ComponentType | string, position?: { x: number; y: number }) => {
       if (!type) {
@@ -55,22 +62,42 @@ export function useComponentCreationHandler({
       console.log("[Canvas] Created component:", newComponent)
       console.log("[Canvas] Adding to canvasItems")
       setCanvasItems(prev => [...prev, newComponent])
+      if (layerMgr) {
+        try {
+          layerMgr.registerNode({
+            id: newComponent.id,
+            type: "component",
+            position: newComponent.position ?? undefined,
+            zIndex: typeof newComponent.zIndex === "number" ? newComponent.zIndex : undefined,
+            metadata: {
+              ...(newComponent as any).metadata,
+              componentType: newComponent.componentType ?? (newComponent as any).type ?? "component",
+            },
+            dimensions: (newComponent as any).size ?? undefined,
+          } as any)
+        } catch {
+          // ignore layer registration errors
+        }
+      }
+      onComponentChange?.()
     },
-    [canvasState.translateX, canvasState.translateY, canvasState.zoom, setCanvasItems],
+    [canvasState.translateX, canvasState.translateY, canvasState.zoom, layerMgr, setCanvasItems, onComponentChange],
   )
 
   const handleComponentClose = useCallback(
     (id: string) => {
       setCanvasItems(prev => prev.filter(item => item.id !== id))
+      onComponentChange?.()
     },
-    [setCanvasItems],
+    [setCanvasItems, onComponentChange],
   )
 
   const handleComponentPositionChange = useCallback(
     (id: string, position: { x: number; y: number }) => {
       setCanvasItems(prev => prev.map(item => (item.id === id ? { ...item, position } : item)))
+      onComponentChange?.()
     },
-    [setCanvasItems],
+    [setCanvasItems, onComponentChange],
   )
 
   const componentItems = useMemo(() => canvasItems.filter(isComponent), [canvasItems])

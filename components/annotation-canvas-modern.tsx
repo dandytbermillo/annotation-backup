@@ -76,6 +76,7 @@ import {
 const PENDING_SAVE_MAX_AGE_MS = 5 * 60 * 1000
 
 interface ModernAnnotationCanvasProps {
+  workspaceId?: string | null
   noteIds: string[]
   primaryNoteId: string | null
   freshNoteSeeds?: Record<string, { x: number; y: number }>
@@ -101,6 +102,7 @@ interface ModernAnnotationCanvasProps {
   onFreshNoteHydrated?: (noteId: string) => void
   noteTitleMap?: Map<string, string> | null
   workspaceSnapshotRevision?: number
+  onComponentChange?: () => void
 }
 
 interface CanvasImperativeHandle {
@@ -172,6 +174,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onFreshNoteHydrated,
   noteTitleMap = null,
   workspaceSnapshotRevision = 0,
+  onComponentChange,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -532,7 +535,35 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     canvasState,
     canvasItems,
     setCanvasItems,
+    layerManager: layerManagerApi.manager,
+    onComponentChange,
   })
+
+  // Rehydrate component items from the current workspace LayerManager when snapshot/revision changes.
+  useEffect(() => {
+    const lm = layerManagerApi.manager
+    if (!lm || typeof lm.getNodes !== "function") return
+    const nodes = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component")
+    if (nodes.length === 0) {
+      setCanvasItems((prev: CanvasItem[]) => prev.filter((item: CanvasItem) => item.itemType !== "component"))
+      return
+    }
+    setCanvasItems((prev: CanvasItem[]) => {
+      const nonComponentItems = prev.filter((item: CanvasItem) => item.itemType !== "component")
+      const nextComponents = nodes.map((node: any) => ({
+        id: node.id,
+        itemType: "component" as const,
+        componentType: (node as any).metadata?.componentType ?? (node as any).type,
+        position: node.position ?? { x: 0, y: 0 },
+        zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
+        dimensions: (node as any).dimensions ?? undefined,
+      }))
+      const byId = new Map<string, any>()
+      nextComponents.forEach((c) => byId.set(c.id, c))
+      nonComponentItems.forEach((item) => byId.set(item.id, item))
+      return Array.from(byId.values())
+    })
+  }, [layerManagerApi.manager, setCanvasItems, workspaceSnapshotRevision])
   const { stickyNoteOverlayPortal } = useStickyNoteOverlayPanels({
     stickyOverlayEl,
     stickyNoteItems,
@@ -882,7 +913,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => {
   const { getWorkspace } = useCanvasWorkspace()
-  const workspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
+  const workspace = useMemo(() => getWorkspace(props.workspaceId ?? SHARED_WORKSPACE_ID), [getWorkspace, props.workspaceId])
   const activeNoteId = props.primaryNoteId ?? props.noteIds[0] ?? ""
 
   useEffect(() => {

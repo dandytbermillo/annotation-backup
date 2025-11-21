@@ -27,12 +27,22 @@ export type NoteWorkspaceCamera = {
   scale: number
 }
 
+export type NoteWorkspaceComponentSnapshot = {
+  id: string
+  type: string
+  position?: { x: number; y: number } | null
+  size?: { width: number; height: number } | null
+  zIndex?: number | null
+  metadata?: Record<string, unknown> | null
+}
+
 export type NoteWorkspacePayload = {
-  schemaVersion: '1.0.0'
+  schemaVersion: '1.1.0'
   openNotes: NoteWorkspacePanel[]
   activeNoteId: string | null
   camera: NoteWorkspaceCamera
   panels: NoteWorkspacePanelSnapshot[]
+  components?: NoteWorkspaceComponentSnapshot[]
 }
 
 export type NoteWorkspaceRecord = {

@@ -2,11 +2,12 @@ import { serverPool } from "@/lib/db/pool"
 import type { NoteWorkspacePayload, NoteWorkspaceRecord } from "@/lib/types/note-workspace"
 
 const DEFAULT_PAYLOAD: NoteWorkspacePayload = {
-  schemaVersion: "1.0.0",
+  schemaVersion: "1.1.0",
   openNotes: [],
   activeNoteId: null,
   camera: { x: 0, y: 0, scale: 1 },
   panels: [],
+  components: [],
 }
 
 let schemaReadyPromise: Promise<void> | null = null
@@ -162,12 +163,39 @@ const sanitizePayload = (payload: NoteWorkspacePayload | null | undefined): Note
 
   const activeNoteId = typeof payload.activeNoteId === "string" ? payload.activeNoteId : null
 
+  const components = Array.isArray((payload as any).components)
+    ? (payload as any).components
+        .map((c: any) => {
+          if (!c || typeof c !== "object" || typeof c.id !== "string" || typeof c.type !== "string") {
+            return null
+          }
+          const position =
+            c.position && typeof c.position === "object"
+              ? { x: Number((c.position as any).x) || 0, y: Number((c.position as any).y) || 0 }
+              : null
+          const size =
+            c.size && typeof c.size === "object"
+              ? { width: Number((c.size as any).width) || 0, height: Number((c.size as any).height) || 0 }
+              : null
+          return {
+            id: c.id,
+            type: c.type,
+            position,
+            size,
+            zIndex: typeof c.zIndex === "number" ? c.zIndex : null,
+            metadata: c.metadata && typeof c.metadata === "object" ? c.metadata : null,
+          }
+        })
+        .filter(Boolean)
+    : []
+
   return {
-    schemaVersion: "1.0.0",
+    schemaVersion: payload.schemaVersion ?? "1.1.0",
     openNotes,
     activeNoteId,
     camera,
     panels: sanitizePanelSnapshot(payload.panels),
+    components,
   }
 }
 

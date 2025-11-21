@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect, typ
 
 import type { LayerContextValue } from "@/components/canvas/layer-provider"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { getLayerManager } from "@/lib/canvas/layer-manager"
+import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import { DataStore } from "@/lib/data-store"
 import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
 import type { WorkspacePanelSnapshot } from "@/lib/hooks/annotation/use-workspace-panel-positions"
-import type { NoteWorkspacePayload, NoteWorkspacePanelSnapshot } from "@/lib/types/note-workspace"
+import type {
+  NoteWorkspacePayload,
+  NoteWorkspacePanelSnapshot,
+  NoteWorkspaceComponentSnapshot,
+} from "@/lib/types/note-workspace"
 import type { NoteWorkspace } from "@/lib/workspace/types"
 import {
   cacheWorkspaceSnapshot,
@@ -208,6 +214,7 @@ type UseNoteWorkspaceResult = {
   createWorkspace: () => void
   deleteWorkspace: (workspaceId: string) => void
   renameWorkspace: (workspaceId: string, name: string) => void
+  scheduleImmediateSave?: (reason?: string) => void
 }
 
 const formatSyncedLabel = (timestamp: string | Date) => {
@@ -354,7 +361,7 @@ export function useNoteWorkspaces({
       const branches = Array.isArray((record as any).branches)
         ? (record as any).branches.map((entry: unknown) => String(entry))
         : null
-      if (!position && !size && !branches && typeof (record as any).zIndex !== "number") {
+      if (!position && !size && !branches && typeof (record as any).zIndex !== "number" && !(record as any).type) {
         continue
       }
       snapshots.push({
@@ -609,10 +616,15 @@ export function useNoteWorkspaces({
   )
 
   const applyPanelSnapshots = useCallback(
-    (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
-      if (!panels || panels.length === 0) return
+    (
+      panels: NoteWorkspacePanelSnapshot[] | undefined,
+      targetNoteIds: Set<string>,
+      components?: NoteWorkspaceComponentSnapshot[],
+    ) => {
+      if ((!panels || panels.length === 0) && (!components || components.length === 0)) return
       const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
       const dataStore = getWorkspaceDataStore(activeWorkspaceId)
+      const layerMgr = getWorkspaceLayerManager(activeWorkspaceId)
       if (!dataStore) return
       if (typeof dataStore.keys === "function") {
         const keysToRemove: string[] = []
@@ -631,7 +643,7 @@ export function useNoteWorkspaces({
           dataStore.delete(key)
         })
       }
-      panels.forEach((panel) => {
+      panels?.forEach((panel) => {
         if (!panel.noteId || !panel.panelId || !targetNoteIds.has(panel.noteId)) return
         const key = ensurePanelKey(panel.noteId, panel.panelId)
         const namespacedKey = makeWorkspaceKey(activeWorkspaceId, key)
@@ -649,13 +661,31 @@ export function useNoteWorkspaces({
           worldSize: panel.worldSize ?? panel.size ?? null,
         })
       })
-      lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
+      if (components && layerMgr) {
+        components.forEach((component) => {
+          if (!component.id || !component.type) return
+          layerMgr.registerNode({
+            id: component.id,
+            type: "component",
+            position: component.position ?? { x: 0, y: 0 },
+            dimensions: component.size ?? undefined,
+            zIndex: component.zIndex ?? undefined,
+            metadata: {
+              ...(component.metadata ?? {}),
+              componentType: component.type,
+            },
+          } as any)
+        })
+      }
+      if (panels) {
+        lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
+      }
     },
-    [sharedWorkspace],
+    [sharedWorkspace, layerContext, v2Enabled, stripWorkspaceKey, makeWorkspaceKey, currentWorkspaceId],
   )
 
   const captureCurrentWorkspaceSnapshot = useCallback(async () => {
-    const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId
+    const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId ?? currentWorkspaceIdRef.current
     if (!workspaceId) return
     await waitForPanelSnapshotReadiness("capture_snapshot")
     const captureStartedAt = Date.now()
@@ -675,10 +705,32 @@ export function useNoteWorkspaces({
     updatePanelSnapshotMap(snapshots, "workspace_switch_capture", { allowEmpty: true })
     workspaceSnapshotsRef.current.set(workspaceId, snapshots)
     lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshots)
+    const workspaceIdForComponents =
+      currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
+    const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
+    const components: NoteWorkspaceComponentSnapshot[] =
+      lm && typeof lm.getNodes === "function"
+        ? Array.from(lm.getNodes().values())
+            .filter((node: any) => node.type === "component")
+            .map((node: any) => ({
+              id: node.id,
+              type:
+                (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
+                  ? (node as any).metadata.componentType
+                  : typeof node.type === "string"
+                    ? node.type
+                    : "component",
+              position: (node as any).position ?? null,
+              size: (node as any).dimensions ?? null,
+              zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
+              metadata: (node as any).metadata ?? null,
+            }))
+        : []
     if (v2Enabled) {
       cacheWorkspaceSnapshot({
         workspaceId,
         panels: snapshots,
+        components,
         openNotes: openNotes.map((note) => ({
           noteId: note.noteId,
           mainPosition: resolveMainPanelPosition(note.noteId),
@@ -707,6 +759,7 @@ export function useNoteWorkspaces({
         workspaceId,
         panelCount: snapshots.length,
         openNoteCount: openNotes.length,
+        componentCount: components?.length ?? 0,
         durationMs: Date.now() - captureStartedAt,
         cameraSource,
         timestampMs: Date.now(),
@@ -757,7 +810,7 @@ export function useNoteWorkspaces({
       workspaceSnapshotsRef.current.set(workspaceId, panelSnapshots)
       updatePanelSnapshotMap(panelSnapshots, "preview_snapshot", { allowEmpty: true })
       if (panelSnapshots.length > 0) {
-        applyPanelSnapshots(panelSnapshots, targetIds)
+        applyPanelSnapshots(panelSnapshots, targetIds, snapshot.components)
       } else {
         // Avoid clearing the store on empty snapshot to prevent wiping freshly opened panels.
         return
@@ -910,10 +963,42 @@ export function useNoteWorkspaces({
           }
         : layerContext?.transforms.notes ?? DEFAULT_CAMERA
     lastCameraRef.current = cameraTransform
+    const workspaceIdForComponents =
+      currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
+    if (!workspaceIdForComponents) {
+      return {
+        schemaVersion: "1.1.0",
+        openNotes: [],
+        activeNoteId: null,
+        camera: cameraTransform,
+        panels: [],
+        components: [],
+      }
+    }
     const panelSnapshots = getAllPanelSnapshots({ useFallback: false })
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: true })
+    const lm = getWorkspaceLayerManager(workspaceIdForComponents)
+    const components: NoteWorkspaceComponentSnapshot[] =
+      lm && typeof lm.getNodes === "function"
+        ? Array.from(lm.getNodes().values())
+            .filter((node: any) => node.type === "component")
+            .map((node: any) => ({
+              id: node.id,
+              type:
+                (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
+                  ? (node as any).metadata.componentType
+                  : typeof node.type === "string"
+                    ? node.type
+                    : "component",
+              position: (node as any).position ?? null,
+              size: (node as any).dimensions ?? null,
+              zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
+              metadata: (node as any).metadata ?? null,
+            }))
+        : []
+
     const payload: NoteWorkspacePayload = {
-      schemaVersion: "1.0.0",
+      schemaVersion: "1.1.0",
       openNotes: openNotes.map((note) => {
         const snapshot = getPanelSnapshot(note.noteId)
         return {
@@ -927,11 +1012,13 @@ export function useNoteWorkspaces({
       activeNoteId,
       camera: cameraTransform,
       panels: panelSnapshots,
+      components,
     }
     if (v2Enabled && currentWorkspaceId) {
       cacheWorkspaceSnapshot({
         workspaceId: currentWorkspaceId,
         panels: panelSnapshots,
+        components,
         openNotes: payload.openNotes.map((entry) => ({
           noteId: entry.noteId,
           mainPosition: entry.position ?? null,
@@ -946,6 +1033,7 @@ export function useNoteWorkspaces({
         metadata: {
           workspaceId: currentWorkspaceId,
           panelCount: panelSnapshots.length,
+          componentCount: components?.length ?? 0,
           openCount: payload.openNotes.length,
         },
       })
@@ -1182,10 +1270,11 @@ export function useNoteWorkspaces({
         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
         const incomingPanels = record.payload.panels ?? []
+        const incomingComponents = record.payload.components ?? []
         updatePanelSnapshotMap(incomingPanels, "hydrate_workspace", { allowEmpty: true })
         workspaceSnapshotsRef.current.set(workspaceId, incomingPanels)
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(incomingPanels)
-        applyPanelSnapshots(incomingPanels, targetIds)
+        applyPanelSnapshots(incomingPanels, targetIds, incomingComponents)
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
           .map((note) =>
@@ -1462,17 +1551,24 @@ export function useNoteWorkspaces({
     scheduleSave,
   ])
 
+  // Trigger save when component set changes (so default workspace captures non-note components)
+  useEffect(() => {
+    if (!featureEnabled) return
+    scheduleSave({ reason: "components_changed" })
+  }, [scheduleSave, featureEnabled, panelSnapshotVersion])
+
   const handleCreateWorkspace = useCallback(async () => {
     if (!featureEnabled || !adapterRef.current) return
     flushPendingSave("workspace_create")
     try {
       const workspace = await adapterRef.current.createWorkspace({
         payload: {
-          schemaVersion: "1.0.0",
+          schemaVersion: "1.1.0",
           openNotes: [],
           activeNoteId: null,
           camera: DEFAULT_CAMERA,
           panels: [],
+          components: [],
         },
       })
       setWorkspaces((prev) => [...prev, workspace])
@@ -1604,6 +1700,7 @@ export function useNoteWorkspaces({
             const adapterRevision = (record as any).revision ?? null
             const adapterSnapshot = {
               panels: record?.payload?.panels ?? [],
+              components: record?.payload?.components ?? [],
               openNotes: record?.payload?.openNotes ?? [],
               activeNoteId: record?.payload?.activeNoteId ?? null,
               camera: record?.payload?.camera ?? DEFAULT_CAMERA,
@@ -1738,5 +1835,6 @@ export function useNoteWorkspaces({
     createWorkspace: handleCreateWorkspace,
     deleteWorkspace: handleDeleteWorkspace,
     renameWorkspace: handleRenameWorkspace,
+    scheduleImmediateSave: flushPendingSave,
   }
 }

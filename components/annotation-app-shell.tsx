@@ -1317,6 +1317,7 @@ const initialWorkspaceSyncRef = useRef(false)
     <AnnotationWorkspaceCanvas
       key="workspace"
       ref={canvasRef}
+      workspaceId={noteWorkspaceState.currentWorkspaceId ?? undefined}
       noteIds={openNotes.map(note => note.noteId)}
       primaryNoteId={activeNoteId ?? openNotes[0].noteId}
       freshNoteSeeds={freshNoteSeeds}
@@ -1335,6 +1336,7 @@ const initialWorkspaceSyncRef = useRef(false)
       onSnapshotSettled={handleSnapshotSettled}
       noteTitleMap={noteTitleMapRef.current}
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
+      onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
     >
       {showNotesWidget && (
         <CanvasAwareFloatingToolbar

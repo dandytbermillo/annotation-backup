@@ -15,6 +15,14 @@ export type NoteWorkspaceSnapshot = {
     worldPosition?: { x: number; y: number } | null
     worldSize?: { width: number; height: number } | null
   }>
+  components?: Array<{
+    id: string
+    type: string
+    position?: { x: number; y: number } | null
+    size?: { width: number; height: number } | null
+    zIndex?: number | null
+    metadata?: Record<string, unknown> | null
+  }>
   camera: { x: number; y: number; scale: number }
   activeNoteId: string | null
   revision?: string | null
