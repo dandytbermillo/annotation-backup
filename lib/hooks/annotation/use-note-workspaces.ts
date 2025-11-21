@@ -381,9 +381,6 @@ export function useNoteWorkspaces({
 
   const updatePanelSnapshotMap = useCallback(
     (panels: NoteWorkspacePanelSnapshot[], reason: string) => {
-      if (!snapshotOwnerWorkspaceIdRef.current && currentWorkspaceIdRef.current) {
-        snapshotOwnerWorkspaceIdRef.current = currentWorkspaceIdRef.current
-      }
       if (!snapshotOwnerWorkspaceIdRef.current) {
         emitDebugLog({
           component: "NoteWorkspace",
@@ -432,6 +429,9 @@ export function useNoteWorkspaces({
     const dataStore = getWorkspaceDataStore(activeWorkspaceId)
     if (!dataStore || typeof dataStore.on !== "function" || typeof dataStore.off !== "function") {
       return undefined
+    }
+    if (v2Enabled && activeWorkspaceId && !snapshotOwnerWorkspaceIdRef.current) {
+      snapshotOwnerWorkspaceIdRef.current = activeWorkspaceId
     }
 
     const handleMutation = () => {
@@ -645,7 +645,7 @@ export function useNoteWorkspaces({
       if (lastPreview === snapshot) {
         return
       }
-      snapshotOwnerWorkspaceIdRef.current = null
+      snapshotOwnerWorkspaceIdRef.current = workspaceId
       const panelSnapshots = snapshot.panels ?? []
       const targetIds = new Set(snapshot.openNotes.map((entry) => entry.noteId))
       workspaceSnapshotsRef.current.set(workspaceId, panelSnapshots)
@@ -688,7 +688,6 @@ export function useNoteWorkspaces({
         }))
       }
 
-      snapshotOwnerWorkspaceIdRef.current = workspaceId
       lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
       emitDebugLog({
         component: "NoteWorkspace",
@@ -726,6 +725,18 @@ export function useNoteWorkspaces({
       setActiveWorkspaceContext(null)
     }
   }, [featureEnabled, v2Enabled, currentWorkspaceId])
+
+  useEffect(() => {
+    if (!v2Enabled) return
+    if (currentWorkspaceId && snapshotOwnerWorkspaceIdRef.current !== currentWorkspaceId) {
+      snapshotOwnerWorkspaceIdRef.current = currentWorkspaceId
+    }
+    return () => {
+      if (snapshotOwnerWorkspaceIdRef.current === currentWorkspaceId) {
+        snapshotOwnerWorkspaceIdRef.current = null
+      }
+    }
+  }, [v2Enabled, currentWorkspaceId])
 
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) {
@@ -1057,14 +1068,13 @@ export function useNoteWorkspaces({
       try {
         const record = await adapterRef.current.loadWorkspace(workspaceId)
         isHydratingRef.current = true
-        snapshotOwnerWorkspaceIdRef.current = null
+        snapshotOwnerWorkspaceIdRef.current = workspaceId
         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
         const incomingPanels = record.payload.panels ?? []
         updatePanelSnapshotMap(incomingPanels, "hydrate_workspace")
         workspaceSnapshotsRef.current.set(workspaceId, incomingPanels)
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(incomingPanels)
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
         applyPanelSnapshots(incomingPanels, targetIds)
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
