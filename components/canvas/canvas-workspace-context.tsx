@@ -103,7 +103,181 @@ const subscribeActiveWorkspace = (listener: () => void) =>
   subscribeToActiveWorkspaceContext(() => listener())
 const getActiveWorkspaceSnapshot = () => getActiveWorkspaceContext()
 
+export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode }) {
+  const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
+  const positionCachesRef = useRef<Map<string, Map<string, WorkspacePosition>>>(new Map())
+  const openNotesByWorkspaceRef = useRef<Map<string, OpenWorkspaceNote[]>>(new Map())
+  const [currentOpenNotes, setCurrentOpenNotes] = useState<OpenWorkspaceNote[]>([])
+  const activeWorkspaceId = useSyncExternalStore(subscribeActiveWorkspace, getActiveWorkspaceSnapshot)
+
+  const resolveWorkspaceId = useCallback((requestedId: string) => {
+    return activeWorkspaceId ?? requestedId ?? SHARED_WORKSPACE_ID
+  }, [activeWorkspaceId])
+
+  useEffect(() => {
+    const workspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
+    setCurrentOpenNotes(openNotesByWorkspaceRef.current.get(workspaceId) ?? [])
+  }, [activeWorkspaceId])
+
+  const getPositionCache = useCallback(
+    (workspaceId: string) => {
+      if (!positionCachesRef.current.has(workspaceId)) {
+        positionCachesRef.current.set(workspaceId, new Map())
+      }
+      return positionCachesRef.current.get(workspaceId)!
+    },
+    [],
+  )
+
+  const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
+    const resolvedId = resolveWorkspaceId(noteId)
+    let workspace = workspacesRef.current.get(resolvedId)
+    if (!workspace) {
+      workspace = {
+        dataStore: getWorkspaceStore(resolvedId) ?? new DataStore(),
+        events: new EventEmitter(),
+        layerManager: new LayerManager(),
+        loadedNotes: new Set<string>(),
+      }
+      workspacesRef.current.set(resolvedId, workspace)
+    }
+    return workspace
+  }, [resolveWorkspaceId])
+
+  const hasWorkspace = useCallback((noteId: string) => workspacesRef.current.has(resolveWorkspaceId(noteId)), [resolveWorkspaceId])
+
+  const removeWorkspace = useCallback((noteId: string) => {
+    workspacesRef.current.delete(resolveWorkspaceId(noteId))
+  }, [resolveWorkspaceId])
+
+  const listWorkspaces = useCallback(() => Array.from(workspacesRef.current.keys()), [])
+
+  const getPendingPosition = useCallback((noteId: string): WorkspacePosition | null => {
+    const workspaceId = resolveWorkspaceId(noteId)
+    const position = getPositionCache(workspaceId).get(noteId)
+    return position ? { ...position } : null
+  }, [getPositionCache, resolveWorkspaceId])
+
+  const getCachedPosition = useCallback((noteId: string): WorkspacePosition | null => {
+    const workspaceId = resolveWorkspaceId(noteId)
+    const position = getPositionCache(workspaceId).get(noteId)
+    return position ? { ...position } : null
+  }, [getPositionCache, resolveWorkspaceId])
+
+  const openNote = useCallback(
+    async (noteId: string, options?: OpenNoteOptions) => {
+      if (!noteId) return
+      const { mainPosition = null } = options ?? {}
+      const workspaceId = resolveWorkspaceId(noteId)
+      const positionCache = getPositionCache(workspaceId)
+      const cached = positionCache.get(noteId) ?? null
+      const position = mainPosition ?? cached ?? null
+      if (position) {
+        positionCache.set(noteId, position)
+      }
+      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      const exists = current.some(note => note.noteId === noteId)
+      const next = exists
+        ? current.map(note =>
+            note.noteId === noteId
+              ? { ...note, mainPosition: position ?? note.mainPosition }
+              : note,
+          )
+        : [...current, { noteId, mainPosition: position, updatedAt: null, version: 0 }]
+      openNotesByWorkspaceRef.current.set(workspaceId, next)
+      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+        setCurrentOpenNotes(next)
+      }
+    },
+    [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+  )
+
+  const closeNote = useCallback(
+    async (noteId: string) => {
+      if (!noteId) return
+      const workspaceId = resolveWorkspaceId(noteId)
+      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      const next = current.filter(note => note.noteId !== noteId)
+      openNotesByWorkspaceRef.current.set(workspaceId, next)
+      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+        setCurrentOpenNotes(next)
+      }
+      removeWorkspace(noteId)
+    },
+    [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
+  )
+
+  const updateMainPosition = useCallback(
+    async (noteId: string, position: WorkspacePosition) => {
+      if (!noteId || !position) return
+      const workspaceId = resolveWorkspaceId(noteId)
+      const positionCache = getPositionCache(workspaceId)
+      positionCache.set(noteId, position)
+      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      const next = current.map(note =>
+        note.noteId === noteId
+          ? { ...note, mainPosition: position }
+          : note,
+      )
+      openNotesByWorkspaceRef.current.set(workspaceId, next)
+      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+        setCurrentOpenNotes(next)
+      }
+    },
+    [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+  )
+
+  const getWorkspaceVersion = useCallback(() => null, [])
+  const updateWorkspaceVersion = useCallback(() => {}, [])
+  const refreshWorkspace = useCallback(async () => {
+    // No-op for V2; state is client-managed
+  }, [])
+
+  const value = useMemo<CanvasWorkspaceContextValue>(
+    () => ({
+      getWorkspace,
+      hasWorkspace,
+      removeWorkspace,
+      listWorkspaces,
+      openNotes: currentOpenNotes,
+      isWorkspaceReady: true,
+      isWorkspaceLoading: false,
+      isHydrating: false,
+      workspaceError: null,
+      refreshWorkspace,
+      openNote,
+      closeNote,
+      updateMainPosition,
+      getPendingPosition,
+      getCachedPosition,
+      getWorkspaceVersion,
+      updateWorkspaceVersion,
+    }),
+    [
+      getWorkspace,
+      hasWorkspace,
+      removeWorkspace,
+      listWorkspaces,
+      currentOpenNotes,
+      refreshWorkspace,
+      openNote,
+      closeNote,
+      updateMainPosition,
+      getPendingPosition,
+      getCachedPosition,
+      getWorkspaceVersion,
+      updateWorkspaceVersion,
+    ],
+  )
+
+  return <CanvasWorkspaceContext.Provider value={value}>{children}</CanvasWorkspaceContext.Provider>
+}
+
 export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
+  if (NOTE_WORKSPACES_V2_ENABLED) {
+    return <CanvasWorkspaceProviderV2>{children}</CanvasWorkspaceProviderV2>
+  }
+
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
   const sharedWorkspaceRef = useRef<NoteWorkspace | null>(null)
   const [openNotes, setOpenNotes] = useState<OpenWorkspaceNote[]>([])
