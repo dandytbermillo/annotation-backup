@@ -10,6 +10,7 @@ import {
   persistWorkspaceVersions as persistVersionsToStorage,
   applyWorkspaceVersionUpdates,
 } from "@/lib/workspace/workspace-storage"
+import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
 import {
   persistWorkspaceUpdates,
   type WorkspacePersistUpdate,
@@ -151,7 +152,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     if (noteId === SHARED_WORKSPACE_ID) {
       if (!sharedWorkspaceRef.current) {
         sharedWorkspaceRef.current = {
-          dataStore: new DataStore(),
+          dataStore: NOTE_WORKSPACES_V2_ENABLED ? getWorkspaceStore(noteId) ?? new DataStore() : new DataStore(),
           events: new EventEmitter(),
           layerManager: new LayerManager(),
           loadedNotes: new Set<string>(),
@@ -163,7 +164,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     let workspace = workspacesRef.current.get(noteId)
     if (!workspace) {
       workspace = {
-        dataStore: new DataStore(),
+        dataStore: NOTE_WORKSPACES_V2_ENABLED ? getWorkspaceStore(noteId) ?? new DataStore() : new DataStore(),
         events: new EventEmitter(),
         layerManager: new LayerManager(),
         loadedNotes: new Set<string>(),

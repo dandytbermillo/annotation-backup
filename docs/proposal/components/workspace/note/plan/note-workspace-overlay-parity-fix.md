@@ -27,6 +27,7 @@ Plan
    - For V2, bypass CanvasWorkspaceProvider entirely for note workspaces; keep the old provider for legacy paths. Pending persists/unload handlers in the legacy provider become no-ops under V2.
    - On switch: clear only the store for the target workspace (not the global store), then replay its cached snapshot into that store.
    - Keep store events scoped so mutations from workspace A cannot mutate B.
+   - Owner fallback is temporary: once per-workspace store is live and replay-on-switch is enforced, remove the fallback and rely on isolation + deterministic replay.
 
 3) Authoritative snapshot ownership + replay freshness
    - Track backend revision with each cached snapshot; force replay when revision or workspace changes.

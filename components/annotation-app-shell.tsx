@@ -54,6 +54,7 @@ import { useWorkspaceFloatingToolbar } from "@/lib/hooks/annotation/use-workspac
 import { useWorkspaceOverlayProps } from "@/lib/hooks/annotation/use-workspace-overlay-props"
 import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-toolbar-props"
 import { useNoteWorkspaces } from "@/lib/hooks/annotation/use-note-workspaces"
+import { isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -94,6 +95,7 @@ type AnnotationAppContentProps = {
 }
 
 function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProps) {
+  const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const {
     openNotes,
     openNote: openWorkspaceNote,
@@ -107,7 +109,14 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     getCachedPosition,
     getWorkspace
   } = useCanvasWorkspace()
-  const sharedWorkspace = useMemo(() => getWorkspace(SHARED_WORKSPACE_ID), [getWorkspace])
+  const [workspaceStoreId, setWorkspaceStoreId] = useState<string | null>(null)
+  const sharedWorkspace = useMemo(() => {
+    if (!noteWorkspaceV2Enabled) {
+      return getWorkspace(SHARED_WORKSPACE_ID)
+    }
+    const workspaceId = workspaceStoreId ?? SHARED_WORKSPACE_ID
+    return getWorkspace(workspaceId)
+  }, [getWorkspace, noteWorkspaceV2Enabled, workspaceStoreId])
 
   // Initialize activeNoteId from localStorage (persist which note canvas is focused)
   const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
@@ -385,6 +394,11 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     debugLog,
     sharedWorkspace,
   })
+
+  useEffect(() => {
+    if (!noteWorkspaceV2Enabled) return
+    setWorkspaceStoreId(noteWorkspaceState.currentWorkspaceId ?? SHARED_WORKSPACE_ID)
+  }, [noteWorkspaceState.currentWorkspaceId, noteWorkspaceV2Enabled])
 
   const currentNoteWorkspace = useMemo(
     () => noteWorkspaceState.workspaces.find((workspace) => workspace.id === noteWorkspaceState.currentWorkspaceId) ?? null,

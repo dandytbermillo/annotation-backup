@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect, typ
 
 import type { LayerContextValue } from "@/components/canvas/layer-provider"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+import { DataStore } from "@/lib/data-store"
+import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
@@ -232,6 +234,7 @@ export function useNoteWorkspaces({
   const currentWorkspaceIdRef = useRef<string | null>(null)
   const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
   const workspaceRevisionRef = useRef<Map<string, string | null>>(new Map())
+  const workspaceStoresRef = useRef<Map<string, DataStore>>(new Map())
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const ownedNotesRef = useRef<Map<string, string>>(new Map())
@@ -277,6 +280,16 @@ export function useNoteWorkspaces({
     [v2Enabled],
   )
 
+  const getWorkspaceDataStore = useCallback(
+    (workspaceId: string | null | undefined) => {
+      if (!v2Enabled) {
+        return sharedWorkspace?.dataStore ?? null
+      }
+      return getWorkspaceStore(workspaceId ?? undefined)
+    },
+    [sharedWorkspace?.dataStore, v2Enabled],
+  )
+
   const emitDebugLog = useCallback(
     (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
       if (!debugLogger) return
@@ -305,11 +318,11 @@ export function useNoteWorkspaces({
 
   const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
     const snapshots: NoteWorkspacePanelSnapshot[] = []
-    const dataStore = sharedWorkspace?.dataStore
+    const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
+    const dataStore = getWorkspaceDataStore(activeWorkspaceId)
     if (!dataStore || typeof dataStore.keys !== "function") {
       return snapshots
     }
-    const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
     for (const key of dataStore.keys() as Iterable<string>) {
       const rawKey = String(key)
       const strippedKey = stripWorkspaceKey(activeWorkspaceId, rawKey)
@@ -415,7 +428,8 @@ export function useNoteWorkspaces({
   )
 
   useEffect(() => {
-    const dataStore = sharedWorkspace?.dataStore
+    const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
+    const dataStore = getWorkspaceDataStore(activeWorkspaceId)
     if (!dataStore || typeof dataStore.on !== "function" || typeof dataStore.off !== "function") {
       return undefined
     }
@@ -447,7 +461,13 @@ export function useNoteWorkspaces({
       dataStore.off("update", handleMutation)
       dataStore.off("delete", handleMutation)
     }
-  }, [collectPanelSnapshotsFromDataStore, emitDebugLog, sharedWorkspace, updatePanelSnapshotMap])
+  }, [
+    collectPanelSnapshotsFromDataStore,
+    emitDebugLog,
+    getWorkspaceDataStore,
+    updatePanelSnapshotMap,
+    currentWorkspaceId,
+  ])
 
   const waitForPanelSnapshotReadiness = useCallback(
     async (reason: string, maxWaitMs = 800) => {
@@ -486,9 +506,9 @@ export function useNoteWorkspaces({
   const applyPanelSnapshots = useCallback(
     (panels: NoteWorkspacePanelSnapshot[] | undefined, targetNoteIds: Set<string>) => {
       if (!panels || panels.length === 0) return
-      const dataStore = sharedWorkspace?.dataStore
-      if (!dataStore) return
       const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
+      const dataStore = getWorkspaceDataStore(activeWorkspaceId)
+      if (!dataStore) return
       if (typeof dataStore.keys === "function") {
         const keysToRemove: string[] = []
         for (const key of dataStore.keys() as Iterable<string>) {
@@ -1427,6 +1447,16 @@ export function useNoteWorkspaces({
         await captureCurrentWorkspaceSnapshot()
         lastSaveReasonRef.current = "workspace_switch"
         await persistWorkspaceNow()
+        if (v2Enabled) {
+          const targetStore = getWorkspaceDataStore(workspaceId)
+          if (targetStore && typeof targetStore.keys === "function") {
+            const keys: string[] = []
+            for (const key of targetStore.keys() as Iterable<string>) {
+              keys.push(String(key))
+            }
+            keys.forEach((key) => targetStore.delete(key))
+          }
+        }
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         const cachedSnapshot = getWorkspaceSnapshot(workspaceId)
         const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
@@ -1452,6 +1482,29 @@ export function useNoteWorkspaces({
             applyPanelSnapshots(cachedPanels, new Set(cachedPanels.map((panel) => panel.noteId)))
           }, 0)
         }
+        if (v2Enabled && adapterRef.current) {
+          try {
+            const record = await adapterRef.current.loadWorkspace(workspaceId)
+            const adapterRevision = (record as any).revision ?? null
+            const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
+            if (adapterRevision && adapterRevision !== cachedRevision) {
+              const snapshot = {
+                panels: record.payload.panels ?? [],
+                openNotes: record.payload.openNotes ?? [],
+                activeNoteId: record.payload.activeNoteId ?? null,
+                camera: record.payload.camera ?? DEFAULT_CAMERA,
+              }
+              workspaceRevisionRef.current.set(workspaceId, adapterRevision)
+              await previewWorkspaceFromSnapshot(workspaceId, snapshot as any)
+            }
+          } catch (error) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "adapter_load_error",
+              metadata: { workspaceId, error: error instanceof Error ? error.message : String(error) },
+            })
+          }
+        }
       }
       void run()
     },
@@ -1463,6 +1516,8 @@ export function useNoteWorkspaces({
       previewWorkspaceFromSnapshot,
       emitDebugLog,
       v2Enabled,
+      adapterRef,
+      workspaceRevisionRef,
     ],
   )
 
