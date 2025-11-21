@@ -2,9 +2,8 @@
  * Debug Logger - Logs to PostgreSQL debug_logs table
  */
 
-const DEBUG_LOGGING_ENABLED = ['true', '1', 'on', 'yes'].includes(
-  (process.env.NEXT_PUBLIC_DEBUG_LOGGING ?? '').toLowerCase()
-);
+// Hard-disable debug logging to avoid flooding /api/debug/log during troubleshooting.
+const DEBUG_LOGGING_ENABLED = false;
 const DEBUG_OVERRIDE_STORAGE_KEY = 'annotation:debug-logging';
 const RUNTIME_PREF_CACHE_MS = 1000;
 const RATE_LIMIT_INTERVAL_MS = 1000;
@@ -61,52 +60,13 @@ const computeRuntimePreference = (): boolean => {
   return DEBUG_LOGGING_ENABLED;
 };
 
-export const isDebugEnabled = () => {
-  if (typeof window === 'undefined') {
-    return DEBUG_LOGGING_ENABLED;
-  }
-  const now = Date.now();
-  if (now - lastPreferenceCheck > RUNTIME_PREF_CACHE_MS) {
-    cachedPreference = computeRuntimePreference();
-    lastPreferenceCheck = now;
-  }
-  return cachedPreference;
-};
+export const isDebugEnabled = () => false;
 
 let rateWindowStart = 0;
 let rateWindowCount = 0;
 let rateLimitWarned = false;
 
-const shouldEmitDebugLog = () => {
-  if (!isDebugEnabled()) {
-    return false;
-  }
-
-  if (RATE_LIMIT_MAX <= 0) {
-    return true;
-  }
-
-  const now = Date.now();
-  if (now - rateWindowStart > RATE_LIMIT_INTERVAL_MS) {
-    rateWindowStart = now;
-    rateWindowCount = 0;
-    rateLimitWarned = false;
-  }
-
-  if (rateWindowCount >= RATE_LIMIT_MAX) {
-    if (!rateLimitWarned && typeof console !== 'undefined') {
-      console.warn(
-        `[DebugLogger] Suppressing debug logs after ${RATE_LIMIT_MAX} events/sec. ` +
-          `Set localStorage("${DEBUG_OVERRIDE_STORAGE_KEY}","on") or raise NEXT_PUBLIC_DEBUG_LOG_MAX to re-enable.`,
-      );
-      rateLimitWarned = true;
-    }
-    return false;
-  }
-
-  rateWindowCount += 1;
-  return true;
-};
+const shouldEmitDebugLog = () => false;
 
 let sessionId: string | null = null;
 
@@ -131,46 +91,12 @@ export interface DebugLogData {
  * Supports both object format and legacy 3-parameter format
  */
 export async function debugLog(
-  dataOrContext: DebugLogData | string,
-  event?: string,
-  details?: any
+  _dataOrContext: DebugLogData | string,
+  _event?: string,
+  _details?: any
 ): Promise<void> {
-  // Early return if debug logging is disabled or rate-limited
-  if (!shouldEmitDebugLog()) {
-    return;
-  }
-
-  try {
-    let logData: DebugLogData;
-
-    // Support both calling styles
-    if (typeof dataOrContext === 'string') {
-      // Legacy 3-parameter style: debugLog('Context', 'event', {...})
-      logData = {
-        component: dataOrContext,
-        action: event || 'unknown',
-        metadata: details
-      };
-    } else {
-      // New object style: debugLog({ component: '...', action: '...', ... })
-      logData = dataOrContext;
-    }
-
-    await fetch('/api/debug/log', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...logData,
-        session_id: getSessionId(),
-        timestamp: new Date().toISOString(),
-      }),
-    });
-  } catch (error) {
-    // Fallback to console if API fails
-    console.log('[DEBUG]', dataOrContext, event, details);
-  }
+  // Debug logging disabled (no-op).
+  return;
 }
 
 /**

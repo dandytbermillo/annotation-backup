@@ -391,7 +391,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     canvasState,
     setCanvasState,
     onUnavailable: handleNoteWorkspaceUnavailable,
-    debugLog,
+    debugLog: undefined, // disable debug logging to prevent /api/debug/log flood
     sharedWorkspace,
   })
 

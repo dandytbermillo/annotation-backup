@@ -31,6 +31,8 @@ type DebugLogger = (event: {
 }) => void | Promise<void>
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
+// Disable note-workspace debug logging to avoid flooding /api/debug/log unless explicitly re-enabled.
+const NOTE_WORKSPACE_DEBUG_ENABLED = false
 
 const normalizePoint = (value: any): { x: number; y: number } | null => {
   if (!value || typeof value !== "object") return null
@@ -304,7 +306,7 @@ export function useNoteWorkspaces({
 
   const emitDebugLog = useCallback(
     (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
-      if (!debugLogger) return
+      if (!debugLogger || !NOTE_WORKSPACE_DEBUG_ENABLED) return
       let workspaceName: string | undefined
       if (payload.metadata && typeof payload.metadata === "object") {
         const workspaceId =
@@ -743,9 +745,10 @@ export function useNoteWorkspaces({
   )
 
   const previewWorkspaceFromSnapshot = useCallback(
-    async (workspaceId: string, snapshot: NoteWorkspaceSnapshot) => {
+    async (workspaceId: string, snapshot: NoteWorkspaceSnapshot, options?: { force?: boolean }) => {
+      const force = options?.force ?? false
       const lastPreview = lastPreviewedSnapshotRef.current.get(workspaceId)
-      if (lastPreview === snapshot) {
+      if (!force && lastPreview === snapshot) {
         return
       }
       snapshotOwnerWorkspaceIdRef.current = workspaceId
@@ -756,10 +759,8 @@ export function useNoteWorkspaces({
       if (panelSnapshots.length > 0) {
         applyPanelSnapshots(panelSnapshots, targetIds)
       } else {
-        const dataStore = getWorkspaceDataStore(workspaceId)
-        if (dataStore && typeof dataStore.keys === "function") {
-          Array.from(dataStore.keys() as Iterable<string>).forEach((key) => dataStore.delete(String(key)))
-        }
+        // Avoid clearing the store on empty snapshot to prevent wiping freshly opened panels.
+        return
       }
 
       const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
@@ -1574,7 +1575,7 @@ export function useNoteWorkspaces({
 
         const applyCachedSnapshot = async () => {
           if (v2Enabled && cachedSnapshot) {
-            await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot)
+            await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
           } else if (!v2Enabled && cachedPanels && cachedPanels.length > 0) {
             setTimeout(() => {
               snapshotOwnerWorkspaceIdRef.current = workspaceId
@@ -1615,10 +1616,10 @@ export function useNoteWorkspaces({
             }
 
             if (shouldApplyAdapter || !cachedSnapshot) {
-              await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any)
+              await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any, { force: true })
             } else {
               // Replay cached snapshot even if revisions match to keep the store populated
-              await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot)
+              await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
             }
           } catch (error) {
             emitDebugLog({
