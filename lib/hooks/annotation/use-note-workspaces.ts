@@ -360,16 +360,24 @@ export function useNoteWorkspaces({
     const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
     const primaryStore = getWorkspaceDataStore(activeWorkspaceId)
 
-    const collectFromStore = (store: DataStore | null, useSharedId = false) => {
+    const collectFromStore = (
+      store: DataStore | null,
+      options?: { ownerId?: string | null; allowUnprefixed?: boolean },
+    ) => {
       if (!store || typeof store.keys !== "function") return
-      const ownerId = useSharedId ? SHARED_WORKSPACE_ID : activeWorkspaceId
+      const ownerId = options?.ownerId ?? activeWorkspaceId
+      const allowUnprefixed = options?.allowUnprefixed ?? false
       for (const key of store.keys() as Iterable<string>) {
         const rawKey = String(key)
-        const strippedKey = stripWorkspaceKey(ownerId, rawKey)
-        if (v2Enabled && ownerId && strippedKey === null) {
-          continue
+        let parsedKey = rawKey
+        if (ownerId) {
+          const strippedKey = stripWorkspaceKey(ownerId, rawKey)
+          if (v2Enabled && ownerId && strippedKey === null && !allowUnprefixed) {
+            continue
+          }
+          parsedKey = strippedKey ?? rawKey
         }
-        const parsed = parsePanelKey(strippedKey ?? rawKey)
+        const parsed = parsePanelKey(parsedKey)
         const noteId = parsed?.noteId
         const panelId = parsed?.panelId ?? "main"
         if (!noteId) continue
@@ -404,11 +412,16 @@ export function useNoteWorkspaces({
     }
 
     collectFromStore(primaryStore)
-    if (snapshots.length === 0 && sharedWorkspace?.dataStore) {
-      collectFromStore(sharedWorkspace.dataStore, true)
+    if (snapshots.length === 0) {
+      const fallbackStore =
+        sharedWorkspace?.dataStore ??
+        (v2Enabled ? getWorkspaceDataStore(SHARED_WORKSPACE_ID) : null)
+      if (fallbackStore && fallbackStore !== primaryStore) {
+        collectFromStore(fallbackStore, { ownerId: SHARED_WORKSPACE_ID, allowUnprefixed: true })
+      }
     }
     return snapshots
-  }, [sharedWorkspace])
+  }, [sharedWorkspace, v2Enabled])
 
   const getAllPanelSnapshots = useCallback(
     (options?: { useFallback?: boolean }): NoteWorkspacePanelSnapshot[] => {
