@@ -37,8 +37,8 @@ type DebugLogger = (event: {
 }) => void | Promise<void>
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
-// Disable note-workspace debug logging to avoid flooding /api/debug/log unless explicitly re-enabled.
-const NOTE_WORKSPACE_DEBUG_ENABLED = false
+// Enable workspace debug logging; can be toggled at runtime if needed.
+const NOTE_WORKSPACE_DEBUG_ENABLED = true
 
 const normalizePoint = (value: any): { x: number; y: number } | null => {
   if (!value || typeof value !== "object") return null
@@ -113,6 +113,21 @@ const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
       return a.panelId.localeCompare(b.panelId)
     })
 
+  const normalizedComponents = [...(payload.components ?? [])]
+    .map((component) => ({
+      id: component.id ?? "",
+      type: component.type ?? "",
+      position: normalizePointForHash(component.position as any),
+      size: normalizeSizeForHash(component.size as any),
+      zIndex: typeof component.zIndex === "number" ? component.zIndex : null,
+      metadata: component.metadata ?? null,
+    }))
+    .sort((a, b) => {
+      const byType = a.type.localeCompare(b.type)
+      if (byType !== 0) return byType
+      return a.id.localeCompare(b.id)
+    })
+
   const normalizedCamera = {
     x: roundNumber(payload.camera?.x),
     y: roundNumber(payload.camera?.y),
@@ -124,6 +139,7 @@ const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
     camera: normalizedCamera,
     openNotes: normalizedOpenNotes,
     panels: normalizedPanels,
+    components: normalizedComponents,
   })
 }
 
@@ -256,6 +272,7 @@ export function useNoteWorkspaces({
   const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
   const workspaceRevisionRef = useRef<Map<string, string | null>>(new Map())
   const workspaceStoresRef = useRef<Map<string, DataStore>>(new Map())
+  const lastComponentsSnapshotRef = useRef<Map<string, NoteWorkspaceComponentSnapshot[]>>(new Map())
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const ownedNotesRef = useRef<Map<string, string>>(new Map())
@@ -437,17 +454,34 @@ export function useNoteWorkspaces({
         })
       }
       if (!ownerId) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_snapshot_skipped_no_owner",
-          metadata: {
-            reason,
-            panelCount: panels.length,
-            noteIds: Array.from(new Set(panels.map((panel) => panel.noteId))),
-            timestampMs: Date.now(),
-          },
-        })
-        return
+        const activeId = currentWorkspaceIdRef.current ?? currentWorkspaceId
+        if (activeId) {
+          ownerId = activeId
+          snapshotOwnerWorkspaceIdRef.current = activeId
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "panel_snapshot_owner_fallback_attach",
+            metadata: {
+              reason,
+              fallbackWorkspaceId: activeId,
+              panelCount: panels.length,
+              noteIds: Array.from(new Set(panels.map((panel) => panel.noteId))),
+              timestampMs: Date.now(),
+            },
+          })
+        } else {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "panel_snapshot_skipped_no_owner",
+            metadata: {
+              reason,
+              panelCount: panels.length,
+              noteIds: Array.from(new Set(panels.map((panel) => panel.noteId))),
+              timestampMs: Date.now(),
+            },
+          })
+          return
+        }
       }
 
       ownerId = snapshotOwnerWorkspaceIdRef.current ?? ownerId
@@ -708,7 +742,7 @@ export function useNoteWorkspaces({
     const workspaceIdForComponents =
       currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
     const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
-    const components: NoteWorkspaceComponentSnapshot[] =
+    const componentsFromManager: NoteWorkspaceComponentSnapshot[] =
       lm && typeof lm.getNodes === "function"
         ? Array.from(lm.getNodes().values())
             .filter((node: any) => node.type === "component")
@@ -726,7 +760,30 @@ export function useNoteWorkspaces({
               metadata: (node as any).metadata ?? null,
             }))
         : []
+
+    const cachedSnapshot = currentWorkspaceId ? getWorkspaceSnapshot(currentWorkspaceId) : null
+    const lastComponents = currentWorkspaceId
+      ? lastComponentsSnapshotRef.current.get(currentWorkspaceId) ?? []
+      : []
+    const components: NoteWorkspaceComponentSnapshot[] = (() => {
+      const source = componentsFromManager.length > 0 ? componentsFromManager : cachedSnapshot?.components ?? lastComponents
+      if (!source || source.length === 0) return []
+      const byId = new Map<string, NoteWorkspaceComponentSnapshot>()
+      ;(cachedSnapshot?.components ?? []).forEach((c) => byId.set(c.id, c))
+      lastComponents.forEach((c) => byId.set(c.id, c))
+      return source.map((c) => {
+        if (c.type && c.type !== "component") return c
+        const fallback = byId.get(c.id)
+        if (fallback && fallback.type && fallback.type !== "component") {
+          return { ...c, type: fallback.type, metadata: c.metadata ?? fallback.metadata ?? null }
+        }
+        return c
+      })
+    })()
     if (v2Enabled) {
+      if (components.length > 0 && workspaceId) {
+        lastComponentsSnapshotRef.current.set(workspaceId, components)
+      }
       cacheWorkspaceSnapshot({
         workspaceId,
         panels: snapshots,
@@ -1271,10 +1328,17 @@ export function useNoteWorkspaces({
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
         const incomingPanels = record.payload.panels ?? []
         const incomingComponents = record.payload.components ?? []
+        const resolvedComponents =
+          incomingComponents && incomingComponents.length > 0
+            ? incomingComponents
+            : lastComponentsSnapshotRef.current.get(workspaceId) ?? incomingComponents
         updatePanelSnapshotMap(incomingPanels, "hydrate_workspace", { allowEmpty: true })
         workspaceSnapshotsRef.current.set(workspaceId, incomingPanels)
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(incomingPanels)
-        applyPanelSnapshots(incomingPanels, targetIds, incomingComponents)
+        if (resolvedComponents && resolvedComponents.length > 0) {
+          lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
+        }
+        applyPanelSnapshots(incomingPanels, targetIds, resolvedComponents)
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
           .map((note) =>
