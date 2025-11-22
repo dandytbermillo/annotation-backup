@@ -25,6 +25,7 @@ import {
   waitForWorkspaceSnapshotReady,
   subscribeToWorkspaceSnapshotState,
   setActiveWorkspaceContext,
+  SHARED_WORKSPACE_ID,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
 
@@ -357,47 +358,54 @@ export function useNoteWorkspaces({
   const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
     const snapshots: NoteWorkspacePanelSnapshot[] = []
     const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
-    const dataStore = getWorkspaceDataStore(activeWorkspaceId)
-    if (!dataStore || typeof dataStore.keys !== "function") {
-      return snapshots
+    const primaryStore = getWorkspaceDataStore(activeWorkspaceId)
+
+    const collectFromStore = (store: DataStore | null, useSharedId = false) => {
+      if (!store || typeof store.keys !== "function") return
+      const ownerId = useSharedId ? SHARED_WORKSPACE_ID : activeWorkspaceId
+      for (const key of store.keys() as Iterable<string>) {
+        const rawKey = String(key)
+        const strippedKey = stripWorkspaceKey(ownerId, rawKey)
+        if (v2Enabled && ownerId && strippedKey === null) {
+          continue
+        }
+        const parsed = parsePanelKey(strippedKey ?? rawKey)
+        const noteId = parsed?.noteId
+        const panelId = parsed?.panelId ?? "main"
+        if (!noteId) continue
+        const record = store.get(rawKey)
+        if (!record || typeof record !== "object") continue
+        const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
+        const size = normalizeSize((record as any).dimensions) ?? normalizeSize((record as any).worldSize)
+        const branches = Array.isArray((record as any).branches)
+          ? (record as any).branches.map((entry: unknown) => String(entry))
+          : null
+        if (!position && !size && !branches && typeof (record as any).zIndex !== "number" && !(record as any).type) {
+          continue
+        }
+        snapshots.push({
+          noteId,
+          panelId,
+          type: typeof (record as any).type === "string" ? (record as any).type : null,
+          title: typeof (record as any).title === "string" ? (record as any).title : null,
+          position,
+          size,
+          zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
+          metadata:
+            (record as any).metadata && typeof (record as any).metadata === "object"
+              ? (record as any).metadata
+              : null,
+          parentId: typeof (record as any).parentId === "string" ? (record as any).parentId : null,
+          branches,
+          worldPosition: normalizePoint((record as any).worldPosition),
+          worldSize: normalizeSize((record as any).worldSize),
+        })
+      }
     }
-    for (const key of dataStore.keys() as Iterable<string>) {
-      const rawKey = String(key)
-      const strippedKey = stripWorkspaceKey(activeWorkspaceId, rawKey)
-      if (v2Enabled && activeWorkspaceId && strippedKey === null) {
-        continue
-      }
-      const parsed = parsePanelKey(strippedKey ?? rawKey)
-      const noteId = parsed?.noteId
-      const panelId = parsed?.panelId ?? "main"
-      if (!noteId) continue
-      const record = dataStore.get(rawKey)
-      if (!record || typeof record !== "object") continue
-      const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
-      const size = normalizeSize((record as any).dimensions) ?? normalizeSize((record as any).worldSize)
-      const branches = Array.isArray((record as any).branches)
-        ? (record as any).branches.map((entry: unknown) => String(entry))
-        : null
-      if (!position && !size && !branches && typeof (record as any).zIndex !== "number" && !(record as any).type) {
-        continue
-      }
-      snapshots.push({
-        noteId,
-        panelId,
-        type: typeof (record as any).type === "string" ? (record as any).type : null,
-        title: typeof (record as any).title === "string" ? (record as any).title : null,
-        position,
-        size,
-        zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
-        metadata:
-          (record as any).metadata && typeof (record as any).metadata === "object"
-            ? (record as any).metadata
-            : null,
-        parentId: typeof (record as any).parentId === "string" ? (record as any).parentId : null,
-        branches,
-        worldPosition: normalizePoint((record as any).worldPosition),
-        worldSize: normalizeSize((record as any).worldSize),
-      })
+
+    collectFromStore(primaryStore)
+    if (snapshots.length === 0 && sharedWorkspace?.dataStore) {
+      collectFromStore(sharedWorkspace.dataStore, true)
     }
     return snapshots
   }, [sharedWorkspace])
@@ -736,9 +744,18 @@ export function useNoteWorkspaces({
     const previousOwner = snapshotOwnerWorkspaceIdRef.current
     snapshotOwnerWorkspaceIdRef.current = workspaceId
     const snapshots = collectPanelSnapshotsFromDataStore()
-    updatePanelSnapshotMap(snapshots, "workspace_switch_capture", { allowEmpty: true })
-    workspaceSnapshotsRef.current.set(workspaceId, snapshots)
-    lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshots)
+    const fallbackPanels = getLastNonEmptySnapshot(
+      workspaceId,
+      lastNonEmptySnapshotsRef.current,
+      workspaceSnapshotsRef.current,
+    )
+    const snapshotsToCache = snapshots.length > 0 ? snapshots : fallbackPanels
+    updatePanelSnapshotMap(snapshotsToCache, "workspace_switch_capture", { allowEmpty: false })
+    workspaceSnapshotsRef.current.set(workspaceId, snapshotsToCache)
+    if (snapshotsToCache.length > 0) {
+      lastNonEmptySnapshotsRef.current.set(workspaceId, snapshotsToCache)
+    }
+    lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshotsToCache)
     const workspaceIdForComponents =
       currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
     const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
@@ -1509,6 +1526,14 @@ export function useNoteWorkspaces({
     if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return
     if (lastHydratedWorkspaceIdRef.current === currentWorkspaceId) return
     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "hydrate_on_route_load",
+      metadata: {
+        workspaceId: currentWorkspaceId,
+        lastHydratedWorkspaceId: lastHydratedWorkspaceIdRef.current,
+      },
+    })
     hydrateWorkspace(currentWorkspaceId)
   }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady])
 

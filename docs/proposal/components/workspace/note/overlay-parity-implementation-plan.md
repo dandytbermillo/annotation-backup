@@ -22,7 +22,7 @@ Deliver overlay-style persistence for note workspaces so they no longer depend o
 
 ## 3. Implementation Phases
 
-Status: V2 provider now supplies per-workspace DataStore/EventEmitter/openNotes (no legacy persistence), and note workspaces consume per-workspace stores with revision-aware replay. Owner fallback is still present and will be removed after isolation proves stable.
+Status: V2 provider now supplies per-workspace DataStore/EventEmitter/openNotes (no legacy persistence), and note workspaces consume per-workspace stores with revision-aware replay. Owner fallback is still present and will be removed after isolation proves stable. Default workspace reloads were fixed by letting the snapshot collector fall back to the shared workspace DataStore (so the default tab keeps its panels) and preventing empty snapshots from overwriting the cached default workspace state.
 
 ### Phase 1 – Instrumentation & Tracing
 1. Implement `branch-hydration-trace-plan.md`:
