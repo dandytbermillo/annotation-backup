@@ -15,41 +15,44 @@ Out of scope
 - Legacy `/api/canvas/workspace` path (except to remove use under V2).
 
 Plan (tab-model)
-1) Immediate guard (stop drops)
-   - Always keep `snapshotOwnerWorkspaceIdRef` set to the active workspace except during deliberate preview.
-   - Mutation handler must never skip: if owner is null, reattach to the active workspace (under V2) and log; do not drop the mutation.
-   - Force replay of the cached snapshot on every workspace switch (panels + open notes + camera), even if hashes match, to keep in-memory state populated.
-   - Keep `panel_snapshot_skipped_no_owner` logging until owner-null is impossible; add `workspace_snapshot_replay` logs for every replay source.
 
-2) Per-workspace datastore isolation (structural)
- - Use only per-workspace DataStores via a registry + V2 provider; bypass legacy CanvasWorkspaceProvider for V2. All component types (notes, calculators, etc.) must write/read through these stores.
-   - On switch: clear only the target workspace store, then replay its cached snapshot into that store (no global/shared store).
-   - Ensure store events cannot bleed between workspaces.
+1) Immediate guard rails (stop drops within a sprint)
+   - Always keep `snapshotOwnerWorkspaceIdRef` aligned with the active workspace except during explicit preview flows; add assertions to fail-fast in dev.
+   - Mutation handler must never skip: if owner is null, reattach to the active workspace (under V2) and log the recovery; do not drop the mutation and ensure consumers still see the change event.
+   - Force replay of the cached snapshot on every workspace switch (panels + open notes + camera + any registered component), even if hashes match, to keep in-memory state populated.
+   - Keep `panel_snapshot_skipped_no_owner` logging until owner-null is impossible; add `workspace_snapshot_replay` logs for every replay source and record whether replay originated from cache, adapter, or guard-rail recovery.
+
+2) Per-workspace datastore isolation (structural hardening)
+   - Use only per-workspace DataStores via a registry + V2 provider; bypass legacy CanvasWorkspaceProvider for V2. All component types (notes, calculators, timers, future plugins) must write/read through these stores via a shared interface.
+   - On switch: clear only the target workspace store, then replay its cached snapshot into that store (no global/shared store). Explicitly verify event buses are scoped (no subscribe leakage).
+   - Ensure store events cannot bleed between workspaces by sandboxing listeners per workspace ID and tearing them down on deactivate.
 
 3) Authoritative snapshot ownership + replay freshness
    - Track backend revision with each cached snapshot; on switch, compare and replay: if revision differs, replace cache and replay adapter snapshot; if equal, still replay cached snapshot to keep the store warm. Snapshot payload must include all component types present in the store; do not filter to notes only.
-   - Owner stays attached after preview/apply; no owner-null during normal operation.
+   - Owner stays attached after preview/apply; no owner-null during normal operation. Add state machine docs/tests that cover preview → apply → switch to catch regressions early.
+   - Snapshot serialization/deserialization must include component metadata (position, size, z-index, custom state) so parity holds when new component types ship.
 
 4) Capture/switch/hydrate sequence (tab semantics)
-   - V2 removes `/api/canvas/workspace` from note flow; adapter owns save/hydrate.
+   - V2 removes `/api/canvas/workspace` from note flow; adapter owns save/hydrate. Add migration timeline + kill-switch plan for regression.
    - Switch sequence:
-     1) Ensure owner is active workspace.
-     2) Bounded wait (`Promise.race` with timeout) for pending panel mutations; on timeout, log and continue.
+     1) Ensure owner is active workspace (assert/log).
+     2) Bounded wait (`Promise.race` with timeout) for pending panel mutations; on timeout, log and continue with last known state capture.
      3) Capture snapshot from the per-workspace store; persist via adapter.
-     4) Set owner to target workspace.
-     5) Force replay of cached snapshot for target workspace into its store (panels/open notes/camera), regardless of hash.
-     6) Fetch adapter snapshot; if revision differs, replace cache and replay adapter snapshot; if identical, keep cache and (still) force replay to avoid stale memory.
+     4) Set owner to target workspace (and update datastore registry pointers).
+     5) Force replay of cached snapshot for target workspace into its store (panels/open notes/camera/other components), regardless of hash.
+     6) Fetch adapter snapshot; if revision differs, replace cache and replay adapter snapshot; if identical, keep cache and still force replay to avoid stale memory. Emit telemetry for both local and adapter replays to track churn.
 
-5) Tests
- - Regression: Workspace A with a non-main panel → add a new note in A → switch to B → switch back; panel persists.
- - Regression: Mixed components: add note panels and another component (e.g., calculator) in A; add a new item; switch to B; switch back; all components persist.
- - Regression: Multiple non-main panels and rapid switches across ≥2 workspaces; no drops.
- - Isolation: Keys/stores remain per workspace; no bleed.
+5) Tests (unit + integration + soak)
+   - Regression: Workspace A with a non-main panel → add a new note in A → switch to B → switch back; panel persists.
+   - Regression: Mixed components: add note panels and another component (e.g., calculator) in A; add a new item; switch to B; switch back; all components persist.
+   - Regression: Multiple non-main panels and rapid switches across ≥2 workspaces; no drops and no double-replays.
+   - Isolation: Keys/stores remain per workspace; no bleed. Add automated test to assert listeners are torn down per workspace.
+   - Hydration parity: restart the app while multiple workspaces exist; ensure each restores its last state without cross-talk.
 
 6) Telemetry/Logging
- - Keep owner-null/mutation logs until eliminated.
-  - Log every replay (`workspace_snapshot_replay`) with source/revision/panel counts; log bounded-wait timeouts.
-  - Add a guardrail log for hydration replay (passive effect) when it is forced despite matching hashes.
+   - Keep owner-null/mutation logs until eliminated.
+   - Log every replay (`workspace_snapshot_replay`) with source/revision/panel counts; log bounded-wait timeouts and hydration-forced replays (even when hashes match).
+   - Add saturation metrics: number of components per workspace, replay latency, cache hit rate, mutation recovery count; wire alerts when drops occur post-launch.
 
 Current status vs plan (snapshot)
 - Done/partial: Per-workspace provider/registry; forced replay on switch; revision tracking; bounded wait; regression test exists.
