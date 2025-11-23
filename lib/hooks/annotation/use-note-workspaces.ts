@@ -15,7 +15,7 @@ import type {
   NoteWorkspacePanelSnapshot,
   NoteWorkspaceComponentSnapshot,
 } from "@/lib/types/note-workspace"
-import type { NoteWorkspace } from "@/lib/workspace/types"
+import { SHARED_WORKSPACE_ID, type NoteWorkspace } from "@/lib/workspace/types"
 import {
   cacheWorkspaceSnapshot,
   getPendingPanelCount,
@@ -25,7 +25,6 @@ import {
   waitForWorkspaceSnapshotReady,
   subscribeToWorkspaceSnapshotState,
   setActiveWorkspaceContext,
-  SHARED_WORKSPACE_ID,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
 
@@ -302,23 +301,6 @@ export function useNoteWorkspaces({
   )
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
 
-  const makeWorkspaceKey = useCallback(
-    (workspaceId: string | null | undefined, panelKey: string) => {
-      if (!v2Enabled || !workspaceId) return panelKey
-      return `ws:${workspaceId}::${panelKey}`
-    },
-    [v2Enabled],
-  )
-
-  const stripWorkspaceKey = useCallback(
-    (workspaceId: string | null | undefined, key: string) => {
-      if (!v2Enabled || !workspaceId) return key
-      const prefix = `ws:${workspaceId}::`
-      return key.startsWith(prefix) ? key.slice(prefix.length) : null
-    },
-    [v2Enabled],
-  )
-
   const getWorkspaceDataStore = useCallback(
     (workspaceId: string | null | undefined) => {
       if (!v2Enabled) {
@@ -360,24 +342,11 @@ export function useNoteWorkspaces({
     const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
     const primaryStore = getWorkspaceDataStore(activeWorkspaceId)
 
-    const collectFromStore = (
-      store: DataStore | null,
-      options?: { ownerId?: string | null; allowUnprefixed?: boolean },
-    ) => {
+    const collectFromStore = (store: DataStore | null) => {
       if (!store || typeof store.keys !== "function") return
-      const ownerId = options?.ownerId ?? activeWorkspaceId
-      const allowUnprefixed = options?.allowUnprefixed ?? false
       for (const key of store.keys() as Iterable<string>) {
         const rawKey = String(key)
-        let parsedKey = rawKey
-        if (ownerId) {
-          const strippedKey = stripWorkspaceKey(ownerId, rawKey)
-          if (v2Enabled && ownerId && strippedKey === null && !allowUnprefixed) {
-            continue
-          }
-          parsedKey = strippedKey ?? rawKey
-        }
-        const parsed = parsePanelKey(parsedKey)
+        const parsed = parsePanelKey(rawKey)
         const noteId = parsed?.noteId
         const panelId = parsed?.panelId ?? "main"
         if (!noteId) continue
@@ -417,7 +386,7 @@ export function useNoteWorkspaces({
         sharedWorkspace?.dataStore ??
         (v2Enabled ? getWorkspaceDataStore(SHARED_WORKSPACE_ID) : null)
       if (fallbackStore && fallbackStore !== primaryStore) {
-        collectFromStore(fallbackStore, { ownerId: SHARED_WORKSPACE_ID, allowUnprefixed: true })
+        collectFromStore(fallbackStore)
       }
     }
     return snapshots
@@ -542,12 +511,7 @@ export function useNoteWorkspaces({
           if (dataStore && typeof dataStore.keys === "function") {
             const keys: string[] = []
             for (const key of dataStore.keys() as Iterable<string>) {
-              const rawKey = String(key)
-              const strippedKey = stripWorkspaceKey(ownerId, rawKey)
-              if (v2Enabled && ownerId && strippedKey === null) {
-                continue
-              }
-              keys.push(rawKey)
+              keys.push(String(key))
             }
             keys.forEach((key) => dataStore.delete(key))
           }
@@ -588,7 +552,7 @@ export function useNoteWorkspaces({
         },
       })
     },
-    [emitDebugLog, v2Enabled, getWorkspaceDataStore, stripWorkspaceKey, currentWorkspaceId],
+    [emitDebugLog, v2Enabled, getWorkspaceDataStore, currentWorkspaceId],
   )
 
   useEffect(() => {
@@ -685,11 +649,7 @@ export function useNoteWorkspaces({
         const keysToRemove: string[] = []
         for (const key of dataStore.keys() as Iterable<string>) {
           const rawKey = String(key)
-          const strippedKey = stripWorkspaceKey(activeWorkspaceId, rawKey)
-          if (v2Enabled && activeWorkspaceId && strippedKey === null) {
-            continue
-          }
-          const parsed = parsePanelKey(strippedKey ?? rawKey)
+          const parsed = parsePanelKey(rawKey)
           if (parsed?.noteId && targetNoteIds.has(parsed.noteId)) {
             keysToRemove.push(rawKey)
           }
@@ -701,8 +661,7 @@ export function useNoteWorkspaces({
       panels?.forEach((panel) => {
         if (!panel.noteId || !panel.panelId || !targetNoteIds.has(panel.noteId)) return
         const key = ensurePanelKey(panel.noteId, panel.panelId)
-        const namespacedKey = makeWorkspaceKey(activeWorkspaceId, key)
-        dataStore.set(namespacedKey, {
+        dataStore.set(key, {
           id: panel.panelId,
           type: panel.type ?? "note",
           position: panel.position ?? panel.worldPosition ?? null,
@@ -719,16 +678,21 @@ export function useNoteWorkspaces({
       if (components && layerMgr) {
         components.forEach((component) => {
           if (!component.id || !component.type) return
+          const componentMetadata = {
+            ...(component.metadata ?? {}),
+          } as Record<string, unknown> & { componentType?: string }
+          const hasComponentType =
+            typeof componentMetadata.componentType === "string" && componentMetadata.componentType.length > 0
+          if (!hasComponentType) {
+            componentMetadata.componentType = component.type
+          }
           layerMgr.registerNode({
             id: component.id,
             type: "component",
             position: component.position ?? { x: 0, y: 0 },
             dimensions: component.size ?? undefined,
             zIndex: component.zIndex ?? undefined,
-            metadata: {
-              ...(component.metadata ?? {}),
-              componentType: component.type,
-            },
+            metadata: componentMetadata,
           } as any)
         })
       }
@@ -736,7 +700,7 @@ export function useNoteWorkspaces({
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
       }
     },
-    [sharedWorkspace, layerContext, v2Enabled, stripWorkspaceKey, makeWorkspaceKey, currentWorkspaceId],
+    [sharedWorkspace, layerContext, v2Enabled, currentWorkspaceId],
   )
 
   const captureCurrentWorkspaceSnapshot = useCallback(async () => {
