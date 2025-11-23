@@ -210,8 +210,24 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         },
       })
       markPanelPersistencePending(effectiveNoteId, panelId)
+      let resolvedPending = false
+      const resolvePending = () => {
+        if (resolvedPending) return
+        resolvedPending = true
+        void debugLog({
+          component: "PanelPersistence",
+          action: "mark_ready_call",
+          metadata: {
+            noteId: effectiveNoteId,
+            panelId,
+            source: "persist_panel_update",
+          },
+        })
+        markPanelPersistenceReady(effectiveNoteId, panelId)
+      }
       try {
         await transaction.commit(async () => {
+          resolvePending()
           const response = await fetch(`/api/canvas/layout/${effectiveNoteId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -277,16 +293,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           metadata: { panelId, noteId: effectiveNoteId }
         })
       } finally {
-        void debugLog({
-          component: "PanelPersistence",
-          action: "mark_ready_call",
-          metadata: {
-            noteId: effectiveNoteId,
-            panelId,
-            source: "persist_panel_update",
-          },
-        })
-        markPanelPersistenceReady(effectiveNoteId, panelId)
+        resolvePending()
       }
     },
     [dataStore, branchesMap, layerManager, noteId, userId, state.canvasState, getWorkspaceVersion]
@@ -369,6 +376,21 @@ export function usePanelPersistence(options: PanelPersistOptions) {
         },
       })
       markPanelPersistencePending(effectiveNoteId, panelId)
+      let resolvedPending = false
+      const resolvePending = () => {
+        if (resolvedPending) return
+        resolvedPending = true
+        void debugLog({
+          component: "PanelPersistence",
+          action: "mark_ready_call",
+          metadata: {
+            noteId: effectiveNoteId,
+            panelId,
+            source: "persist_panel_create",
+          },
+        })
+        markPanelPersistenceReady(effectiveNoteId, panelId)
+      }
       try {
         const response = await fetch('/api/canvas/panels', {
           method: 'POST',
@@ -376,6 +398,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           body: JSON.stringify(payload)
         })
 
+        resolvePending()
         if (!response.ok) {
           // Get error details from response
           const errorData = await response.json().catch(() => ({}))
@@ -423,16 +446,7 @@ export function usePanelPersistence(options: PanelPersistOptions) {
           metadata: { panelId, noteId: effectiveNoteId }
         })
       } finally {
-        void debugLog({
-          component: "PanelPersistence",
-          action: "mark_ready_call",
-          metadata: {
-            noteId: effectiveNoteId,
-            panelId,
-            source: "persist_panel_create",
-          },
-        })
-        markPanelPersistenceReady(effectiveNoteId, panelId)
+        resolvePending()
       }
     },
     [noteId, userId, state.canvasState, getWorkspaceVersion]

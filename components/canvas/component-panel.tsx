@@ -36,6 +36,20 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   // Layer management integration
   const layerManager = useLayerManager()
   const { node: canvasNode } = useCanvasNode(id, 'component', position)
+
+  useEffect(() => {
+    if (!layerManager.isEnabled) return
+    const existing = layerManager.getNode(id)
+    if (!existing) return
+    const previousMetadata = (existing.metadata as Record<string, unknown>) ?? {}
+    if (previousMetadata.componentType === type) return
+    layerManager.updateNode(id, {
+      metadata: {
+        ...previousMetadata,
+        componentType: type,
+      },
+    })
+  }, [id, type, layerManager])
   
   // State to track render position and prevent snap-back during drag
   const [renderPosition, setRenderPosition] = useState(position)

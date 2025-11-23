@@ -11,7 +11,7 @@ import { isPlainModeActive } from "@/lib/collab-mode"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 import { createPanelItem, isPanel, type CanvasItem, type PanelType } from "@/types/canvas-items"
 import type { PanelUpdateData } from "@/lib/hooks/use-panel-persistence"
-import { markPanelPersistencePending } from "@/lib/note-workspaces/state"
+import { markPanelPersistencePending, markPanelPersistenceReady } from "@/lib/note-workspaces/state"
 
 type PersistPanelCreateArgs = {
   panelId: string
@@ -256,6 +256,41 @@ export function usePanelCreationHandler({
             hasParentPosition: Boolean(parentPosition),
           })
         }
+
+        const defaultDimensions = { width: 500, height: 400 }
+        const resolvedWorldPosition =
+          effectiveCoordinateSpace === "world"
+            ? persistencePosition
+            : screenToWorld(
+                persistencePosition,
+                { x: canvasState.translateX, y: canvasState.translateY },
+                canvasState.zoom,
+              )
+
+        const normalizedPanelRecord = {
+          id: panelId,
+          type: panelType,
+          position: resolvedWorldPosition,
+          worldPosition: resolvedWorldPosition,
+          dimensions: defaultDimensions,
+          worldSize: defaultDimensions,
+          zIndex: 1,
+          title: panelTitle,
+          metadata: { annotationType: panelType },
+        }
+
+        if (dataStore) {
+          const existing = dataStore.get(hydratedStoreKey)
+          dataStore.set(hydratedStoreKey, existing ? { ...existing, ...normalizedPanelRecord } : normalizedPanelRecord)
+        }
+        if (branchesMap) {
+          const existing = branchesMap.get(hydratedStoreKey)
+          branchesMap.set(
+            hydratedStoreKey,
+            existing ? { ...existing, ...normalizedPanelRecord } : normalizedPanelRecord,
+          )
+        }
+        markPanelPersistenceReady(targetNoteId, panelId)
 
         if (!isPreview) {
           emitPanelDebug(panelId, targetNoteId, "panel_persist_create_start")
