@@ -267,6 +267,10 @@ export function usePanelCreationHandler({
                 canvasState.zoom,
               )
 
+        if (!isPreview) {
+          markPanelPersistencePending(targetNoteId, panelId)
+        }
+
         const normalizedPanelRecord = {
           id: panelId,
           type: panelType,
@@ -290,11 +294,12 @@ export function usePanelCreationHandler({
             existing ? { ...existing, ...normalizedPanelRecord } : normalizedPanelRecord,
           )
         }
-        markPanelPersistenceReady(targetNoteId, panelId)
+        if (!isPreview) {
+          markPanelPersistenceReady(targetNoteId, panelId)
+        }
 
         if (!isPreview) {
           emitPanelDebug(panelId, targetNoteId, "panel_persist_create_start")
-          markPanelPersistencePending(targetNoteId, panelId)
           void persistPanelCreate({
             panelId,
             storeKey: hydratedStoreKey,

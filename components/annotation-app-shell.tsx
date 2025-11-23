@@ -89,6 +89,40 @@ const MIN_POPUP_WIDTH = 200
 const MIN_POPUP_HEIGHT = 200
 const MAX_POPUP_WIDTH = 900
 const MAX_POPUP_HEIGHT = 900
+const NOTE_WORKSPACE_DEBUG_OVERRIDE_KEY = "annotation:note-workspace-debug"
+
+type WorkspaceDebugWindow = typeof window & {
+  __ANNOTATION_NOTE_WORKSPACE_DEBUG?: unknown
+}
+
+const parseWorkspaceDebugOverride = (value: unknown): boolean | null => {
+  if (typeof value === "boolean") return value
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toLowerCase()
+  if (["1", "true", "yes", "on", "enable", "enabled"].includes(normalized)) return true
+  if (["0", "false", "no", "off", "disable", "disabled"].includes(normalized)) return false
+  return null
+}
+
+const readWorkspaceDebugPreference = (): boolean | null => {
+  if (typeof window === "undefined") return null
+  const globalOverride = parseWorkspaceDebugOverride(
+    (window as WorkspaceDebugWindow).__ANNOTATION_NOTE_WORKSPACE_DEBUG,
+  )
+  if (globalOverride !== null) {
+    return globalOverride
+  }
+  try {
+    const stored = window.localStorage.getItem(NOTE_WORKSPACE_DEBUG_OVERRIDE_KEY)
+    const storedOverride = parseWorkspaceDebugOverride(stored)
+    if (storedOverride !== null) {
+      return storedOverride
+    }
+  } catch {
+    // Ignore storage errors; fall back to default preference.
+  }
+  return null
+}
 
 type AnnotationAppContentProps = {
   useShellView?: boolean
@@ -185,6 +219,12 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
   useEffect(() => {
     activeNoteIdRef.current = activeNoteId
   }, [activeNoteId])
+  const [noteWorkspaceDebugEnabled, setNoteWorkspaceDebugEnabled] = useState<boolean>(() => isDebugEnabled())
+
+  useEffect(() => {
+    const preference = readWorkspaceDebugPreference()
+    setNoteWorkspaceDebugEnabled(preference === null ? isDebugEnabled() : preference)
+  }, [])
 
   const {
     canvasRef,
@@ -377,6 +417,8 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     })
   }, [])
 
+  const noteWorkspaceDebugLogger = noteWorkspaceDebugEnabled ? debugLog : undefined
+
   const noteWorkspaceState = useNoteWorkspaces({
     openNotes,
     activeNoteId,
@@ -391,7 +433,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     canvasState,
     setCanvasState,
     onUnavailable: handleNoteWorkspaceUnavailable,
-    debugLog: undefined, // disable debug logging to prevent /api/debug/log flood
+    debugLog: noteWorkspaceDebugLogger,
     sharedWorkspace,
   })
 

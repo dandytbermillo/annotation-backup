@@ -3,7 +3,7 @@
  */
 
 // Hard-disable debug logging to avoid flooding /api/debug/log during troubleshooting.
-const DEBUG_LOGGING_ENABLED = false;
+const DEBUG_LOGGING_ENABLED = true;
 const DEBUG_OVERRIDE_STORAGE_KEY = 'annotation:debug-logging';
 const RUNTIME_PREF_CACHE_MS = 1000;
 const RATE_LIMIT_INTERVAL_MS = 1000;
@@ -60,13 +60,13 @@ const computeRuntimePreference = (): boolean => {
   return DEBUG_LOGGING_ENABLED;
 };
 
-export const isDebugEnabled = () => false;
+export const isDebugEnabled = () => true;
 
 let rateWindowStart = 0;
 let rateWindowCount = 0;
 let rateLimitWarned = false;
 
-const shouldEmitDebugLog = () => false;
+const shouldEmitDebugLog = () => true;
 
 let sessionId: string | null = null;
 
@@ -95,8 +95,35 @@ export async function debugLog(
   _event?: string,
   _details?: any
 ): Promise<void> {
-  // Debug logging disabled (no-op).
-  return;
+  const data: DebugLogData =
+    typeof _dataOrContext === "string"
+      ? {
+          component: _dataOrContext,
+          action: _event ?? "log",
+          metadata: typeof _details === "object" ? _details : undefined,
+        }
+      : _dataOrContext
+  const timestamp = new Date().toISOString()
+  const payload = JSON.stringify({
+    timestamp,
+    sessionId: getSessionId(),
+    ...data,
+  })
+  try {
+    if (typeof window !== "undefined" && window?.navigator?.sendBeacon) {
+      const blob = new Blob([payload], { type: "application/json" })
+      window.navigator.sendBeacon?.("/api/debug/log", blob)
+    } else {
+      await fetch("/api/debug/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      })
+    }
+  } catch {
+    // swallow logging errors
+  }
 }
 
 /**

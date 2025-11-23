@@ -2,7 +2,6 @@
 
 import { useEffect, useRef } from "react"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { markPanelPersistencePending } from "@/lib/note-workspaces/state"
 
 type PanelEventDetail = {
   panelId?: string
@@ -67,8 +66,6 @@ export function usePanelCreationEvents({
       return
     }
     const targetNoteId = detail.noteId || noteId
-    // Immediately raise pending so workspace snapshots wait for this panel
-    markPanelPersistencePending(targetNoteId, detail.panelId)
     logPanelEvent("panel_creation_event", detail)
     createPanelRef.current(
       detail.panelId,
