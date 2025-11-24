@@ -1105,8 +1105,11 @@ export function useNoteWorkspaces({
         return
       }
       snapshotOwnerWorkspaceIdRef.current = workspaceId
-      const panelSnapshots = snapshot.panels ?? []
       const targetIds = new Set(snapshot.openNotes.map((entry) => entry.noteId))
+      const panelSnapshots = (snapshot.panels ?? []).filter((panel) => {
+        if (!panel?.noteId) return true
+        return targetIds.has(panel.noteId)
+      })
       panelSnapshots.forEach((panel) => {
         if (panel.noteId) {
           targetIds.add(panel.noteId)
@@ -1114,7 +1117,7 @@ export function useNoteWorkspaces({
       })
       workspaceSnapshotsRef.current.set(workspaceId, panelSnapshots)
       updatePanelSnapshotMap(panelSnapshots, "preview_snapshot", { allowEmpty: true })
-      applyPanelSnapshots(panelSnapshots, new Set(), snapshot.components, {
+      applyPanelSnapshots(panelSnapshots, targetIds, snapshot.components, {
         allowEmptyApply: true,
         suppressMutationEvents: true,
       })
@@ -1281,7 +1284,10 @@ export function useNoteWorkspaces({
         components: [],
       }
     }
-    const panelSnapshots = getAllPanelSnapshots({ useFallback: false })
+    const panelSnapshots =
+      v2Enabled && currentWorkspaceId
+        ? collectPanelSnapshotsFromDataStore()
+        : getAllPanelSnapshots({ useFallback: false })
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: true })
     const lm = getWorkspaceLayerManager(workspaceIdForComponents)
     const components: NoteWorkspaceComponentSnapshot[] =
@@ -1608,12 +1614,10 @@ export function useNoteWorkspaces({
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
-        ;(record.payload.panels ?? []).forEach((panel: NoteWorkspacePanelSnapshot) => {
-          if (panel.noteId) {
-            targetIds.add(panel.noteId)
-          }
+        const incomingPanels = (record.payload.panels ?? []).filter((panel: NoteWorkspacePanelSnapshot) => {
+          if (!panel?.noteId) return true
+          return targetIds.has(panel.noteId)
         })
-        const incomingPanels = record.payload.panels ?? []
         const incomingComponents = record.payload.components ?? []
         const resolvedComponents =
           incomingComponents && incomingComponents.length > 0
@@ -1625,7 +1629,7 @@ export function useNoteWorkspaces({
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
         }
-        applyPanelSnapshots(incomingPanels, new Set(), resolvedComponents, {
+        applyPanelSnapshots(incomingPanels, targetIds, resolvedComponents, {
           allowEmptyApply: true,
           suppressMutationEvents: true,
         })
