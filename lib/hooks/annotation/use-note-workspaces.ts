@@ -273,6 +273,7 @@ export function useNoteWorkspaces({
   const workspaceRevisionRef = useRef<Map<string, string | null>>(new Map())
   const workspaceStoresRef = useRef<Map<string, DataStore>>(new Map())
   const lastComponentsSnapshotRef = useRef<Map<string, NoteWorkspaceComponentSnapshot[]>>(new Map())
+  const lastPendingTimestampRef = useRef<Map<string, number>>(new Map())
   const replayingWorkspaceRef = useRef(0)
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
@@ -382,10 +383,8 @@ export function useNoteWorkspaces({
     }
 
     collectFromStore(primaryStore)
-    if (snapshots.length === 0) {
-      const fallbackStore =
-        sharedWorkspace?.dataStore ??
-        (v2Enabled ? getWorkspaceDataStore(SHARED_WORKSPACE_ID) : null)
+    if (!v2Enabled && snapshots.length === 0) {
+      const fallbackStore = sharedWorkspace?.dataStore ?? getWorkspaceDataStore(SHARED_WORKSPACE_ID)
       if (fallbackStore && fallbackStore !== primaryStore) {
         collectFromStore(fallbackStore)
       }
@@ -427,8 +426,13 @@ export function useNoteWorkspaces({
   )
 
   const updatePanelSnapshotMap = useCallback(
-    (panels: NoteWorkspacePanelSnapshot[], reason: string, options?: { allowEmpty?: boolean }) => {
+    (
+      panels: NoteWorkspacePanelSnapshot[],
+      reason: string,
+      options?: { allowEmpty?: boolean; mergeWithExisting?: boolean },
+    ) => {
       const allowEmpty = options?.allowEmpty ?? false
+      const mergeWithExisting = options?.mergeWithExisting ?? false
       let ownerId =
         snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
       if (!snapshotOwnerWorkspaceIdRef.current && ownerId) {
@@ -479,7 +483,7 @@ export function useNoteWorkspaces({
       const fallbackPanels = ownerId
         ? getLastNonEmptySnapshot(ownerId, lastNonEmptySnapshotsRef.current, workspaceSnapshotsRef.current)
         : []
-      const panelsToPersist =
+      let panelsToPersist =
         panels.length > 0
           ? panels
           : allowEmpty
@@ -496,6 +500,38 @@ export function useNoteWorkspaces({
           },
         })
       }
+      if (mergeWithExisting && ownerId && panelsToPersist.length > 0) {
+        const existingPanels = workspaceSnapshotsRef.current.get(ownerId) ?? []
+        if (existingPanels.length > 0) {
+          const updatedNoteIds = new Set(
+            panelsToPersist
+              .map((panel) => (panel.noteId ? String(panel.noteId) : null))
+              .filter((id): id is string => Boolean(id)),
+          )
+          const preservedPanels = existingPanels.filter((panel) => {
+            if (!panel.noteId) return false
+            return !updatedNoteIds.has(panel.noteId)
+          })
+          const merged = [...preservedPanels, ...panelsToPersist]
+          const deduped = new Map<string, NoteWorkspacePanelSnapshot>()
+          merged.forEach((panel) => {
+            if (!panel.noteId || !panel.panelId) return
+            const key = `${panel.noteId}:${panel.panelId}`
+            deduped.set(key, panel)
+          })
+          panelsToPersist = Array.from(deduped.values())
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "panel_snapshot_merge_existing",
+            metadata: {
+              workspaceId: ownerId,
+              mergedCount: panelsToPersist.length,
+              updatedNoteIds: Array.from(updatedNoteIds),
+            },
+          })
+        }
+      }
+
       if (!panelsToPersist || panelsToPersist.length === 0) {
         if (allowEmpty) {
           workspaceSnapshotsRef.current.set(ownerId, [])
@@ -591,7 +627,10 @@ export function useNoteWorkspaces({
         return
       }
       lastPanelSnapshotHashRef.current = snapshotHash
-      updatePanelSnapshotMap(snapshots, "datastore_mutation", { allowEmpty: true })
+      updatePanelSnapshotMap(snapshots, "datastore_mutation", {
+        allowEmpty: false,
+        mergeWithExisting: true,
+      })
     }
 
     dataStore.on("set", handleMutation)
@@ -619,7 +658,12 @@ export function useNoteWorkspaces({
         snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
       if (!workspaceId) return
       const pendingCount = getPendingPanelCount(workspaceId)
-      if (pendingCount === 0) return
+      const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
+      const hasRecentPending = lastPendingAt > 0 && Date.now() - lastPendingAt < maxWaitMs
+      if (!pendingCount && !hasRecentPending) {
+        return
+      }
+      const waitReason = pendingCount > 0 ? "pending_panels" : "recent_pending"
       emitDebugLog({
         component: "NoteWorkspace",
         action: "snapshot_wait_pending_panels",
@@ -627,12 +671,31 @@ export function useNoteWorkspaces({
           workspaceId,
           pendingCount,
           reason,
+          waitReason,
+          lastPendingMs: lastPendingAt ? Date.now() - lastPendingAt : null,
         },
       })
-      const ready = await Promise.race<boolean>([
-        waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
-      ])
+      const waitForRecentPendingFlush = () =>
+        new Promise<boolean>((resolve) => {
+          const timeout = setTimeout(() => resolve(true), Math.min(64, maxWaitMs))
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(() => {
+              clearTimeout(timeout)
+              resolve(true)
+            })
+          }
+        })
+      const ready = await Promise.race<boolean>(
+        pendingCount > 0
+          ? [
+              waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs),
+              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
+            ]
+          : [
+              waitForRecentPendingFlush(),
+              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
+            ],
+      )
       emitDebugLog({
         component: "NoteWorkspace",
         action: ready ? "snapshot_pending_resolved" : "snapshot_pending_timeout",
@@ -640,6 +703,7 @@ export function useNoteWorkspaces({
           workspaceId,
           pendingCount: getPendingPanelCount(workspaceId),
           reason,
+          waitReason,
         },
       })
     },
@@ -1241,8 +1305,16 @@ export function useNoteWorkspaces({
       return
     }
     saveInFlightRef.current = true
-    if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current) {
+    if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
       saveInFlightRef.current = false
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "save_skipped_workspace_busy",
+        metadata: {
+          workspaceId: currentWorkspaceSummary?.id,
+          reason: replayingWorkspaceRef.current > 0 ? "replaying" : "hydrating",
+        },
+      })
       return
     }
     if (!adapterRef.current) return
@@ -1334,6 +1406,7 @@ export function useNoteWorkspaces({
     if (!featureEnabled || !v2Enabled) return
     const unsubscribe = subscribeToWorkspaceSnapshotState((event) => {
       if (event.type === "panel_pending") {
+        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
         emitDebugLog({
           component: "NoteWorkspace",
           action: "panel_pending",
@@ -1359,7 +1432,8 @@ export function useNoteWorkspaces({
         })
         if (
           event.workspaceId === currentWorkspaceId &&
-          !isHydratingRef.current
+          !isHydratingRef.current &&
+          replayingWorkspaceRef.current === 0
         ) {
           void (async () => {
             await captureCurrentWorkspaceSnapshot()
@@ -1367,6 +1441,29 @@ export function useNoteWorkspaces({
             await persistWorkspaceNow()
           })()
         }
+      } else if (event.type === "component_pending") {
+        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_pending",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "component_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
       }
     })
     return unsubscribe
@@ -1693,6 +1790,28 @@ export function useNoteWorkspaces({
             timestampMs: event.timestamp,
           },
         })
+      } else if (event.type === "component_pending") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_pending",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "component_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
       } else if (event.type === "workspace_ready") {
         emitDebugLog({
           component: "NoteWorkspace",
@@ -1707,7 +1826,8 @@ export function useNoteWorkspaces({
           featureEnabled &&
           v2Enabled &&
           event.workspaceId === currentWorkspaceId &&
-          !isHydratingRef.current
+          !isHydratingRef.current &&
+          replayingWorkspaceRef.current === 0
         ) {
           void (async () => {
             await captureCurrentWorkspaceSnapshot()
@@ -1715,6 +1835,29 @@ export function useNoteWorkspaces({
             await persistWorkspaceNow()
           })()
         }
+      } else if (event.type === "component_pending") {
+        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_pending",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
+      } else if (event.type === "component_ready") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "component_ready",
+          metadata: {
+            workspaceId: event.workspaceId,
+            componentId: event.componentId,
+            pendingCount: event.pendingCount,
+            timestampMs: event.timestamp,
+          },
+        })
       }
     })
     return unsubscribe
@@ -1729,7 +1872,7 @@ export function useNoteWorkspaces({
 
   useEffect(() => {
     if (!featureEnabled || !currentWorkspaceSummary) return
-    if (isHydratingRef.current) return
+    if (isHydratingRef.current || replayingWorkspaceRef.current > 0) return
     scheduleSave({ reason: "state_change" })
   }, [
     activeNoteId,
@@ -1746,6 +1889,7 @@ export function useNoteWorkspaces({
   // Trigger save when component set changes (so default workspace captures non-note components)
   useEffect(() => {
     if (!featureEnabled) return
+    if (isHydratingRef.current || replayingWorkspaceRef.current > 0) return
     scheduleSave({ reason: "components_changed" })
   }, [scheduleSave, featureEnabled, panelSnapshotVersion])
 

@@ -6,6 +6,7 @@ import type { Dispatch, SetStateAction } from "react"
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { createComponentItem, isComponent, type CanvasItem, type ComponentType } from "@/types/canvas-items"
 import type { LayerManager } from "@/lib/canvas/layer-manager"
+import { markComponentPersistencePending, markComponentPersistenceReady } from "@/lib/note-workspaces/state"
 
 interface UseComponentCreationHandlerOptions {
   canvasState: CanvasViewportState
@@ -13,6 +14,7 @@ interface UseComponentCreationHandlerOptions {
   setCanvasItems: Dispatch<SetStateAction<CanvasItem[]>>
   layerManager?: LayerManager | null
   onComponentChange?: () => void
+  workspaceId?: string | null
 }
 
 export function useComponentCreationHandler({
@@ -21,8 +23,10 @@ export function useComponentCreationHandler({
   setCanvasItems,
   layerManager,
   onComponentChange,
+  workspaceId,
 }: UseComponentCreationHandlerOptions) {
   const layerMgr = layerManager ?? null
+  const workspaceKey = workspaceId ?? null
 
   const handleAddComponent = useCallback(
     (type: ComponentType | string, position?: { x: number; y: number }) => {
@@ -61,6 +65,9 @@ export function useComponentCreationHandler({
 
       console.log("[Canvas] Created component:", newComponent)
       console.log("[Canvas] Adding to canvasItems")
+      if (workspaceKey) {
+        markComponentPersistencePending(workspaceKey, newComponent.id)
+      }
       setCanvasItems(prev => [...prev, newComponent])
       if (layerMgr) {
         try {
@@ -80,8 +87,24 @@ export function useComponentCreationHandler({
         }
       }
       onComponentChange?.()
+      if (workspaceKey) {
+        const complete = () => markComponentPersistenceReady(workspaceKey, newComponent.id)
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+          window.requestAnimationFrame(complete)
+        } else {
+          setTimeout(complete, 0)
+        }
+      }
     },
-    [canvasState.translateX, canvasState.translateY, canvasState.zoom, layerMgr, setCanvasItems, onComponentChange],
+    [
+      canvasState.translateX,
+      canvasState.translateY,
+      canvasState.zoom,
+      layerMgr,
+      setCanvasItems,
+      onComponentChange,
+      workspaceKey,
+    ],
   )
 
   const handleComponentClose = useCallback(

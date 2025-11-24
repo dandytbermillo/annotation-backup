@@ -159,6 +159,7 @@ function NoteHydrator({
 const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
   noteIds,
   primaryNoteId,
+  workspaceId = null,
   freshNoteSeeds = {},
   onConsumeFreshNoteSeed,
   isNotesExplorerOpen = false,
@@ -537,6 +538,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     setCanvasItems,
     layerManager: layerManagerApi.manager,
     onComponentChange,
+    workspaceId: workspaceId ?? null,
   })
 
   // Rehydrate component items from the current workspace LayerManager when snapshot/revision changes.
@@ -913,7 +915,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
 const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>((props, ref) => {
   const { getWorkspace } = useCanvasWorkspace()
-  const workspace = useMemo(() => getWorkspace(props.workspaceId ?? SHARED_WORKSPACE_ID), [getWorkspace, props.workspaceId])
+  const resolvedWorkspaceId = props.workspaceId ?? SHARED_WORKSPACE_ID
+  const workspace = useMemo(() => getWorkspace(resolvedWorkspaceId), [getWorkspace, resolvedWorkspaceId])
   const activeNoteId = props.primaryNoteId ?? props.noteIds[0] ?? ""
 
   useEffect(() => {
@@ -929,7 +932,7 @@ const ModernAnnotationCanvas = forwardRef<CanvasImperativeHandle, ModernAnnotati
           externalDataStore={workspace.dataStore}
           externalEvents={workspace.events}
         >
-          <ModernAnnotationCanvasInner {...props} ref={ref} />
+          <ModernAnnotationCanvasInner {...props} workspaceId={resolvedWorkspaceId} ref={ref} />
           {props.children}
         </CanvasProvider>
       </LayerManagerProvider>

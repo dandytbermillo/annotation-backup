@@ -46,6 +46,20 @@ export type WorkspaceSnapshotEvent =
       timestamp: number
     }
   | {
+      type: "component_pending"
+      workspaceId: string
+      componentId: string
+      pendingCount: number
+      timestamp: number
+    }
+  | {
+      type: "component_ready"
+      workspaceId: string
+      componentId: string
+      pendingCount: number
+      timestamp: number
+    }
+  | {
     type: "workspace_ready"
     workspaceId: string
     pendingCount: number
@@ -55,6 +69,7 @@ export type WorkspaceSnapshotEvent =
 type WorkspaceState = {
   pendingPanels: Set<string>
   readyPanels: Set<string>
+  pendingComponents: Set<string>
 }
 
 const snapshots = new Map<string, NoteWorkspaceSnapshot>()
@@ -72,6 +87,7 @@ const createWorkspaceState = (workspaceId: string): WorkspaceState => {
     workspaceStates.set(workspaceId, {
       pendingPanels: new Set(),
       readyPanels: new Set(),
+      pendingComponents: new Set(),
     })
   }
   return workspaceStates.get(workspaceId)!
@@ -100,6 +116,24 @@ const resolveWorkspaceWaiters = (workspaceId: string, ready: boolean) => {
       // ignore errors from listeners
     }
   })
+}
+
+const getWorkspacePendingCount = (workspaceId: string): number => {
+  const state = workspaceStates.get(workspaceId)
+  if (!state) return 0
+  return state.pendingPanels.size + state.pendingComponents.size
+}
+
+const emitWorkspaceReadyIfSettled = (workspaceId: string) => {
+  if (getWorkspacePendingCount(workspaceId) === 0) {
+    emitEvent({
+      type: "workspace_ready",
+      workspaceId,
+      pendingCount: 0,
+      timestamp: Date.now(),
+    })
+    resolveWorkspaceWaiters(workspaceId, true)
+  }
 }
 
 export function cacheWorkspaceSnapshot(snapshot: NoteWorkspaceSnapshot) {
@@ -216,21 +250,12 @@ export function markPanelPersistenceReady(noteId: string | null | undefined, pan
     pendingCount: state.pendingPanels.size,
     timestamp: Date.now(),
   })
-  if (state.pendingPanels.size === 0) {
-    emitEvent({
-      type: "workspace_ready",
-      workspaceId,
-      pendingCount: 0,
-      timestamp: Date.now(),
-    })
-    resolveWorkspaceWaiters(workspaceId, true)
-  }
+  emitWorkspaceReadyIfSettled(workspaceId)
 }
 
 export function getPendingPanelCount(workspaceId: string | null | undefined): number {
   if (!workspaceId) return 0
-  const state = workspaceStates.get(workspaceId)
-  return state ? state.pendingPanels.size : 0
+  return getWorkspacePendingCount(workspaceId)
 }
 
 export function waitForWorkspaceSnapshotReady(workspaceId: string, timeoutMs = 500): Promise<boolean> {
@@ -277,4 +302,41 @@ export function subscribeToWorkspaceSnapshotState(listener: (event: WorkspaceSna
   return () => {
     snapshotListeners.delete(listener)
   }
+}
+
+export function markComponentPersistencePending(
+  workspaceId: string | null | undefined,
+  componentId: string | null | undefined,
+) {
+  if (!workspaceId || !componentId) return
+  const state = createWorkspaceState(workspaceId)
+  if (state.pendingComponents.has(componentId)) return
+  state.pendingComponents.add(componentId)
+  emitEvent({
+    type: "component_pending",
+    workspaceId,
+    componentId,
+    pendingCount: getWorkspacePendingCount(workspaceId),
+    timestamp: Date.now(),
+  })
+}
+
+export function markComponentPersistenceReady(
+  workspaceId: string | null | undefined,
+  componentId: string | null | undefined,
+) {
+  if (!workspaceId || !componentId) return
+  const state = createWorkspaceState(workspaceId)
+  if (!state.pendingComponents.has(componentId)) {
+    return
+  }
+  state.pendingComponents.delete(componentId)
+  emitEvent({
+    type: "component_ready",
+    workspaceId,
+    componentId,
+    pendingCount: getWorkspacePendingCount(workspaceId),
+    timestamp: Date.now(),
+  })
+  emitWorkspaceReadyIfSettled(workspaceId)
 }
