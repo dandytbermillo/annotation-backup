@@ -657,6 +657,41 @@ export function useNoteWorkspaces({
       const workspaceId =
         snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
       if (!workspaceId) return
+      if (replayingWorkspaceRef.current > 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "snapshot_wait_replay",
+          metadata: {
+            workspaceId,
+            pendingReplays: replayingWorkspaceRef.current,
+            reason,
+          },
+        })
+        const replaySettled = await new Promise<boolean>((resolve) => {
+          const start = Date.now()
+          const check = () => {
+            if (replayingWorkspaceRef.current === 0) {
+              resolve(true)
+              return
+            }
+            if (Date.now() - start >= maxWaitMs) {
+              resolve(false)
+              return
+            }
+            setTimeout(check, 16)
+          }
+          check()
+        })
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: replaySettled ? "snapshot_replay_resolved" : "snapshot_replay_timeout",
+          metadata: {
+            workspaceId,
+            pendingReplays: replayingWorkspaceRef.current,
+            reason,
+          },
+        })
+      }
       const pendingCount = getPendingPanelCount(workspaceId)
       const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
       const hasRecentPending = lastPendingAt > 0 && Date.now() - lastPendingAt < maxWaitMs
@@ -715,136 +750,164 @@ export function useNoteWorkspaces({
       panels: NoteWorkspacePanelSnapshot[] | undefined,
       targetNoteIds: Set<string>,
       components?: NoteWorkspaceComponentSnapshot[],
-      options?: { allowEmptyApply?: boolean; clearWorkspace?: boolean },
+      options?: {
+        allowEmptyApply?: boolean
+        clearWorkspace?: boolean
+        suppressMutationEvents?: boolean
+      },
     ) => {
       const allowEmptyApply = options?.allowEmptyApply ?? false
       const shouldClearWorkspace = options?.clearWorkspace ?? false
-      const releasingReplay = shouldClearWorkspace
-      if (shouldClearWorkspace) {
+      const suppressMutations = options?.suppressMutationEvents ?? true
+      let releasingReplay = false
+      if (suppressMutations) {
         replayingWorkspaceRef.current += 1
+        releasingReplay = true
       }
       try {
-      const hasPanelPayload = Boolean(panels && panels.length > 0)
-      const hasComponentPayload = Array.isArray(components)
-      const hasAnyComponentRecords = Boolean(components && components.length > 0)
-      if (!hasPanelPayload && !hasAnyComponentRecords && !allowEmptyApply && !shouldClearWorkspace) return
-      const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
-      const dataStore = getWorkspaceDataStore(activeWorkspaceId)
-      const layerMgr = getWorkspaceLayerManager(activeWorkspaceId)
-      if (!dataStore) return
-      const noteIdsToClear = new Set<string>(targetNoteIds)
-      if (noteIdsToClear.size === 0 && panels) {
-        panels.forEach((panel) => {
-          if (panel.noteId) noteIdsToClear.add(panel.noteId)
+        const hasPanelPayload = Boolean(panels && panels.length > 0)
+        const hasComponentPayload = Array.isArray(components)
+        const hasAnyComponentRecords = Boolean(components && components.length > 0)
+        if (!hasPanelPayload && !hasAnyComponentRecords && !allowEmptyApply && !shouldClearWorkspace) return
+        const activeWorkspaceId =
+          snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
+        const dataStore = getWorkspaceDataStore(activeWorkspaceId)
+        const layerMgr = getWorkspaceLayerManager(activeWorkspaceId)
+        if (!dataStore) return
+
+        const normalizedTargetIds = new Set<string>(targetNoteIds)
+        const incomingPanelIndex = new Map<string, Set<string>>()
+        panels?.forEach((panel) => {
+          if (!panel.noteId || !panel.panelId) return
+          if (!incomingPanelIndex.has(panel.noteId)) {
+            incomingPanelIndex.set(panel.noteId, new Set())
+          }
+          incomingPanelIndex.get(panel.noteId)!.add(panel.panelId)
+          normalizedTargetIds.add(panel.noteId)
         })
-      }
-      const shouldClearAllPanels =
-        shouldClearWorkspace || (allowEmptyApply && noteIdsToClear.size === 0 && !hasPanelPayload)
-      const shouldApplyAllPanels = shouldClearWorkspace || noteIdsToClear.size === 0
-      if (typeof dataStore.keys === "function") {
+
+        const shouldTargetAllNotes = normalizedTargetIds.size === 0
         const keysToRemove: string[] = []
-        for (const key of dataStore.keys() as Iterable<string>) {
-          const rawKey = String(key)
-          const parsed = parsePanelKey(rawKey)
-          if (!parsed?.noteId) continue
-          if (shouldClearAllPanels || noteIdsToClear.has(parsed.noteId)) {
-            keysToRemove.push(rawKey)
+        if (typeof dataStore.keys === "function") {
+          for (const key of dataStore.keys() as Iterable<string>) {
+            const rawKey = String(key)
+            const parsed = parsePanelKey(rawKey)
+            if (!parsed?.noteId || !parsed?.panelId) continue
+            let removeKey = false
+            if (shouldClearWorkspace) {
+              removeKey = true
+            } else if (shouldTargetAllNotes) {
+              const incomingPanels = incomingPanelIndex.get(parsed.noteId)
+              if (!incomingPanels || !incomingPanels.has(parsed.panelId)) {
+                removeKey = true
+              }
+            } else if (normalizedTargetIds.has(parsed.noteId)) {
+              const incomingPanels = incomingPanelIndex.get(parsed.noteId)
+              if (!incomingPanels || !incomingPanels.has(parsed.panelId)) {
+                removeKey = true
+              }
+            }
+            if (removeKey) {
+              keysToRemove.push(rawKey)
+            }
           }
         }
-        keysToRemove.forEach((key) => {
-          dataStore.delete(key)
+
+        panels?.forEach((panel) => {
+          if (!panel.noteId || !panel.panelId) return
+          const shouldApplyPanel = shouldTargetAllNotes || normalizedTargetIds.has(panel.noteId)
+          if (!shouldApplyPanel) return
+          const key = ensurePanelKey(panel.noteId, panel.panelId)
+          dataStore.set(key, {
+            id: panel.panelId,
+            type: panel.type ?? "note",
+            position: panel.position ?? panel.worldPosition ?? null,
+            dimensions: panel.size ?? panel.worldSize ?? null,
+            zIndex: panel.zIndex ?? undefined,
+            title: panel.title ?? undefined,
+            metadata: panel.metadata ?? undefined,
+            parentId: panel.parentId ?? null,
+            branches: panel.branches ?? [],
+            worldPosition: panel.worldPosition ?? panel.position ?? null,
+            worldSize: panel.worldSize ?? panel.size ?? null,
+          })
         })
-        if (keysToRemove.length > 0 || shouldClearAllPanels) {
+
+        if (keysToRemove.length > 0) {
+          keysToRemove.forEach((key) => {
+            dataStore.delete(key)
+          })
           emitDebugLog({
             component: "NoteWorkspace",
-            action: "panel_snapshot_apply_clear",
+            action: shouldClearWorkspace ? "panel_snapshot_apply_clear" : "panel_snapshot_apply_prune",
             metadata: {
               workspaceId: activeWorkspaceId,
               clearedCount: keysToRemove.length,
-              clearedAll: shouldClearAllPanels,
+              clearedAll: shouldClearWorkspace && keysToRemove.length > 0,
             },
           })
         }
-      }
-      if (!hasPanelPayload && !allowEmptyApply && !shouldClearWorkspace) {
-        // nothing else to do for panels
-      }
-      panels?.forEach((panel) => {
-        if (!panel.noteId || !panel.panelId) return
-        const shouldApplyPanel = shouldApplyAllPanels || targetNoteIds.has(panel.noteId)
-        if (!shouldApplyPanel) return
-        const key = ensurePanelKey(panel.noteId, panel.panelId)
-        dataStore.set(key, {
-          id: panel.panelId,
-          type: panel.type ?? "note",
-          position: panel.position ?? panel.worldPosition ?? null,
-          dimensions: panel.size ?? panel.worldSize ?? null,
-          zIndex: panel.zIndex ?? undefined,
-          title: panel.title ?? undefined,
-          metadata: panel.metadata ?? undefined,
-          parentId: panel.parentId ?? null,
-          branches: panel.branches ?? [],
-          worldPosition: panel.worldPosition ?? panel.position ?? null,
-          worldSize: panel.worldSize ?? panel.size ?? null,
-        })
-      })
-      if (layerMgr) {
-        const existingComponentNodes =
-          typeof layerMgr.getNodes === "function"
-            ? Array.from(layerMgr.getNodes().values()).filter((node: any) => node.type === "component")
-            : []
-        if (components && components.length > 0) {
-          const incomingIds = new Set<string>()
-          components.forEach((component) => {
-            if (!component.id || !component.type) return
-            incomingIds.add(component.id)
-            const componentMetadata = {
-              ...(component.metadata ?? {}),
-            } as Record<string, unknown> & { componentType?: string }
-            const hasComponentType =
-              typeof componentMetadata.componentType === "string" && componentMetadata.componentType.length > 0
-            if (!hasComponentType) {
-              componentMetadata.componentType = component.type
-            }
-            layerMgr.registerNode({
-              id: component.id,
-              type: "component",
-              position: component.position ?? { x: 0, y: 0 },
-              dimensions: component.size ?? undefined,
-              zIndex: component.zIndex ?? undefined,
-              metadata: componentMetadata,
-            } as any)
-          })
-          existingComponentNodes
-            .filter((node: any) => !incomingIds.has(node.id))
-            .forEach((node: any) => layerMgr.removeNode(node.id))
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "component_snapshot_apply",
-            metadata: {
-              workspaceId: activeWorkspaceId,
-              incomingCount: components.length,
-              removedCount: existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length,
-            },
-          })
-        } else if ((components && components.length === 0) || allowEmptyApply || shouldClearWorkspace) {
-          existingComponentNodes.forEach((node: any) => layerMgr.removeNode(node.id))
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "component_snapshot_apply_clear",
-            metadata: {
-              workspaceId: activeWorkspaceId,
-              clearedCount: existingComponentNodes.length,
-              allowEmpty: allowEmptyApply,
-            },
-          })
+
+        if (!hasPanelPayload && !allowEmptyApply && !shouldClearWorkspace) {
+          // nothing else to do for panels
         }
-      }
-      if (panels) {
-        lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
-      } else if (allowEmptyApply || shouldClearWorkspace) {
-        lastPanelSnapshotHashRef.current = serializePanelSnapshots([])
-      }
+        if (layerMgr) {
+          const existingComponentNodes =
+            typeof layerMgr.getNodes === "function"
+              ? Array.from(layerMgr.getNodes().values()).filter((node: any) => node.type === "component")
+              : []
+          if (components && components.length > 0) {
+            const incomingIds = new Set<string>()
+            components.forEach((component) => {
+              if (!component.id || !component.type) return
+              incomingIds.add(component.id)
+              const componentMetadata = {
+                ...(component.metadata ?? {}),
+              } as Record<string, unknown> & { componentType?: string }
+              const hasComponentType =
+                typeof componentMetadata.componentType === "string" && componentMetadata.componentType.length > 0
+              if (!hasComponentType) {
+                componentMetadata.componentType = component.type
+              }
+              layerMgr.registerNode({
+                id: component.id,
+                type: "component",
+                position: component.position ?? { x: 0, y: 0 },
+                dimensions: component.size ?? undefined,
+                zIndex: component.zIndex ?? undefined,
+                metadata: componentMetadata,
+              } as any)
+            })
+            existingComponentNodes
+              .filter((node: any) => !incomingIds.has(node.id))
+              .forEach((node: any) => layerMgr.removeNode(node.id))
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "component_snapshot_apply",
+              metadata: {
+                workspaceId: activeWorkspaceId,
+                incomingCount: components.length,
+                removedCount: existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length,
+              },
+            })
+          } else if ((components && components.length === 0) || allowEmptyApply || shouldClearWorkspace) {
+            existingComponentNodes.forEach((node: any) => layerMgr.removeNode(node.id))
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "component_snapshot_apply_clear",
+              metadata: {
+                workspaceId: activeWorkspaceId,
+                clearedCount: existingComponentNodes.length,
+                allowEmpty: allowEmptyApply,
+              },
+            })
+          }
+        }
+        if (panels) {
+          lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
+        } else if (allowEmptyApply || shouldClearWorkspace) {
+          lastPanelSnapshotHashRef.current = serializePanelSnapshots([])
+        }
       } finally {
         if (releasingReplay) {
           replayingWorkspaceRef.current = Math.max(0, replayingWorkspaceRef.current - 1)
@@ -1044,11 +1107,16 @@ export function useNoteWorkspaces({
       snapshotOwnerWorkspaceIdRef.current = workspaceId
       const panelSnapshots = snapshot.panels ?? []
       const targetIds = new Set(snapshot.openNotes.map((entry) => entry.noteId))
+      panelSnapshots.forEach((panel) => {
+        if (panel.noteId) {
+          targetIds.add(panel.noteId)
+        }
+      })
       workspaceSnapshotsRef.current.set(workspaceId, panelSnapshots)
       updatePanelSnapshotMap(panelSnapshots, "preview_snapshot", { allowEmpty: true })
-      applyPanelSnapshots(panelSnapshots, targetIds, snapshot.components, {
-        allowEmptyApply: panelSnapshots.length === 0,
-        clearWorkspace: true,
+      applyPanelSnapshots(panelSnapshots, new Set(), snapshot.components, {
+        allowEmptyApply: true,
+        suppressMutationEvents: true,
       })
 
       const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
@@ -1540,6 +1608,11 @@ export function useNoteWorkspaces({
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
         const targetIds = new Set(record.payload.openNotes.map((entry) => entry.noteId))
+        ;(record.payload.panels ?? []).forEach((panel: NoteWorkspacePanelSnapshot) => {
+          if (panel.noteId) {
+            targetIds.add(panel.noteId)
+          }
+        })
         const incomingPanels = record.payload.panels ?? []
         const incomingComponents = record.payload.components ?? []
         const resolvedComponents =
@@ -1552,9 +1625,9 @@ export function useNoteWorkspaces({
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
         }
-        applyPanelSnapshots(incomingPanels, targetIds, resolvedComponents, {
-          allowEmptyApply: incomingPanels.length === 0,
-          clearWorkspace: true,
+        applyPanelSnapshots(incomingPanels, new Set(), resolvedComponents, {
+          allowEmptyApply: true,
+          suppressMutationEvents: true,
         })
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
@@ -2019,6 +2092,7 @@ export function useNoteWorkspaces({
                 {
                   allowEmptyApply: cachedPanels.length === 0,
                   clearWorkspace: true,
+                  suppressMutationEvents: true,
                 },
               )
             }, 0)
