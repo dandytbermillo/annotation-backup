@@ -754,11 +754,13 @@ export function useNoteWorkspaces({
         allowEmptyApply?: boolean
         clearWorkspace?: boolean
         suppressMutationEvents?: boolean
+        clearComponents?: boolean
       },
     ) => {
       const allowEmptyApply = options?.allowEmptyApply ?? false
       const shouldClearWorkspace = options?.clearWorkspace ?? false
       const suppressMutations = options?.suppressMutationEvents ?? true
+      const shouldClearComponentsExplicit = options?.clearComponents ?? false
       let releasingReplay = false
       if (suppressMutations) {
         replayingWorkspaceRef.current += 1
@@ -890,7 +892,11 @@ export function useNoteWorkspaces({
                 removedCount: existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length,
               },
             })
-          } else if ((components && components.length === 0) || allowEmptyApply || shouldClearWorkspace) {
+          } else if (
+            shouldClearComponentsExplicit ||
+            shouldClearWorkspace ||
+            (Array.isArray(components) && components.length === 0)
+          ) {
             existingComponentNodes.forEach((node: any) => layerMgr.removeNode(node.id))
             emitDebugLog({
               component: "NoteWorkspace",
@@ -901,8 +907,8 @@ export function useNoteWorkspaces({
                 allowEmpty: allowEmptyApply,
               },
             })
-          }
         }
+      }
         if (panels) {
           lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
         } else if (allowEmptyApply || shouldClearWorkspace) {
@@ -2096,6 +2102,7 @@ export function useNoteWorkspaces({
                 {
                   allowEmptyApply: cachedPanels.length === 0,
                   clearWorkspace: true,
+                  clearComponents: true,
                   suppressMutationEvents: true,
                 },
               )
