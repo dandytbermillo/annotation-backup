@@ -1068,6 +1068,7 @@ export function useNoteWorkspaces({
         reason?: string
       },
     ) => {
+      const replayStartedAt = Date.now()
       const allowEmptyApply = options?.allowEmptyApply ?? false
       const shouldClearWorkspace = options?.clearWorkspace ?? false
       const suppressMutations = options?.suppressMutationEvents ?? true
@@ -1247,6 +1248,21 @@ export function useNoteWorkspaces({
             })
           }
         }
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_snapshot_replay",
+          metadata: {
+            workspaceId: activeWorkspaceId,
+            reason: applyReason,
+            panelCount: panels?.length ?? 0,
+            componentCount: Array.isArray(components) ? components.length : 0,
+            targetNoteCount: normalizedTargetIds.size,
+            clearedCount: keysToRemove.length,
+            clearedWorkspace: shouldClearWorkspace,
+            suppressedMutations: suppressMutations,
+            durationMs: Date.now() - replayStartedAt,
+          },
+        })
         if (panels) {
           lastPanelSnapshotHashRef.current = serializePanelSnapshots(panels)
         } else if (allowEmptyApply || shouldClearWorkspace) {
@@ -1453,13 +1469,17 @@ export function useNoteWorkspaces({
           (panel) => panel.noteId === noteId,
         )
         if (perWorkspace.length > 0) {
-          applyPanelSnapshots(perWorkspace, new Set([noteId]))
+          applyPanelSnapshots(perWorkspace, new Set([noteId]), undefined, {
+            reason: "rehydrate_note",
+          })
           return
         }
       }
       const stored = panelSnapshotsRef.current.get(noteId)
       if (!stored || stored.length === 0) return
-      applyPanelSnapshots(stored, new Set([noteId]))
+      applyPanelSnapshots(stored, new Set([noteId]), undefined, {
+        reason: "rehydrate_note",
+      })
     },
     [applyPanelSnapshots],
   )
@@ -1506,6 +1526,7 @@ export function useNoteWorkspaces({
       applyPanelSnapshots(scopedPanels, panelNoteIds, snapshot.components, {
         allowEmptyApply: true,
         suppressMutationEvents: true,
+        reason: "preview_snapshot",
       })
 
       const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
@@ -2097,6 +2118,7 @@ export function useNoteWorkspaces({
         applyPanelSnapshots(scopedPanels, panelNoteIds, resolvedComponents, {
           allowEmptyApply: true,
           suppressMutationEvents: true,
+          reason: "hydrate_workspace",
         })
         const closePromises = openNotes
           .filter((note) => !targetIds.has(note.noteId))
@@ -2586,6 +2608,7 @@ export function useNoteWorkspaces({
                   clearWorkspace: true,
                   clearComponents: true,
                   suppressMutationEvents: true,
+                  reason: "legacy_workspace_switch",
                 },
               )
             }, 0)
