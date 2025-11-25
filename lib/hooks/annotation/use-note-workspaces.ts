@@ -215,6 +215,7 @@ const getLastNonEmptySnapshot = (
   return fromCached && fromCached.length > 0 ? fromCached : []
 }
 const existingOpenSnapshot = new Map<string, boolean>()
+const now = () => Date.now()
 
 type UseNoteWorkspaceOptions = {
   openNotes: NoteWorkspaceSlot[]
@@ -547,6 +548,76 @@ export function useNoteWorkspaces({
       void debugLogger(payload)
     },
     [debugLogger, workspaces],
+  )
+
+  const getProviderOpenNoteIds = useCallback(
+    (workspaceId: string | null | undefined): Set<string> => {
+      if (!workspaceId) return new Set()
+      if (!openNotesWorkspaceId || openNotesWorkspaceId !== workspaceId) return new Set()
+      return new Set(
+        openNotes
+          .map((entry) => entry?.noteId)
+          .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+      )
+    },
+    [openNotes, openNotesWorkspaceId],
+  )
+
+  const pruneWorkspaceEntries = useCallback(
+    (workspaceId: string | null | undefined, observedNoteIds: Set<string>, reason: string) => {
+      if (!v2Enabled || !workspaceId) return false
+      const membership = workspaceNoteMembershipRef.current.get(workspaceId)
+      const storedSlots = workspaceOpenNotesRef.current.get(workspaceId) ?? []
+      const providerNoteIds = getProviderOpenNoteIds(workspaceId)
+      const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
+      if (lastPendingAt > 0 && now() - lastPendingAt < 1500) {
+        return false
+      }
+      const staleNoteIds = new Set<string>()
+      if (membership) {
+        membership.forEach((noteId) => {
+          if (!observedNoteIds.has(noteId) && !providerNoteIds.has(noteId)) {
+            staleNoteIds.add(noteId)
+          }
+        })
+      }
+      storedSlots.forEach((slot) => {
+        if (slot.noteId && !observedNoteIds.has(slot.noteId) && !providerNoteIds.has(slot.noteId)) {
+          staleNoteIds.add(slot.noteId)
+        }
+      })
+      if (staleNoteIds.size === 0) {
+        return false
+      }
+      const filteredSlots = storedSlots.filter((slot) => !staleNoteIds.has(slot.noteId))
+      commitWorkspaceOpenNotes(workspaceId, filteredSlots, { updateCache: true })
+      const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
+      if (cache.panels.length > 0) {
+        cache.panels = cache.panels.filter((panel) => {
+          if (!panel.noteId) return true
+          return !staleNoteIds.has(panel.noteId)
+        })
+      }
+      if (cache.panels.length === 0) {
+        lastNonEmptySnapshotsRef.current.delete(workspaceId)
+      }
+      staleNoteIds.forEach((noteId) => {
+        panelSnapshotsRef.current.delete(noteId)
+      })
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "workspace_prune_stale_notes",
+        metadata: {
+          workspaceId,
+          reason,
+          staleNoteIds: Array.from(staleNoteIds),
+          observedNoteCount: observedNoteIds.size,
+          providerOpenCount: providerNoteIds.size,
+        },
+      })
+      return true
+    },
+    [commitWorkspaceOpenNotes, emitDebugLog, getProviderOpenNoteIds, v2Enabled],
   )
 
   const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
@@ -1209,6 +1280,12 @@ export function useNoteWorkspaces({
     const previousOwner = snapshotOwnerWorkspaceIdRef.current
     snapshotOwnerWorkspaceIdRef.current = workspaceId
     const snapshots = collectPanelSnapshotsFromDataStore()
+    const observedNoteIds = new Set(
+      snapshots
+        .map((panel) => panel.noteId)
+        .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+    )
+    pruneWorkspaceEntries(workspaceId, observedNoteIds, "capture_snapshot")
     const fallbackPanels = getLastNonEmptySnapshot(
       workspaceId,
       lastNonEmptySnapshotsRef.current,
@@ -1257,10 +1334,14 @@ export function useNoteWorkspaces({
       lastNonEmptySnapshotsRef.current.set(workspaceId, snapshotsToCache)
     }
     lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshotsToCache)
-    setWorkspaceNoteMembership(
-      workspaceId,
-      workspaceOpenNotes.map((entry) => entry.noteId),
-    )
+    const membershipSource = new Set<string>()
+    workspaceOpenNotes.forEach((entry) => {
+      if (entry.noteId) {
+        membershipSource.add(entry.noteId)
+      }
+    })
+    observedNoteIds.forEach((noteId) => membershipSource.add(noteId))
+    setWorkspaceNoteMembership(workspaceId, membershipSource)
     const workspaceIdForComponents =
       currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
     const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
@@ -1355,7 +1436,9 @@ export function useNoteWorkspaces({
     commitWorkspaceOpenNotes,
     currentWorkspaceId,
     emitDebugLog,
+    getWorkspaceOpenNotes,
     layerContext?.transforms.notes,
+    pruneWorkspaceEntries,
     resolveMainPanelPosition,
     updatePanelSnapshotMap,
     setWorkspaceNoteMembership,
@@ -1585,10 +1668,30 @@ export function useNoteWorkspaces({
       }
     }
     const workspaceMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
-    const hasKnownNotes = Boolean(
-      (workspaceMembership && workspaceMembership.size > 0) ||
-        (workspaceOpenNotesRef.current.get(workspaceIdForComponents)?.length ?? 0) > 0,
+    const storedOpenNotesForWorkspace = workspaceOpenNotesRef.current.get(workspaceIdForComponents) ?? []
+    let hasKnownNotes = Boolean(
+      (workspaceMembership && workspaceMembership.size > 0) || storedOpenNotesForWorkspace.length > 0,
     )
+    let panelSnapshots =
+      v2Enabled && currentWorkspaceId
+        ? collectPanelSnapshotsFromDataStore()
+        : getAllPanelSnapshots({ useFallback: false })
+    const observedNoteIds = new Set(
+      panelSnapshots
+        .map((panel) => panel.noteId)
+        .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+    )
+    const workspacePruned = pruneWorkspaceEntries(workspaceIdForComponents, observedNoteIds, "build_payload")
+    if (v2Enabled && workspaceIdForComponents && observedNoteIds.size > 0) {
+      setWorkspaceNoteMembership(workspaceIdForComponents, observedNoteIds)
+    }
+    if (workspacePruned) {
+      const refreshedSlots = workspaceOpenNotesRef.current.get(workspaceIdForComponents) ?? []
+      const refreshedMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
+      hasKnownNotes =
+        refreshedSlots.length > 0 ||
+        Boolean(refreshedMembership && refreshedMembership.size > 0)
+    }
     const cachedPanelsForWorkspace =
       workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.panels ??
       getLastNonEmptySnapshot(
@@ -1596,10 +1699,6 @@ export function useNoteWorkspaces({
         lastNonEmptySnapshotsRef.current,
         workspaceSnapshotsRef.current,
       )
-    let panelSnapshots =
-      v2Enabled && currentWorkspaceId
-        ? collectPanelSnapshotsFromDataStore()
-        : getAllPanelSnapshots({ useFallback: false })
     if (panelSnapshots.length === 0 && hasKnownNotes && cachedPanelsForWorkspace.length > 0) {
       panelSnapshots = cachedPanelsForWorkspace
       emitDebugLog({
@@ -1697,6 +1796,8 @@ export function useNoteWorkspaces({
     getWorkspaceLayerManager,
     getWorkspaceNoteMembership,
     getWorkspaceOpenNotes,
+    pruneWorkspaceEntries,
+    setWorkspaceNoteMembership,
     openNotes,
     resolveMainPanelPosition,
     layerContext?.transforms.notes?.x,
