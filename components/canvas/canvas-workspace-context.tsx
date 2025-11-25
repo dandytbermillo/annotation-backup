@@ -46,6 +46,7 @@ export interface OpenNoteOptions {
   mainPosition?: WorkspacePosition | null
   persist?: boolean
   persistPosition?: boolean
+  workspaceId?: string | null
 }
 
 export interface CloseNoteOptions {
@@ -64,6 +65,8 @@ interface CanvasWorkspaceContextValue {
   listWorkspaces(): string[]
   /** Notes currently marked open in workspace persistence */
   openNotes: OpenWorkspaceNote[]
+  /** Workspace ID whose notes are currently exposed via `openNotes` */
+  openNotesWorkspaceId: string | null
   /** Whether the initial workspace load has completed */
   isWorkspaceReady: boolean
   /** Whether workspace operations are in-flight */
@@ -109,6 +112,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const positionCachesRef = useRef<Map<string, Map<string, WorkspacePosition>>>(new Map())
   const openNotesByWorkspaceRef = useRef<Map<string, OpenWorkspaceNote[]>>(new Map())
   const [currentOpenNotes, setCurrentOpenNotes] = useState<OpenWorkspaceNote[]>([])
+  const [currentOpenNotesWorkspaceId, setCurrentOpenNotesWorkspaceId] = useState<string | null>(null)
   const activeWorkspaceId = useSyncExternalStore(subscribeActiveWorkspace, getActiveWorkspaceSnapshot)
 
   const resolveWorkspaceId = useCallback((requestedId: string) => {
@@ -118,6 +122,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   useEffect(() => {
     const workspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
     setCurrentOpenNotes(openNotesByWorkspaceRef.current.get(workspaceId) ?? [])
+    setCurrentOpenNotesWorkspaceId(workspaceId)
   }, [activeWorkspaceId])
 
   const getPositionCache = useCallback(
@@ -169,8 +174,8 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const openNote = useCallback(
     async (noteId: string, options?: OpenNoteOptions) => {
       if (!noteId) return
-      const { mainPosition = null } = options ?? {}
-      const workspaceId = resolveWorkspaceId(noteId)
+      const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
+      const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
       const positionCache = getPositionCache(workspaceId)
       const cached = positionCache.get(noteId) ?? null
       const position = mainPosition ?? cached ?? null
@@ -242,6 +247,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       removeWorkspace,
       listWorkspaces,
       openNotes: currentOpenNotes,
+      openNotesWorkspaceId: currentOpenNotesWorkspaceId,
       isWorkspaceReady: true,
       isWorkspaceLoading: false,
       isHydrating: false,
@@ -261,6 +267,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       removeWorkspace,
       listWorkspaces,
       currentOpenNotes,
+      currentOpenNotesWorkspaceId,
       refreshWorkspace,
       openNote,
       closeNote,
@@ -400,11 +407,11 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       return position ? { ...position } : null
     }, [getPositionCache, resolveWorkspaceId])
 
-    const openNote = useCallback(
-      async (noteId: string, options?: OpenNoteOptions) => {
-        if (!noteId) return
-        const { mainPosition = null } = options ?? {}
-        const workspaceId = resolveWorkspaceId(noteId)
+  const openNote = useCallback(
+    async (noteId: string, options?: OpenNoteOptions) => {
+      if (!noteId) return
+      const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
+      const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
         const positionCache = getPositionCache(workspaceId)
         const cached = positionCache.get(noteId) ?? null
         const position = mainPosition ?? cached ?? null
@@ -797,6 +804,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       removeWorkspace,
       listWorkspaces,
       openNotes,
+      openNotesWorkspaceId: SHARED_WORKSPACE_ID,
       isWorkspaceReady,
       isWorkspaceLoading,
       isHydrating,

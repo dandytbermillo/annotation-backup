@@ -132,6 +132,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const {
     openNotes,
+    openNotesWorkspaceId,
     openNote: openWorkspaceNote,
     closeNote: closeWorkspaceNote,
     isWorkspaceReady,
@@ -421,6 +422,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
 
   const noteWorkspaceState = useNoteWorkspaces({
     openNotes,
+    openNotesWorkspaceId,
     activeNoteId,
     setActiveNoteId,
     resolveMainPanelPosition,
@@ -770,6 +772,7 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
         void openWorkspaceNote(activeNoteId, {
           persist: true,
           mainPosition: resolvedPosition ?? undefined,
+          workspaceId: noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId ?? null,
         }).catch(error => {
           console.error('[AnnotationApp] Failed to ensure focused note is open:', error)
         })
@@ -780,7 +783,17 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
       const fallback = openNotes[0]?.noteId ?? null
       setActiveNoteId(fallback ?? null)
     }
-  }, [isWorkspaceReady, openNotes, activeNoteId, openWorkspaceNote, getPendingPosition, getCachedPosition, resolveMainPanelPosition])
+  }, [
+    isWorkspaceReady,
+    openNotes,
+    activeNoteId,
+    openWorkspaceNote,
+    getPendingPosition,
+    getCachedPosition,
+    resolveMainPanelPosition,
+    noteWorkspaceState.currentWorkspaceId,
+    openNotesWorkspaceId,
+  ])
 
   // Persist activeNoteId to localStorage when it changes
   useEffect(() => {
@@ -1045,6 +1058,7 @@ const initialWorkspaceSyncRef = useRef(false)
     activeNoteId,
     openNotes,
     openWorkspaceNote,
+    currentWorkspaceId: noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId ?? null,
     closeWorkspaceNote,
     requestMainOnlyNote,
     centerNoteOnCanvas,

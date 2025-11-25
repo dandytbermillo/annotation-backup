@@ -36,6 +36,7 @@ type OpenWorkspaceNote = (
     persist?: boolean
     mainPosition?: Point
     persistPosition?: boolean
+    workspaceId?: string | null
   },
 ) => Promise<void>
 
@@ -56,6 +57,7 @@ type UseWorkspaceNoteSelectionOptions = {
   activeNoteId: string | null
   openNotes: WorkspaceNote[]
   openWorkspaceNote: OpenWorkspaceNote
+  currentWorkspaceId: string | null
   closeWorkspaceNote: CloseWorkspaceNote
   requestMainOnlyNote: (noteId: string) => void
   centerNoteOnCanvas: (noteId: string, overrides?: { attempts?: number; delayMs?: number }) => void
@@ -80,6 +82,7 @@ export function useWorkspaceNoteSelection({
   activeNoteId,
   openNotes,
   openWorkspaceNote,
+  currentWorkspaceId,
   closeWorkspaceNote,
   requestMainOnlyNote,
   centerNoteOnCanvas,
@@ -380,6 +383,7 @@ export function useWorkspaceNoteSelection({
           persist: true,
           mainPosition: resolvedPosition ?? undefined,
           persistPosition: true,
+          workspaceId: currentWorkspaceId ?? null,
         }).catch(error => {
           console.error("[AnnotationApp] Failed to open note in workspace:", error)
         })
@@ -400,6 +404,7 @@ export function useWorkspaceNoteSelection({
       isHydrating,
       openNotes,
       openWorkspaceNote,
+      currentWorkspaceId,
       registerFreshNote,
       requestMainOnlyNote,
       resolveMainPanelPosition,

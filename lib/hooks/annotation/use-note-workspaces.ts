@@ -218,6 +218,7 @@ const existingOpenSnapshot = new Map<string, boolean>()
 
 type UseNoteWorkspaceOptions = {
   openNotes: NoteWorkspaceSlot[]
+  openNotesWorkspaceId?: string | null
   activeNoteId: string | null
   setActiveNoteId: Dispatch<SetStateAction<string | null>>
   resolveMainPanelPosition: (noteId: string) => { x: number; y: number } | null
@@ -262,6 +263,7 @@ const formatSyncedLabel = (timestamp: string | Date) => {
 
 export function useNoteWorkspaces({
   openNotes,
+  openNotesWorkspaceId = null,
   activeNoteId,
   setActiveNoteId,
   resolveMainPanelPosition,
@@ -376,6 +378,25 @@ export function useNoteWorkspaces({
     if (!workspaceId) return null
     return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
   }, [])
+
+  const getWorkspaceOpenNotes = useCallback(
+    (workspaceId: string | null | undefined): NoteWorkspaceSlot[] => {
+      if (!workspaceId) return []
+      if (openNotesWorkspaceId && openNotesWorkspaceId === workspaceId) {
+        return openNotes
+      }
+      const cached = workspaceSnapshotsRef.current.get(workspaceId)
+      if (cached && cached.openNotes.length > 0) {
+        return cached.openNotes
+      }
+      const membership = workspaceNoteMembershipRef.current.get(workspaceId)
+      if (membership && membership.size > 0) {
+        return Array.from(membership).map((noteId) => ({ noteId, mainPosition: null }))
+      }
+      return []
+    },
+    [openNotes, openNotesWorkspaceId],
+  )
 
   const filterPanelsForWorkspace = useCallback(
     (workspaceId: string | null | undefined, panels: NoteWorkspacePanelSnapshot[]) => {
@@ -1085,6 +1106,7 @@ export function useNoteWorkspaces({
   const captureCurrentWorkspaceSnapshot = useCallback(async () => {
     const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId ?? currentWorkspaceIdRef.current
     if (!workspaceId) return
+    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
     await waitForPanelSnapshotReadiness("capture_snapshot")
     const captureStartedAt = Date.now()
     emitDebugLog({
@@ -1092,7 +1114,7 @@ export function useNoteWorkspaces({
       action: "snapshot_capture_start",
       metadata: {
         workspaceId,
-        openNoteCount: openNotes.length,
+        openNoteCount: workspaceOpenNotes.length,
         activeNoteId,
         timestampMs: captureStartedAt,
       },
@@ -1150,7 +1172,7 @@ export function useNoteWorkspaces({
     lastPanelSnapshotHashRef.current = serializePanelSnapshots(snapshotsToCache)
     setWorkspaceNoteMembership(
       workspaceId,
-      openNotes.map((entry) => entry.noteId),
+      workspaceOpenNotes.map((entry) => entry.noteId),
     )
     const workspaceIdForComponents =
       currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
@@ -1206,7 +1228,7 @@ export function useNoteWorkspaces({
         workspaceId,
         panels: snapshots,
         components,
-        openNotes: openNotes.map((note) => ({
+        openNotes: workspaceOpenNotes.map((note) => ({
           noteId: note.noteId,
           mainPosition: resolveMainPanelPosition(note.noteId),
         })),
@@ -1233,7 +1255,7 @@ export function useNoteWorkspaces({
       metadata: {
         workspaceId,
         panelCount: snapshots.length,
-        openNoteCount: openNotes.length,
+        openNoteCount: workspaceOpenNotes.length,
         componentCount: components?.length ?? 0,
         durationMs: Date.now() - captureStartedAt,
         cameraSource,
@@ -1330,6 +1352,7 @@ export function useNoteWorkspaces({
           mainPosition: entry.mainPosition ?? undefined,
           persist: false,
           persistPosition: false,
+          workspaceId,
         })
         currentOpenIds.add(entry.noteId)
       }
@@ -1422,6 +1445,7 @@ export function useNoteWorkspaces({
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) return
     if (!currentWorkspaceId) return
+    if (openNotesWorkspaceId !== currentWorkspaceId) return
     if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) {
       return
     }
@@ -1435,7 +1459,14 @@ export function useNoteWorkspaces({
       noteIdsForWorkspace.add(entry.noteId)
     })
     setWorkspaceNoteMembership(currentWorkspaceId, noteIdsForWorkspace)
-  }, [featureEnabled, v2Enabled, currentWorkspaceId, openNotes, setWorkspaceNoteMembership])
+  }, [
+    featureEnabled,
+    v2Enabled,
+    currentWorkspaceId,
+    openNotes,
+    openNotesWorkspaceId,
+    setWorkspaceNoteMembership,
+  ])
 
   const markUnavailable = useCallback(
     (reason?: string) => {
@@ -1501,9 +1532,10 @@ export function useNoteWorkspaces({
             }))
         : []
 
+    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
     const payload: NoteWorkspacePayload = {
       schemaVersion: "1.1.0",
-      openNotes: openNotes.map((note) => {
+      openNotes: workspaceOpenNotes.map((note) => {
         const snapshot = getPanelSnapshot(note.noteId)
         return {
           noteId: note.noteId,
@@ -1587,6 +1619,7 @@ export function useNoteWorkspaces({
     const saveStart = Date.now()
     const workspaceId = currentWorkspaceSummary.id
     const reason = lastSaveReasonRef.current
+    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
     emitDebugLog({
       component: "NoteWorkspace",
       action: "save_attempt",
@@ -1594,7 +1627,7 @@ export function useNoteWorkspaces({
         workspaceId,
         reason,
         timestampMs: saveStart,
-        openCount: openNotes.length,
+        openCount: workspaceOpenNotes.length,
       },
     })
     try {
@@ -1666,7 +1699,7 @@ export function useNoteWorkspaces({
         return
     }
     saveInFlightRef.current = false
-  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, openNotes.length])
+  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, getWorkspaceOpenNotes])
 
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) return
@@ -1861,6 +1894,7 @@ export function useNoteWorkspaces({
               mainPosition: panel.position ?? undefined,
               persist: false,
               persistPosition: false,
+              workspaceId,
             })
           }
         }
