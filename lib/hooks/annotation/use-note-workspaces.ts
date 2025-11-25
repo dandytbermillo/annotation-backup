@@ -464,22 +464,30 @@ export function useNoteWorkspaces({
     (workspaceId: string | null | undefined): NoteWorkspaceSlot[] => {
       if (!workspaceId) return []
       const stored = workspaceOpenNotesRef.current.get(workspaceId)
-      if (stored) {
+      if (stored && stored.length > 0) {
         return stored
       }
-      if (openNotesWorkspaceId && openNotesWorkspaceId === workspaceId) {
+      const cachedSnapshot = workspaceSnapshotsRef.current.get(workspaceId)
+      if (stored && stored.length === 0 && cachedSnapshot && cachedSnapshot.openNotes.length > 0) {
+        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false })
+      }
+      const canUseProvider =
+        openNotesWorkspaceId &&
+        openNotesWorkspaceId === workspaceId &&
+        replayingWorkspaceRef.current === 0 &&
+        !isHydratingRef.current
+      if (canUseProvider && openNotes.length > 0) {
         return commitWorkspaceOpenNotes(workspaceId, openNotes, { updateCache: false })
       }
-      const cached = workspaceSnapshotsRef.current.get(workspaceId)
-      if (cached && cached.openNotes.length > 0) {
-        return commitWorkspaceOpenNotes(workspaceId, cached.openNotes, { updateMembership: false })
+      if (cachedSnapshot && cachedSnapshot.openNotes.length > 0) {
+        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false })
       }
       const membership = workspaceNoteMembershipRef.current.get(workspaceId)
       if (membership && membership.size > 0) {
         const inferred = Array.from(membership).map((noteId) => ({ noteId, mainPosition: null }))
         return commitWorkspaceOpenNotes(workspaceId, inferred, { updateCache: false })
       }
-      return []
+      return stored ?? []
     },
     [commitWorkspaceOpenNotes, openNotes, openNotesWorkspaceId],
   )
@@ -1576,11 +1584,35 @@ export function useNoteWorkspaces({
         components: [],
       }
     }
-    const panelSnapshots =
+    const workspaceMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
+    const hasKnownNotes = Boolean(
+      (workspaceMembership && workspaceMembership.size > 0) ||
+        (workspaceOpenNotesRef.current.get(workspaceIdForComponents)?.length ?? 0) > 0,
+    )
+    const cachedPanelsForWorkspace =
+      workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.panels ??
+      getLastNonEmptySnapshot(
+        workspaceIdForComponents,
+        lastNonEmptySnapshotsRef.current,
+        workspaceSnapshotsRef.current,
+      )
+    let panelSnapshots =
       v2Enabled && currentWorkspaceId
         ? collectPanelSnapshotsFromDataStore()
         : getAllPanelSnapshots({ useFallback: false })
-    updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: true })
+    if (panelSnapshots.length === 0 && hasKnownNotes && cachedPanelsForWorkspace.length > 0) {
+      panelSnapshots = cachedPanelsForWorkspace
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "panel_snapshot_use_cached_for_payload",
+        metadata: {
+          workspaceId: workspaceIdForComponents,
+          fallbackCount: cachedPanelsForWorkspace.length,
+        },
+      })
+    }
+    const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
+    updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
     const lm = getWorkspaceLayerManager(workspaceIdForComponents)
     const components: NoteWorkspaceComponentSnapshot[] =
       lm && typeof lm.getNodes === "function"
@@ -1601,7 +1633,16 @@ export function useNoteWorkspaces({
             }))
         : []
 
-    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
+    let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
+    if (workspaceOpenNotes.length === 0 && workspaceMembership && workspaceMembership.size > 0) {
+      const inferredSlots = Array.from(workspaceMembership).map((noteId) => ({
+        noteId,
+        mainPosition: resolveMainPanelPosition(noteId),
+      }))
+      workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceIdForComponents, inferredSlots, {
+        updateCache: false,
+      })
+    }
     const payload: NoteWorkspacePayload = {
       schemaVersion: "1.1.0",
       openNotes: workspaceOpenNotes.map((note) => {
@@ -1650,7 +1691,12 @@ export function useNoteWorkspaces({
     canvasState?.translateX,
     canvasState?.translateY,
     canvasState?.zoom,
+    collectPanelSnapshotsFromDataStore,
+    commitWorkspaceOpenNotes,
     getPanelSnapshot,
+    getWorkspaceLayerManager,
+    getWorkspaceNoteMembership,
+    getWorkspaceOpenNotes,
     openNotes,
     resolveMainPanelPosition,
     layerContext?.transforms.notes?.x,
