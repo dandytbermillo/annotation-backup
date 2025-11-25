@@ -1,4 +1,4 @@
-# Note   Workspace Overlay-Parity Fix   Plan
+# Note  Workspace Overlay-Parity Fix   Plan
 
 Goal: make each note workspace behave like an isolated browser tab—state keeps running/in-memory, and switching away/back never drops panels or notes or other components (e.g., calculator widgets). Non-main panels must persist across switches, including after creating new notes. Any component type must be captured/replayed via the per-workspace store and snapshot payload (type/id/position/size/z-index/metadata).
 
