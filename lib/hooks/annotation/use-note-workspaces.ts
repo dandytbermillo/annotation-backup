@@ -284,6 +284,7 @@ export function useNoteWorkspaces({
   const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
   const panelSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
   const workspaceSnapshotsRef = useRef<Map<string, WorkspaceSnapshotCache>>(new Map())
+  const workspaceOpenNotesRef = useRef<Map<string, NoteWorkspaceSlot[]>>(new Map())
   const workspaceNoteMembershipRef = useRef<Map<string, Set<string>>>(new Map())
   const lastNonEmptySnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
   const snapshotOwnerWorkspaceIdRef = useRef<string | null>(null)
@@ -379,23 +380,108 @@ export function useNoteWorkspaces({
     return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
   }, [])
 
+  const normalizeWorkspaceSlots = (
+    slots:
+      | Iterable<{
+          noteId?: string | null
+          mainPosition?: { x: number; y: number } | null
+          position?: { x: number; y: number } | null
+        }>
+      | null
+      | undefined,
+  ): NoteWorkspaceSlot[] => {
+    if (!slots) return []
+    const normalized: NoteWorkspaceSlot[] = []
+    const seen = new Set<string>()
+    for (const slot of slots) {
+      if (!slot || typeof slot.noteId !== "string" || slot.noteId.length === 0) continue
+      if (seen.has(slot.noteId)) continue
+      const position = slot.mainPosition ?? slot.position ?? null
+      const mainPosition =
+        position && typeof position.x === "number" && typeof position.y === "number"
+          ? { x: position.x, y: position.y }
+          : null
+      normalized.push({ noteId: slot.noteId, mainPosition })
+      seen.add(slot.noteId)
+    }
+    return normalized
+  }
+
+  const areWorkspaceSlotsEqual = (a: NoteWorkspaceSlot[] | null | undefined, b: NoteWorkspaceSlot[] | null | undefined) => {
+    if (a === b) return true
+    if (!a || !b) return false
+    if (a.length !== b.length) return false
+    for (let index = 0; index < a.length; index += 1) {
+      const left = a[index]
+      const right = b[index]
+      if (left.noteId !== right.noteId) return false
+      const leftPos = left.mainPosition
+      const rightPos = right.mainPosition
+      if (Boolean(leftPos) !== Boolean(rightPos)) return false
+      if (leftPos && rightPos && (leftPos.x !== rightPos.x || leftPos.y !== rightPos.y)) return false
+    }
+    return true
+  }
+
+  const commitWorkspaceOpenNotes = useCallback(
+    (
+      workspaceId: string | null | undefined,
+      slots:
+        | Iterable<{
+            noteId?: string | null
+            mainPosition?: { x: number; y: number } | null
+            position?: { x: number; y: number } | null
+          }>
+        | null
+        | undefined,
+      options?: { updateMembership?: boolean; updateCache?: boolean },
+    ): NoteWorkspaceSlot[] => {
+      if (!workspaceId) return []
+      const normalized = normalizeWorkspaceSlots(slots)
+      const previous = workspaceOpenNotesRef.current.get(workspaceId)
+      const changed = !areWorkspaceSlotsEqual(previous, normalized)
+      if (changed) {
+        workspaceOpenNotesRef.current.set(workspaceId, normalized)
+      }
+      const shouldUpdateMembership = options?.updateMembership ?? true
+      const shouldUpdateCache = options?.updateCache ?? true
+      if (shouldUpdateMembership) {
+        setWorkspaceNoteMembership(
+          workspaceId,
+          normalized.map((entry) => entry.noteId),
+        )
+      }
+      if (shouldUpdateCache) {
+        const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
+        cache.openNotes = normalized
+      }
+      return normalized
+    },
+    [setWorkspaceNoteMembership],
+  )
+
   const getWorkspaceOpenNotes = useCallback(
     (workspaceId: string | null | undefined): NoteWorkspaceSlot[] => {
       if (!workspaceId) return []
+      const stored = workspaceOpenNotesRef.current.get(workspaceId)
+      if (stored) {
+        return stored
+      }
       if (openNotesWorkspaceId && openNotesWorkspaceId === workspaceId) {
-        return openNotes
+        return commitWorkspaceOpenNotes(workspaceId, openNotes, { updateCache: false })
       }
       const cached = workspaceSnapshotsRef.current.get(workspaceId)
       if (cached && cached.openNotes.length > 0) {
-        return cached.openNotes
+        return commitWorkspaceOpenNotes(workspaceId, cached.openNotes, { updateMembership: false })
       }
       const membership = workspaceNoteMembershipRef.current.get(workspaceId)
       if (membership && membership.size > 0) {
-        return Array.from(membership).map((noteId) => ({ noteId, mainPosition: null }))
+        const inferred = Array.from(membership).map((noteId) => ({ noteId, mainPosition: null }))
+        return commitWorkspaceOpenNotes(workspaceId, inferred, { updateCache: false })
       }
       return []
     },
-    [openNotes, openNotesWorkspaceId],
+    [commitWorkspaceOpenNotes, openNotes, openNotesWorkspaceId],
   )
 
   const filterPanelsForWorkspace = useCallback(
@@ -839,18 +925,8 @@ export function useNoteWorkspaces({
       const pendingCount = getPendingPanelCount(workspaceId)
       const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
       const hasRecentPending = lastPendingAt > 0 && Date.now() - lastPendingAt < maxWaitMs
-      if (!pendingCount && !hasRecentPending) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "snapshot_wait_skip_no_pending",
-          metadata: {
-            workspaceId,
-            reason,
-          },
-        })
-        return
-      }
-      const waitReason = pendingCount > 0 ? "pending_panels" : "recent_pending"
+      const waitReason =
+        pendingCount > 0 ? "pending_panels" : hasRecentPending ? "recent_pending" : "none"
       emitDebugLog({
         component: "NoteWorkspace",
         action: "snapshot_wait_pending_panels",
@@ -862,6 +938,9 @@ export function useNoteWorkspaces({
           lastPendingMs: lastPendingAt ? Date.now() - lastPendingAt : null,
         },
       })
+      if (waitReason === "none") {
+        return
+      }
       const waitForRecentPendingFlush = () =>
         new Promise<boolean>((resolve) => {
           const timeout = setTimeout(() => resolve(true), Math.min(64, maxWaitMs))
@@ -1220,18 +1299,17 @@ export function useNoteWorkspaces({
         lastComponentsSnapshotRef.current.set(workspaceId, components)
       }
       cache.components = components
-      cache.openNotes = openNotes.map((note) => ({
+      const normalizedOpenNotes = workspaceOpenNotes.map((note) => ({
         noteId: note.noteId,
         mainPosition: resolveMainPanelPosition(note.noteId),
       }))
+      cache.openNotes = normalizedOpenNotes
+      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes)
       cacheWorkspaceSnapshot({
         workspaceId,
         panels: snapshots,
         components,
-        openNotes: workspaceOpenNotes.map((note) => ({
-          noteId: note.noteId,
-          mainPosition: resolveMainPanelPosition(note.noteId),
-        })),
+        openNotes: normalizedOpenNotes,
         camera: canvasState
           ? {
               x: canvasState.translateX,
@@ -1266,10 +1344,10 @@ export function useNoteWorkspaces({
     activeNoteId,
     canvasState,
     collectPanelSnapshotsFromDataStore,
+    commitWorkspaceOpenNotes,
     currentWorkspaceId,
     emitDebugLog,
     layerContext?.transforms.notes,
-    openNotes,
     resolveMainPanelPosition,
     updatePanelSnapshotMap,
     setWorkspaceNoteMembership,
@@ -1325,10 +1403,12 @@ export function useNoteWorkspaces({
       const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
       cache.panels = scopedPanels
       cache.components = Array.isArray(snapshot.components) ? [...snapshot.components] : []
-      cache.openNotes = snapshot.openNotes.map((entry) => ({
+      const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
         noteId: entry.noteId,
         mainPosition: entry.mainPosition ?? null,
       }))
+      cache.openNotes = normalizedOpenNotes
+      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes)
       updatePanelSnapshotMap(scopedPanels, "preview_snapshot", { allowEmpty: true })
       const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
       panelNoteIds.forEach((id) => targetIds.add(id))
@@ -1389,10 +1469,10 @@ export function useNoteWorkspaces({
     [
       applyPanelSnapshots,
       closeWorkspaceNote,
+      commitWorkspaceOpenNotes,
       emitDebugLog,
       filterPanelsForWorkspace,
       layerContext,
-      openNotes,
       openWorkspaceNote,
       setWorkspaceNoteMembership,
       setActiveNoteId,
@@ -1446,26 +1526,15 @@ export function useNoteWorkspaces({
     if (!featureEnabled || !v2Enabled) return
     if (!currentWorkspaceId) return
     if (openNotesWorkspaceId !== currentWorkspaceId) return
-    if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) {
-      return
-    }
-    const noteIdsForWorkspace = new Set<string>()
-    openNotes.forEach((entry) => {
-      if (!entry.noteId) return
-      const existingOwner = ownedNotesRef.current.get(entry.noteId)
-      if (existingOwner && existingOwner !== currentWorkspaceId) {
-        return
-      }
-      noteIdsForWorkspace.add(entry.noteId)
-    })
-    setWorkspaceNoteMembership(currentWorkspaceId, noteIdsForWorkspace)
+    if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) return
+    commitWorkspaceOpenNotes(currentWorkspaceId, openNotes, { updateCache: false })
   }, [
+    commitWorkspaceOpenNotes,
     featureEnabled,
     v2Enabled,
     currentWorkspaceId,
     openNotes,
     openNotesWorkspaceId,
-    setWorkspaceNoteMembership,
   ])
 
   const markUnavailable = useCallback(
@@ -1866,10 +1935,12 @@ export function useNoteWorkspaces({
         const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
         cache.panels = scopedPanels
         cache.components = resolvedComponents ?? []
-        cache.openNotes = record.payload.openNotes.map((entry) => ({
+        const normalizedSnapshotOpenNotes = record.payload.openNotes.map((entry) => ({
           noteId: entry.noteId,
           mainPosition: entry.position ?? null,
         }))
+        cache.openNotes = normalizedSnapshotOpenNotes
+        commitWorkspaceOpenNotes(workspaceId, normalizedSnapshotOpenNotes)
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
@@ -1976,6 +2047,7 @@ export function useNoteWorkspaces({
     [
       applyPanelSnapshots,
       closeWorkspaceNote,
+      commitWorkspaceOpenNotes,
       emitDebugLog,
       filterPanelsForWorkspace,
       layerContext,
@@ -2241,6 +2313,7 @@ export function useNoteWorkspaces({
       setWorkspaces((prev) => [...prev, workspace])
       setCurrentWorkspaceId(workspace.id)
       setWorkspaceNoteMembership(workspace.id, [])
+      commitWorkspaceOpenNotes(workspace.id, [], { updateCache: false })
       setStatusHelperText(formatSyncedLabel(workspace.updatedAt))
       emitDebugLog({
         component: "NoteWorkspace",
@@ -2255,7 +2328,7 @@ export function useNoteWorkspaces({
         metadata: { error: error instanceof Error ? error.message : String(error) },
       })
     }
-  }, [emitDebugLog, featureEnabled, flushPendingSave, setWorkspaceNoteMembership])
+  }, [commitWorkspaceOpenNotes, emitDebugLog, featureEnabled, flushPendingSave, setWorkspaceNoteMembership])
 
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -2264,6 +2337,7 @@ export function useNoteWorkspaces({
         await adapterRef.current.deleteWorkspace(workspaceId)
         setWorkspaces((prev) => prev.filter((workspace) => workspace.id !== workspaceId))
         workspaceNoteMembershipRef.current.delete(workspaceId)
+        workspaceOpenNotesRef.current.delete(workspaceId)
         Array.from(ownedNotesRef.current.entries()).forEach(([noteId, ownerWorkspaceId]) => {
           if (ownerWorkspaceId === workspaceId) {
             clearNoteWorkspaceOwner(noteId)
