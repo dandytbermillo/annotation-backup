@@ -14,6 +14,7 @@ type WorkspaceSeedHarnessProps = {
   hydrationSuccess: boolean
   initialItems: CanvasItem[]
   workspaceSeededNotesRef: React.MutableRefObject<Set<string>>
+  workspaceSnapshotRevision?: number
 }
 
 type WorkspaceSeedHarnessHandle = {
@@ -21,7 +22,17 @@ type WorkspaceSeedHarnessHandle = {
 }
 
 const WorkspaceSeedHarness = forwardRef<WorkspaceSeedHarnessHandle, WorkspaceSeedHarnessProps>(
-  ({ noteId, workspaceMainPosition, hydrationSuccess, initialItems, workspaceSeededNotesRef }, ref) => {
+  (
+    {
+      noteId,
+      workspaceMainPosition,
+      hydrationSuccess,
+      initialItems,
+      workspaceSeededNotesRef,
+      workspaceSnapshotRevision = 0,
+    },
+    ref,
+  ) => {
     const [items, setItems] = useState<CanvasItem[]>(initialItems)
     const itemsRef = useRef(items)
 
@@ -37,6 +48,7 @@ const WorkspaceSeedHarness = forwardRef<WorkspaceSeedHarnessHandle, WorkspaceSee
       setCanvasItems: setItems,
       getItemNoteId: item => item.noteId ?? null,
       workspaceSeededNotesRef,
+      workspaceSnapshotRevision,
     })
 
     useImperativeHandle(ref, () => ({
@@ -99,5 +111,49 @@ describe("useWorkspaceHydrationSeed", () => {
     expect(workspaceSeededNotesRef.current.size).toBe(0)
     const updatedItems = ref.current!.getItems()
     expect(updatedItems[0].position).toEqual({ x: 0, y: 0 })
+  })
+
+  it("marks the note as seeded immediately when snapshot revision changes", async () => {
+    const workspaceSeededNotesRef = { current: new Set<string>() }
+    const ref = React.createRef<WorkspaceSeedHarnessHandle>()
+
+    let renderer: TestRenderer.ReactTestRenderer | null = null
+    await act(async () => {
+      renderer = TestRenderer.create(
+        <WorkspaceSeedHarness
+          ref={ref}
+          noteId="note-1"
+          workspaceMainPosition={{ x: 200, y: 300 }}
+          hydrationSuccess={false}
+          initialItems={[basePanel]}
+          workspaceSeededNotesRef={workspaceSeededNotesRef}
+          workspaceSnapshotRevision={0}
+        />,
+      )
+    })
+
+    expect(workspaceSeededNotesRef.current.has("note-1")).toBe(true)
+    const itemsAfterInitial = ref.current!.getItems()
+    expect(itemsAfterInitial[0].position).toEqual({ x: 200, y: 300 })
+
+    workspaceSeededNotesRef.current.clear()
+
+    await act(async () => {
+      renderer!.update(
+        <WorkspaceSeedHarness
+          ref={ref}
+          noteId="note-1"
+          workspaceMainPosition={{ x: 50, y: 75 }}
+          hydrationSuccess={false}
+          initialItems={[itemsAfterInitial[0]]}
+          workspaceSeededNotesRef={workspaceSeededNotesRef}
+          workspaceSnapshotRevision={1}
+        />,
+      )
+    })
+
+    expect(workspaceSeededNotesRef.current.has("note-1")).toBe(true)
+    const itemsAfterRevision = ref.current!.getItems()
+    expect(itemsAfterRevision[0].position).toEqual({ x: 200, y: 300 })
   })
 })

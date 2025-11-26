@@ -22,6 +22,7 @@ const createBaseOptions = (): Omit<UseCanvasSnapshotOptions, "skipSnapshotForNot
   noteId: "note-1",
   activeWorkspaceVersion: 2,
   workspaceMainPosition: { x: 0, y: 0 },
+  workspaceSnapshotRevision: 0,
   canvasState: createDefaultCanvasState(),
   canvasStateRef: { current: createDefaultCanvasState() },
   canvasItems: [],

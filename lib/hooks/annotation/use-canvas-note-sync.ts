@@ -100,6 +100,14 @@ export function useCanvasNoteSync({
 
     setCanvasItems(prev => {
       const allowedNoteIds = new Set(noteIds)
+      if (revisionChanged) {
+        prev.forEach(item => {
+          const existingNoteId = getItemNoteId(item)
+          if (existingNoteId) {
+            allowedNoteIds.add(existingNoteId)
+          }
+        })
+      }
       let changed = revisionChanged
 
       const mainByNote = new Map<string, CanvasItem>()

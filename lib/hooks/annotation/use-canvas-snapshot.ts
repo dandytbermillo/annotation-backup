@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { flushSync } from "react-dom"
 
 import type { Dispatch, MutableRefObject, SetStateAction } from "react"
@@ -60,6 +60,7 @@ export type UseCanvasSnapshotOptions = {
   primaryHydrationStatus: HydrationResult
   dataStore: DataStore
   persistCameraSnapshot?: (camera: { x: number; y: number; zoom: number }) => void | Promise<void>
+  workspaceSnapshotRevision?: number
 }
 
 export function useCanvasSnapshot({
@@ -91,14 +92,37 @@ export function useCanvasSnapshot({
   primaryHydrationStatus,
   dataStore,
   persistCameraSnapshot,
+  workspaceSnapshotRevision = 0,
 }: UseCanvasSnapshotOptions) {
   const applySnapshotCamera = useSnapshotCameraSync({
     noteId,
     setCanvasState,
     persistCameraSnapshot,
   })
+  const lastWorkspaceSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
 
   useEffect(() => {
+    const revisionChanged = lastWorkspaceSnapshotRevisionRef.current !== workspaceSnapshotRevision
+    lastWorkspaceSnapshotRevisionRef.current = workspaceSnapshotRevision
+
+    if (revisionChanged) {
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "snapshot_restore_skipped_due_to_workspace_revision",
+        metadata: {
+          noteId,
+          workspaceSnapshotRevision,
+        },
+      })
+      skipNextContextSyncRef.current = true
+      initialCanvasSetupRef.current = true
+      isRestoringSnapshotRef.current = false
+      setIsStateLoaded(true)
+      onSnapshotLoadComplete?.()
+      onSnapshotSettled?.(noteId)
+      return
+    }
+
     setIsStateLoaded(false)
 
     if (autoSaveTimerRef.current) {

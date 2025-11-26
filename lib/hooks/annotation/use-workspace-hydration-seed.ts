@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import type { Dispatch, MutableRefObject, SetStateAction } from "react"
 
 import type { CanvasItem } from "@/types/canvas-items"
@@ -16,6 +16,7 @@ type UseWorkspaceHydrationSeedOptions = {
   setCanvasItems: Dispatch<SetStateAction<CanvasItem[]>>
   getItemNoteId: (item: CanvasItem) => string | null
   workspaceSeededNotesRef: MutableRefObject<Set<string>>
+  workspaceSnapshotRevision?: number
 }
 
 export function useWorkspaceHydrationSeed({
@@ -26,8 +27,25 @@ export function useWorkspaceHydrationSeed({
   setCanvasItems,
   getItemNoteId,
   workspaceSeededNotesRef,
+  workspaceSnapshotRevision = 0,
 }: UseWorkspaceHydrationSeedOptions) {
+  const lastSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
   useEffect(() => {
+    if (workspaceSnapshotRevision !== lastSnapshotRevisionRef.current) {
+      lastSnapshotRevisionRef.current = workspaceSnapshotRevision
+      workspaceSeededNotesRef.current.add(noteId)
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "workspace_seed_skip_due_to_snapshot_replay",
+        metadata: {
+          noteId,
+          workspaceSnapshotRevision,
+          seededNotes: Array.from(workspaceSeededNotesRef.current),
+        },
+      })
+      return
+    }
+
     const mainPanelExists = canvasItems.some(item => {
       if (item.itemType === "panel" && item.panelId === "main") {
         const itemNoteId = getItemNoteId(item)
@@ -112,5 +130,14 @@ export function useWorkspaceHydrationSeed({
         },
       })
     }
-  }, [canvasItems, getItemNoteId, hydrationSuccess, noteId, setCanvasItems, workspaceMainPosition, workspaceSeededNotesRef])
+  }, [
+    canvasItems,
+    getItemNoteId,
+    hydrationSuccess,
+    noteId,
+    setCanvasItems,
+    workspaceMainPosition,
+    workspaceSeededNotesRef,
+    workspaceSnapshotRevision,
+  ])
 }

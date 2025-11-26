@@ -356,6 +356,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     setCanvasItems,
     getItemNoteId,
     workspaceSeededNotesRef,
+    workspaceSnapshotRevision,
   })
 
   // Enable camera persistence (debounced)
@@ -460,6 +461,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     primaryHydrationStatus,
     dataStore,
     persistCameraSnapshot,
+    workspaceSnapshotRevision,
   })
 
   // Cleanup auto-save timer on unmount
