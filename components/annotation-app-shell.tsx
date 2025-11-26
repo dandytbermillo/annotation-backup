@@ -1338,7 +1338,14 @@ const initialWorkspaceSyncRef = useRef(false)
         workspaces={noteWorkspaceState.workspaces}
         currentWorkspaceId={noteWorkspaceState.currentWorkspaceId}
         deletingWorkspaceId={null}
-        onSelectWorkspace={noteWorkspaceState.selectWorkspace}
+        onSelectWorkspace={(workspaceId) => {
+          debugLog({
+            component: "AnnotationApp",
+            action: "workspace_select_clicked",
+            metadata: { workspaceId },
+          })
+          noteWorkspaceState.selectWorkspace(workspaceId)
+        }}
         onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
         onRenameWorkspace={noteWorkspaceState.renameWorkspace}
       />

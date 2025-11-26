@@ -376,6 +376,7 @@ export function useWorkspaceNoteSelection({
             resolvedPosition,
             isToolbarCreation,
             hasExplicitPosition,
+            targetWorkspaceId: currentWorkspaceId ?? null,
           },
         })
 

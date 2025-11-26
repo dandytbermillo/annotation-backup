@@ -578,6 +578,16 @@ export function useNoteWorkspaces({
         return false
       }
       if (!providerMatches && providerNoteIds.size === 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_prune_skipped_offscreen",
+          metadata: {
+            workspaceId,
+            reason,
+            openNotesWorkspaceId,
+            observedNoteCount: observedNoteIds.size,
+          },
+        })
         return false
       }
       const staleNoteIds = new Set<string>()
@@ -1027,27 +1037,10 @@ export function useNoteWorkspaces({
       if (waitReason === "none") {
         return
       }
-      const waitForRecentPendingFlush = () =>
-        new Promise<boolean>((resolve) => {
-          const timeout = setTimeout(() => resolve(true), Math.min(64, maxWaitMs))
-          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-            window.requestAnimationFrame(() => {
-              clearTimeout(timeout)
-              resolve(true)
-            })
-          }
-        })
-      const ready = await Promise.race<boolean>(
-        pendingCount > 0
-          ? [
-              waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs),
-              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
-            ]
-          : [
-              waitForRecentPendingFlush(),
-              new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
-            ],
-      )
+      const ready = await Promise.race<boolean>([
+        waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), maxWaitMs)),
+      ])
       emitDebugLog({
         component: "NoteWorkspace",
         action: ready ? "snapshot_pending_resolved" : "snapshot_pending_timeout",
@@ -1607,6 +1600,13 @@ export function useNoteWorkspaces({
     }
     currentWorkspaceIdRef.current = currentWorkspaceId
     setActiveWorkspaceContext(currentWorkspaceId ?? null)
+    if (currentWorkspaceId) {
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "workspace_active_set",
+        metadata: { workspaceId: currentWorkspaceId },
+      })
+    }
   }, [featureEnabled, v2Enabled, currentWorkspaceId])
 
   useEffect(() => {
@@ -2586,6 +2586,11 @@ export function useNoteWorkspaces({
       const previousWorkspaceId = currentWorkspaceIdRef.current ?? currentWorkspaceId ?? null
       setPendingWorkspaceId(workspaceId)
       setActiveWorkspaceContext(workspaceId)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "select_workspace_requested",
+        metadata: { workspaceId, previousWorkspaceId },
+      })
       const run = async () => {
         try {
           await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)

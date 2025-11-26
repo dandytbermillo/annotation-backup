@@ -11,16 +11,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react"
-import { DataStore } from "@/lib/data-store"
 import { EventEmitter } from "@/lib/event-emitter"
-import { LayerManager } from "@/lib/canvas/layer-manager"
 import {
   syncMapToStorage,
   persistWorkspaceVersions as persistVersionsToStorage,
   applyWorkspaceVersionUpdates,
 } from "@/lib/workspace/workspace-storage"
-import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
-import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
   persistWorkspaceUpdates,
   type WorkspacePersistUpdate,
@@ -43,6 +39,12 @@ import { useWorkspaceMainPositionUpdater } from "@/lib/hooks/annotation/use-work
 import { useWorkspaceUnloadPersistence } from "@/lib/hooks/annotation/use-workspace-unload-persistence"
 import { useWorkspaceVersionTracker } from "@/lib/hooks/annotation/use-workspace-version-tracker"
 import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
+import {
+  getWorkspaceRuntime,
+  markRuntimeActive,
+  markRuntimePaused,
+  removeWorkspaceRuntime,
+} from "@/lib/workspace/runtime-manager"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -119,15 +121,21 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const [currentOpenNotes, setCurrentOpenNotes] = useState<OpenWorkspaceNote[]>([])
   const [currentOpenNotesWorkspaceId, setCurrentOpenNotesWorkspaceId] = useState<string | null>(null)
   const activeWorkspaceId = useSyncExternalStore(subscribeActiveWorkspace, getActiveWorkspaceSnapshot)
+  const selectedWorkspaceIdRef = useRef<string | null>(null)
 
   const resolveWorkspaceId = useCallback((requestedId: string) => {
-    return activeWorkspaceId ?? requestedId ?? SHARED_WORKSPACE_ID
+    return selectedWorkspaceIdRef.current ?? activeWorkspaceId ?? requestedId ?? SHARED_WORKSPACE_ID
   }, [activeWorkspaceId])
 
   useEffect(() => {
-    const workspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
+    const workspaceId = activeWorkspaceId ?? selectedWorkspaceIdRef.current ?? SHARED_WORKSPACE_ID
+    selectedWorkspaceIdRef.current = workspaceId
     setCurrentOpenNotes(openNotesByWorkspaceRef.current.get(workspaceId) ?? [])
     setCurrentOpenNotesWorkspaceId(workspaceId)
+    markRuntimeActive(workspaceId)
+    return () => {
+      markRuntimePaused(workspaceId)
+    }
   }, [activeWorkspaceId])
 
   const getPositionCache = useCallback(
@@ -144,10 +152,11 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     const resolvedId = resolveWorkspaceId(noteId)
     let workspace = workspacesRef.current.get(resolvedId)
     if (!workspace) {
+      const runtime = getWorkspaceRuntime(resolvedId)
       workspace = {
-        dataStore: getWorkspaceStore(resolvedId) ?? new DataStore(),
+        dataStore: runtime.dataStore,
         events: new EventEmitter(),
-        layerManager: getWorkspaceLayerManager(resolvedId) ?? new LayerManager(),
+        layerManager: runtime.layerManager,
         loadedNotes: new Set<string>(),
       }
       workspacesRef.current.set(resolvedId, workspace)
@@ -160,6 +169,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const removeWorkspace = useCallback((noteId: string) => {
     const resolvedId = resolveWorkspaceId(noteId)
     workspacesRef.current.delete(resolvedId)
+    removeWorkspaceRuntime(resolvedId)
   }, [resolveWorkspaceId])
 
   const listWorkspaces = useCallback(() => Array.from(workspacesRef.current.keys()), [])
