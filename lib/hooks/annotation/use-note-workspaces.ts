@@ -1055,11 +1055,14 @@ export function useNoteWorkspaces({
   ])
 
   const waitForPanelSnapshotReadiness = useCallback(
-    async (reason: string, maxWaitMs = 800) => {
-      if (!featureEnabled || !v2Enabled) return
+    async (reason: string, maxWaitMs = 800, workspaceOverride?: string | null): Promise<boolean> => {
+      if (!featureEnabled || !v2Enabled) return true
       const workspaceId =
-        snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
-      if (!workspaceId) return
+        workspaceOverride ??
+        snapshotOwnerWorkspaceIdRef.current ??
+        currentWorkspaceIdRef.current ??
+        currentWorkspaceId
+      if (!workspaceId) return true
       if (replayingWorkspaceRef.current > 0) {
         emitDebugLog({
           component: "NoteWorkspace",
@@ -1094,6 +1097,9 @@ export function useNoteWorkspaces({
             reason,
           },
         })
+        if (!replaySettled) {
+          return false
+        }
       }
       const pendingCount = getPendingPanelCount(workspaceId)
       const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
@@ -1112,7 +1118,7 @@ export function useNoteWorkspaces({
         },
       })
       if (waitReason === "none") {
-        return
+        return true
       }
       // If we just saw pending activity, require a short stability window before capturing.
       if (waitReason === "recent_pending") {
@@ -1138,14 +1144,14 @@ export function useNoteWorkspaces({
           emitDebugLog({
             component: "NoteWorkspace",
             action: "snapshot_pending_timeout",
-            metadata: {
-              workspaceId,
-              reason,
-              pendingCount,
-              lastPendingMs: lastPendingAt ? Date.now() - lastPendingAt : null,
-            },
-          })
-          return
+          metadata: {
+            workspaceId,
+            reason,
+            pendingCount,
+            lastPendingMs: lastPendingAt ? Date.now() - lastPendingAt : null,
+          },
+        })
+          return false
         }
       }
       const ready = await Promise.race<boolean>([
@@ -1162,8 +1168,9 @@ export function useNoteWorkspaces({
           waitReason,
         },
       })
+      return ready
     },
-    [currentWorkspaceId, emitDebugLog, featureEnabled, v2Enabled],
+    [currentWorkspaceId, emitDebugLog, featureEnabled, v2Enabled, waitForWorkspaceSnapshotReady],
   )
 
   const applyPanelSnapshots = useCallback(
@@ -1348,11 +1355,7 @@ export function useNoteWorkspaces({
                 removedCount: existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length,
               },
             })
-          } else if (
-            shouldClearComponentsExplicit ||
-            shouldClearWorkspace ||
-            (Array.isArray(components) && components.length === 0)
-          ) {
+          } else if (shouldClearComponentsExplicit || shouldClearWorkspace) {
             existingComponentNodes.forEach((node: any) => layerMgr.removeNode(node.id))
             emitDebugLog({
               component: "NoteWorkspace",
@@ -1404,29 +1407,48 @@ export function useNoteWorkspaces({
     ],
   )
 
-  const captureCurrentWorkspaceSnapshot = useCallback(async (targetWorkspaceId?: string | null) => {
-    const workspaceId =
-      targetWorkspaceId ??
-      snapshotOwnerWorkspaceIdRef.current ??
-      currentWorkspaceId ??
-      currentWorkspaceIdRef.current
-    if (!workspaceId) return
-    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
-    await waitForPanelSnapshotReadiness("capture_snapshot")
-    const captureStartedAt = Date.now()
-    emitDebugLog({
-      component: "NoteWorkspace",
-      action: "snapshot_capture_start",
-      metadata: {
-        workspaceId,
-        openNoteCount: workspaceOpenNotes.length,
-        activeNoteId,
-        timestampMs: captureStartedAt,
-      },
-    })
-    const previousOwner = snapshotOwnerWorkspaceIdRef.current
-    snapshotOwnerWorkspaceIdRef.current = workspaceId
-    const snapshots = collectPanelSnapshotsFromDataStore()
+  const captureCurrentWorkspaceSnapshot = useCallback(
+    async (
+      targetWorkspaceId?: string | null,
+      options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean },
+    ) => {
+      const workspaceId =
+        targetWorkspaceId ??
+        snapshotOwnerWorkspaceIdRef.current ??
+        currentWorkspaceId ??
+        currentWorkspaceIdRef.current
+      if (!workspaceId) return
+      const readinessReason = options?.readinessReason ?? "capture_snapshot"
+      const readinessMaxWaitMs = options?.readinessMaxWaitMs ?? 800
+      if (!options?.skipReadiness) {
+        const ready = await waitForPanelSnapshotReadiness(readinessReason, readinessMaxWaitMs, workspaceId)
+        if (!ready) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_capture_skipped_pending",
+            metadata: {
+              workspaceId,
+              reason: readinessReason,
+            },
+          })
+          return
+        }
+      }
+      const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
+      const captureStartedAt = Date.now()
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "snapshot_capture_start",
+        metadata: {
+          workspaceId,
+          openNoteCount: workspaceOpenNotes.length,
+          activeNoteId,
+          timestampMs: captureStartedAt,
+        },
+      })
+      const previousOwner = snapshotOwnerWorkspaceIdRef.current
+      snapshotOwnerWorkspaceIdRef.current = workspaceId
+      const snapshots = collectPanelSnapshotsFromDataStore()
     const observedNoteIds = new Set(
       snapshots
         .map((panel) => panel.noteId)
@@ -1489,9 +1511,8 @@ export function useNoteWorkspaces({
     })
     observedNoteIds.forEach((noteId) => membershipSource.add(noteId))
     setWorkspaceNoteMembership(workspaceId, membershipSource)
-    const workspaceIdForComponents =
-      currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
-    const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
+      const workspaceIdForComponents = workspaceId
+      const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
     const componentsFromManager: NoteWorkspaceComponentSnapshot[] =
       lm && typeof lm.getNodes === "function"
         ? Array.from(lm.getNodes().values())
@@ -1511,10 +1532,8 @@ export function useNoteWorkspaces({
             }))
         : []
 
-    const cachedSnapshot = currentWorkspaceId ? getWorkspaceSnapshot(currentWorkspaceId) : null
-    const lastComponents = currentWorkspaceId
-      ? lastComponentsSnapshotRef.current.get(currentWorkspaceId) ?? []
-      : []
+      const cachedSnapshot = workspaceId ? getWorkspaceSnapshot(workspaceId) : null
+      const lastComponents = workspaceId ? lastComponentsSnapshotRef.current.get(workspaceId) ?? [] : []
     const components: NoteWorkspaceComponentSnapshot[] = (() => {
       const source = componentsFromManager.length > 0 ? componentsFromManager : cachedSnapshot?.components ?? lastComponents
       if (!source || source.length === 0) return []
@@ -1576,27 +1595,29 @@ export function useNoteWorkspaces({
         timestampMs: Date.now(),
       },
     })
-    if (targetWorkspaceId) {
-      snapshotOwnerWorkspaceIdRef.current = previousOwner
-    } else {
-      snapshotOwnerWorkspaceIdRef.current = previousOwner ?? workspaceId
-    }
-  }, [
-    activeNoteId,
-    canvasState,
-    collectPanelSnapshotsFromDataStore,
-    commitWorkspaceOpenNotes,
-    currentWorkspaceId,
-    emitDebugLog,
-    getWorkspaceOpenNotes,
-    layerContext?.transforms.notes,
-    pruneWorkspaceEntries,
-    resolveMainPanelPosition,
-    updatePanelSnapshotMap,
-    setWorkspaceNoteMembership,
-    waitForPanelSnapshotReadiness,
-    v2Enabled,
-  ])
+      if (targetWorkspaceId) {
+        snapshotOwnerWorkspaceIdRef.current = previousOwner
+      } else {
+        snapshotOwnerWorkspaceIdRef.current = previousOwner ?? workspaceId
+      }
+    },
+    [
+      activeNoteId,
+      canvasState,
+      collectPanelSnapshotsFromDataStore,
+      commitWorkspaceOpenNotes,
+      currentWorkspaceId,
+      emitDebugLog,
+      getWorkspaceOpenNotes,
+      layerContext?.transforms.notes,
+      pruneWorkspaceEntries,
+      resolveMainPanelPosition,
+      updatePanelSnapshotMap,
+      setWorkspaceNoteMembership,
+      waitForPanelSnapshotReadiness,
+      v2Enabled,
+    ],
+  )
 
   const buildPayloadFromSnapshot = useCallback(
     (workspaceId: string, snapshot: NoteWorkspaceSnapshot): NoteWorkspacePayload => {
@@ -2111,7 +2132,19 @@ export function useNoteWorkspaces({
       },
     })
     try {
-      await waitForPanelSnapshotReadiness("persist_workspace")
+      const ready = await waitForPanelSnapshotReadiness("persist_workspace", 800, workspaceId)
+      if (!ready) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_skip_pending_snapshot",
+          metadata: {
+            workspaceId,
+            reason,
+          },
+        })
+        saveInFlightRef.current = false
+        return
+      }
       const payload = buildPayload()
       const payloadHash = serializeWorkspacePayload(payload)
       const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
@@ -2215,7 +2248,7 @@ export function useNoteWorkspaces({
           replayingWorkspaceRef.current === 0
         ) {
           void (async () => {
-            await captureCurrentWorkspaceSnapshot()
+            await captureCurrentWorkspaceSnapshot(undefined, { readinessReason: "panel_ready_capture" })
             lastSaveReasonRef.current = "panel_ready_auto_save"
             await persistWorkspaceNow()
           })()
@@ -2243,6 +2276,17 @@ export function useNoteWorkspaces({
             timestampMs: event.timestamp,
           },
         })
+        if (
+          event.workspaceId === currentWorkspaceId &&
+          !isHydratingRef.current &&
+          replayingWorkspaceRef.current === 0
+        ) {
+          void (async () => {
+            await captureCurrentWorkspaceSnapshot(undefined, { readinessReason: "component_ready_capture" })
+            lastSaveReasonRef.current = "component_ready_auto_save"
+            await persistWorkspaceNow()
+          })()
+        }
       }
     })
     return unsubscribe
@@ -2838,8 +2882,10 @@ export function useNoteWorkspaces({
       const run = async () => {
         try {
           await ensureRuntimePrepared(workspaceId, "select_workspace")
-          await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
-          await captureCurrentWorkspaceSnapshot()
+          await captureCurrentWorkspaceSnapshot(undefined, {
+            readinessReason: "workspace_switch_capture",
+            readinessMaxWaitMs: 1500,
+          })
           lastSaveReasonRef.current = "workspace_switch"
           await persistWorkspaceNow()
 
