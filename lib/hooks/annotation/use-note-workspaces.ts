@@ -243,6 +243,7 @@ type UseNoteWorkspaceResult = {
   isLoading: boolean
   statusHelperText: string | null
   currentWorkspaceId: string | null
+  targetWorkspaceId: string | null
   snapshotRevision: number
   selectWorkspace: (workspaceId: string) => void
   createWorkspace: () => void
@@ -304,6 +305,7 @@ export function useNoteWorkspaces({
   const skipSavesUntilRef = useRef(0)
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
+  const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [statusHelperText, setStatusHelperText] = useState<string | null>(null)
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -322,6 +324,7 @@ export function useNoteWorkspaces({
     () => workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null,
     [currentWorkspaceId, workspaces],
   )
+  const targetWorkspaceId = pendingWorkspaceId ?? currentWorkspaceId
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
 
   const setWorkspaceNoteMembership = useCallback(
@@ -569,8 +572,12 @@ export function useNoteWorkspaces({
       const membership = workspaceNoteMembershipRef.current.get(workspaceId)
       const storedSlots = workspaceOpenNotesRef.current.get(workspaceId) ?? []
       const providerNoteIds = getProviderOpenNoteIds(workspaceId)
+      const providerMatches = openNotesWorkspaceId === workspaceId
       const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
       if (lastPendingAt > 0 && now() - lastPendingAt < 1500) {
+        return false
+      }
+      if (!providerMatches && providerNoteIds.size === 0) {
         return false
       }
       const staleNoteIds = new Set<string>()
@@ -617,7 +624,7 @@ export function useNoteWorkspaces({
       })
       return true
     },
-    [commitWorkspaceOpenNotes, emitDebugLog, getProviderOpenNoteIds, v2Enabled],
+    [commitWorkspaceOpenNotes, emitDebugLog, getProviderOpenNoteIds, openNotesWorkspaceId, v2Enabled],
   )
 
   const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
@@ -2575,92 +2582,112 @@ export function useNoteWorkspaces({
 
   const handleSelectWorkspace = useCallback(
     (workspaceId: string) => {
-      if (workspaceId === currentWorkspaceId) return
+      if (workspaceId === currentWorkspaceId && pendingWorkspaceId === null) return
+      const previousWorkspaceId = currentWorkspaceIdRef.current ?? currentWorkspaceId ?? null
+      setPendingWorkspaceId(workspaceId)
+      setActiveWorkspaceContext(workspaceId)
       const run = async () => {
-        await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
-        await captureCurrentWorkspaceSnapshot()
-        lastSaveReasonRef.current = "workspace_switch"
-        await persistWorkspaceNow()
+        try {
+          await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
+          await captureCurrentWorkspaceSnapshot()
+          lastSaveReasonRef.current = "workspace_switch"
+          await persistWorkspaceNow()
 
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
-        setActiveWorkspaceContext(workspaceId)
-        setWorkspaceNoteMembership(workspaceId, [])
-        const cachedSnapshot = getWorkspaceSnapshot(workspaceId)
-        const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
-        const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId)?.panels ?? null
+          snapshotOwnerWorkspaceIdRef.current = workspaceId
+          setActiveWorkspaceContext(workspaceId)
+          setWorkspaceNoteMembership(workspaceId, [])
+          const cachedSnapshot = getWorkspaceSnapshot(workspaceId)
+          const cachedRevision = workspaceRevisionRef.current.get(workspaceId) ?? null
+          const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId)?.panels ?? null
 
-        const applyCachedSnapshot = async () => {
-          if (v2Enabled && cachedSnapshot) {
-            const seedNoteIds =
-              cachedSnapshot?.openNotes?.map((entry) => entry.noteId).filter((id): id is string => Boolean(id)) ?? []
-            setWorkspaceNoteMembership(workspaceId, seedNoteIds)
-            await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
-          } else if (!v2Enabled && cachedPanels && cachedPanels.length > 0) {
-            const scopedPanels = filterPanelsForWorkspace(workspaceId, cachedPanels)
-            setTimeout(() => {
-              snapshotOwnerWorkspaceIdRef.current = workspaceId
-              applyPanelSnapshots(
-                scopedPanels,
-                new Set(scopedPanels.map((panel) => panel.noteId)),
-                undefined,
-                {
-                  allowEmptyApply: scopedPanels.length === 0,
-                  clearWorkspace: true,
-                  clearComponents: true,
-                  suppressMutationEvents: true,
-                  reason: "legacy_workspace_switch",
-                },
-              )
-            }, 0)
-          }
-        }
-
-        await applyCachedSnapshot()
-        setCurrentWorkspaceId(workspaceId)
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
-        setActiveWorkspaceContext(workspaceId)
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "select_workspace",
-          metadata: {
-            workspaceId,
-            hadCachedSnapshot: Boolean(cachedSnapshot),
-            cachedPanelCount: cachedSnapshot?.panels.length ?? cachedPanels?.length ?? 0,
-            cachedRevision,
-          },
-        })
-
-        if (v2Enabled && adapterRef.current) {
-          try {
-            const record = await adapterRef.current.loadWorkspace(workspaceId)
-            const adapterRevision = (record as any).revision ?? null
-            const adapterSnapshot = {
-              panels: record?.payload?.panels ?? [],
-              components: record?.payload?.components ?? [],
-              openNotes: record?.payload?.openNotes ?? [],
-              activeNoteId: record?.payload?.activeNoteId ?? null,
-              camera: record?.payload?.camera ?? DEFAULT_CAMERA,
-            }
-            const cachedRevisionValue = workspaceRevisionRef.current.get(workspaceId) ?? null
-            const shouldApplyAdapter = !cachedSnapshot || adapterRevision !== cachedRevisionValue
-
-            if (adapterRevision) {
-              workspaceRevisionRef.current.set(workspaceId, adapterRevision)
-            }
-
-            if (shouldApplyAdapter || !cachedSnapshot) {
-              await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any, { force: true })
-            } else {
-              // Replay cached snapshot even if revisions match to keep the store populated
+          const applyCachedSnapshot = async () => {
+            if (v2Enabled && cachedSnapshot) {
+              const seedNoteIds =
+                cachedSnapshot?.openNotes?.map((entry) => entry.noteId).filter((id): id is string => Boolean(id)) ?? []
+              setWorkspaceNoteMembership(workspaceId, seedNoteIds)
               await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
+            } else if (!v2Enabled && cachedPanels && cachedPanels.length > 0) {
+              const scopedPanels = filterPanelsForWorkspace(workspaceId, cachedPanels)
+              setTimeout(() => {
+                snapshotOwnerWorkspaceIdRef.current = workspaceId
+                applyPanelSnapshots(
+                  scopedPanels,
+                  new Set(scopedPanels.map((panel) => panel.noteId)),
+                  undefined,
+                  {
+                    allowEmptyApply: scopedPanels.length === 0,
+                    clearWorkspace: true,
+                    clearComponents: true,
+                    suppressMutationEvents: true,
+                    reason: "legacy_workspace_switch",
+                  },
+                )
+              }, 0)
             }
-          } catch (error) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "adapter_load_error",
-              metadata: { workspaceId, error: error instanceof Error ? error.message : String(error) },
-            })
           }
+
+          await applyCachedSnapshot()
+          setCurrentWorkspaceId(workspaceId)
+          setPendingWorkspaceId(null)
+          snapshotOwnerWorkspaceIdRef.current = workspaceId
+          setActiveWorkspaceContext(workspaceId)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "select_workspace",
+            metadata: {
+              workspaceId,
+              hadCachedSnapshot: Boolean(cachedSnapshot),
+              cachedPanelCount: cachedSnapshot?.panels.length ?? cachedPanels?.length ?? 0,
+              cachedRevision,
+            },
+          })
+
+          if (v2Enabled && adapterRef.current) {
+            try {
+              const record = await adapterRef.current.loadWorkspace(workspaceId)
+              const adapterRevision = (record as any).revision ?? null
+              const adapterSnapshot = {
+                panels: record?.payload?.panels ?? [],
+                components: record?.payload?.components ?? [],
+                openNotes: record?.payload?.openNotes ?? [],
+                activeNoteId: record?.payload?.activeNoteId ?? null,
+                camera: record?.payload?.camera ?? DEFAULT_CAMERA,
+              }
+              const cachedRevisionValue = workspaceRevisionRef.current.get(workspaceId) ?? null
+              const shouldApplyAdapter = !cachedSnapshot || adapterRevision !== cachedRevisionValue
+
+              if (adapterRevision) {
+                workspaceRevisionRef.current.set(workspaceId, adapterRevision)
+              }
+
+              if (shouldApplyAdapter || !cachedSnapshot) {
+                await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any, { force: true })
+              } else {
+                // Replay cached snapshot even if revisions match to keep the store populated
+                await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
+              }
+            } catch (adapterError) {
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "adapter_load_error",
+                metadata: {
+                  workspaceId,
+                  error: adapterError instanceof Error ? adapterError.message : String(adapterError),
+                },
+              })
+            }
+          }
+        } catch (error) {
+          setPendingWorkspaceId(null)
+          setActiveWorkspaceContext(previousWorkspaceId)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "select_workspace_error",
+            metadata: {
+              workspaceId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          })
         }
       }
       void run()
@@ -2670,6 +2697,7 @@ export function useNoteWorkspaces({
       filterPanelsForWorkspace,
       captureCurrentWorkspaceSnapshot,
       currentWorkspaceId,
+      pendingWorkspaceId,
       persistWorkspaceNow,
       previewWorkspaceFromSnapshot,
       emitDebugLog,
@@ -2768,6 +2796,7 @@ export function useNoteWorkspaces({
     isLoading,
     statusHelperText,
     currentWorkspaceId,
+    targetWorkspaceId,
     snapshotRevision,
     selectWorkspace: handleSelectWorkspace,
     createWorkspace: handleCreateWorkspace,

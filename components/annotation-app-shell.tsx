@@ -1058,7 +1058,7 @@ const initialWorkspaceSyncRef = useRef(false)
     activeNoteId,
     openNotes,
     openWorkspaceNote,
-    currentWorkspaceId: noteWorkspaceState.currentWorkspaceId ?? openNotesWorkspaceId ?? null,
+    currentWorkspaceId: noteWorkspaceState.targetWorkspaceId ?? openNotesWorkspaceId ?? null,
     closeWorkspaceNote,
     requestMainOnlyNote,
     centerNoteOnCanvas,
