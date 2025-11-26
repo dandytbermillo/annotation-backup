@@ -470,6 +470,7 @@ export function useNoteWorkspaces({
         },
       })
       await captureCurrentWorkspaceSnapshot(workspaceId)
+      await persistWorkspaceSnapshot(workspaceId, reason)
       removeWorkspaceRuntime(workspaceId)
       runtimeAccessRef.current.delete(workspaceId)
       emitDebugLog({
@@ -483,7 +484,13 @@ export function useNoteWorkspaces({
       })
       return true
     },
-    [captureCurrentWorkspaceSnapshot, currentWorkspaceId, emitDebugLog, liveStateEnabled],
+    [
+      captureCurrentWorkspaceSnapshot,
+      currentWorkspaceId,
+      emitDebugLog,
+      liveStateEnabled,
+      persistWorkspaceSnapshot,
+    ],
   )
 
   const ensureRuntimePrepared = useCallback(
@@ -1838,6 +1845,89 @@ export function useNoteWorkspaces({
       setActiveNoteId,
       setCanvasState,
     ],
+  )
+
+  const buildPayloadFromSnapshot = useCallback(
+    (workspaceId: string, snapshot: NoteWorkspaceSnapshot): NoteWorkspacePayload => {
+      const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
+        noteId: entry.noteId,
+        position: entry.mainPosition ?? null,
+      }))
+      const active = snapshot.activeNoteId ?? normalizedOpenNotes[0]?.noteId ?? null
+      const payload: NoteWorkspacePayload = {
+        schemaVersion: "1.1.0",
+        openNotes: normalizedOpenNotes,
+        activeNoteId: active,
+        camera: snapshot.camera ?? DEFAULT_CAMERA,
+        panels: snapshot.panels ?? [],
+      }
+      if (snapshot.components && snapshot.components.length > 0) {
+        payload.components = snapshot.components
+      }
+      return payload
+    },
+    [],
+  )
+
+  const persistWorkspaceSnapshot = useCallback(
+    async (workspaceId: string | null | undefined, reason: string) => {
+      if (!workspaceId || !adapterRef.current) return false
+      const snapshot = getWorkspaceSnapshot(workspaceId)
+      if (!snapshot) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_skip_no_snapshot",
+          metadata: { workspaceId, reason },
+        })
+        return false
+      }
+      const payload = buildPayloadFromSnapshot(workspaceId, snapshot)
+      const payloadHash = serializeWorkspacePayload(payload)
+      const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
+      if (previousHash === payloadHash) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_skip_no_changes",
+          metadata: { workspaceId, reason },
+        })
+        return true
+      }
+      const saveStart = Date.now()
+      try {
+        const updated = await adapterRef.current.saveWorkspace({
+          id: workspaceId,
+          payload,
+          revision: workspaceRevisionRef.current.get(workspaceId) ?? null,
+        })
+        workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
+        lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_success",
+          metadata: {
+            workspaceId,
+            reason,
+            panelCount: payload.panels.length,
+            openCount: payload.openNotes.length,
+            durationMs: Date.now() - saveStart,
+          },
+        })
+        return true
+      } catch (error) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_error",
+          metadata: {
+            workspaceId,
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+            durationMs: Date.now() - saveStart,
+          },
+        })
+        return false
+      }
+    },
+    [adapterRef, buildPayloadFromSnapshot, emitDebugLog],
   )
 
   useEffect(() => {
