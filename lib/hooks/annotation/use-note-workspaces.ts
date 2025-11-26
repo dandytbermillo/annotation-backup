@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect, type Dispatch, type SetStateAction } from "react"
 
 import type { LayerContextValue } from "@/components/canvas/layer-provider"
+import {
+  useNoteWorkspaceRuntimeManager,
+  type NoteWorkspaceDebugLogger,
+} from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { getLayerManager } from "@/lib/canvas/layer-manager"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
@@ -41,14 +45,6 @@ import {
   setActiveWorkspaceContext,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
-
-type DebugLogger = (event: {
-  component: string
-  action: string
-  content_preview?: string
-  metadata?: Record<string, unknown>
-  note_id?: string | null
-}) => void | Promise<void>
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 // Enable workspace debug logging; can be toggled at runtime if needed.
@@ -257,7 +253,7 @@ type UseNoteWorkspaceOptions = {
   canvasState: CanvasState | null
   setCanvasState?: Dispatch<SetStateAction<CanvasState>>
   onUnavailable?: () => void
-  debugLog?: DebugLogger
+  debugLog?: NoteWorkspaceDebugLogger
   sharedWorkspace: NoteWorkspace | null
 }
 
@@ -326,7 +322,6 @@ export function useNoteWorkspaces({
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const ownedNotesRef = useRef<Map<string, string>>(new Map())
-  const runtimeAccessRef = useRef<Map<string, number>>(new Map())
   const previousVisibleWorkspaceRef = useRef<string | null>(null)
   const lastSaveReasonRef = useRef<string>("initial_schedule")
   const saveInFlightRef = useRef(false)
@@ -424,33 +419,6 @@ export function useNoteWorkspaces({
         }
       }
       return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
-    },
-    [liveStateEnabled],
-  )
-
-  const updateRuntimeAccess = useCallback(
-    (workspaceId: string | null | undefined) => {
-      if (!liveStateEnabled || !workspaceId) return
-      runtimeAccessRef.current.set(workspaceId, Date.now())
-    },
-    [liveStateEnabled],
-  )
-
-  const selectEvictionCandidate = useCallback(
-    (excludeIds: Set<string>) => {
-      if (!liveStateEnabled) return null
-      let candidate: string | null = null
-      let oldest = Number.POSITIVE_INFINITY
-      const runtimeIds = listWorkspaceRuntimeIds()
-      runtimeIds.forEach((id) => {
-        if (excludeIds.has(id)) return
-        const ts = runtimeAccessRef.current.get(id) ?? 0
-        if (ts < oldest) {
-          oldest = ts
-          candidate = id
-        }
-      })
-      return candidate
     },
     [liveStateEnabled],
   )
@@ -622,7 +590,7 @@ export function useNoteWorkspaces({
   )
 
   const emitDebugLog = useCallback(
-    (payload: Parameters<NonNullable<DebugLogger>>[0]) => {
+    (payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => {
       if (!debugLogger || !NOTE_WORKSPACE_DEBUG_ENABLED) return
       let workspaceName: string | undefined
       if (payload.metadata && typeof payload.metadata === "object") {
@@ -1713,86 +1681,19 @@ export function useNoteWorkspaces({
     [adapterRef, buildPayloadFromSnapshot, emitDebugLog],
   )
 
-  const evictWorkspaceRuntime = useCallback(
-    async (workspaceId: string | null | undefined, reason: string) => {
-      if (!liveStateEnabled || !workspaceId) return false
-      if (!hasWorkspaceRuntime(workspaceId)) return false
-      if (workspaceId === currentWorkspaceId) return false
-      emitDebugLog({
-        component: "NoteWorkspaceRuntime",
-        action: "workspace_runtime_eviction_start",
-        metadata: {
-          workspaceId,
-          reason,
-          runtimeCount: listWorkspaceRuntimeIds().length,
-        },
-      })
-      await captureCurrentWorkspaceSnapshot(workspaceId)
-      await persistWorkspaceSnapshot(workspaceId, reason)
-      removeWorkspaceRuntime(workspaceId)
-      runtimeAccessRef.current.delete(workspaceId)
-      emitDebugLog({
-        component: "NoteWorkspaceRuntime",
-        action: "workspace_runtime_evicted",
-        metadata: {
-          workspaceId,
-          reason,
-          runtimeCount: listWorkspaceRuntimeIds().length,
-        },
-      })
-      return true
-    },
-    [
-      captureCurrentWorkspaceSnapshot,
-      currentWorkspaceId,
-      emitDebugLog,
-      liveStateEnabled,
-      persistWorkspaceSnapshot,
-    ],
-  )
-
-  const ensureRuntimePrepared = useCallback(
-    async (workspaceId: string | null | undefined, reason: string) => {
-      if (!liveStateEnabled || !workspaceId) return
-      updateRuntimeAccess(workspaceId)
-      if (!hasWorkspaceRuntime(workspaceId)) {
-        const runtimeIds = listWorkspaceRuntimeIds()
-        if (runtimeIds.length >= runtimeCapacity) {
-          const excludeIds = new Set<string>()
-          excludeIds.add(workspaceId)
-          if (currentWorkspaceId) excludeIds.add(currentWorkspaceId)
-          if (pendingWorkspaceId) excludeIds.add(pendingWorkspaceId)
-          const candidate = selectEvictionCandidate(excludeIds)
-          if (candidate) {
-            await evictWorkspaceRuntime(candidate, "capacity")
-          }
-        }
-        if (!hasWorkspaceRuntime(workspaceId)) {
-          getWorkspaceRuntime(workspaceId)
-          runtimeAccessRef.current.set(workspaceId, Date.now())
-          emitDebugLog({
-            component: "NoteWorkspaceRuntime",
-            action: "workspace_runtime_created",
-            metadata: {
-              workspaceId,
-              reason,
-              runtimeCount: listWorkspaceRuntimeIds().length,
-            },
-          })
-        }
-      }
-    },
-    [
-      currentWorkspaceId,
-      emitDebugLog,
-      evictWorkspaceRuntime,
-      liveStateEnabled,
-      pendingWorkspaceId,
-      runtimeCapacity,
-      selectEvictionCandidate,
-      updateRuntimeAccess,
-    ],
-  )
+  const {
+    ensureRuntimePrepared,
+    updateRuntimeAccess,
+    runtimeAccessRef,
+  } = useNoteWorkspaceRuntimeManager({
+    liveStateEnabled,
+    currentWorkspaceId,
+    pendingWorkspaceId,
+    runtimeCapacity,
+    captureSnapshot: captureCurrentWorkspaceSnapshot,
+    persistSnapshot: persistWorkspaceSnapshot,
+    emitDebugLog,
+  })
 
   const rehydratePanelsForNote = useCallback(
     (noteId: string, workspaceId?: string) => {
