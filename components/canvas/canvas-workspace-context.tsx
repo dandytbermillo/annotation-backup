@@ -31,7 +31,12 @@ import {
   type OpenWorkspaceNote,
   type WorkspacePosition,
 } from "@/lib/workspace/types"
-import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+import {
+  getActiveWorkspaceContext,
+  subscribeToActiveWorkspaceContext,
+  setNoteWorkspaceOwner,
+  clearNoteWorkspaceOwner,
+} from "@/lib/note-workspaces/state"
 import { useWorkspaceHydrationLoader } from "@/lib/hooks/annotation/use-workspace-hydration-loader"
 import { useWorkspaceNoteManager } from "@/lib/hooks/annotation/use-workspace-note-manager"
 import { useWorkspaceMainPositionUpdater } from "@/lib/hooks/annotation/use-workspace-main-position-updater"
@@ -176,6 +181,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       if (!noteId) return
       const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
       const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
+      setNoteWorkspaceOwner(noteId, workspaceId)
       const positionCache = getPositionCache(workspaceId)
       const cached = positionCache.get(noteId) ?? null
       const position = mainPosition ?? cached ?? null
@@ -210,6 +216,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
         setCurrentOpenNotes(next)
       }
       removeWorkspace(noteId)
+      clearNoteWorkspaceOwner(noteId)
     },
     [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
   )
@@ -407,12 +414,13 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       return position ? { ...position } : null
     }, [getPositionCache, resolveWorkspaceId])
 
-  const openNote = useCallback(
-    async (noteId: string, options?: OpenNoteOptions) => {
-      if (!noteId) return
-      const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
-      const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
-        const positionCache = getPositionCache(workspaceId)
+const openNote = useCallback(
+  async (noteId: string, options?: OpenNoteOptions) => {
+    if (!noteId) return
+    const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
+    const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
+    setNoteWorkspaceOwner(noteId, workspaceId)
+    const positionCache = getPositionCache(workspaceId)
         const cached = positionCache.get(noteId) ?? null
         const position = mainPosition ?? cached ?? null
         if (position) {
@@ -436,20 +444,21 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
     )
 
-    const closeNote = useCallback(
-      async (noteId: string) => {
-        if (!noteId) return
-        const workspaceId = resolveWorkspaceId(noteId)
-        const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
-        const next = current.filter(note => note.noteId !== noteId)
-        openNotesByWorkspaceRef.current.set(workspaceId, next)
-        if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
-          setCurrentOpenNotes(next)
-        }
-        removeWorkspace(noteId)
-      },
-      [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
-    )
+const closeNote = useCallback(
+  async (noteId: string) => {
+    if (!noteId) return
+    const workspaceId = resolveWorkspaceId(noteId)
+    const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+    const next = current.filter(note => note.noteId !== noteId)
+    openNotesByWorkspaceRef.current.set(workspaceId, next)
+    if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+      setCurrentOpenNotes(next)
+    }
+    removeWorkspace(noteId)
+    clearNoteWorkspaceOwner(noteId)
+  },
+  [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
+)
 
     const updateMainPosition = useCallback(
       async (noteId: string, position: WorkspacePosition) => {

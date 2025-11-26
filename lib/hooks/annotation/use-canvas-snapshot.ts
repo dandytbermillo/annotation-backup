@@ -537,10 +537,30 @@ export function useCanvasSnapshot({
     })
 
     setCanvasItems(prev => {
-      const otherNotesItems = prev.filter(item => {
+      const otherNotesItems: CanvasItem[] = []
+      const existingNoteItems: CanvasItem[] = []
+      prev.forEach(item => {
         const itemNoteId = getItemNoteId(item)
-        return itemNoteId && itemNoteId !== noteId
+        if (!itemNoteId) {
+          return
+        }
+        if (itemNoteId === noteId) {
+          existingNoteItems.push(item)
+          return
+        }
+        otherNotesItems.push(item)
       })
+
+      const mergedById = new Map<string, CanvasItem>()
+      existingNoteItems.forEach(item => {
+        mergedById.set(item.id, item)
+      })
+      restoredItems.forEach(item => {
+        mergedById.set(item.id, item)
+      })
+      const restoredIds = new Set(restoredItems.map(item => item.id))
+      const carriedForwardCount = existingNoteItems.filter(item => !restoredIds.has(item.id)).length
+      const mergedSameNoteItems = Array.from(mergedById.values())
 
       debugLog({
         component: "AnnotationCanvas",
@@ -548,12 +568,15 @@ export function useCanvasSnapshot({
         metadata: {
           noteId,
           restoredItemsCount: restoredItems.length,
+          existingNoteItemsCount: existingNoteItems.length,
+          carriedForwardCount,
+          mergedSameNoteCount: mergedSameNoteItems.length,
           otherNotesItemsCount: otherNotesItems.length,
-          totalItemsCount: otherNotesItems.length + restoredItems.length,
+          totalItemsCount: otherNotesItems.length + mergedSameNoteItems.length,
         },
       })
 
-      return [...otherNotesItems, ...restoredItems]
+      return [...otherNotesItems, ...mergedSameNoteItems]
     })
 
     const mainPanel = restoredItems.find(item => item.itemType === "panel" && item.panelId === "main")
@@ -670,6 +693,7 @@ export function useCanvasSnapshot({
     onSnapshotSettled,
     activeWorkspaceVersion,
     applySnapshotCamera,
+    workspaceSnapshotRevision,
   ])
 }
 
