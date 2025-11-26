@@ -1282,11 +1282,14 @@ export function useNoteWorkspaces({
         const shouldTargetAllNotes = normalizedTargetIds.size === 0
         const shouldLimitToAllowed = Boolean(allowedNoteIds)
         const keysToRemove: string[] = []
+        const removedNoteIds = new Set<string>()
+        let existingPanelKeyCount = 0
         if (typeof dataStore.keys === "function") {
           for (const key of dataStore.keys() as Iterable<string>) {
             const rawKey = String(key)
             const parsed = parsePanelKey(rawKey)
             if (!parsed?.noteId || !parsed?.panelId) continue
+            existingPanelKeyCount += 1
             let removeKey = false
             const belongsToWorkspace =
               !shouldLimitToAllowed || allowedNoteIds?.has(parsed.noteId) || normalizedTargetIds.has(parsed.noteId)
@@ -1300,9 +1303,25 @@ export function useNoteWorkspaces({
             }
             if (removeKey) {
               keysToRemove.push(rawKey)
+              removedNoteIds.add(parsed.noteId)
             }
           }
         }
+
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_snapshot_apply_start",
+          metadata: {
+            workspaceId: activeWorkspaceId,
+            reason: applyReason,
+            panelPayloadCount: panels?.length ?? 0,
+            componentPayloadCount: components?.length ?? 0,
+            targetNoteIds: Array.from(normalizedTargetIds),
+            clearedWorkspace: shouldClearWorkspace,
+            existingPanelCount: existingPanelKeyCount,
+            membershipSize: workspaceMembership?.size ?? null,
+          },
+        })
 
         panels?.forEach((panel) => {
           if (!panel.noteId || !panel.panelId) return
@@ -1335,6 +1354,7 @@ export function useNoteWorkspaces({
               workspaceId: activeWorkspaceId,
               clearedCount: keysToRemove.length,
               clearedAll: shouldClearWorkspace && keysToRemove.length > 0,
+              clearedNoteIds: Array.from(removedNoteIds),
             },
           })
         }
@@ -1468,41 +1488,6 @@ export function useNoteWorkspaces({
         }
       }
       let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
-      const providerOpenSlots = openNotesWorkspaceId === workspaceId ? openNotes : []
-      const runtimeOpenSlots = getWorkspaceOpenNotes(workspaceId)
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "snapshot_open_notes_source",
-        metadata: {
-          workspaceId,
-          providerCount: providerOpenSlots.length,
-          providerWorkspaceId: openNotesWorkspaceId,
-          runtimeCount: runtimeOpenSlots.length,
-        },
-      })
-      const existingIds = new Set(
-        workspaceOpenNotes
-          .map((entry) => entry.noteId)
-          .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
-      )
-      const mergeSlots = [...providerOpenSlots, ...runtimeOpenSlots]
-        .map((entry) =>
-          entry?.noteId ? { noteId: entry.noteId, mainPosition: entry.mainPosition ?? null } : null,
-        )
-        .filter((entry): entry is { noteId: string; mainPosition: { x: number; y: number } | null } => Boolean(entry))
-      const missingSlots = mergeSlots.filter((slot) => !existingIds.has(slot.noteId))
-      if (missingSlots.length > 0) {
-        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, [...workspaceOpenNotes, ...missingSlots])
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "snapshot_open_notes_runtime_sync",
-          metadata: {
-            workspaceId,
-            addedNoteIds: missingSlots.map((slot) => slot.noteId),
-            mergedSourceCount: mergeSlots.length,
-          },
-        })
-      }
       const captureStartedAt = Date.now()
       emitDebugLog({
         component: "NoteWorkspace",
@@ -1849,6 +1834,7 @@ export function useNoteWorkspaces({
         return
       }
       snapshotOwnerWorkspaceIdRef.current = workspaceId
+      const previousOpenSlots = workspaceOpenNotesRef.current.get(workspaceId) ?? []
       const panelSnapshots = snapshot.panels ?? []
       const declaredNoteIds = new Set(
         snapshot.openNotes.map((entry) => entry.noteId).filter((noteId): noteId is string => Boolean(noteId)),
@@ -1860,6 +1846,11 @@ export function useNoteWorkspaces({
           }
         })
       }
+      previousOpenSlots.forEach((slot) => {
+        if (slot.noteId) {
+          declaredNoteIds.add(slot.noteId)
+        }
+      })
       setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
       const scopedPanels = filterPanelsForWorkspace(workspaceId, panelSnapshots)
       const targetIds = new Set<string>(declaredNoteIds)
@@ -1875,27 +1866,38 @@ export function useNoteWorkspaces({
         noteId: entry.noteId,
         mainPosition: entry.mainPosition ?? null,
       }))
+      const normalizedSeen = new Set(normalizedOpenNotes.map((entry) => entry.noteId).filter(Boolean) as string[])
+      previousOpenSlots.forEach((slot) => {
+        if (slot.noteId && !normalizedSeen.has(slot.noteId)) {
+          normalizedOpenNotes.push(slot)
+          normalizedSeen.add(slot.noteId)
+        }
+      })
       cache.openNotes = normalizedOpenNotes
       commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes)
       updatePanelSnapshotMap(scopedPanels, "preview_snapshot", { allowEmpty: true })
       const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
       panelNoteIds.forEach((id) => targetIds.add(id))
-      applyPanelSnapshots(scopedPanels, panelNoteIds, snapshot.components, {
+      applyPanelSnapshots(scopedPanels, targetIds, snapshot.components, {
         allowEmptyApply: true,
         suppressMutationEvents: true,
         reason: "preview_snapshot",
       })
 
-      const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
-      const notesToClose = openNotes.filter((note) => !targetIds.has(note.noteId))
+      const currentOpenIds = new Set(previousOpenSlots.map((note) => note.noteId).filter(Boolean) as string[])
+      const notesToClose = previousOpenSlots.filter((note) => note.noteId && !targetIds.has(note.noteId))
       await Promise.all(
         notesToClose.map((note) =>
-          closeWorkspaceNote(note.noteId, { persist: false, removeWorkspace: false }).catch(() => {}),
+          closeWorkspaceNote(note.noteId!, { persist: false, removeWorkspace: false }).catch(() => {}),
         ),
       )
-      notesToClose.forEach((note) => currentOpenIds.delete(note.noteId))
+      notesToClose.forEach((note) => {
+        if (note.noteId) {
+          currentOpenIds.delete(note.noteId)
+        }
+      })
 
-      for (const entry of snapshot.openNotes) {
+      for (const entry of normalizedOpenNotes) {
         if (currentOpenIds.has(entry.noteId)) continue
         await openWorkspaceNote(entry.noteId, {
           mainPosition: entry.mainPosition ?? undefined,
@@ -1929,7 +1931,7 @@ export function useNoteWorkspaces({
         metadata: {
           workspaceId,
           panelCount: scopedPanels.length,
-          openCount: snapshot.openNotes.length,
+          openCount: normalizedOpenNotes.length,
           activeNoteId: nextActive,
         },
       })
