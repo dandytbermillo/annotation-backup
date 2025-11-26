@@ -847,6 +847,21 @@ export function useNoteWorkspaces({
         }
       }
 
+      const snapshotHash = serializePanelSnapshots(panelsToPersist)
+      if (snapshotHash === lastPanelSnapshotHashRef.current) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_snapshot_skip_duplicate",
+          metadata: {
+            workspaceId: ownerId,
+            reason,
+            panelCount: panelsToPersist.length,
+          },
+        })
+        return
+      }
+      lastPanelSnapshotHashRef.current = snapshotHash
+
       if (!panelsToPersist || panelsToPersist.length === 0) {
         if (allowEmpty) {
           const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, ownerId)
@@ -1036,6 +1051,40 @@ export function useNoteWorkspaces({
       })
       if (waitReason === "none") {
         return
+      }
+      // If we just saw pending activity, require a short stability window before capturing.
+      if (waitReason === "recent_pending") {
+        const stabilityMs = Math.min(200, maxWaitMs)
+        const stable = await new Promise<boolean>((resolve) => {
+          const start = Date.now()
+          const check = () => {
+            const elapsed = Date.now() - start
+            const stillPending = getPendingPanelCount(workspaceId)
+            if (stillPending === 0 && elapsed >= stabilityMs) {
+              resolve(true)
+              return
+            }
+            if (elapsed >= maxWaitMs) {
+              resolve(false)
+              return
+            }
+            setTimeout(check, 16)
+          }
+          check()
+        })
+        if (!stable) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_pending_timeout",
+            metadata: {
+              workspaceId,
+              reason,
+              pendingCount,
+              lastPendingMs: lastPendingAt ? Date.now() - lastPendingAt : null,
+            },
+          })
+          return
+        }
       }
       const ready = await Promise.race<boolean>([
         waitForWorkspaceSnapshotReady(workspaceId, maxWaitMs),
