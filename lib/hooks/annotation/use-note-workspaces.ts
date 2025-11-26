@@ -757,13 +757,20 @@ export function useNoteWorkspaces({
     if (v2Enabled && !membershipKnown) {
       return []
     }
+    const ownedNotesForWorkspace = ownedNotesRef.current
     if (workspaceMembership) {
       if (workspaceMembership.size === 0) {
-        return []
+        const ownedPanels = snapshots.filter(
+          (snapshot) => snapshot.noteId && ownedNotesForWorkspace.get(snapshot.noteId) === activeWorkspaceId,
+        )
+        return ownedPanels
       }
       return snapshots.filter((snapshot) => {
         if (!snapshot.noteId) return false
-        return workspaceMembership.has(snapshot.noteId)
+        if (workspaceMembership.has(snapshot.noteId)) {
+          return true
+        }
+        return ownedNotesForWorkspace.get(snapshot.noteId) === activeWorkspaceId
       })
     }
     return snapshots
@@ -1236,13 +1243,8 @@ export function useNoteWorkspaces({
             }
           })
         }
-        const incomingPanelIndex = new Map<string, Set<string>>()
         panels?.forEach((panel) => {
-          if (!panel.noteId || !panel.panelId) return
-          if (!incomingPanelIndex.has(panel.noteId)) {
-            incomingPanelIndex.set(panel.noteId, new Set())
-          }
-          incomingPanelIndex.get(panel.noteId)!.add(panel.panelId)
+          if (!panel.noteId) return
           normalizedTargetIds.add(panel.noteId)
         })
 
@@ -1257,20 +1259,13 @@ export function useNoteWorkspaces({
             let removeKey = false
             const belongsToWorkspace =
               !shouldLimitToAllowed || allowedNoteIds?.has(parsed.noteId) || normalizedTargetIds.has(parsed.noteId)
+            const isTargeted = shouldTargetAllNotes || normalizedTargetIds.has(parsed.noteId)
             if (shouldClearWorkspace) {
               removeKey = true
             } else if (!belongsToWorkspace) {
               removeKey = true
-            } else if (shouldTargetAllNotes) {
-              const incomingPanels = incomingPanelIndex.get(parsed.noteId)
-              if (!incomingPanels || !incomingPanels.has(parsed.panelId)) {
-                removeKey = true
-              }
-            } else if (normalizedTargetIds.has(parsed.noteId)) {
-              const incomingPanels = incomingPanelIndex.get(parsed.noteId)
-              if (!incomingPanels || !incomingPanels.has(parsed.panelId)) {
-                removeKey = true
-              }
+            } else if (!isTargeted) {
+              removeKey = true
             }
             if (removeKey) {
               keysToRemove.push(rawKey)
@@ -1345,14 +1340,21 @@ export function useNoteWorkspaces({
             })
             existingComponentNodes
               .filter((node: any) => !incomingIds.has(node.id))
-              .forEach((node: any) => layerMgr.removeNode(node.id))
+              .forEach((node: any) => {
+                if (shouldClearComponentsExplicit || shouldClearWorkspace) {
+                  layerMgr.removeNode(node.id)
+                }
+              })
             emitDebugLog({
               component: "NoteWorkspace",
               action: "component_snapshot_apply",
               metadata: {
                 workspaceId: activeWorkspaceId,
                 incomingCount: components.length,
-                removedCount: existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length,
+                removedCount:
+                  shouldClearComponentsExplicit || shouldClearWorkspace
+                    ? existingComponentNodes.filter((node: any) => !incomingIds.has(node.id)).length
+                    : 0,
               },
             })
           } else if (shouldClearComponentsExplicit || shouldClearWorkspace) {
