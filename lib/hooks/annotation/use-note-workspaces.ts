@@ -13,6 +13,8 @@ import {
   getRuntimeMembership,
   setRuntimeMembership,
   hasWorkspaceRuntime,
+  listWorkspaceRuntimeIds,
+  removeWorkspaceRuntime,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -51,6 +53,22 @@ type DebugLogger = (event: {
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 // Enable workspace debug logging; can be toggled at runtime if needed.
 const NOTE_WORKSPACE_DEBUG_ENABLED = true
+const DESKTOP_RUNTIME_CAP = 4
+const TOUCH_RUNTIME_CAP = 2
+
+const detectRuntimeCapacity = () => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return DESKTOP_RUNTIME_CAP
+  }
+  try {
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      return TOUCH_RUNTIME_CAP
+    }
+  } catch {
+    // ignore matchMedia errors
+  }
+  return DESKTOP_RUNTIME_CAP
+}
 
 const normalizePoint = (value: any): { x: number; y: number } | null => {
   if (!value || typeof value !== "object") return null
@@ -308,6 +326,8 @@ export function useNoteWorkspaces({
   const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
   const lastPanelSnapshotHashRef = useRef<string | null>(null)
   const ownedNotesRef = useRef<Map<string, string>>(new Map())
+  const runtimeAccessRef = useRef<Map<string, number>>(new Map())
+  const previousVisibleWorkspaceRef = useRef<string | null>(null)
   const lastSaveReasonRef = useRef<string>("initial_schedule")
   const saveInFlightRef = useRef(false)
   const skipSavesUntilRef = useRef(0)
@@ -327,6 +347,10 @@ export function useNoteWorkspaces({
   const bumpSnapshotRevision = useCallback(() => {
     setSnapshotRevision((prev) => prev + 1)
   }, [])
+  const runtimeCapacity = useMemo(
+    () => (liveStateEnabled ? detectRuntimeCapacity() : Number.POSITIVE_INFINITY),
+    [liveStateEnabled],
+  )
 
   const currentWorkspaceSummary = useMemo(
     () => workspaces.find((workspace) => workspace.id === currentWorkspaceId) ?? null,
@@ -402,6 +426,107 @@ export function useNoteWorkspaces({
       return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
     },
     [liveStateEnabled],
+  )
+
+  const updateRuntimeAccess = useCallback(
+    (workspaceId: string | null | undefined) => {
+      if (!liveStateEnabled || !workspaceId) return
+      runtimeAccessRef.current.set(workspaceId, Date.now())
+    },
+    [liveStateEnabled],
+  )
+
+  const selectEvictionCandidate = useCallback(
+    (excludeIds: Set<string>) => {
+      if (!liveStateEnabled) return null
+      let candidate: string | null = null
+      let oldest = Number.POSITIVE_INFINITY
+      const runtimeIds = listWorkspaceRuntimeIds()
+      runtimeIds.forEach((id) => {
+        if (excludeIds.has(id)) return
+        const ts = runtimeAccessRef.current.get(id) ?? 0
+        if (ts < oldest) {
+          oldest = ts
+          candidate = id
+        }
+      })
+      return candidate
+    },
+    [liveStateEnabled],
+  )
+
+  const evictWorkspaceRuntime = useCallback(
+    async (workspaceId: string | null | undefined, reason: string) => {
+      if (!liveStateEnabled || !workspaceId) return false
+      if (!hasWorkspaceRuntime(workspaceId)) return false
+      if (workspaceId === currentWorkspaceId) return false
+      emitDebugLog({
+        component: "NoteWorkspaceRuntime",
+        action: "workspace_runtime_eviction_start",
+        metadata: {
+          workspaceId,
+          reason,
+          runtimeCount: listWorkspaceRuntimeIds().length,
+        },
+      })
+      await captureCurrentWorkspaceSnapshot(workspaceId)
+      removeWorkspaceRuntime(workspaceId)
+      runtimeAccessRef.current.delete(workspaceId)
+      emitDebugLog({
+        component: "NoteWorkspaceRuntime",
+        action: "workspace_runtime_evicted",
+        metadata: {
+          workspaceId,
+          reason,
+          runtimeCount: listWorkspaceRuntimeIds().length,
+        },
+      })
+      return true
+    },
+    [captureCurrentWorkspaceSnapshot, currentWorkspaceId, emitDebugLog, liveStateEnabled],
+  )
+
+  const ensureRuntimePrepared = useCallback(
+    async (workspaceId: string | null | undefined, reason: string) => {
+      if (!liveStateEnabled || !workspaceId) return
+      updateRuntimeAccess(workspaceId)
+      if (!hasWorkspaceRuntime(workspaceId)) {
+        const runtimeIds = listWorkspaceRuntimeIds()
+        if (runtimeIds.length >= runtimeCapacity) {
+          const excludeIds = new Set<string>()
+          excludeIds.add(workspaceId)
+          if (currentWorkspaceId) excludeIds.add(currentWorkspaceId)
+          if (pendingWorkspaceId) excludeIds.add(pendingWorkspaceId)
+          const candidate = selectEvictionCandidate(excludeIds)
+          if (candidate) {
+            await evictWorkspaceRuntime(candidate, "capacity")
+          }
+        }
+        if (!hasWorkspaceRuntime(workspaceId)) {
+          getWorkspaceRuntime(workspaceId)
+          runtimeAccessRef.current.set(workspaceId, Date.now())
+          emitDebugLog({
+            component: "NoteWorkspaceRuntime",
+            action: "workspace_runtime_created",
+            metadata: {
+              workspaceId,
+              reason,
+              runtimeCount: listWorkspaceRuntimeIds().length,
+            },
+          })
+        }
+      }
+    },
+    [
+      currentWorkspaceId,
+      emitDebugLog,
+      evictWorkspaceRuntime,
+      liveStateEnabled,
+      pendingWorkspaceId,
+      runtimeCapacity,
+      selectEvictionCandidate,
+      updateRuntimeAccess,
+    ],
   )
 
   const normalizeWorkspaceSlots = (
@@ -1181,6 +1306,12 @@ export function useNoteWorkspaces({
         const dataStore = getWorkspaceDataStore(activeWorkspaceId)
         const layerMgr = getWorkspaceLayerManager(activeWorkspaceId)
         if (!dataStore) return
+        const runtimeState =
+          !liveStateEnabled || !activeWorkspaceId
+            ? "legacy"
+            : hasWorkspaceRuntime(activeWorkspaceId)
+              ? "hot"
+              : "cold"
 
         const normalizedTargetIds = new Set<string>(targetNoteIds)
         const workspaceMembership = getWorkspaceNoteMembership(activeWorkspaceId)
@@ -1353,6 +1484,7 @@ export function useNoteWorkspaces({
             clearedWorkspace: shouldClearWorkspace,
             suppressedMutations: suppressMutations,
             durationMs: Date.now() - replayStartedAt,
+            runtimeState,
           },
         })
         if (panels) {
@@ -1366,11 +1498,24 @@ export function useNoteWorkspaces({
         }
       }
     },
-    [sharedWorkspace, layerContext, v2Enabled, currentWorkspaceId, emitDebugLog, getWorkspaceNoteMembership],
+    [
+      sharedWorkspace,
+      layerContext,
+      v2Enabled,
+      currentWorkspaceId,
+      emitDebugLog,
+      getWorkspaceNoteMembership,
+      hasWorkspaceRuntime,
+      liveStateEnabled,
+    ],
   )
 
-  const captureCurrentWorkspaceSnapshot = useCallback(async () => {
-    const workspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceId ?? currentWorkspaceIdRef.current
+  const captureCurrentWorkspaceSnapshot = useCallback(async (targetWorkspaceId?: string | null) => {
+    const workspaceId =
+      targetWorkspaceId ??
+      snapshotOwnerWorkspaceIdRef.current ??
+      currentWorkspaceId ??
+      currentWorkspaceIdRef.current
     if (!workspaceId) return
     const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
     await waitForPanelSnapshotReadiness("capture_snapshot")
@@ -1537,6 +1682,11 @@ export function useNoteWorkspaces({
         timestampMs: Date.now(),
       },
     })
+    if (targetWorkspaceId) {
+      snapshotOwnerWorkspaceIdRef.current = previousOwner
+    } else {
+      snapshotOwnerWorkspaceIdRef.current = previousOwner ?? workspaceId
+    }
   }, [
     activeNoteId,
     canvasState,
@@ -1579,6 +1729,9 @@ export function useNoteWorkspaces({
   const previewWorkspaceFromSnapshot = useCallback(
     async (workspaceId: string, snapshot: NoteWorkspaceSnapshot, options?: { force?: boolean }) => {
       const force = options?.force ?? false
+      if (liveStateEnabled) {
+        await ensureRuntimePrepared(workspaceId, "preview_snapshot")
+      }
       const lastPreview = lastPreviewedSnapshotRef.current.get(workspaceId)
       if (!force && lastPreview === snapshot) {
         return
@@ -1672,16 +1825,18 @@ export function useNoteWorkspaces({
     },
     [
       applyPanelSnapshots,
+      bumpSnapshotRevision,
       closeWorkspaceNote,
       commitWorkspaceOpenNotes,
+      ensureRuntimePrepared,
       emitDebugLog,
       filterPanelsForWorkspace,
       layerContext,
+      liveStateEnabled,
       openWorkspaceNote,
       setWorkspaceNoteMembership,
       setActiveNoteId,
       setCanvasState,
-      bumpSnapshotRevision,
     ],
   )
 
@@ -2578,6 +2733,7 @@ export function useNoteWorkspaces({
           components: [],
         },
       })
+      await ensureRuntimePrepared(workspace.id, "create_workspace")
       setWorkspaces((prev) => [...prev, workspace])
       setCurrentWorkspaceId(workspace.id)
       setWorkspaceNoteMembership(workspace.id, [])
@@ -2596,7 +2752,14 @@ export function useNoteWorkspaces({
         metadata: { error: error instanceof Error ? error.message : String(error) },
       })
     }
-  }, [commitWorkspaceOpenNotes, emitDebugLog, featureEnabled, flushPendingSave, setWorkspaceNoteMembership])
+  }, [
+    commitWorkspaceOpenNotes,
+    emitDebugLog,
+    ensureRuntimePrepared,
+    featureEnabled,
+    flushPendingSave,
+    setWorkspaceNoteMembership,
+  ])
 
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -2685,6 +2848,7 @@ export function useNoteWorkspaces({
       })
       const run = async () => {
         try {
+          await ensureRuntimePrepared(workspaceId, "select_workspace")
           await waitForPanelSnapshotReadiness("workspace_switch_capture", 1500)
           await captureCurrentWorkspaceSnapshot()
           lastSaveReasonRef.current = "workspace_switch"
@@ -2794,6 +2958,7 @@ export function useNoteWorkspaces({
       filterPanelsForWorkspace,
       captureCurrentWorkspaceSnapshot,
       currentWorkspaceId,
+      ensureRuntimePrepared,
       pendingWorkspaceId,
       persistWorkspaceNow,
       previewWorkspaceFromSnapshot,
@@ -2852,6 +3017,49 @@ export function useNoteWorkspaces({
     if (!snapshot) return
     previewWorkspaceFromSnapshot(currentWorkspaceId, snapshot)
   }, [currentWorkspaceId, previewWorkspaceFromSnapshot, v2Enabled])
+
+  useEffect(() => {
+    if (!liveStateEnabled) return
+    if (currentWorkspaceId) {
+      void ensureRuntimePrepared(currentWorkspaceId, "current_workspace")
+    }
+  }, [currentWorkspaceId, ensureRuntimePrepared, liveStateEnabled])
+
+  useEffect(() => {
+    if (!liveStateEnabled) return
+    if (pendingWorkspaceId) {
+      void ensureRuntimePrepared(pendingWorkspaceId, "pending_workspace")
+    }
+  }, [ensureRuntimePrepared, liveStateEnabled, pendingWorkspaceId])
+
+  useEffect(() => {
+    if (!liveStateEnabled) return
+    const prevVisible = previousVisibleWorkspaceRef.current
+    if (prevVisible && prevVisible !== currentWorkspaceId) {
+      emitDebugLog({
+        component: "NoteWorkspaceRuntime",
+        action: "workspace_runtime_hidden",
+        metadata: {
+          workspaceId: prevVisible,
+          runtimeCount: listWorkspaceRuntimeIds().length,
+        },
+      })
+    }
+    if (currentWorkspaceId) {
+      const wasCold = !runtimeAccessRef.current.has(currentWorkspaceId)
+      emitDebugLog({
+        component: "NoteWorkspaceRuntime",
+        action: "workspace_runtime_visible",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          wasCold,
+          runtimeCount: listWorkspaceRuntimeIds().length,
+        },
+      })
+      updateRuntimeAccess(currentWorkspaceId)
+    }
+    previousVisibleWorkspaceRef.current = currentWorkspaceId ?? null
+  }, [currentWorkspaceId, emitDebugLog, liveStateEnabled, updateRuntimeAccess])
 
   useEffect(() => {
     if (!featureEnabled || !activeNoteId) return
