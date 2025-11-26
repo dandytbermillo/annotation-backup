@@ -6,20 +6,8 @@ import { getLayerManager } from "@/lib/canvas/layer-manager"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import { DataStore } from "@/lib/data-store"
 import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
-import {
-  getWorkspaceRuntime,
-  getRuntimeOpenNotes,
-  setRuntimeOpenNotes,
-  getRuntimeMembership,
-  setRuntimeMembership,
-  hasWorkspaceRuntime,
-} from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
-import {
-  isNoteWorkspaceEnabled,
-  isNoteWorkspaceLiveStateEnabled,
-  isNoteWorkspaceV2Enabled,
-} from "@/lib/flags/note"
+import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-state"
 import type { WorkspacePanelSnapshot } from "@/lib/hooks/annotation/use-workspace-panel-positions"
 import type {
@@ -27,7 +15,7 @@ import type {
   NoteWorkspacePanelSnapshot,
   NoteWorkspaceComponentSnapshot,
 } from "@/lib/types/note-workspace"
-import { SHARED_WORKSPACE_ID, type NoteWorkspace, type NoteWorkspaceSlot } from "@/lib/workspace/types"
+import { SHARED_WORKSPACE_ID, type NoteWorkspace } from "@/lib/workspace/types"
 import {
   cacheWorkspaceSnapshot,
   getPendingPanelCount,
@@ -195,6 +183,11 @@ const serializePanelSnapshots = (panels: NoteWorkspacePanelSnapshot[]): string =
   return JSON.stringify(normalizedPanels)
 }
 
+export type NoteWorkspaceSlot = {
+  noteId: string
+  mainPosition?: { x: number; y: number } | null
+}
+
 type WorkspaceSnapshotCache = {
   panels: NoteWorkspacePanelSnapshot[]
   components: NoteWorkspaceComponentSnapshot[]
@@ -290,7 +283,6 @@ export function useNoteWorkspaces({
 }: UseNoteWorkspaceOptions): UseNoteWorkspaceResult {
   const flagEnabled = isNoteWorkspaceEnabled()
   const v2Enabled = isNoteWorkspaceV2Enabled()
-  const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
   const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
   const panelSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
   const workspaceSnapshotsRef = useRef<Map<string, WorkspaceSnapshotCache>>(new Map())
@@ -358,9 +350,6 @@ export function useNoteWorkspaces({
       if (shouldUpdateMembership) {
         workspaceNoteMembershipRef.current.set(workspaceId, normalized)
       }
-      if (liveStateEnabled) {
-        setRuntimeMembership(workspaceId, normalized)
-      }
       if (!v2Enabled) {
         return
       }
@@ -387,22 +376,13 @@ export function useNoteWorkspaces({
         ownedNotesRef.current.delete(noteId)
       })
     },
-    [liveStateEnabled, v2Enabled],
+    [v2Enabled],
   )
 
-  const getWorkspaceNoteMembership = useCallback(
-    (workspaceId: string | null | undefined): Set<string> | null => {
-      if (!workspaceId) return null
-      if (liveStateEnabled) {
-        const runtimeMembership = getRuntimeMembership(workspaceId)
-        if (runtimeMembership) {
-          return runtimeMembership
-        }
-      }
-      return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
-    },
-    [liveStateEnabled],
-  )
+  const getWorkspaceNoteMembership = useCallback((workspaceId: string | null | undefined): Set<string> | null => {
+    if (!workspaceId) return null
+    return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
+  }, [])
 
   const normalizeWorkspaceSlots = (
     slots:
@@ -479,25 +459,14 @@ export function useNoteWorkspaces({
         const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
         cache.openNotes = normalized
       }
-      if (liveStateEnabled) {
-        setRuntimeOpenNotes(workspaceId, normalized)
-      }
       return normalized
     },
-    [liveStateEnabled, setWorkspaceNoteMembership],
+    [setWorkspaceNoteMembership],
   )
 
   const getWorkspaceOpenNotes = useCallback(
     (workspaceId: string | null | undefined): NoteWorkspaceSlot[] => {
       if (!workspaceId) return []
-      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
-        const runtimeSlots = getRuntimeOpenNotes(workspaceId)
-        const stored = workspaceOpenNotesRef.current.get(workspaceId)
-        if (!areWorkspaceSlotsEqual(stored, runtimeSlots)) {
-          workspaceOpenNotesRef.current.set(workspaceId, runtimeSlots)
-        }
-        return runtimeSlots
-      }
       const stored = workspaceOpenNotesRef.current.get(workspaceId)
       if (stored && stored.length > 0) {
         return stored
@@ -524,7 +493,7 @@ export function useNoteWorkspaces({
       }
       return stored ?? []
     },
-    [commitWorkspaceOpenNotes, hasWorkspaceRuntime, liveStateEnabled, openNotes, openNotesWorkspaceId],
+    [commitWorkspaceOpenNotes, openNotes, openNotesWorkspaceId],
   )
 
   const filterPanelsForWorkspace = useCallback(
@@ -548,26 +517,14 @@ export function useNoteWorkspaces({
     [getWorkspaceNoteMembership, v2Enabled],
   )
 
-  const getRuntimeDataStore = useCallback(
-    (workspaceId: string | null | undefined): DataStore | null => {
-      if (!liveStateEnabled || !workspaceId) return null
-      return getWorkspaceRuntime(workspaceId).dataStore
-    },
-    [liveStateEnabled],
-  )
-
   const getWorkspaceDataStore = useCallback(
     (workspaceId: string | null | undefined) => {
       if (!v2Enabled) {
         return sharedWorkspace?.dataStore ?? null
       }
-      if (liveStateEnabled) {
-        if (!workspaceId) return null
-        return getRuntimeDataStore(workspaceId)
-      }
       return getWorkspaceStore(workspaceId ?? undefined)
     },
-    [sharedWorkspace?.dataStore, v2Enabled, liveStateEnabled, getRuntimeDataStore],
+    [sharedWorkspace?.dataStore, v2Enabled],
   )
 
   const emitDebugLog = useCallback(
@@ -2857,13 +2814,7 @@ export function useNoteWorkspaces({
     if (!featureEnabled || !activeNoteId) return
     const snapshots = panelSnapshotsRef.current.get(activeNoteId)
     if (!snapshots || snapshots.length === 0) return
-    const workspaceIdForNote =
-      ownedNotesRef.current.get(activeNoteId) ??
-      snapshotOwnerWorkspaceIdRef.current ??
-      currentWorkspaceId ??
-      currentWorkspaceIdRef.current ??
-      null
-    const dataStore = getWorkspaceDataStore(workspaceIdForNote)
+    const dataStore = sharedWorkspace?.dataStore
     if (!dataStore) return
     const hasAllPanels = snapshots.every((panel) => {
       const key = ensurePanelKey(panel.noteId, panel.panelId)
@@ -2889,15 +2840,8 @@ export function useNoteWorkspaces({
         reason: "active_note_check",
       },
     })
-    rehydratePanelsForNote(activeNoteId, workspaceIdForNote ?? undefined)
-  }, [
-    activeNoteId,
-    currentWorkspaceId,
-    featureEnabled,
-    getWorkspaceDataStore,
-    rehydratePanelsForNote,
-    emitDebugLog,
-  ])
+    rehydratePanelsForNote(activeNoteId)
+  }, [activeNoteId, featureEnabled, rehydratePanelsForNote, sharedWorkspace, emitDebugLog])
 
   return {
     featureEnabled,

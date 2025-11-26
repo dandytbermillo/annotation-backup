@@ -14,6 +14,11 @@ export interface OpenWorkspaceNote {
   version: number
 }
 
+export interface NoteWorkspaceSlot {
+  noteId: string
+  mainPosition?: WorkspacePosition | null
+}
+
 export interface NoteWorkspace {
   dataStore: DataStore
   events: EventEmitter
