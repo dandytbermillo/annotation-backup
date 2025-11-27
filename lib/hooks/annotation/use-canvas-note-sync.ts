@@ -55,6 +55,7 @@ type UseCanvasNoteSyncOptions = {
   branchesMap: Map<string, any> | null
   hydrationStateKey: number | string | boolean
   workspaceSnapshotRevision?: number
+  hydrationInProgressRef?: React.MutableRefObject<boolean>
 }
 
 export function useCanvasNoteSync({
@@ -72,6 +73,7 @@ export function useCanvasNoteSync({
   branchesMap,
   hydrationStateKey,
   workspaceSnapshotRevision = 0,
+  hydrationInProgressRef,
 }: UseCanvasNoteSyncOptions) {
   const lastSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
   const resolveStoredPanelPosition = useCallback(
@@ -118,16 +120,41 @@ export function useCanvasNoteSync({
           revisionChanged,
         },
       })
-      const allowedNoteIds = new Set(noteIds)
+
+      // Option 3: Skip filtering entirely when workspace snapshot revision changed
+      // Let workspace snapshot restoration control canvas items during workspace switches
       if (revisionChanged) {
-        prev.forEach(item => {
-          const existingNoteId = getItemNoteId(item)
-          if (existingNoteId) {
-            allowedNoteIds.add(existingNoteId)
-          }
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "noteIds_sync_skip_during_snapshot_restoration",
+          metadata: {
+            reason: "let_workspace_snapshot_control_items",
+            workspaceSnapshotRevision,
+            prevItemsCount: prev.length,
+            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+          },
         })
+        return prev
       }
-      let changed = revisionChanged
+
+      // Skip filtering while non-main panel hydration is in progress
+      // This prevents the race condition where hydration fetches panels asynchronously
+      // but sync runs again and filters them out before hydration completes
+      if (hydrationInProgressRef?.current) {
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "noteIds_sync_skip_during_hydration",
+          metadata: {
+            reason: "non_main_panel_hydration_in_progress",
+            prevItemsCount: prev.length,
+            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+          },
+        })
+        return prev
+      }
+
+      const allowedNoteIds = new Set(noteIds)
+      let changed = false
 
       const mainByNote = new Map<string, CanvasItem>()
       const otherItems: CanvasItem[] = []
@@ -313,7 +340,8 @@ export function useCanvasNoteSync({
     hasNotes,
     noteIds,
     noteId,
-    canvasItemsLength,
+    // canvasItemsLength removed from dependencies - only used for debug logging
+    // Keeping it as a dependency caused re-triggers when items were cleared during workspace switches
     mainOnlyNoteSet,
     freshNoteSeeds,
     onConsumeFreshNoteSeed,

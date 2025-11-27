@@ -30,6 +30,7 @@ import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
 import { useCanvasTransform } from "@/lib/hooks/annotation/use-canvas-transform"
 import { useCanvasItems } from "@/lib/hooks/annotation/use-canvas-items"
 import { useCanvasNoteSync } from "@/lib/hooks/annotation/use-canvas-note-sync"
+import { useNonMainPanelHydration } from "@/lib/hooks/annotation/use-non-main-panel-hydration"
 import { useCanvasAutosave } from "@/lib/hooks/annotation/use-canvas-autosave"
 import { useCanvasSnapshotLifecycle } from "@/lib/hooks/annotation/use-canvas-snapshot-lifecycle"
 import { LayerManagerProvider, useLayerManager } from "@/lib/hooks/use-layer-manager"
@@ -350,6 +351,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }, [primaryHydrationStatus])
 
   const initialCanvasSetupRef = useRef(false)
+  const nonMainPanelHydrationInProgressRef = useRef(false)
 
   useCanvasNoteSync({
     hasNotes,
@@ -366,6 +368,17 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     branchesMap,
     hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}`,
     workspaceSnapshotRevision,
+    hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
+  })
+
+  // Hydrate non-main panels from database after workspace restoration
+  useNonMainPanelHydration({
+    noteIds,
+    canvasItems,
+    setCanvasItems,
+    workspaceSnapshotRevision,
+    enabled: hasNotes,
+    hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
   })
 
   useWorkspaceHydrationSeed({
