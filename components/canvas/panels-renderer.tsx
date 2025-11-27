@@ -140,9 +140,14 @@ export const PanelsRenderer = memo(function PanelsRenderer({
         }
 
         // Only hide panels if they belong to the PRIMARY note that's being hydrated
+        // AND only during initial hydration (when panel doesn't exist yet in canvasItems)
         // This prevents panels from other notes from flickering when the primary note changes
+        // But allows panels to show when switching back to a workspace (they already exist in state)
         const isPrimaryNote = primaryNoteId ? panelNoteId === primaryNoteId : true
-        const shouldHidePanel = !hydrationReady && panelId !== "main" && isPrimaryNote
+        const panelExistsInState = canvasItems.some(
+          item => item.itemType === "panel" && item.panelId === panelId && (item.noteId ?? '') === panelNoteId
+        )
+        const shouldHidePanel = !hydrationReady && panelId !== "main" && isPrimaryNote && !panelExistsInState
 
         if (shouldHidePanel) {
           void debugLog({
@@ -154,7 +159,8 @@ export const PanelsRenderer = memo(function PanelsRenderer({
               primaryNoteId,
               hydrationReady,
               isPrimaryNote,
-              reason: "hydration_not_ready_for_primary_note",
+              panelExistsInState,
+              reason: "hydration_not_ready_for_primary_note_initial_load",
             },
           })
           return null
