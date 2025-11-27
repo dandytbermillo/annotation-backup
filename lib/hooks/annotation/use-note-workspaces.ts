@@ -340,6 +340,7 @@ export function useNoteWorkspaces({
   const featureEnabled = flagEnabled && !isUnavailable
   const unavailableNoticeShownRef = useRef(false)
   const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
+  const captureRetryAttemptsRef = useRef<Map<string, number>>(new Map())
   const [snapshotRevision, setSnapshotRevision] = useState(0)
   const bumpSnapshotRevision = useCallback(() => {
     setSnapshotRevision((prev) => prev + 1)
@@ -365,6 +366,22 @@ export function useNoteWorkspaces({
           normalized.add(noteId)
         }
       }
+
+      // DEBUG: Log what's being set with call stack
+      const stack = new Error().stack?.split('\n').slice(2, 6).join(' | ') ?? 'no-stack'
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "set_workspace_membership_called",
+        metadata: {
+          workspaceId,
+          inputNoteIds: Array.from(noteIds),
+          normalizedNoteIds: Array.from(normalized),
+          normalizedSize: normalized.size,
+          previousSize: workspaceNoteMembershipRef.current.get(workspaceId)?.size ?? null,
+          callStack: stack,
+        },
+      })
+
       const previous = workspaceNoteMembershipRef.current.get(workspaceId)
       let shouldUpdateMembership = true
       if (previous && previous.size === normalized.size) {
@@ -381,6 +398,19 @@ export function useNoteWorkspaces({
       }
       if (liveStateEnabled) {
         setRuntimeMembership(workspaceId, normalized)
+
+        // DEBUG: Verify what was actually set in runtime
+        const verifySet = getRuntimeMembership(workspaceId)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "set_workspace_membership_verified",
+          metadata: {
+            workspaceId,
+            attemptedToSet: Array.from(normalized),
+            actuallySet: verifySet ? Array.from(verifySet) : null,
+            matchesExpected: verifySet?.size === normalized.size,
+          },
+        })
       }
       if (!v2Enabled) {
         return
@@ -1280,6 +1310,24 @@ export function useNoteWorkspaces({
           normalizedTargetIds.add(panel.noteId)
         })
 
+        // DEBUG: Log membership state before pruning loop
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_snapshot_apply_membership_state",
+          metadata: {
+            workspaceId: activeWorkspaceId,
+            reason: applyReason,
+            runtimeState,
+            workspaceMembershipSize: workspaceMembership?.size ?? null,
+            workspaceMembershipIds: workspaceMembership ? Array.from(workspaceMembership) : null,
+            allowedNoteIdsSize: allowedNoteIds?.size ?? null,
+            allowedNoteIds: allowedNoteIds ? Array.from(allowedNoteIds) : null,
+            normalizedTargetIdsSize: normalizedTargetIds.size,
+            normalizedTargetIds: Array.from(normalizedTargetIds),
+            panelCount: panels?.length ?? 0,
+          },
+        })
+
         const shouldTargetAllNotes = normalizedTargetIds.size === 0
         const shouldLimitToAllowed = Boolean(allowedNoteIds)
         const keysToRemove: string[] = []
@@ -1291,7 +1339,11 @@ export function useNoteWorkspaces({
             let removeKey = false
             const belongsToWorkspace =
               !shouldLimitToAllowed || allowedNoteIds?.has(parsed.noteId) || normalizedTargetIds.has(parsed.noteId)
-            const isTargeted = shouldTargetAllNotes || normalizedTargetIds.has(parsed.noteId)
+            // FIX 3: Respect preserved membership when determining if panel is targeted
+            // Panels belonging to workspace via membership should not be pruned even if not in snapshot
+            const isTargeted = shouldTargetAllNotes ||
+                               normalizedTargetIds.has(parsed.noteId) ||
+                               (allowedNoteIds?.has(parsed.noteId) ?? false)
             if (shouldClearWorkspace) {
               removeKey = true
             } else if (!belongsToWorkspace) {
@@ -1301,6 +1353,26 @@ export function useNoteWorkspaces({
             }
             if (removeKey) {
               keysToRemove.push(rawKey)
+              // DEBUG: Log why this panel is being removed
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "panel_snapshot_prune_decision",
+                metadata: {
+                  workspaceId: activeWorkspaceId,
+                  panelKey: rawKey,
+                  noteId: parsed.noteId,
+                  panelId: parsed.panelId,
+                  reason: applyReason,
+                  shouldClearWorkspace,
+                  belongsToWorkspace,
+                  isTargeted,
+                  inAllowedNoteIds: allowedNoteIds?.has(parsed.noteId) ?? null,
+                  inNormalizedTargetIds: normalizedTargetIds.has(parsed.noteId),
+                  shouldTargetAllNotes,
+                  shouldLimitToAllowed,
+                  removalReason: shouldClearWorkspace ? "clearWorkspace" : !belongsToWorkspace ? "notBelongsToWorkspace" : "notTargeted",
+                },
+              })
             }
           }
         }
@@ -1519,24 +1591,49 @@ export function useNoteWorkspaces({
           )
           const missingCachedNotes = Array.from(cachedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
           if (missingCachedNotes.length > 0) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "snapshot_capture_deferred_cached_open_notes",
-              metadata: {
-                workspaceId,
-                missingNoteIds: missingCachedNotes,
-                cachedNoteCount: cachedNoteIds.size,
-                openNoteCount: openNoteIds.size,
-                timestampMs: Date.now(),
-              },
-            })
-            setTimeout(() => {
-              captureCurrentWorkspaceSnapshot(workspaceId, {
-                readinessReason: "deferred_cached_open_notes",
-                readinessMaxWaitMs,
+            // FIX 4: Prevent infinite deferral loop from stale cached snapshots
+            // Check if this is genuinely waiting for new notes or just stale cache
+            const currentMembership = getRuntimeMembership(workspaceId)
+            const allMissingAreInMembership = missingCachedNotes.every(
+              (noteId) => currentMembership?.has(noteId) ?? false
+            )
+
+            if (allMissingAreInMembership && currentMembership && currentMembership.size >= cachedNoteIds.size) {
+              // Cache is stale - membership already expanded beyond cached snapshot, don't defer
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "snapshot_capture_skip_stale_cache",
+                metadata: {
+                  workspaceId,
+                  missingNoteIds: missingCachedNotes,
+                  cachedNoteCount: cachedNoteIds.size,
+                  openNoteCount: openNoteIds.size,
+                  membershipCount: currentMembership.size,
+                  reason: "cached_snapshot_stale_vs_membership",
+                },
               })
-            }, CAPTURE_DEFER_DELAY_MS)
-            return
+              // Continue with capture using current state, not stale cache
+            } else {
+              // Legitimate wait for notes to be added to open list
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "snapshot_capture_deferred_cached_open_notes",
+                metadata: {
+                  workspaceId,
+                  missingNoteIds: missingCachedNotes,
+                  cachedNoteCount: cachedNoteIds.size,
+                  openNoteCount: openNoteIds.size,
+                  timestampMs: Date.now(),
+                },
+              })
+              setTimeout(() => {
+                captureCurrentWorkspaceSnapshot(workspaceId, {
+                  readinessReason: "deferred_cached_open_notes",
+                  readinessMaxWaitMs,
+                })
+              }, CAPTURE_DEFER_DELAY_MS)
+              return
+            }
           }
         }
       }
@@ -1574,6 +1671,49 @@ export function useNoteWorkspaces({
           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
       )
       const missingOpenNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+      // FIX 1: Guard against stale provider state in live-state hot runtime
+      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId) && missingOpenNotes.length > 0) {
+        const currentAttempts = captureRetryAttemptsRef.current.get(workspaceId) ?? 0
+        const maxRetries = 3
+        const retryTimeoutMs = 100
+        if (currentAttempts < maxRetries) {
+          captureRetryAttemptsRef.current.set(workspaceId, currentAttempts + 1)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_capture_deferred_runtime_sync",
+            metadata: {
+              workspaceId,
+              missingNoteIds: missingOpenNotes,
+              panelNoteCount: observedNoteIds.size,
+              openNoteCount: openNoteIds.size,
+              attemptNumber: currentAttempts + 1,
+              maxRetries,
+              reason: readinessReason,
+            },
+          })
+          setTimeout(() => {
+            captureCurrentWorkspaceSnapshot(workspaceId, {
+              readinessReason: "deferred_runtime_sync",
+              readinessMaxWaitMs,
+            })
+          }, retryTimeoutMs)
+          return
+        } else {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_capture_runtime_sync_timeout",
+            metadata: {
+              workspaceId,
+              missingNoteIds: missingOpenNotes,
+              attemptsExhausted: currentAttempts,
+              proceedingWithRuntimeState: true,
+            },
+          })
+          captureRetryAttemptsRef.current.delete(workspaceId)
+        }
+      } else if (missingOpenNotes.length === 0) {
+        captureRetryAttemptsRef.current.delete(workspaceId)
+      }
       if (missingOpenNotes.length > 0) {
         const augmentedSlots = [
           ...workspaceOpenNotes,
@@ -1650,6 +1790,20 @@ export function useNoteWorkspaces({
         }
       })
       observedNoteIds.forEach((noteId) => membershipSource.add(noteId))
+
+      // DEBUG: Log membership being set from capture
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "capture_set_membership_from_observed",
+        metadata: {
+          workspaceId,
+          membershipSourceIds: Array.from(membershipSource),
+          membershipSourceSize: membershipSource.size,
+          workspaceOpenNotesCount: workspaceOpenNotes.length,
+          observedNoteIdsCount: observedNoteIds.size,
+        },
+      })
+
       setWorkspaceNoteMembership(workspaceId, membershipSource)
       const workspaceIdForComponents = workspaceId
       const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
@@ -1898,7 +2052,79 @@ export function useNoteWorkspaces({
           }
         })
       }
-      setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
+      // FIX 2: Prevent membership regression from partial snapshots in hot runtimes
+      const runtimeState = liveStateEnabled && hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
+      if (runtimeState === "hot") {
+        // Hot runtime: preserve and expand membership, never contract from stale preview
+        const currentMembership = getRuntimeMembership(workspaceId)
+        if (currentMembership && currentMembership.size > 0) {
+          const allCurrentMembers = Array.from(currentMembership)
+          const missingFromSnapshot = allCurrentMembers.filter((noteId) => !declaredNoteIds.has(noteId))
+          if (missingFromSnapshot.length > 0) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_snapshot_membership_preserved",
+              metadata: {
+                workspaceId,
+                runtimeState,
+                snapshotNoteCount: declaredNoteIds.size,
+                currentMembershipCount: currentMembership.size,
+                missingFromSnapshot,
+                preservedMembership: true,
+              },
+            })
+            // Merge: keep existing members + add new ones from snapshot
+            const mergedMembership = new Set([...currentMembership, ...declaredNoteIds])
+
+            // DEBUG: Log the merged membership before setting
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_snapshot_merged_membership_debug",
+              metadata: {
+                workspaceId,
+                currentMembershipIds: Array.from(currentMembership),
+                currentMembershipSize: currentMembership.size,
+                declaredNoteIds: Array.from(declaredNoteIds),
+                declaredNoteIdsSize: declaredNoteIds.size,
+                mergedMembershipIds: Array.from(mergedMembership),
+                mergedMembershipSize: mergedMembership.size,
+                missingFromSnapshot,
+              },
+            })
+
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_set_membership_branch",
+              metadata: { workspaceId, branch: "hot_missing_notes_merged", noteCount: mergedMembership.size },
+            })
+            setWorkspaceNoteMembership(workspaceId, mergedMembership)
+          } else {
+            // Snapshot covers all current members, safe to update
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_set_membership_branch",
+              metadata: { workspaceId, branch: "hot_no_missing_snapshot_only", noteCount: declaredNoteIds.size },
+            })
+            setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
+          }
+        } else {
+          // No existing membership, snapshot is authoritative
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "preview_set_membership_branch",
+            metadata: { workspaceId, branch: "hot_no_existing_membership", noteCount: declaredNoteIds.size },
+          })
+          setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
+        }
+      } else {
+        // Cold runtime or legacy: snapshot is authoritative, overwrite is intentional
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "preview_set_membership_branch",
+          metadata: { workspaceId, branch: "cold_or_legacy", noteCount: declaredNoteIds.size },
+        })
+        setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
+      }
       const scopedPanels = filterPanelsForWorkspace(workspaceId, panelSnapshots)
       const targetIds = new Set<string>(declaredNoteIds)
       scopedPanels.forEach((panel) => {
@@ -1914,7 +2140,10 @@ export function useNoteWorkspaces({
         mainPosition: entry.mainPosition ?? null,
       }))
       cache.openNotes = normalizedOpenNotes
-      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes)
+      // FIX 5: Prevent commitWorkspaceOpenNotes from overwriting Fix 2's merged membership
+      // The membership was already set correctly by Fix 2 above (lines 2080-2112)
+      // We only want to update the open notes cache/runtime, not the membership
+      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes, { updateMembership: false })
       updatePanelSnapshotMap(scopedPanels, "preview_snapshot", { allowEmpty: true })
       const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
       panelNoteIds.forEach((id) => targetIds.add(id))

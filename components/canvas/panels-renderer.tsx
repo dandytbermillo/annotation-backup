@@ -1,6 +1,6 @@
 "use client"
 
-import { memo } from "react"
+import { memo, useEffect, useRef } from "react"
 
 import { CanvasPanel } from "@/components/canvas/canvas-panel"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
@@ -20,6 +20,7 @@ interface PanelsRendererProps {
   onRestorePanelPosition?: (noteId: string, position: { x: number; y: number }) => void
   hydrationReady?: boolean
   noteTitleMap?: Map<string, string> | null
+  primaryNoteId?: string // Add primary note ID to identify which note is being hydrated
 }
 
 export const PanelsRenderer = memo(function PanelsRenderer({
@@ -31,9 +32,45 @@ export const PanelsRenderer = memo(function PanelsRenderer({
   onRestorePanelPosition,
   hydrationReady = true,
   noteTitleMap = null,
+  primaryNoteId,
 }: PanelsRendererProps) {
   const isPlainMode = isPlainModeActive()
   const seenStoreKeys = new Set<string>()
+
+  // DEBUG: Track hydrationReady changes
+  const prevHydrationReadyRef = useRef(hydrationReady)
+  const prevCanvasItemsCountRef = useRef(canvasItems.length)
+
+  useEffect(() => {
+    if (prevHydrationReadyRef.current !== hydrationReady) {
+      void debugLog({
+        component: "PanelsRenderer",
+        action: "hydration_ready_changed",
+        metadata: {
+          previousValue: prevHydrationReadyRef.current,
+          newValue: hydrationReady,
+          canvasItemsCount: canvasItems.length,
+        },
+      })
+      prevHydrationReadyRef.current = hydrationReady
+    }
+
+    if (prevCanvasItemsCountRef.current !== canvasItems.length) {
+      const panels = canvasItems.filter(isPanel)
+      void debugLog({
+        component: "PanelsRenderer",
+        action: "canvas_items_count_changed",
+        metadata: {
+          previousCount: prevCanvasItemsCountRef.current,
+          newCount: canvasItems.length,
+          panelsCount: panels.length,
+          panelIds: panels.map(p => p.panelId),
+          hydrationReady,
+        },
+      })
+      prevCanvasItemsCountRef.current = canvasItems.length
+    }
+  }, [hydrationReady, canvasItems])
 
   const provider = UnifiedProvider.getInstance()
   if (!isPlainMode) {
@@ -42,6 +79,18 @@ export const PanelsRenderer = memo(function PanelsRenderer({
   const branchesMap = !isPlainMode ? provider.getBranchesMap() : null
 
   const panels = canvasItems.filter(isPanel)
+
+  // DEBUG: Log panels being rendered
+  void debugLog({
+    component: "PanelsRenderer",
+    action: "rendering_panels_list",
+    metadata: {
+      hydrationReady,
+      totalCanvasItems: canvasItems.length,
+      totalPanels: panels.length,
+      panelIds: panels.map(p => p.panelId),
+    },
+  })
 
   return (
     <>
@@ -90,7 +139,24 @@ export const PanelsRenderer = memo(function PanelsRenderer({
           })
         }
 
-        if (!hydrationReady && panelId !== "main") {
+        // Only hide panels if they belong to the PRIMARY note that's being hydrated
+        // This prevents panels from other notes from flickering when the primary note changes
+        const isPrimaryNote = primaryNoteId ? panelNoteId === primaryNoteId : true
+        const shouldHidePanel = !hydrationReady && panelId !== "main" && isPrimaryNote
+
+        if (shouldHidePanel) {
+          void debugLog({
+            component: "PanelsRenderer",
+            action: "panel_hidden_not_hydrated",
+            metadata: {
+              panelId,
+              panelNoteId,
+              primaryNoteId,
+              hydrationReady,
+              isPrimaryNote,
+              reason: "hydration_not_ready_for_primary_note",
+            },
+          })
           return null
         }
 

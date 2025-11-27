@@ -90,15 +90,34 @@ export function useCanvasNoteSync({
         noteIds,
         currentItemsCount: canvasItemsLength,
         currentNoteIdProp: noteId,
+        revisionChanged,
+        workspaceSnapshotRevision,
       },
     })
 
     if (!hasNotes) {
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "clearing_canvas_items_no_notes",
+        metadata: {
+          reason: "hasNotes_is_false",
+        },
+      })
       setCanvasItems([])
       return
     }
 
     setCanvasItems(prev => {
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "setCanvasItems_called_before_sync",
+        metadata: {
+          prevItemsCount: prev.length,
+          prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+          noteIds,
+          revisionChanged,
+        },
+      })
       const allowedNoteIds = new Set(noteIds)
       if (revisionChanged) {
         prev.forEach(item => {
@@ -270,8 +289,23 @@ export function useCanvasNoteSync({
           prevMainPanels,
           nextMainPanels,
           mainByNoteKeys: Array.from(mainByNote.keys()),
+          prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+          newPanelIds: newItems.filter(item => item.itemType === "panel").map(p => p.panelId),
         },
       })
+
+      if (changed) {
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "canvas_items_state_will_change",
+          metadata: {
+            previousPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+            newPanelIds: newItems.filter(item => item.itemType === "panel").map(p => p.panelId),
+            panelsRemoved: prev.filter(item => item.itemType === "panel" && !newItems.some(ni => ni.itemType === "panel" && ni.panelId === item.panelId)).map(p => p.panelId),
+            panelsAdded: newItems.filter(item => item.itemType === "panel" && !prev.some(pi => pi.itemType === "panel" && pi.panelId === item.panelId)).map(p => p.panelId),
+          },
+        })
+      }
 
       return newItems
     })

@@ -329,6 +329,26 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     skipCameraRestore
   })
 
+  // DEBUG: Track hydrationStatus.success changes
+  const prevHydrationSuccessRef = useRef(primaryHydrationStatus.success)
+  useEffect(() => {
+    if (prevHydrationSuccessRef.current !== primaryHydrationStatus.success) {
+      void debugLog({
+        component: "AnnotationCanvas",
+        action: "primary_hydration_success_changed",
+        metadata: {
+          previousValue: prevHydrationSuccessRef.current,
+          newValue: primaryHydrationStatus.success,
+          loading: primaryHydrationStatus.loading,
+          panelsLoaded: primaryHydrationStatus.panelsLoaded,
+          cameraLoaded: primaryHydrationStatus.cameraLoaded,
+          error: primaryHydrationStatus.error?.message,
+        },
+      })
+      prevHydrationSuccessRef.current = primaryHydrationStatus.success
+    }
+  }, [primaryHydrationStatus])
+
   const initialCanvasSetupRef = useRef(false)
 
   useCanvasNoteSync({
@@ -889,6 +909,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           onClose={handlePanelClose}
           hydrationReady={primaryHydrationStatus.success}
           noteTitleMap={noteTitleMap}
+          primaryNoteId={noteId}
         />
             
             {/* Component Panels */}

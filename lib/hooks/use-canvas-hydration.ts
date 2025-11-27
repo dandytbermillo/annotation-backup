@@ -146,6 +146,12 @@ async function fetchWithTimeout(
 const hydrationSessions = new Map<string, number>()
 const HYDRATION_COOLDOWN_MS = 5000 // 5 seconds cooldown between hydrations
 
+// Module-level Map to track successful hydrations
+// This persists across component remounts to prevent flickering
+// Key: noteId, Value: { success: boolean, timestamp: number }
+const hydrationSuccessCache = new Map<string, { success: boolean; timestamp: number; isHydrating: boolean }>()
+const SUCCESS_CACHE_TTL_MS = 30000 // 30 seconds - cache successful hydrations
+
 export interface HydrationOptions {
   /** Note ID to load state for */
   noteId: string
@@ -209,14 +215,20 @@ export function useCanvasHydration(options: HydrationOptions) {
   } = options
 
   const { state, dispatch } = useCanvas()
-  const [status, setStatus] = useState<HydrationStatus>({
+
+  // Initialize status from cache if available (survives component remount)
+  const cachedState = hydrationSuccessCache.get(noteId)
+  const now = Date.now()
+  const isCacheValid = cachedState && (now - cachedState.timestamp) < SUCCESS_CACHE_TTL_MS
+
+  const [status, setStatus] = useState<HydrationStatus>(() => ({
     loading: false,
     error: null,
-    success: false,
+    success: isCacheValid ? cachedState.success : false,
     panelsLoaded: 0,
     cameraLoaded: false,
     panels: []
-  })
+  }))
 
   /**
    * Load camera state from API with timeout, validation, and cache fallback
@@ -662,14 +674,44 @@ export function useCanvasHydration(options: HydrationOptions) {
       return
     }
 
-    setStatus({
+    // Check module-level cache for this noteId
+    const cachedHydration = hydrationSuccessCache.get(noteId)
+    const cacheAge = cachedHydration ? Date.now() - cachedHydration.timestamp : Infinity
+    const isCacheValid = cachedHydration && cacheAge < SUCCESS_CACHE_TTL_MS
+    const isAlreadyHydrating = cachedHydration?.isHydrating ?? false
+
+    // Only reset success to false if this note hasn't been successfully hydrated recently
+    // This prevents flickering when noteId changes transiently or component remounts
+    const shouldResetSuccess = !isCacheValid || !cachedHydration.success
+
+    debugLog({
+      component: 'CanvasHydration',
+      action: 'hydrate_start',
+      metadata: {
+        noteId,
+        isCacheValid,
+        cachedSuccess: cachedHydration?.success ?? null,
+        cacheAgeMs: cacheAge === Infinity ? null : cacheAge,
+        willResetSuccess: shouldResetSuccess,
+        isAlreadyHydrating
+      }
+    })
+
+    // Mark as hydrating in cache
+    hydrationSuccessCache.set(noteId, {
+      success: isCacheValid ? cachedHydration.success : false,
+      timestamp: Date.now(),
+      isHydrating: true
+    })
+
+    setStatus(prev => ({
       loading: true,
       error: null,
-      success: false,
-      panelsLoaded: 0,
-      cameraLoaded: false,
-      panels: []
-    })
+      success: shouldResetSuccess ? false : (isCacheValid ? cachedHydration.success : prev.success),
+      panelsLoaded: shouldResetSuccess ? 0 : prev.panelsLoaded,
+      cameraLoaded: shouldResetSuccess ? false : prev.cameraLoaded,
+      panels: shouldResetSuccess ? [] : prev.panels
+    }))
 
     try {
       // Load camera state first (needed for coordinate conversion)
@@ -810,6 +852,13 @@ export function useCanvasHydration(options: HydrationOptions) {
         }
       })
 
+      // Mark this noteId as successfully hydrated in module-level cache
+      hydrationSuccessCache.set(noteId, {
+        success: true,
+        timestamp: Date.now(),
+        isHydrating: false
+      })
+
       setStatus({
         loading: false,
         error: null,
@@ -822,7 +871,12 @@ export function useCanvasHydration(options: HydrationOptions) {
       debugLog({
         component: 'CanvasHydration',
         action: 'hydration_complete',
-        metadata: { panelsLoaded, cameraLoaded }
+        metadata: {
+          noteId,
+          panelsLoaded,
+          cameraLoaded,
+          cachedInModule: true
+        }
       })
     } catch (error) {
       // Don't set error state if aborted (expected behavior)
@@ -836,10 +890,18 @@ export function useCanvasHydration(options: HydrationOptions) {
       }
 
       const errorObj = error instanceof Error ? error : new Error('Unknown hydration error')
+
+      // Mark hydration as failed in cache
+      hydrationSuccessCache.set(noteId, {
+        success: false,
+        timestamp: Date.now(),
+        isHydrating: false
+      })
+
       debugLog({
         component: 'CanvasHydration',
         action: 'hydration_failed',
-        metadata: { error: errorObj.message, stack: errorObj.stack }
+        metadata: { noteId, error: errorObj.message, stack: errorObj.stack }
       })
 
       setStatus({
@@ -856,14 +918,36 @@ export function useCanvasHydration(options: HydrationOptions) {
     loadCameraState,
     loadPanelLayout,
     applyCameraState,
-    applyPanelLayout
+    applyPanelLayout,
+    noteId
   ])
 
   /**
    * Hydrate on mount with AbortController for race condition prevention
    */
   useEffect(() => {
+    const stack = new Error().stack?.split('\n').slice(2, 6).join(' | ') ?? 'no-stack'
+    debugLog({
+      component: 'CanvasHydration',
+      action: 'hydration_effect_triggered',
+      metadata: {
+        enabled,
+        noteId,
+        userId,
+        callStack: stack
+      }
+    })
+
     if (!enabled || !noteId) {
+      debugLog({
+        component: 'CanvasHydration',
+        action: 'hydration_effect_skipped',
+        metadata: {
+          reason: !enabled ? 'disabled' : 'no_noteId',
+          enabled,
+          noteId
+        }
+      })
       return
     }
 
@@ -880,12 +964,34 @@ export function useCanvasHydration(options: HydrationOptions) {
       return
     }
 
+    // Check if we're already hydrating this noteId (from module-level cache)
+    const cachedState = hydrationSuccessCache.get(noteId)
+    if (cachedState?.isHydrating) {
+      debugLog({
+        component: 'CanvasHydration',
+        action: 'skip_already_hydrating',
+        metadata: { noteId, reason: 'hydration_in_progress_for_same_note' }
+      })
+      return
+    }
+
+    // If we have a recent successful hydration, skip re-hydrating
+    const cacheAge = cachedState ? now - cachedState.timestamp : Infinity
+    if (cachedState?.success && cacheAge < SUCCESS_CACHE_TTL_MS) {
+      debugLog({
+        component: 'CanvasHydration',
+        action: 'skip_recent_successful_hydration',
+        metadata: { noteId, cacheAgeMs: cacheAge, reason: 'already_hydrated_successfully' }
+      })
+      return
+    }
+
     // Mark hydration timestamp
     hydrationSessions.set(noteId, now)
     debugLog({
       component: 'CanvasHydration',
       action: 'starting_hydration',
-      metadata: { noteId }
+      metadata: { noteId, userId, enabled }
     })
 
     const controller = new AbortController()
@@ -899,7 +1005,7 @@ export function useCanvasHydration(options: HydrationOptions) {
       debugLog({
         component: 'CanvasHydration',
         action: 'hydration_cleanup',
-        metadata: { reason: 'unmount or noteId changed' }
+        metadata: { reason: 'unmount or noteId changed', noteId }
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
