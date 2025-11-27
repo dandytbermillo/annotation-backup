@@ -51,6 +51,7 @@ const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 const NOTE_WORKSPACE_DEBUG_ENABLED = true
 const DESKTOP_RUNTIME_CAP = 4
 const TOUCH_RUNTIME_CAP = 2
+const CAPTURE_DEFER_DELAY_MS = 48
 
 const detectRuntimeCapacity = () => {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -1503,6 +1504,42 @@ export function useNoteWorkspaces({
           },
         })
       }
+      let openNoteIds = new Set(
+        workspaceOpenNotes
+          .map((entry) => entry.noteId)
+          .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+      )
+      if (liveStateEnabled) {
+        const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId)?.panels ?? []
+        if (cachedPanels.length > 0) {
+          const cachedNoteIds = new Set(
+            cachedPanels
+              .map((panel) => panel.noteId)
+              .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+          )
+          const missingCachedNotes = Array.from(cachedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+          if (missingCachedNotes.length > 0) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "snapshot_capture_deferred_cached_open_notes",
+              metadata: {
+                workspaceId,
+                missingNoteIds: missingCachedNotes,
+                cachedNoteCount: cachedNoteIds.size,
+                openNoteCount: openNoteIds.size,
+                timestampMs: Date.now(),
+              },
+            })
+            setTimeout(() => {
+              captureCurrentWorkspaceSnapshot(workspaceId, {
+                readinessReason: "deferred_cached_open_notes",
+                readinessMaxWaitMs,
+              })
+            }, CAPTURE_DEFER_DELAY_MS)
+            return
+          }
+        }
+      }
       const captureStartedAt = Date.now()
       emitDebugLog({
         component: "NoteWorkspace",
@@ -1536,11 +1573,6 @@ export function useNoteWorkspaces({
           .map((panel) => panel.noteId)
           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
       )
-      const openNoteIds = new Set(
-        workspaceOpenNotes
-          .map((entry) => entry.noteId)
-          .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
-      )
       const missingOpenNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
       if (missingOpenNotes.length > 0) {
         const augmentedSlots = [
@@ -1551,6 +1583,11 @@ export function useNoteWorkspaces({
           })),
         ]
         workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, augmentedSlots)
+        openNoteIds = new Set(
+          workspaceOpenNotes
+            .map((entry) => entry.noteId)
+            .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+        )
         emitDebugLog({
           component: "NoteWorkspace",
           action: "snapshot_open_note_seed",
@@ -1719,6 +1756,7 @@ export function useNoteWorkspaces({
       updatePanelSnapshotMap,
       setWorkspaceNoteMembership,
       waitForPanelSnapshotReadiness,
+      liveStateEnabled,
       v2Enabled,
     ],
   )

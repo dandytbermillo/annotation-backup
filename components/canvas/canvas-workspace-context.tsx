@@ -24,6 +24,7 @@ import {
 import {
   SHARED_WORKSPACE_ID,
   type NoteWorkspace,
+  type NoteWorkspaceSlot,
   type OpenWorkspaceNote,
   type WorkspacePosition,
 } from "@/lib/workspace/types"
@@ -44,6 +45,8 @@ import {
   markRuntimeActive,
   markRuntimePaused,
   removeWorkspaceRuntime,
+  setRuntimeMembership,
+  setRuntimeOpenNotes,
 } from "@/lib/workspace/runtime-manager"
 
 export { SHARED_WORKSPACE_ID }
@@ -123,6 +126,25 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const activeWorkspaceId = useSyncExternalStore(subscribeActiveWorkspace, getActiveWorkspaceSnapshot)
   const selectedWorkspaceIdRef = useRef<string | null>(null)
 
+  const syncRuntimeOpenState = useCallback((workspaceId: string, slots: OpenWorkspaceNote[]) => {
+    if (!workspaceId) return
+    const normalized: NoteWorkspaceSlot[] = slots
+      .map((slot) => {
+        if (!slot?.noteId) return null
+        const mainPosition =
+          slot.mainPosition && typeof slot.mainPosition.x === "number" && typeof slot.mainPosition.y === "number"
+            ? slot.mainPosition
+            : null
+        return { noteId: slot.noteId, mainPosition }
+      })
+      .filter((slot): slot is NoteWorkspaceSlot => Boolean(slot))
+    setRuntimeOpenNotes(workspaceId, normalized)
+    setRuntimeMembership(
+      workspaceId,
+      normalized.map((slot) => slot.noteId),
+    )
+  }, [])
+
   const resolveWorkspaceId = useCallback((requestedId: string) => {
     return selectedWorkspaceIdRef.current ?? activeWorkspaceId ?? requestedId ?? SHARED_WORKSPACE_ID
   }, [activeWorkspaceId])
@@ -130,13 +152,15 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   useEffect(() => {
     const workspaceId = activeWorkspaceId ?? selectedWorkspaceIdRef.current ?? SHARED_WORKSPACE_ID
     selectedWorkspaceIdRef.current = workspaceId
-    setCurrentOpenNotes(openNotesByWorkspaceRef.current.get(workspaceId) ?? [])
+    const nextSlots = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+    setCurrentOpenNotes(nextSlots)
+    syncRuntimeOpenState(workspaceId, nextSlots)
     setCurrentOpenNotesWorkspaceId(workspaceId)
     markRuntimeActive(workspaceId)
     return () => {
       markRuntimePaused(workspaceId)
     }
-  }, [activeWorkspaceId])
+  }, [activeWorkspaceId, syncRuntimeOpenState])
 
   const getPositionCache = useCallback(
     (workspaceId: string) => {
@@ -211,8 +235,9 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
         setCurrentOpenNotes(next)
       }
+      syncRuntimeOpenState(workspaceId, next)
     },
-    [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+    [activeWorkspaceId, getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const closeNote = useCallback(
@@ -225,10 +250,11 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
         setCurrentOpenNotes(next)
       }
+      syncRuntimeOpenState(workspaceId, next)
       removeWorkspace(noteId)
       clearNoteWorkspaceOwner(noteId)
     },
-    [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
+    [activeWorkspaceId, removeWorkspace, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const updateMainPosition = useCallback(
@@ -247,8 +273,9 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
         setCurrentOpenNotes(next)
       }
+      syncRuntimeOpenState(workspaceId, next)
     },
-    [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+    [activeWorkspaceId, getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const getWorkspaceVersion = useCallback(() => null, [])
