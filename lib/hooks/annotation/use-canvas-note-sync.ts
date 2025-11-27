@@ -56,6 +56,7 @@ type UseCanvasNoteSyncOptions = {
   hydrationStateKey: number | string | boolean
   workspaceSnapshotRevision?: number
   hydrationInProgressRef?: React.MutableRefObject<boolean>
+  workspaceRestorationInProgressRef?: React.MutableRefObject<boolean>
 }
 
 export function useCanvasNoteSync({
@@ -74,6 +75,7 @@ export function useCanvasNoteSync({
   hydrationStateKey,
   workspaceSnapshotRevision = 0,
   hydrationInProgressRef,
+  workspaceRestorationInProgressRef,
 }: UseCanvasNoteSyncOptions) {
   const lastSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
   const resolveStoredPanelPosition = useCallback(
@@ -118,8 +120,26 @@ export function useCanvasNoteSync({
           prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
           noteIds,
           revisionChanged,
+          workspaceRestorationInProgress: workspaceRestorationInProgressRef?.current ?? false,
         },
       })
+
+      // COMPREHENSIVE FIX: Skip ALL syncs during workspace restoration
+      // This prevents syncs triggered by ANY dependency change (noteIds, noteId, etc.)
+      // from running before snapshot restore + hydration complete
+      if (workspaceRestorationInProgressRef?.current) {
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "noteIds_sync_skip_during_workspace_restoration",
+          metadata: {
+            reason: "workspace_restoration_in_progress",
+            workspaceSnapshotRevision,
+            prevItemsCount: prev.length,
+            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
+          },
+        })
+        return prev
+      }
 
       // Option 3: Skip filtering entirely when workspace snapshot revision changed
       // Let workspace snapshot restoration control canvas items during workspace switches

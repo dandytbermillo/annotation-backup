@@ -25,6 +25,7 @@ type UseNonMainPanelHydrationOptions = {
   workspaceSnapshotRevision: number
   enabled?: boolean
   hydrationInProgressRef?: React.MutableRefObject<boolean>
+  workspaceRestorationInProgressRef?: React.MutableRefObject<boolean>
 }
 
 /**
@@ -41,6 +42,7 @@ export function useNonMainPanelHydration({
   workspaceSnapshotRevision,
   enabled = true,
   hydrationInProgressRef,
+  workspaceRestorationInProgressRef,
 }: UseNonMainPanelHydrationOptions) {
   const lastRevisionRef = useRef(workspaceSnapshotRevision)
   const hydratedRevisionRef = useRef<number | null>(null)
@@ -157,9 +159,20 @@ export function useNonMainPanelHydration({
           },
         })
         hydratedRevisionRef.current = workspaceSnapshotRevision
-        // Clear flag - hydration complete
+        // Clear flags - hydration complete (no panels to add)
         if (hydrationInProgressRef) {
           hydrationInProgressRef.current = false
+        }
+        if (workspaceRestorationInProgressRef) {
+          workspaceRestorationInProgressRef.current = false
+          debugLog({
+            component: "NonMainPanelHydration",
+            action: "workspace_restoration_completed",
+            metadata: {
+              reason: "no_panels_to_hydrate",
+              workspaceSnapshotRevision,
+            },
+          })
         }
         return
       }
@@ -214,9 +227,21 @@ export function useNonMainPanelHydration({
 
       hydratedRevisionRef.current = workspaceSnapshotRevision
 
-      // Clear flag - hydration complete
+      // Clear flags - hydration complete
       if (hydrationInProgressRef) {
         hydrationInProgressRef.current = false
+      }
+      if (workspaceRestorationInProgressRef) {
+        workspaceRestorationInProgressRef.current = false
+        debugLog({
+          component: "NonMainPanelHydration",
+          action: "workspace_restoration_completed",
+          metadata: {
+            reason: "hydration_successful",
+            workspaceSnapshotRevision,
+            panelsAdded: nonMainPanelsToAdd.length,
+          },
+        })
       }
     }).catch((error) => {
       debugLog({
@@ -227,9 +252,20 @@ export function useNonMainPanelHydration({
         },
       })
 
-      // Clear flag even on error
+      // Clear flags even on error
       if (hydrationInProgressRef) {
         hydrationInProgressRef.current = false
+      }
+      if (workspaceRestorationInProgressRef) {
+        workspaceRestorationInProgressRef.current = false
+        debugLog({
+          component: "NonMainPanelHydration",
+          action: "workspace_restoration_completed",
+          metadata: {
+            reason: "hydration_error",
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
       }
     })
   }, [noteIds, canvasItems, setCanvasItems, workspaceSnapshotRevision, enabled])

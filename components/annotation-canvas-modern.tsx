@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo } from "react"
+import { useEffect, useState, forwardRef, useImperativeHandle, useRef, useCallback, useMemo, useLayoutEffect } from "react"
 import { CanvasProvider, useCanvas } from "./canvas/canvas-context"
 import type { DataStore } from "@/lib/data-store"
 import { IsolationProvider } from "@/lib/isolation/context"
@@ -353,6 +353,33 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const initialCanvasSetupRef = useRef(false)
   const nonMainPanelHydrationInProgressRef = useRef(false)
 
+  // Track workspace restoration state to prevent syncs during workspace switches
+  const workspaceRestorationInProgressRef = useRef(false)
+  // Initialize to null so we ALWAYS detect the first revision (even on remount)
+  // This ensures the flag gets set even if component unmounts/remounts during workspace switches
+  const lastWorkspaceRevisionRef = useRef<number | null>(null)
+
+  // Detect workspace revision changes and set restoration flag
+  // Use layoutEffect to run synchronously before other effects
+  useLayoutEffect(() => {
+    const previousRevision = lastWorkspaceRevisionRef.current
+
+    if (previousRevision !== workspaceSnapshotRevision) {
+      workspaceRestorationInProgressRef.current = true
+      lastWorkspaceRevisionRef.current = workspaceSnapshotRevision
+
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "workspace_restoration_started",
+        metadata: {
+          previousRevision,
+          newRevision: workspaceSnapshotRevision,
+          isFirstMount: previousRevision === null,
+        },
+      })
+    }
+  }, [workspaceSnapshotRevision])
+
   useCanvasNoteSync({
     hasNotes,
     noteIds,
@@ -369,6 +396,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}`,
     workspaceSnapshotRevision,
     hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
+    workspaceRestorationInProgressRef,
   })
 
   // Hydrate non-main panels from database after workspace restoration
@@ -379,6 +407,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     workspaceSnapshotRevision,
     enabled: hasNotes,
     hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
+    workspaceRestorationInProgressRef,
   })
 
   useWorkspaceHydrationSeed({
