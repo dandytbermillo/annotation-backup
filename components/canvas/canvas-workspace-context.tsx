@@ -48,6 +48,10 @@ import {
   setRuntimeMembership,
   setRuntimeOpenNotes,
 } from "@/lib/workspace/runtime-manager"
+import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
+import { DataStore } from "@/lib/data-store"
+import { LayerManager } from "@/lib/canvas/layer-manager"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 export { SHARED_WORKSPACE_ID }
 export type { NoteWorkspace, OpenWorkspaceNote, WorkspacePosition }
@@ -212,6 +216,19 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
 
   const openNote = useCallback(
     async (noteId: string, options?: OpenNoteOptions) => {
+      // DEBUG: Trace note opening timing
+      const debugStartTime = performance.now()
+      void debugLog({
+        component: "NoteDelay",
+        action: "open_note_start",
+        metadata: {
+          noteId,
+          options: options ?? null,
+          activeWorkspaceId,
+          timestampMs: debugStartTime,
+        },
+      })
+
       if (!noteId) return
       const { mainPosition = null, workspaceId: explicitWorkspaceId = null } = options ?? {}
       const workspaceId = explicitWorkspaceId ?? resolveWorkspaceId(noteId)
@@ -232,10 +249,34 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
           )
         : [...current, { noteId, mainPosition: position, updatedAt: null, version: 0 }]
       openNotesByWorkspaceRef.current.set(workspaceId, next)
-      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+
+      const willUpdateState = workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)
+      void debugLog({
+        component: "NoteDelay",
+        action: "open_note_before_set_state",
+        metadata: {
+          noteId,
+          workspaceId,
+          activeWorkspaceId,
+          willUpdateState,
+          nextNoteCount: next.length,
+          durationMs: performance.now() - debugStartTime,
+        },
+      })
+
+      if (willUpdateState) {
         setCurrentOpenNotes(next)
       }
       syncRuntimeOpenState(workspaceId, next)
+
+      void debugLog({
+        component: "NoteDelay",
+        action: "open_note_end",
+        metadata: {
+          noteId,
+          durationMs: performance.now() - debugStartTime,
+        },
+      })
     },
     [activeWorkspaceId, getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
   )

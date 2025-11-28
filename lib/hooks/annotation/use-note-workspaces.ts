@@ -16,6 +16,8 @@ import {
   setRuntimeOpenNotes,
   getRuntimeMembership,
   setRuntimeMembership,
+  setRuntimeNoteOwner,
+  clearRuntimeNoteOwner,
   hasWorkspaceRuntime,
   listWorkspaceRuntimeIds,
   removeWorkspaceRuntime,
@@ -45,6 +47,7 @@ import {
   setActiveWorkspaceContext,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 // Enable workspace debug logging; can be toggled at runtime if needed.
@@ -358,7 +361,11 @@ export function useNoteWorkspaces({
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
 
   const setWorkspaceNoteMembership = useCallback(
-    (workspaceId: string | null | undefined, noteIds: Iterable<string | null | undefined>) => {
+    (
+      workspaceId: string | null | undefined,
+      noteIds: Iterable<string | null | undefined>,
+      timestamp?: number,
+    ) => {
       if (!workspaceId) return
       const normalized = new Set<string>()
       for (const noteId of noteIds) {
@@ -366,6 +373,8 @@ export function useNoteWorkspaces({
           normalized.add(noteId)
         }
       }
+
+      const writeTimestamp = timestamp ?? Date.now()
 
       // DEBUG: Log what's being set with call stack
       const stack = new Error().stack?.split('\n').slice(2, 6).join(' | ') ?? 'no-stack'
@@ -378,10 +387,17 @@ export function useNoteWorkspaces({
           normalizedNoteIds: Array.from(normalized),
           normalizedSize: normalized.size,
           previousSize: workspaceNoteMembershipRef.current.get(workspaceId)?.size ?? null,
+          timestamp: writeTimestamp,
           callStack: stack,
         },
       })
 
+      // Phase 1: Write to runtime FIRST when live state enabled (prevents stale overwrites)
+      if (liveStateEnabled) {
+        setRuntimeMembership(workspaceId, normalized, writeTimestamp)
+      }
+
+      // Keep ref in sync as backup/legacy fallback
       const previous = workspaceNoteMembershipRef.current.get(workspaceId)
       let shouldUpdateMembership = true
       if (previous && previous.size === normalized.size) {
@@ -396,9 +412,8 @@ export function useNoteWorkspaces({
       if (shouldUpdateMembership) {
         workspaceNoteMembershipRef.current.set(workspaceId, normalized)
       }
-      if (liveStateEnabled) {
-        setRuntimeMembership(workspaceId, normalized)
 
+      if (liveStateEnabled) {
         // DEBUG: Verify what was actually set in runtime
         const verifySet = getRuntimeMembership(workspaceId)
         emitDebugLog({
@@ -428,13 +443,23 @@ export function useNoteWorkspaces({
           existingMembership?.delete(noteId)
         }
         if (existingOwner !== workspaceId) {
-          setNoteWorkspaceOwner(noteId, workspaceId)
+          // Phase 1: Use runtime ownership when live state enabled
+          if (liveStateEnabled) {
+            setRuntimeNoteOwner(workspaceId, noteId)
+          } else {
+            setNoteWorkspaceOwner(noteId, workspaceId)
+          }
           ownedNotesRef.current.set(noteId, workspaceId)
         }
         previouslyOwnedByWorkspace.delete(noteId)
       })
       previouslyOwnedByWorkspace.forEach((noteId) => {
-        clearNoteWorkspaceOwner(noteId)
+        // Phase 1: Use runtime ownership when live state enabled
+        if (liveStateEnabled) {
+          clearRuntimeNoteOwner(workspaceId, noteId)
+        } else {
+          clearNoteWorkspaceOwner(noteId)
+        }
         ownedNotesRef.current.delete(noteId)
       })
     },
@@ -444,12 +469,11 @@ export function useNoteWorkspaces({
   const getWorkspaceNoteMembership = useCallback(
     (workspaceId: string | null | undefined): Set<string> | null => {
       if (!workspaceId) return null
+      // Phase 1: When live state enabled, runtime is the ONLY source of truth
       if (liveStateEnabled) {
-        const runtimeMembership = getRuntimeMembership(workspaceId)
-        if (runtimeMembership) {
-          return runtimeMembership
-        }
+        return getRuntimeMembership(workspaceId)  // Even if null/empty
       }
+      // Legacy mode: Use ref fallback when live state is disabled
       return workspaceNoteMembershipRef.current.get(workspaceId) ?? null
     },
     [liveStateEnabled],
@@ -509,30 +533,64 @@ export function useNoteWorkspaces({
           }>
         | null
         | undefined,
-      options?: { updateMembership?: boolean; updateCache?: boolean },
+      options?: { updateMembership?: boolean; updateCache?: boolean; timestamp?: number; callSite?: string },
     ): NoteWorkspaceSlot[] => {
       if (!workspaceId) return []
       const normalized = normalizeWorkspaceSlots(slots)
+      const writeTimestamp = options?.timestamp ?? Date.now()
+
+      // DEBUG: Trace note addition timing with call site for stale-write diagnosis
+      const debugStartTime = performance.now()
+      void debugLog({
+        component: "NoteDelay",
+        action: "commit_open_notes_start",
+        metadata: {
+          workspaceId,
+          noteCount: normalized.length,
+          noteIds: normalized.map(n => n.noteId),
+          liveStateEnabled,
+          timestampMs: debugStartTime,
+          callSite: options?.callSite ?? "unknown",
+        },
+      })
+
+      // Phase 1: Write to runtime FIRST when live state enabled (prevents stale overwrites)
+      if (liveStateEnabled) {
+        setRuntimeOpenNotes(workspaceId, normalized, writeTimestamp)
+      }
+
+      // Keep ref in sync as backup/legacy fallback
       const previous = workspaceOpenNotesRef.current.get(workspaceId)
       const changed = !areWorkspaceSlotsEqual(previous, normalized)
       if (changed) {
         workspaceOpenNotesRef.current.set(workspaceId, normalized)
       }
+
       const shouldUpdateMembership = options?.updateMembership ?? true
       const shouldUpdateCache = options?.updateCache ?? true
       if (shouldUpdateMembership) {
         setWorkspaceNoteMembership(
           workspaceId,
           normalized.map((entry) => entry.noteId),
+          writeTimestamp,
         )
       }
       if (shouldUpdateCache) {
         const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
         cache.openNotes = normalized
       }
-      if (liveStateEnabled) {
-        setRuntimeOpenNotes(workspaceId, normalized)
-      }
+
+      // DEBUG: Trace note addition timing
+      void debugLog({
+        component: "NoteDelay",
+        action: "commit_open_notes_end",
+        metadata: {
+          workspaceId,
+          noteCount: normalized.length,
+          durationMs: performance.now() - debugStartTime,
+        },
+      })
+
       return normalized
     },
     [liveStateEnabled, setWorkspaceNoteMembership],
@@ -541,21 +599,49 @@ export function useNoteWorkspaces({
   const getWorkspaceOpenNotes = useCallback(
     (workspaceId: string | null | undefined): NoteWorkspaceSlot[] => {
       if (!workspaceId) return []
-      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
+
+      // DEBUG: Trace note reading timing
+      void debugLog({
+        component: "NoteDelay",
+        action: "get_open_notes_called",
+        metadata: {
+          workspaceId,
+          liveStateEnabled,
+          timestampMs: performance.now(),
+        },
+      })
+
+      // Phase 1: When live state enabled, runtime is the ONLY source of truth
+      // No fallbacks to provider/refs/cache - they would overwrite runtime
+      if (liveStateEnabled) {
         const runtimeSlots = getRuntimeOpenNotes(workspaceId)
+        // DEBUG: Log what we got from runtime
+        void debugLog({
+          component: "NoteDelay",
+          action: "get_open_notes_result_live_state",
+          metadata: {
+            workspaceId,
+            noteCount: runtimeSlots.length,
+            noteIds: runtimeSlots.map(n => n.noteId),
+            timestampMs: performance.now(),
+          },
+        })
+        // Keep ref in sync for debugging/legacy compatibility
         const stored = workspaceOpenNotesRef.current.get(workspaceId)
         if (!areWorkspaceSlotsEqual(stored, runtimeSlots)) {
           workspaceOpenNotesRef.current.set(workspaceId, runtimeSlots)
         }
         return runtimeSlots
       }
+
+      // Legacy mode: Use fallback chain when live state is disabled
       const stored = workspaceOpenNotesRef.current.get(workspaceId)
       if (stored && stored.length > 0) {
         return stored
       }
       const cachedSnapshot = workspaceSnapshotsRef.current.get(workspaceId)
       if (stored && stored.length === 0 && cachedSnapshot && cachedSnapshot.openNotes.length > 0) {
-        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false })
+        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false, callSite: "getOpenNotes_cachedSnapshot1" })
       }
       const canUseProvider =
         openNotesWorkspaceId &&
@@ -563,19 +649,19 @@ export function useNoteWorkspaces({
         replayingWorkspaceRef.current === 0 &&
         !isHydratingRef.current
       if (canUseProvider && openNotes.length > 0) {
-        return commitWorkspaceOpenNotes(workspaceId, openNotes, { updateCache: false })
+        return commitWorkspaceOpenNotes(workspaceId, openNotes, { updateCache: false, callSite: "getOpenNotes_provider" })
       }
       if (cachedSnapshot && cachedSnapshot.openNotes.length > 0) {
-        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false })
+        return commitWorkspaceOpenNotes(workspaceId, cachedSnapshot.openNotes, { updateMembership: false, callSite: "getOpenNotes_cachedSnapshot2" })
       }
       const membership = workspaceNoteMembershipRef.current.get(workspaceId)
       if (membership && membership.size > 0) {
         const inferred = Array.from(membership).map((noteId) => ({ noteId, mainPosition: null }))
-        return commitWorkspaceOpenNotes(workspaceId, inferred, { updateCache: false })
+        return commitWorkspaceOpenNotes(workspaceId, inferred, { updateCache: false, callSite: "getOpenNotes_membership" })
       }
       return stored ?? []
     },
-    [commitWorkspaceOpenNotes, hasWorkspaceRuntime, liveStateEnabled, openNotes, openNotesWorkspaceId],
+    [commitWorkspaceOpenNotes, getRuntimeOpenNotes, liveStateEnabled, openNotes, openNotesWorkspaceId],
   )
 
   const filterPanelsForWorkspace = useCallback(
@@ -701,7 +787,7 @@ export function useNoteWorkspaces({
         return false
       }
       const filteredSlots = storedSlots.filter((slot) => !staleNoteIds.has(slot.noteId))
-      commitWorkspaceOpenNotes(workspaceId, filteredSlots, { updateCache: true })
+      commitWorkspaceOpenNotes(workspaceId, filteredSlots, { updateCache: true, callSite: "evictStaleNotes" })
       const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
       if (cache.panels.length > 0) {
         cache.panels = cache.panels.filter((panel) => {
@@ -1565,7 +1651,7 @@ export function useNoteWorkspaces({
         .filter((entry): entry is { noteId: string; mainPosition: { x: number; y: number } | null } => Boolean(entry))
       const missingSlots = mergeSlots.filter((slot) => !existingIds.has(slot.noteId))
       if (missingSlots.length > 0) {
-        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, [...workspaceOpenNotes, ...missingSlots])
+        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, [...workspaceOpenNotes, ...missingSlots], { callSite: "snapshotRuntimeSync" })
         emitDebugLog({
           component: "NoteWorkspace",
           action: "snapshot_open_notes_runtime_sync",
@@ -1722,7 +1808,7 @@ export function useNoteWorkspaces({
             mainPosition: resolveMainPanelPosition(noteId) ?? null,
           })),
         ]
-        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, augmentedSlots)
+        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, augmentedSlots, { callSite: "snapshotOpenNoteSeed" })
         openNoteIds = new Set(
           workspaceOpenNotes
             .map((entry) => entry.noteId)
@@ -1854,7 +1940,7 @@ export function useNoteWorkspaces({
         mainPosition: resolveMainPanelPosition(note.noteId),
       }))
       cache.openNotes = normalizedOpenNotes
-      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes)
+      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes, { callSite: "captureSnapshot" })
       cacheWorkspaceSnapshot({
         workspaceId,
         panels: snapshots,
@@ -2139,11 +2225,45 @@ export function useNoteWorkspaces({
         noteId: entry.noteId,
         mainPosition: entry.mainPosition ?? null,
       }))
-      cache.openNotes = normalizedOpenNotes
+
+      // FIX 6: Apply same hot runtime protection to openNotes as we do for membership
+      // When runtime is hot, merge openNotes instead of overwriting with stale snapshot data
+      let openNotesToCommit: { noteId: string; mainPosition: { x: number; y: number } | null }[] = normalizedOpenNotes
+      if (runtimeState === "hot") {
+        const currentOpenNotes = getRuntimeOpenNotes(workspaceId)
+        if (currentOpenNotes && currentOpenNotes.length > 0) {
+          const snapshotNoteIds = new Set(normalizedOpenNotes.map((n) => n.noteId))
+          const missingFromSnapshot = currentOpenNotes.filter((n) => !snapshotNoteIds.has(n.noteId))
+          if (missingFromSnapshot.length > 0) {
+            // Merge: keep existing open notes + add new ones from snapshot
+            // Normalize currentOpenNotes to match the expected type
+            const normalizedCurrent = currentOpenNotes.map((n) => ({
+              noteId: n.noteId,
+              mainPosition: n.mainPosition ?? null,
+            }))
+            const existingIds = new Set(normalizedCurrent.map((n) => n.noteId))
+            openNotesToCommit = [...normalizedCurrent, ...normalizedOpenNotes.filter((n) => !existingIds.has(n.noteId))]
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_snapshot_open_notes_preserved",
+              metadata: {
+                workspaceId,
+                runtimeState,
+                snapshotNoteCount: normalizedOpenNotes.length,
+                currentOpenNotesCount: currentOpenNotes.length,
+                missingFromSnapshot: missingFromSnapshot.map((n) => n.noteId),
+                mergedCount: openNotesToCommit.length,
+              },
+            })
+          }
+        }
+      }
+      cache.openNotes = openNotesToCommit
+
       // FIX 5: Prevent commitWorkspaceOpenNotes from overwriting Fix 2's merged membership
       // The membership was already set correctly by Fix 2 above (lines 2080-2112)
       // We only want to update the open notes cache/runtime, not the membership
-      commitWorkspaceOpenNotes(workspaceId, normalizedOpenNotes, { updateMembership: false })
+      commitWorkspaceOpenNotes(workspaceId, openNotesToCommit, { updateMembership: false, callSite: "replaySnapshot" })
       updatePanelSnapshotMap(scopedPanels, "preview_snapshot", { allowEmpty: true })
       const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
       panelNoteIds.forEach((id) => targetIds.add(id))
@@ -2274,7 +2394,7 @@ export function useNoteWorkspaces({
     if (!currentWorkspaceId) return
     if (openNotesWorkspaceId !== currentWorkspaceId) return
     if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) return
-    commitWorkspaceOpenNotes(currentWorkspaceId, openNotes, { updateCache: false })
+    commitWorkspaceOpenNotes(currentWorkspaceId, openNotes, { updateCache: false, callSite: "useEffect_openNotesSync" })
   }, [
     commitWorkspaceOpenNotes,
     featureEnabled,
@@ -2396,6 +2516,7 @@ export function useNoteWorkspaces({
       }))
       workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceIdForComponents, inferredSlots, {
         updateCache: false,
+        callSite: "buildPayload_inferred",
       })
     }
     const payload: NoteWorkspacePayload = {
@@ -2766,7 +2887,7 @@ export function useNoteWorkspaces({
           mainPosition: entry.position ?? null,
         }))
         cache.openNotes = normalizedSnapshotOpenNotes
-        commitWorkspaceOpenNotes(workspaceId, normalizedSnapshotOpenNotes)
+        commitWorkspaceOpenNotes(workspaceId, normalizedSnapshotOpenNotes, { callSite: "restoreWorkspace" })
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
@@ -3141,7 +3262,7 @@ export function useNoteWorkspaces({
       setWorkspaces((prev) => [...prev, workspace])
       setCurrentWorkspaceId(workspace.id)
       setWorkspaceNoteMembership(workspace.id, [])
-      commitWorkspaceOpenNotes(workspace.id, [], { updateCache: false })
+      commitWorkspaceOpenNotes(workspace.id, [], { updateCache: false, callSite: "createWorkspace" })
       setStatusHelperText(formatSyncedLabel(workspace.updatedAt))
       emitDebugLog({
         component: "NoteWorkspace",

@@ -144,6 +144,21 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     getCachedPosition,
     getWorkspace
   } = useCanvasWorkspace()
+
+  // DEBUG: Trace when openNotes changes in component
+  useEffect(() => {
+    void debugLog({
+      component: "NoteDelay",
+      action: "component_received_open_notes_update",
+      metadata: {
+        noteCount: openNotes.length,
+        noteIds: openNotes.map(n => n.noteId),
+        openNotesWorkspaceId,
+        timestampMs: performance.now(),
+      },
+    })
+  }, [openNotes, openNotesWorkspaceId])
+
   const [workspaceStoreId, setWorkspaceStoreId] = useState<string | null>(null)
   const sharedWorkspace = useMemo(() => {
     if (!noteWorkspaceV2Enabled) {
