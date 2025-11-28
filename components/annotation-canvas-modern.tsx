@@ -17,7 +17,7 @@ import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { PanelsRenderer } from "./canvas/panels-renderer"
-import { CanvasItem } from "@/types/canvas-items"
+import { CanvasItem, createPanelItem } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 // IsolationDebugPanel now integrated into EnhancedControlPanelV2
 import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
@@ -267,13 +267,50 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   // Unified canvas items state
   const workspaceSeededNotesRef = useRef<Set<string>>(new Set())
+
+  // Compute initial canvas items synchronously from workspace data
+  // This prevents empty canvas during rapid workspace switches (unmount/remount cycles)
+  const initialCanvasItems = useMemo(() => {
+    if (!noteIds || noteIds.length === 0) {
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "initial_canvas_items_empty",
+        metadata: {
+          reason: "no_noteIds",
+          workspaceSnapshotRevision,
+        },
+      })
+      return []
+    }
+
+    // Create main panels from workspace positions synchronously
+    const mainPanels = noteIds.map(id => {
+      const position = resolveWorkspacePosition(id) ?? getDefaultMainPosition()
+      const storeKey = ensurePanelKey(id, "main")
+      return createPanelItem("main", position, "main", id, storeKey)
+    })
+
+    debugLog({
+      component: "AnnotationCanvas",
+      action: "initial_canvas_items_computed",
+      metadata: {
+        workspaceSnapshotRevision,
+        noteIds,
+        panelCount: mainPanels.length,
+        positions: mainPanels.map(p => ({ noteId: p.noteId, position: p.position })),
+      },
+    })
+
+    return mainPanels
+  }, [workspaceSnapshotRevision, noteIds, resolveWorkspacePosition])
+
   const {
     canvasItems,
     setCanvasItems,
     canvasItemsRef,
     dedupeWarnings,
     updateDedupeWarnings,
-  } = useCanvasItems({ noteId })
+  } = useCanvasItems({ noteId, initialItems: initialCanvasItems })
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)

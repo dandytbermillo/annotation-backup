@@ -10,6 +10,7 @@ type UpdateOptions = { append?: boolean }
 
 type UseCanvasItemsOptions = {
   noteId: string
+  initialItems?: CanvasItem[]
 }
 
 type UseCanvasItemsResult = {
@@ -20,8 +21,8 @@ type UseCanvasItemsResult = {
   updateDedupeWarnings: (incoming: CanvasDedupeWarning[], options?: UpdateOptions) => void
 }
 
-export function useCanvasItems({ noteId }: UseCanvasItemsOptions): UseCanvasItemsResult {
-  const [canvasItems, internalSetCanvasItems] = useState<CanvasItem[]>([])
+export function useCanvasItems({ noteId, initialItems = [] }: UseCanvasItemsOptions): UseCanvasItemsResult {
+  const [canvasItems, internalSetCanvasItems] = useState<CanvasItem[]>(initialItems)
   const canvasItemsRef = useRef<CanvasItem[]>(canvasItems)
 
   useEffect(() => {
