@@ -248,7 +248,7 @@ type UseNoteWorkspaceOptions = {
   activeNoteId: string | null
   setActiveNoteId: Dispatch<SetStateAction<string | null>>
   resolveMainPanelPosition: (noteId: string) => { x: number; y: number } | null
-  openWorkspaceNote: (noteId: string, options?: { mainPosition?: { x: number; y: number } | null; persist?: boolean; persistPosition?: boolean }) => Promise<void>
+  openWorkspaceNote: (noteId: string, options?: { mainPosition?: { x: number; y: number } | null; persist?: boolean; persistPosition?: boolean; workspaceId?: string }) => Promise<void>
   closeWorkspaceNote: (noteId: string, options?: { persist?: boolean; removeWorkspace?: boolean }) => Promise<void>
   layerContext: LayerContextValue | null
   isWorkspaceReady: boolean
@@ -2051,7 +2051,7 @@ export function useNoteWorkspaces({
         const updated = await adapterRef.current.saveWorkspace({
           id: workspaceId,
           payload,
-          revision: workspaceRevisionRef.current.get(workspaceId) ?? null,
+          revision: workspaceRevisionRef.current.get(workspaceId) ?? "",
         })
         workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
         lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
@@ -3166,6 +3166,7 @@ export function useNoteWorkspaces({
           },
         })
       } else if (event.type === "component_pending") {
+        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
         emitDebugLog({
           component: "NoteWorkspace",
           action: "component_pending",
@@ -3210,29 +3211,6 @@ export function useNoteWorkspaces({
             await persistWorkspaceNow()
           })()
         }
-      } else if (event.type === "component_pending") {
-        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "component_pending",
-          metadata: {
-            workspaceId: event.workspaceId,
-            componentId: event.componentId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      } else if (event.type === "component_ready") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "component_ready",
-          metadata: {
-            workspaceId: event.workspaceId,
-            componentId: event.componentId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
       }
     })
     return unsubscribe

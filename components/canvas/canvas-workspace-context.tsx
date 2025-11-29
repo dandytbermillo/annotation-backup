@@ -133,15 +133,14 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   const syncRuntimeOpenState = useCallback((workspaceId: string, slots: OpenWorkspaceNote[]) => {
     if (!workspaceId) return
     const normalized: NoteWorkspaceSlot[] = slots
+      .filter((slot): slot is OpenWorkspaceNote => Boolean(slot?.noteId))
       .map((slot) => {
-        if (!slot?.noteId) return null
         const mainPosition =
           slot.mainPosition && typeof slot.mainPosition.x === "number" && typeof slot.mainPosition.y === "number"
             ? slot.mainPosition
-            : null
+            : undefined
         return { noteId: slot.noteId, mainPosition }
       })
-      .filter((slot): slot is NoteWorkspaceSlot => Boolean(slot))
     setRuntimeOpenNotes(workspaceId, normalized)
     setRuntimeMembership(
       workspaceId,
@@ -375,6 +374,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
   const workspacesRef = useRef<Map<string, NoteWorkspace>>(new Map())
   const sharedWorkspaceRef = useRef<NoteWorkspace | null>(null)
   const [openNotes, setOpenNotes] = useState<OpenWorkspaceNote[]>([])
+  const [openNotesWorkspaceId] = useState<string | null>(SHARED_WORKSPACE_ID)
   const [isWorkspaceReady, setIsWorkspaceReady] = useState(false)
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
   const [isHydrating, setIsHydrating] = useState(false)
@@ -441,6 +441,7 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     const positionCachesRef = useRef<Map<string, Map<string, WorkspacePosition>>>(new Map())
     const openNotesByWorkspaceRef = useRef<Map<string, OpenWorkspaceNote[]>>(new Map())
     const [currentOpenNotes, setCurrentOpenNotes] = useState<OpenWorkspaceNote[]>([])
+    const openNotesWorkspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
 
     useEffect(() => {
       const workspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
@@ -571,6 +572,7 @@ const closeNote = useCallback(
         removeWorkspace,
         listWorkspaces,
         openNotes: currentOpenNotes,
+        openNotesWorkspaceId,
         isWorkspaceReady: true,
         isWorkspaceLoading: false,
         isHydrating: false,
@@ -590,6 +592,7 @@ const closeNote = useCallback(
         removeWorkspace,
         listWorkspaces,
         currentOpenNotes,
+        openNotesWorkspaceId,
         refreshWorkspace,
         openNote,
         closeNote,
