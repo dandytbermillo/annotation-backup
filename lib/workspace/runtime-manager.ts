@@ -19,9 +19,39 @@ export type WorkspaceRuntime = {
   // Timestamps to prevent stale overwrites (Phase 1 ownership plumbing)
   openNotesUpdatedAt: number
   membershipUpdatedAt: number
+  // Phase 2: Visibility state for multi-runtime hide/show
+  isVisible: boolean
+  lastVisibleAt: number
 }
 
 const runtimes = new Map<string, WorkspaceRuntime>()
+
+// Phase 2: Runtime change listeners for re-rendering multi-canvas
+const runtimeChangeListeners = new Set<() => void>()
+
+// Phase 2: Version counter that increments on ANY runtime change (IDs or contents)
+// Used by useSyncExternalStore to detect when to re-render
+let runtimeVersion = 0
+
+export const getRuntimeVersion = () => runtimeVersion
+
+export const subscribeToRuntimeChanges = (listener: () => void) => {
+  runtimeChangeListeners.add(listener)
+  return () => runtimeChangeListeners.delete(listener)
+}
+
+export const notifyRuntimeChanges = () => {
+  // Increment version so useSyncExternalStore detects the change
+  runtimeVersion++
+
+  runtimeChangeListeners.forEach((listener) => {
+    try {
+      listener()
+    } catch {
+      // Ignore listener errors
+    }
+  })
+}
 
 // DEBUG: Unique ID to detect multiple module instances
 const MODULE_INSTANCE_ID = Math.random().toString(36).substring(2, 8)
@@ -72,6 +102,9 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     noteOwners: new Map(),
     openNotesUpdatedAt: now,
     membershipUpdatedAt: now,
+    // Phase 2: New runtimes start hidden
+    isVisible: false,
+    lastVisibleAt: 0,
   }
   runtimes.set(workspaceId, runtime)
 
@@ -81,6 +114,10 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
       runtimeIds: Array.from(runtimes.keys()),
     })
   }
+
+  // Phase 2: Don't notify here - notification happens via setRuntimeVisible()
+  // which is called after runtime setup. Notifying during getWorkspaceRuntime
+  // can cause "setState during render" errors if called inside useMemo/render.
 
   return runtime
 }
@@ -117,6 +154,9 @@ export const removeWorkspaceRuntime = (workspaceId: string) => {
     runtime.membership.clear()
   }
   runtimes.delete(workspaceId)
+
+  // Phase 2: Notify listeners when runtime is removed
+  notifyRuntimeChanges()
 }
 
 export const listWorkspaceRuntimeIds = () => Array.from(runtimes.keys())
@@ -156,6 +196,12 @@ export const setRuntimeOpenNotes = (
 
   runtime.openNotes = slots
   runtime.openNotesUpdatedAt = writeTimestamp
+
+  // Phase 2: Notify container that openNotes changed so it re-renders
+  // Use queueMicrotask to defer notification, avoiding setState-during-render issues
+  queueMicrotask(() => {
+    notifyRuntimeChanges()
+  })
 }
 
 export const getRuntimeMembership = (workspaceId: string): Set<string> | null => {
@@ -214,4 +260,100 @@ export const getRuntimeNoteOwner = (noteId: string): string | null => {
     }
   }
   return null
+}
+
+// Phase 2: Visibility management for multi-runtime hide/show
+
+/**
+ * Set a runtime's visibility state.
+ * When visible, also updates lastVisibleAt for LRU tracking.
+ */
+export const setRuntimeVisible = (workspaceId: string, visible: boolean) => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  const wasVisible = runtime.isVisible
+  runtime.isVisible = visible
+
+  if (visible) {
+    runtime.lastVisibleAt = Date.now()
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] setRuntimeVisible`, {
+      workspaceId,
+      visible,
+      wasVisible,
+      lastVisibleAt: runtime.lastVisibleAt,
+    })
+  }
+
+  // Notify listeners if visibility changed
+  if (wasVisible !== visible) {
+    notifyRuntimeChanges()
+  }
+}
+
+/**
+ * Get the ID of the currently visible runtime, if any.
+ */
+export const getVisibleRuntimeId = (): string | null => {
+  for (const [id, runtime] of runtimes.entries()) {
+    if (runtime.isVisible) return id
+  }
+  return null
+}
+
+/**
+ * Check if a specific runtime is visible.
+ */
+export const isRuntimeVisible = (workspaceId: string): boolean => {
+  return runtimes.get(workspaceId)?.isVisible ?? false
+}
+
+/**
+ * List all "hot" runtime IDs (runtimes that exist in memory).
+ * Used for rendering multiple canvas instances.
+ */
+export const listHotRuntimes = (): string[] => {
+  return Array.from(runtimes.keys())
+}
+
+/**
+ * Get runtime info for all hot runtimes.
+ * Used by MultiWorkspaceCanvasContainer to render each canvas.
+ */
+export const getHotRuntimesInfo = (): Array<{
+  workspaceId: string
+  isVisible: boolean
+  openNotes: NoteWorkspaceSlot[]
+  lastVisibleAt: number
+}> => {
+  return Array.from(runtimes.entries()).map(([workspaceId, runtime]) => ({
+    workspaceId,
+    isVisible: runtime.isVisible,
+    openNotes: runtime.openNotes,
+    lastVisibleAt: runtime.lastVisibleAt,
+  }))
+}
+
+/**
+ * Get the least recently visible runtime ID for eviction.
+ * Excludes the currently visible runtime.
+ */
+export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
+  let oldestId: string | null = null
+  let oldestTime = Infinity
+
+  for (const [id, runtime] of runtimes.entries()) {
+    // Don't evict the visible runtime
+    if (runtime.isVisible) continue
+
+    if (runtime.lastVisibleAt < oldestTime) {
+      oldestTime = runtime.lastVisibleAt
+      oldestId = id
+    }
+  }
+
+  return oldestId
 }

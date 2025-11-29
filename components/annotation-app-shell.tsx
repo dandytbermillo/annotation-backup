@@ -19,6 +19,7 @@ import { ConstellationProvider } from "@/components/constellation/constellation-
 import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationWorkspaceCanvas } from "@/components/workspace/annotation-workspace-canvas"
+import { MultiWorkspaceCanvasContainer } from "@/components/workspace/multi-workspace-canvas-container"
 import { WorkspaceConstellationLayer } from "@/components/workspace/workspace-constellation-layer"
 import type { OverlayCameraState } from "@/lib/types/overlay-layout"
 import { Z_INDEX } from "@/lib/constants/z-index"
@@ -54,7 +55,7 @@ import { useWorkspaceFloatingToolbar } from "@/lib/hooks/annotation/use-workspac
 import { useWorkspaceOverlayProps } from "@/lib/hooks/annotation/use-workspace-overlay-props"
 import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-toolbar-props"
 import { useNoteWorkspaces } from "@/lib/hooks/annotation/use-note-workspaces"
-import { isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
+import { isNoteWorkspaceV2Enabled, isNoteWorkspaceLiveStateEnabled } from "@/lib/flags/note"
 import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -130,6 +131,7 @@ type AnnotationAppContentProps = {
 
 function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
+  const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
   const {
     openNotes,
     openNotesWorkspaceId,
@@ -1391,7 +1393,63 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  const workspaceCanvas = openNotes.length > 0 ? (
+  // Shared floating toolbar for canvas (rendered as child of the canvas)
+  const floatingToolbarChild = showNotesWidget ? (
+    <CanvasAwareFloatingToolbar
+      x={notesWidgetPosition.x}
+      y={notesWidgetPosition.y}
+      onClose={handleCloseNotesWidget}
+      onSelectNote={handleNoteSelect}
+      onCreateOverlayPopup={handleCreateOverlayPopup}
+      onAddComponent={handleAddComponentFromToolbar}
+      editorRef={activeEditorRef}
+      activePanelId={activePanelId}
+      onBackdropStyleChange={handleBackdropStyleChange}
+      onFolderRenamed={handleFolderRenamed}
+      activePanel={toolbarActivePanel}
+      onActivePanelChange={setToolbarActivePanel}
+      refreshRecentNotes={recentNotesRefreshTrigger}
+      onToggleConstellationPanel={toggleConstellationView}
+      showConstellationPanel={showConstellationPanel}
+      knowledgeBaseWorkspace={knowledgeBaseWorkspace}
+      workspaceReady={noteWorkspaceReady}
+      workspaceName={
+        noteWorkspaceState.workspaces.find(
+          (entry) => entry.id === noteWorkspaceState.currentWorkspaceId,
+        )?.name ?? null
+      }
+    />
+  ) : null
+
+  // Phase 2: Use multi-canvas container when live state is enabled for hot workspace switching
+  // This keeps hidden canvases mounted (visibility:hidden) so components keep running
+  const workspaceCanvas = liveStateEnabled && noteWorkspaceState.currentWorkspaceId ? (
+    <MultiWorkspaceCanvasContainer
+      key="multi-workspace"
+      ref={canvasRef}
+      activeWorkspaceId={noteWorkspaceState.currentWorkspaceId}
+      freshNoteSeeds={freshNoteSeeds}
+      onConsumeFreshNoteSeed={consumeFreshNoteSeed}
+      isNotesExplorerOpen={false}
+      freshNoteIds={freshNoteIds}
+      onFreshNoteHydrated={handleFreshNoteHydrated}
+      onCanvasStateChange={handleCanvasStateChange}
+      mainOnlyNoteIds={mainOnlyNotes}
+      onMainOnlyLayoutHandled={handleMainOnlyLayoutHandled}
+      showAddComponentMenu={showAddComponentMenu}
+      onToggleAddComponentMenu={() => setShowAddComponentMenu(!showAddComponentMenu)}
+      onRegisterActiveEditor={handleRegisterActiveEditor}
+      onSnapshotLoadComplete={handleSnapshotLoadComplete}
+      skipSnapshotForNote={skipSnapshotForNote}
+      onSnapshotSettled={handleSnapshotSettled}
+      noteTitleMap={noteTitleMapRef.current}
+      workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
+      onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
+    >
+      {floatingToolbarChild}
+    </MultiWorkspaceCanvasContainer>
+  ) : openNotes.length > 0 ? (
+    // Original single-canvas approach when live state is disabled
     <AnnotationWorkspaceCanvas
       key="workspace"
       ref={canvasRef}
@@ -1416,32 +1474,7 @@ const initialWorkspaceSyncRef = useRef(false)
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
       onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
     >
-      {showNotesWidget && (
-        <CanvasAwareFloatingToolbar
-          x={notesWidgetPosition.x}
-          y={notesWidgetPosition.y}
-          onClose={handleCloseNotesWidget}
-          onSelectNote={handleNoteSelect}
-          onCreateOverlayPopup={handleCreateOverlayPopup}
-          onAddComponent={handleAddComponentFromToolbar}
-          editorRef={activeEditorRef}
-          activePanelId={activePanelId}
-          onBackdropStyleChange={handleBackdropStyleChange}
-          onFolderRenamed={handleFolderRenamed}
-          activePanel={toolbarActivePanel}
-          onActivePanelChange={setToolbarActivePanel}
-          refreshRecentNotes={recentNotesRefreshTrigger}
-          onToggleConstellationPanel={toggleConstellationView}
-          showConstellationPanel={showConstellationPanel}
-          knowledgeBaseWorkspace={knowledgeBaseWorkspace}
-          workspaceReady={noteWorkspaceReady}
-          workspaceName={
-            noteWorkspaceState.workspaces.find(
-              (entry) => entry.id === noteWorkspaceState.currentWorkspaceId,
-            )?.name ?? null
-          }
-        />
-      )}
+      {floatingToolbarChild}
     </AnnotationWorkspaceCanvas>
   ) : null
 

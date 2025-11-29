@@ -21,6 +21,11 @@ import {
   hasWorkspaceRuntime,
   listWorkspaceRuntimeIds,
   removeWorkspaceRuntime,
+  // Phase 2: Visibility management
+  setRuntimeVisible,
+  isRuntimeVisible,
+  listHotRuntimes,
+  notifyRuntimeChanges,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -3000,6 +3005,16 @@ export function useNoteWorkspaces({
           },
         })
         bumpSnapshotRevision()
+
+        // Phase 2: Mark runtime visible after initial hydration completes
+        if (liveStateEnabled) {
+          setRuntimeVisible(workspaceId, true)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "workspace_runtime_visible",
+            metadata: { workspaceId, wasCold: true, source: "hydrate_workspace" },
+          })
+        }
       } catch (error) {
         console.error("[NoteWorkspace] hydrate failed", error)
         emitDebugLog({
@@ -3023,6 +3038,7 @@ export function useNoteWorkspaces({
       emitDebugLog,
       filterPanelsForWorkspace,
       layerContext,
+      liveStateEnabled,
       openNotes,
       openWorkspaceNote,
       setActiveNoteId,
@@ -3368,11 +3384,61 @@ export function useNoteWorkspaces({
       const previousWorkspaceId = currentWorkspaceIdRef.current ?? currentWorkspaceId ?? null
       setPendingWorkspaceId(workspaceId)
       setActiveWorkspaceContext(workspaceId)
+
+      // Phase 2: Check if target workspace has a hot runtime
+      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
+
       emitDebugLog({
         component: "NoteWorkspace",
         action: "select_workspace_requested",
-        metadata: { workspaceId, previousWorkspaceId },
+        metadata: { workspaceId, previousWorkspaceId, targetRuntimeState },
       })
+
+      // Phase 2: HOT SWITCH - Just toggle visibility, skip snapshot capture/replay
+      if (liveStateEnabled && targetRuntimeState === "hot") {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_switch_hot",
+          metadata: {
+            workspaceId,
+            previousWorkspaceId,
+            hotRuntimeCount: listHotRuntimes().length,
+          },
+        })
+
+        // Hide previous runtime
+        if (previousWorkspaceId) {
+          setRuntimeVisible(previousWorkspaceId, false)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "workspace_runtime_hidden",
+            metadata: { workspaceId: previousWorkspaceId },
+          })
+        }
+
+        // Show target runtime
+        setRuntimeVisible(workspaceId, true)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_runtime_visible",
+          metadata: { workspaceId, wasCold: false },
+        })
+
+        // Update state without async snapshot work
+        snapshotOwnerWorkspaceIdRef.current = workspaceId
+        setCurrentWorkspaceId(workspaceId)
+        setPendingWorkspaceId(null)
+
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "select_workspace_hot_complete",
+          metadata: { workspaceId },
+        })
+
+        return
+      }
+
+      // COLD SWITCH - Original behavior with snapshot capture/replay
       const run = async () => {
         try {
           await ensureRuntimePrepared(workspaceId, "select_workspace")
@@ -3382,6 +3448,16 @@ export function useNoteWorkspaces({
           })
           lastSaveReasonRef.current = "workspace_switch"
           await persistWorkspaceNow()
+
+          // Phase 2: Hide previous runtime after capture
+          if (liveStateEnabled && previousWorkspaceId) {
+            setRuntimeVisible(previousWorkspaceId, false)
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "workspace_runtime_hidden",
+              metadata: { workspaceId: previousWorkspaceId },
+            })
+          }
 
           snapshotOwnerWorkspaceIdRef.current = workspaceId
           setActiveWorkspaceContext(workspaceId)
@@ -3467,6 +3543,16 @@ export function useNoteWorkspaces({
               })
             }
           }
+
+          // Phase 2: Show new runtime after cold load complete
+          if (liveStateEnabled) {
+            setRuntimeVisible(workspaceId, true)
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "workspace_runtime_visible",
+              metadata: { workspaceId, wasCold: true },
+            })
+          }
         } catch (error) {
           setPendingWorkspaceId(null)
           setActiveWorkspaceContext(previousWorkspaceId)
@@ -3488,6 +3574,7 @@ export function useNoteWorkspaces({
       captureCurrentWorkspaceSnapshot,
       currentWorkspaceId,
       ensureRuntimePrepared,
+      liveStateEnabled,
       pendingWorkspaceId,
       persistWorkspaceNow,
       previewWorkspaceFromSnapshot,
