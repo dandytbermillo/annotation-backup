@@ -2126,6 +2126,26 @@ export function useNoteWorkspaces({
       if (!force && lastPreview === snapshot) {
         return
       }
+
+      // FIX 8: Don't apply empty snapshot if runtime has notes
+      // This protects against stale/transitional snapshots overwriting live state
+      const snapshotOpenNotesCount = snapshot.openNotes?.length ?? 0
+      if (snapshotOpenNotesCount === 0 && liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
+        const runtimeOpenNotes = getRuntimeOpenNotes(workspaceId)
+        if (runtimeOpenNotes && runtimeOpenNotes.length > 0) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "fix8_rejected_empty_snapshot",
+            metadata: {
+              workspaceId,
+              runtimeNoteCount: runtimeOpenNotes.length,
+              reason: "runtime_has_notes_would_lose_data",
+            },
+          })
+          return // Don't apply - would lose notes
+        }
+      }
+
       snapshotOwnerWorkspaceIdRef.current = workspaceId
       const panelSnapshots = snapshot.panels ?? []
       const declaredNoteIds = new Set(
@@ -2272,6 +2292,10 @@ export function useNoteWorkspaces({
         suppressMutationEvents: true,
         reason: "preview_snapshot",
       })
+
+      // FIX 7: Extend targetIds with merged openNotes to prevent close loop from undoing FIX 6
+      // This ensures notes preserved by FIX 6 (hot runtime merge) aren't closed by the loop below
+      openNotesToCommit.forEach(n => targetIds.add(n.noteId))
 
       const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
       const notesToClose = openNotes.filter((note) => !targetIds.has(note.noteId))
