@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -69,30 +70,45 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     const hotRuntimes = useMemo(() => getHotRuntimesInfo(), [hotRuntimeIds])
 
     // Determine which canvases to render
+    // IMPORTANT: Only render canvases that have at least one note.
+    // This prevents the hook order violation in ModernAnnotationCanvasInner:
+    // - If canvas renders with empty noteIds, it returns null before hooks run
+    // - When notes sync in, hooks run, causing "Expected static flag was missing" error
+    // By not rendering empty canvases, we ensure the canvas component mounts fresh
+    // with notes already present, so hooks always run in the same order.
     const canvasesToRender = useMemo(() => {
-      return hotRuntimes.map((runtime) => ({
-        ...runtime,
-        isActive: runtime.workspaceId === activeWorkspaceId,
-      }))
+      return hotRuntimes
+        .filter((runtime) => runtime.openNotes.length > 0)
+        .map((runtime) => ({
+          ...runtime,
+          isActive: runtime.workspaceId === activeWorkspaceId,
+        }))
     }, [hotRuntimes, activeWorkspaceId])
 
-    // Keep refs to all canvas instances
+    // Keep refs to all canvas instances - stable Map that persists across renders
     const canvasRefsMap = useRef<Map<string, MutableRefObject<any>>>(new Map())
 
-    // Ensure refs exist for all runtimes
-    canvasesToRender.forEach((runtime) => {
-      if (!canvasRefsMap.current.has(runtime.workspaceId)) {
-        canvasRefsMap.current.set(runtime.workspaceId, { current: null })
+    // Lazy getter for canvas refs - creates on-demand during render (idempotent, safe in concurrent mode)
+    // This avoids mutating the Map in a forEach during render which can cause React fiber issues
+    const getOrCreateCanvasRef = useCallback((workspaceId: string): MutableRefObject<any> => {
+      let ref = canvasRefsMap.current.get(workspaceId)
+      if (!ref) {
+        ref = { current: null }
+        canvasRefsMap.current.set(workspaceId, ref)
       }
-    })
+      return ref
+    }, [])
 
-    // Clean up refs for removed runtimes
-    const activeIds = new Set(canvasesToRender.map((r) => r.workspaceId))
-    canvasRefsMap.current.forEach((_, id) => {
-      if (!activeIds.has(id)) {
-        canvasRefsMap.current.delete(id)
-      }
-    })
+    // Clean up refs for removed runtimes - do this in useEffect AFTER render, not during
+    // This prevents React fiber corruption from mutations during render phase
+    useEffect(() => {
+      const activeIds = new Set(canvasesToRender.map((r) => r.workspaceId))
+      canvasRefsMap.current.forEach((_, id) => {
+        if (!activeIds.has(id)) {
+          canvasRefsMap.current.delete(id)
+        }
+      })
+    }, [canvasesToRender])
 
     // Forward ref to the active canvas
     useImperativeHandle(
@@ -129,7 +145,7 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
         }}
       >
         {canvasesToRender.map((runtime) => {
-          const canvasRef = canvasRefsMap.current.get(runtime.workspaceId)!
+          const canvasRef = getOrCreateCanvasRef(runtime.workspaceId)
           return (
             <div
               key={runtime.workspaceId}
