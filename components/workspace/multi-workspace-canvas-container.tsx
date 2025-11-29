@@ -74,8 +74,8 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     // This prevents the hook order violation in ModernAnnotationCanvasInner:
     // - If canvas renders with empty noteIds, it returns null before hooks run
     // - When notes sync in, hooks run, causing "Expected static flag was missing" error
-    // By not rendering empty canvases, we ensure the canvas component mounts fresh
-    // with notes already present, so hooks always run in the same order.
+    // TODO: To truly keep components alive during workspace switches, we need to refactor
+    // ModernAnnotationCanvasInner to handle empty noteIds gracefully (run all hooks unconditionally).
     const canvasesToRender = useMemo(() => {
       return hotRuntimes
         .filter((runtime) => runtime.openNotes.length > 0)

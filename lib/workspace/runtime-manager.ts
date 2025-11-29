@@ -5,6 +5,7 @@ import { LayerManager } from "@/lib/canvas/layer-manager"
 import { getWorkspaceStore } from "@/lib/workspace/workspace-store-registry"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 export type WorkspaceRuntime = {
   id: string
@@ -176,6 +177,31 @@ export const setRuntimeOpenNotes = (
 ) => {
   const runtime = getWorkspaceRuntime(workspaceId)
   const writeTimestamp = timestamp ?? Date.now()
+  const previousSlots = runtime.openNotes
+  const previousCount = previousSlots.length
+  const newCount = slots.length
+
+  // Phase 2 DEBUG: Log ALL openNotes changes, especially when going to/from empty
+  const isGoingEmpty = previousCount > 0 && newCount === 0
+  const isBecomingPopulated = previousCount === 0 && newCount > 0
+  const callStack = new Error().stack?.split('\n').slice(2, 6).join('\n') ?? ''
+
+  if (isGoingEmpty || isBecomingPopulated) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: isGoingEmpty ? "openNotes_going_empty" : "openNotes_becoming_populated",
+      metadata: {
+        workspaceId,
+        transition: isGoingEmpty ? 'POPULATED_TO_EMPTY' : 'EMPTY_TO_POPULATED',
+        previousCount,
+        newCount,
+        previousNoteIds: previousSlots.map(s => s.noteId),
+        newNoteIds: slots.map(s => s.noteId),
+        timestamp: writeTimestamp,
+        callStack,
+      },
+    })
+  }
 
   // Phase 1: Reject stale writes to prevent snapshot overwrites
   if (writeTimestamp < runtime.openNotesUpdatedAt) {
@@ -329,12 +355,32 @@ export const getHotRuntimesInfo = (): Array<{
   openNotes: NoteWorkspaceSlot[]
   lastVisibleAt: number
 }> => {
-  return Array.from(runtimes.entries()).map(([workspaceId, runtime]) => ({
+  const result = Array.from(runtimes.entries()).map(([workspaceId, runtime]) => ({
     workspaceId,
     isVisible: runtime.isVisible,
     openNotes: runtime.openNotes,
     lastVisibleAt: runtime.lastVisibleAt,
   }))
+
+  // Phase 2 DEBUG: Log when any runtime has empty openNotes
+  const emptyRuntimes = result.filter(r => r.openNotes.length === 0)
+  if (emptyRuntimes.length > 0) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "getHotRuntimesInfo_empty_runtimes",
+      metadata: {
+        emptyCount: emptyRuntimes.length,
+        emptyWorkspaceIds: emptyRuntimes.map(r => r.workspaceId),
+        allRuntimes: result.map(r => ({
+          workspaceId: r.workspaceId,
+          noteCount: r.openNotes.length,
+          isVisible: r.isVisible,
+        })),
+      },
+    })
+  }
+
+  return result
 }
 
 /**
