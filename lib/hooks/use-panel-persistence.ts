@@ -319,6 +319,18 @@ export function usePanelPersistence(options: PanelPersistOptions) {
       const parsedKey = storeKey ? parsePanelKey(storeKey) : null
       const effectiveNoteId = parsedKey?.noteId && parsedKey.noteId.length > 0 ? parsedKey.noteId : noteId
 
+      // FIX: Validate noteId before API call to prevent queuing bad operations
+      // During cold start or workspace switches, noteId can be empty string ""
+      // which causes API 400 errors and pollutes the offline queue with bad data.
+      if (!effectiveNoteId) {
+        debugLog({
+          component: 'PanelPersistence',
+          action: 'panel_create_skipped_no_noteId',
+          metadata: { panelId, storeKey, reason: 'effectiveNoteId is empty' }
+        })
+        return
+      }
+
       // Get current camera state
       const camera = {
         x: state.canvasState?.translateX || 0,

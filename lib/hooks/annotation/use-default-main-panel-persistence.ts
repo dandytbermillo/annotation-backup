@@ -59,6 +59,14 @@ export function useDefaultMainPanelPersistence({
   mainPanelSeededRef,
 }: UseDefaultMainPanelPersistenceOptions) {
   useEffect(() => {
+    // FIX: Guard against empty noteId during transitional states
+    // (cold start, workspace switches when primaryNoteId is null and noteIds is empty)
+    // Without this guard, persistPanelCreate is called with noteId:"" which causes
+    // API 400 errors and queues bad operations to IndexedDB that retry forever.
+    if (!noteId) {
+      return
+    }
+
     if (!hydrationStatus.success) return
 
     const hasMainPanel = hydrationStatus.panels.some(panel => panel.id === "main")

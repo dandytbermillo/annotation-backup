@@ -487,6 +487,13 @@ export class CanvasOfflineQueue {
    * Process panel update operation
    */
   private async processPanelUpdate(operation: CanvasOperation): Promise<void> {
+    // FIX: Validate noteId before sending - remove invalid operations instead of retrying
+    if (!operation.noteId) {
+      console.warn('[Canvas Offline Queue] Removing invalid panel_update operation (no noteId):', operation.id)
+      await this.removeOperation(operation.id)
+      return
+    }
+
     const response = await fetch(`/api/canvas/layout/${operation.noteId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -504,6 +511,23 @@ export class CanvasOfflineQueue {
    * Process panel create operation
    */
   private async processPanelCreate(operation: CanvasOperation): Promise<void> {
+    // FIX: Validate required fields before sending - remove invalid operations instead of retrying
+    // These operations were queued with bad data (e.g., empty noteId during cold start)
+    // and will always fail with 400 Bad Request. Remove them instead of retrying forever.
+    const { id, noteId, type, position, size } = operation.data || {}
+    if (!id || !noteId || !type || !position || !size) {
+      console.warn('[Canvas Offline Queue] Removing invalid panel_create operation (missing required fields):', {
+        operationId: operation.id,
+        hasId: Boolean(id),
+        hasNoteId: Boolean(noteId),
+        hasType: Boolean(type),
+        hasPosition: Boolean(position),
+        hasSize: Boolean(size)
+      })
+      await this.removeOperation(operation.id)
+      return
+    }
+
     const response = await fetch('/api/canvas/panels', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -521,6 +545,13 @@ export class CanvasOfflineQueue {
   private async processPanelDelete(operation: CanvasOperation): Promise<void> {
     const panelId = operation.data.panelId || operation.data.id
     const noteId = operation.data.noteId || operation.noteId
+
+    // FIX: Validate required fields - remove invalid operations instead of retrying
+    if (!panelId) {
+      console.warn('[Canvas Offline Queue] Removing invalid panel_delete operation (no panelId):', operation.id)
+      await this.removeOperation(operation.id)
+      return
+    }
 
     // Pass noteId as query parameter for composite key lookup
     const url = noteId
