@@ -255,14 +255,21 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
         : [...current, { noteId, mainPosition: position, updatedAt: null, version: 0 }]
       openNotesByWorkspaceRef.current.set(workspaceId, next)
 
-      const willUpdateState = workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)
+      // FIX 11: Use getActiveWorkspaceContext() to read module-level state directly.
+      // useSyncExternalStore schedules a re-render when external state changes, but doesn't
+      // update the closure immediately. When hydrateWorkspace calls openNote during cold start,
+      // the callback still has the OLD activeWorkspaceId = null from before the re-render.
+      // getActiveWorkspaceContext() reads the module-level state that setActiveWorkspaceContext()
+      // already updated synchronously before hydrateWorkspace ran.
+      const currentActiveWorkspaceId = getActiveWorkspaceContext()
+      const willUpdateState = workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)
       void debugLog({
         component: "NoteDelay",
         action: "open_note_before_set_state",
         metadata: {
           noteId,
           workspaceId,
-          activeWorkspaceId,
+          activeWorkspaceId: currentActiveWorkspaceId,
           willUpdateState,
           nextNoteCount: next.length,
           durationMs: performance.now() - debugStartTime,
@@ -283,7 +290,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
         },
       })
     },
-    [activeWorkspaceId, getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
+    [getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const closeNote = useCallback(
@@ -293,7 +300,9 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
       const next = current.filter(note => note.noteId !== noteId)
       openNotesByWorkspaceRef.current.set(workspaceId, next)
-      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+      // FIX 11: Use getActiveWorkspaceContext() instead of closure (see openNote comment)
+      const currentActiveWorkspaceId = getActiveWorkspaceContext()
+      if (workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)) {
         setCurrentOpenNotes(next)
       }
       syncRuntimeOpenState(workspaceId, next)
@@ -303,7 +312,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       }
       clearNoteWorkspaceOwner(noteId)
     },
-    [activeWorkspaceId, removeWorkspace, resolveWorkspaceId, syncRuntimeOpenState],
+    [removeWorkspace, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const updateMainPosition = useCallback(
@@ -319,12 +328,14 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
           : note,
       )
       openNotesByWorkspaceRef.current.set(workspaceId, next)
-      if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+      // FIX 11: Use getActiveWorkspaceContext() instead of closure (see openNote comment)
+      const currentActiveWorkspaceId = getActiveWorkspaceContext()
+      if (workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)) {
         setCurrentOpenNotes(next)
       }
       syncRuntimeOpenState(workspaceId, next)
     },
-    [activeWorkspaceId, getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
+    [getPositionCache, resolveWorkspaceId, syncRuntimeOpenState],
   )
 
   const getWorkspaceVersion = useCallback(() => null, [])
@@ -452,6 +463,10 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
     const [currentOpenNotes, setCurrentOpenNotes] = useState<OpenWorkspaceNote[]>([])
     const openNotesWorkspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
 
+    // NOTE: FIX 10 (activeWorkspaceIdRef + useEffect sync) was removed in FIX 11.
+    // FIX 11 uses getActiveWorkspaceContext() directly in callbacks to read module-level
+    // state synchronously, which avoids the useEffect timing issue on cold start.
+
     useEffect(() => {
       const workspaceId = activeWorkspaceId ?? SHARED_WORKSPACE_ID
       setCurrentOpenNotes(openNotesByWorkspaceRef.current.get(workspaceId) ?? [])
@@ -526,11 +541,18 @@ const openNote = useCallback(
             )
           : [...current, { noteId, mainPosition: position, updatedAt: null, version: 0 }]
         openNotesByWorkspaceRef.current.set(workspaceId, next)
-        if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+        // FIX 11: Use getActiveWorkspaceContext() to read module-level state directly.
+        // FIX 10 used activeWorkspaceIdRef which was updated via useEffect, but useEffect
+        // runs AFTER render. During cold start, hydrateWorkspace calls openNote BEFORE
+        // the useEffect runs, so the ref still had null. getActiveWorkspaceContext()
+        // reads the module-level state that setActiveWorkspaceContext() already updated
+        // synchronously before hydrateWorkspace ran.
+        const currentActiveWorkspaceId = getActiveWorkspaceContext()
+        if (workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)) {
           setCurrentOpenNotes(next)
         }
       },
-      [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+      [getPositionCache, resolveWorkspaceId],
     )
 
 const closeNote = useCallback(
@@ -540,13 +562,15 @@ const closeNote = useCallback(
     const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
     const next = current.filter(note => note.noteId !== noteId)
     openNotesByWorkspaceRef.current.set(workspaceId, next)
-    if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+    // FIX 11: Use getActiveWorkspaceContext() instead of ref (see openNote comment)
+    const currentActiveWorkspaceId = getActiveWorkspaceContext()
+    if (workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)) {
       setCurrentOpenNotes(next)
     }
     removeWorkspace(noteId)
     clearNoteWorkspaceOwner(noteId)
   },
-  [activeWorkspaceId, removeWorkspace, resolveWorkspaceId],
+  [removeWorkspace, resolveWorkspaceId],
 )
 
     const updateMainPosition = useCallback(
@@ -562,11 +586,13 @@ const closeNote = useCallback(
             : note,
         )
         openNotesByWorkspaceRef.current.set(workspaceId, next)
-        if (workspaceId === (activeWorkspaceId ?? SHARED_WORKSPACE_ID)) {
+        // FIX 11: Use getActiveWorkspaceContext() instead of ref (see openNote comment)
+        const currentActiveWorkspaceId = getActiveWorkspaceContext()
+        if (workspaceId === (currentActiveWorkspaceId ?? SHARED_WORKSPACE_ID)) {
           setCurrentOpenNotes(next)
         }
       },
-      [activeWorkspaceId, getPositionCache, resolveWorkspaceId],
+      [getPositionCache, resolveWorkspaceId],
     )
 
     const getWorkspaceVersion = useCallback(() => null, [])
