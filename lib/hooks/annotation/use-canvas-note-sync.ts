@@ -309,6 +309,42 @@ export function useCanvasNoteSync({
           nextMainItems.push(
             createPanelItem("main", targetPosition, "main", id, targetStoreKey),
           )
+
+          // FIX: Seed DataStore immediately when creating new panel.
+          // Without this, PanelsRenderer calls dataStore.get(storeKey) and gets null,
+          // causing the panel to not render even though it's in canvasItems.
+          // Previously, useDefaultMainPanelPersistence was supposed to do this,
+          // but it depends on hydrationStatus.success which never fires for
+          // dynamically added notes (hydration gets interrupted).
+          if (dataStore && !dataStore.get(targetStoreKey)) {
+            dataStore.set(targetStoreKey, {
+              id: "main",
+              type: "main" as const,
+              title: "",
+              position: targetPosition,
+              worldPosition: targetPosition,
+              dimensions: { width: 420, height: 350 },
+              originalText: "",
+              isEditable: true,
+              branches: [],
+              parentId: null,
+              content: undefined,
+              preview: "",
+              hasHydratedContent: false,
+              state: "active",
+              closedAt: null,
+            })
+            debugLog({
+              component: "AnnotationCanvas",
+              action: "noteIds_sync_seeded_datastore",
+              metadata: {
+                noteId: id,
+                storeKey: targetStoreKey,
+                position: targetPosition,
+              },
+            })
+          }
+
           if (seedPosition && onConsumeFreshNoteSeed) {
             queueMicrotask(() => onConsumeFreshNoteSeed(id))
           }
