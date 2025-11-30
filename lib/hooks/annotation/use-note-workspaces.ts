@@ -2380,6 +2380,19 @@ export function useNoteWorkspaces({
       }
     }
 
+    // DEBUG: Log what we're about to commit and whether it matches expected workspace
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "openNotesSync_about_to_commit",
+      metadata: {
+        currentWorkspaceId,
+        openNotesWorkspaceId,
+        openNotesCount: openNotes.length,
+        openNoteIds: openNotes.map(n => n.noteId),
+        workspaceIdMatch: currentWorkspaceId === openNotesWorkspaceId,
+      },
+    })
+
     commitWorkspaceOpenNotes(currentWorkspaceId, openNotes, { updateCache: false, callSite: "useEffect_openNotesSync" })
   }, [
     commitWorkspaceOpenNotes,

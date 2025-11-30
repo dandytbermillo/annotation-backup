@@ -149,13 +149,52 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   }, [])
 
   const resolveWorkspaceId = useCallback((requestedId: string) => {
-    return selectedWorkspaceIdRef.current ?? activeWorkspaceId ?? requestedId ?? SHARED_WORKSPACE_ID
+    const currentActiveFromModule = getActiveWorkspaceContext()
+    const selectedRef = selectedWorkspaceIdRef.current
+    const closureActive = activeWorkspaceId
+    const resolved = selectedRef ?? closureActive ?? requestedId ?? SHARED_WORKSPACE_ID
+
+    // DEBUG: Log when resolution falls back to requestedId (potential bug indicator)
+    const usedFallback = resolved === requestedId && requestedId !== selectedRef && requestedId !== closureActive
+    if (usedFallback || resolved !== currentActiveFromModule) {
+      void debugLog({
+        component: "CanvasWorkspaceV2",
+        action: "resolveWorkspaceId_trace",
+        metadata: {
+          requestedId,
+          selectedRefCurrent: selectedRef,
+          closureActiveWorkspaceId: closureActive,
+          moduleActiveWorkspaceId: currentActiveFromModule,
+          resolved,
+          usedFallbackToRequestedId: usedFallback,
+          mismatchWithModule: resolved !== currentActiveFromModule,
+        },
+      })
+    }
+
+    return resolved
   }, [activeWorkspaceId])
 
   useEffect(() => {
     const workspaceId = activeWorkspaceId ?? selectedWorkspaceIdRef.current ?? SHARED_WORKSPACE_ID
+    const prevSelectedRef = selectedWorkspaceIdRef.current
     selectedWorkspaceIdRef.current = workspaceId
     const nextSlots = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+
+    // DEBUG: Log workspace switch state transition
+    void debugLog({
+      component: "CanvasWorkspaceV2",
+      action: "workspace_switch_effect",
+      metadata: {
+        activeWorkspaceIdFromClosure: activeWorkspaceId,
+        activeWorkspaceIdFromModule: getActiveWorkspaceContext(),
+        prevSelectedRefCurrent: prevSelectedRef,
+        newSelectedRefCurrent: workspaceId,
+        nextSlotsCount: nextSlots.length,
+        nextSlotNoteIds: nextSlots.map(s => s.noteId),
+      },
+    })
+
     setCurrentOpenNotes(nextSlots)
     syncRuntimeOpenState(workspaceId, nextSlots)
     setCurrentOpenNotesWorkspaceId(workspaceId)
