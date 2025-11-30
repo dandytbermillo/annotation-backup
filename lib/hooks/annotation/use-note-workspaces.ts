@@ -2165,77 +2165,39 @@ export function useNoteWorkspaces({
       }
       // FIX 2: Prevent membership regression from partial snapshots in hot runtimes
       const runtimeState = liveStateEnabled && hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
+
+      // FIX 9: Skip snapshot replay entirely for hot runtimes
+      // Hot runtimes maintain their own state - the canvas was just hidden via CSS, not unmounted.
+      // All panels, components, and notes are still there. Replaying the snapshot would:
+      // 1. Set workspaceRestorationInProgress flag causing canvas to skip sync
+      // 2. Potentially overwrite live state with stale snapshot data
+      // 3. Cause the canvas to appear empty during the restoration window
+      // For hot runtimes, we just need visibility toggle - no state changes needed.
+      // IMPORTANT: Do NOT call bumpSnapshotRevision() here - it triggers the canvas's internal
+      // restoration logic which sets workspaceRestorationInProgress=true and skips component rendering.
       if (runtimeState === "hot") {
-        // Hot runtime: preserve and expand membership, never contract from stale preview
-        const currentMembership = getRuntimeMembership(workspaceId)
-        if (currentMembership && currentMembership.size > 0) {
-          const allCurrentMembers = Array.from(currentMembership)
-          const missingFromSnapshot = allCurrentMembers.filter((noteId) => !declaredNoteIds.has(noteId))
-          if (missingFromSnapshot.length > 0) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_snapshot_membership_preserved",
-              metadata: {
-                workspaceId,
-                runtimeState,
-                snapshotNoteCount: declaredNoteIds.size,
-                currentMembershipCount: currentMembership.size,
-                missingFromSnapshot,
-                preservedMembership: true,
-              },
-            })
-            // Merge: keep existing members + add new ones from snapshot
-            const mergedMembership = new Set([...currentMembership, ...declaredNoteIds])
-
-            // DEBUG: Log the merged membership before setting
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_snapshot_merged_membership_debug",
-              metadata: {
-                workspaceId,
-                currentMembershipIds: Array.from(currentMembership),
-                currentMembershipSize: currentMembership.size,
-                declaredNoteIds: Array.from(declaredNoteIds),
-                declaredNoteIdsSize: declaredNoteIds.size,
-                mergedMembershipIds: Array.from(mergedMembership),
-                mergedMembershipSize: mergedMembership.size,
-                missingFromSnapshot,
-              },
-            })
-
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_set_membership_branch",
-              metadata: { workspaceId, branch: "hot_missing_notes_merged", noteCount: mergedMembership.size },
-            })
-            setWorkspaceNoteMembership(workspaceId, mergedMembership)
-          } else {
-            // Snapshot covers all current members, safe to update
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_set_membership_branch",
-              metadata: { workspaceId, branch: "hot_no_missing_snapshot_only", noteCount: declaredNoteIds.size },
-            })
-            setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
-          }
-        } else {
-          // No existing membership, snapshot is authoritative
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "preview_set_membership_branch",
-            metadata: { workspaceId, branch: "hot_no_existing_membership", noteCount: declaredNoteIds.size },
-          })
-          setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
-        }
-      } else {
-        // Cold runtime or legacy: snapshot is authoritative, overwrite is intentional
         emitDebugLog({
           component: "NoteWorkspace",
-          action: "preview_set_membership_branch",
-          metadata: { workspaceId, branch: "cold_or_legacy", noteCount: declaredNoteIds.size },
+          action: "preview_snapshot_skip_hot_runtime",
+          metadata: {
+            workspaceId,
+            reason: "Hot runtime maintains own state, skip snapshot replay",
+            openNotesInSnapshot: snapshot.openNotes?.length ?? 0,
+            panelsInSnapshot: snapshot.panels?.length ?? 0,
+          },
         })
-        setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
+        lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
+        // No bumpSnapshotRevision() - canvas already has its content, just becoming visible
+        return
       }
+
+      // Cold runtime: snapshot is authoritative (hot runtimes already returned via FIX 9)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "preview_set_membership_branch",
+        metadata: { workspaceId, branch: "cold_runtime", noteCount: declaredNoteIds.size },
+      })
+      setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
       const scopedPanels = filterPanelsForWorkspace(workspaceId, panelSnapshots)
       const targetIds = new Set<string>(declaredNoteIds)
       scopedPanels.forEach((panel) => {
@@ -2251,38 +2213,8 @@ export function useNoteWorkspaces({
         mainPosition: entry.mainPosition ?? null,
       }))
 
-      // FIX 6: Apply same hot runtime protection to openNotes as we do for membership
-      // When runtime is hot, merge openNotes instead of overwriting with stale snapshot data
-      let openNotesToCommit: { noteId: string; mainPosition: { x: number; y: number } | null }[] = normalizedOpenNotes
-      if (runtimeState === "hot") {
-        const currentOpenNotes = getRuntimeOpenNotes(workspaceId)
-        if (currentOpenNotes && currentOpenNotes.length > 0) {
-          const snapshotNoteIds = new Set(normalizedOpenNotes.map((n) => n.noteId))
-          const missingFromSnapshot = currentOpenNotes.filter((n) => !snapshotNoteIds.has(n.noteId))
-          if (missingFromSnapshot.length > 0) {
-            // Merge: keep existing open notes + add new ones from snapshot
-            // Normalize currentOpenNotes to match the expected type
-            const normalizedCurrent = currentOpenNotes.map((n) => ({
-              noteId: n.noteId,
-              mainPosition: n.mainPosition ?? null,
-            }))
-            const existingIds = new Set(normalizedCurrent.map((n) => n.noteId))
-            openNotesToCommit = [...normalizedCurrent, ...normalizedOpenNotes.filter((n) => !existingIds.has(n.noteId))]
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_snapshot_open_notes_preserved",
-              metadata: {
-                workspaceId,
-                runtimeState,
-                snapshotNoteCount: normalizedOpenNotes.length,
-                currentOpenNotesCount: currentOpenNotes.length,
-                missingFromSnapshot: missingFromSnapshot.map((n) => n.noteId),
-                mergedCount: openNotesToCommit.length,
-              },
-            })
-          }
-        }
-      }
+      // Cold runtime: use snapshot openNotes directly (hot runtimes already returned via FIX 9)
+      const openNotesToCommit = normalizedOpenNotes
       cache.openNotes = openNotesToCommit
 
       // FIX 5: Prevent commitWorkspaceOpenNotes from overwriting Fix 2's merged membership
@@ -2298,10 +2230,11 @@ export function useNoteWorkspaces({
         reason: "preview_snapshot",
       })
 
-      // FIX 7: Extend targetIds with merged openNotes to prevent close loop from undoing FIX 6
-      // This ensures notes preserved by FIX 6 (hot runtime merge) aren't closed by the loop below
+      // Extend targetIds with openNotes for close loop reconciliation
       openNotesToCommit.forEach(n => targetIds.add(n.noteId))
 
+      // Close loop for cold runtimes: close notes not in the target snapshot
+      // (Hot runtimes skip this entirely via FIX 9 early return above)
       const currentOpenIds = new Set(openNotes.map((note) => note.noteId))
       const notesToClose = openNotes.filter((note) => !targetIds.has(note.noteId))
       await Promise.all(
@@ -2423,9 +2356,34 @@ export function useNoteWorkspaces({
     if (!currentWorkspaceId) return
     if (openNotesWorkspaceId !== currentWorkspaceId) return
     if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) return
+
+    // FIX 18: Guard against committing empty openNotes to a hot runtime during workspace switch.
+    // When switching workspaces, the provider's openNotes is transiently empty while the runtime
+    // still has notes from the previous session. Committing empty here would wipe the runtime's
+    // note membership, causing useCanvasNoteSync to remove the main panel.
+    // Only skip if: (1) openNotes is empty AND (2) runtime already has notes (hot runtime)
+    if (openNotes.length === 0) {
+      const runtimeMembership = getRuntimeMembership(currentWorkspaceId)
+      if (runtimeMembership && runtimeMembership.size > 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "openNotesSync_skip_hot_runtime",
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            openNotesCount: 0,
+            runtimeMembershipCount: runtimeMembership.size,
+            runtimeNoteIds: Array.from(runtimeMembership),
+            reason: "provider_openNotes_transiently_empty_but_runtime_has_notes",
+          },
+        })
+        return
+      }
+    }
+
     commitWorkspaceOpenNotes(currentWorkspaceId, openNotes, { updateCache: false, callSite: "useEffect_openNotesSync" })
   }, [
     commitWorkspaceOpenNotes,
+    emitDebugLog,
     featureEnabled,
     v2Enabled,
     currentWorkspaceId,

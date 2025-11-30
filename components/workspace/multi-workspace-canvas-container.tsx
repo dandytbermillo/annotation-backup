@@ -10,6 +10,7 @@ import {
   useSyncExternalStore,
   type MutableRefObject,
 } from "react"
+import { debugLog } from "@/lib/utils/debug-logger"
 import { AnnotationWorkspaceCanvas, type AnnotationWorkspaceCanvasProps } from "./annotation-workspace-canvas"
 import {
   getHotRuntimesInfo,
@@ -59,6 +60,14 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     },
     ref,
   ) {
+    // FIX 10: Extract workspaceSnapshotRevision to pass to ALL canvases (including hidden ones)
+    // Without this, hidden canvases default to revision 0, and when they become active they see
+    // a "revision jump" (0 → N) which triggers workspaceRestorationInProgressRef = true,
+    // causing the canvas to enter cold-restore mode and lose component state (alarms, etc.)
+    const { workspaceSnapshotRevision, ...interactiveCanvasProps } = canvasProps as {
+      workspaceSnapshotRevision?: number
+      [key: string]: unknown
+    }
     // Subscribe to runtime changes for re-rendering when runtimes are added/removed
     const hotRuntimeIds = useSyncExternalStore(
       subscribeToRuntimeChanges,
@@ -69,21 +78,63 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     // Get full runtime info for rendering
     const hotRuntimes = useMemo(() => getHotRuntimesInfo(), [hotRuntimeIds])
 
+    // FIX 11: Track which workspaces have been rendered to keep them alive
+    // Once a canvas is mounted, we keep it mounted even if openNotes temporarily drops to 0.
+    // This is critical for Phase 2 hot switching - canvases should be hidden, not unmounted.
+    const everRenderedWorkspacesRef = useRef<Set<string>>(new Set())
+
     // Determine which canvases to render
-    // IMPORTANT: Only render canvases that have at least one note.
-    // This prevents the hook order violation in ModernAnnotationCanvasInner:
-    // - If canvas renders with empty noteIds, it returns null before hooks run
-    // - When notes sync in, hooks run, causing "Expected static flag was missing" error
-    // TODO: To truly keep components alive during workspace switches, we need to refactor
-    // ModernAnnotationCanvasInner to handle empty noteIds gracefully (run all hooks unconditionally).
+    // IMPORTANT: Render canvases that EITHER:
+    // 1. Have at least one note (normal case for new canvases), OR
+    // 2. Were previously rendered (keep alive for hot switching)
+    // This prevents the hook order violation in ModernAnnotationCanvasInner while also
+    // keeping hot canvases mounted during workspace switches.
     const canvasesToRender = useMemo(() => {
-      return hotRuntimes
-        .filter((runtime) => runtime.openNotes.length > 0)
+      const result = hotRuntimes
+        .filter((runtime) => {
+          const hasNotes = runtime.openNotes.length > 0
+          const wasRenderedBefore = everRenderedWorkspacesRef.current.has(runtime.workspaceId)
+          const shouldRender = hasNotes || wasRenderedBefore
+
+          if (!hasNotes && wasRenderedBefore) {
+            debugLog({
+              component: "MultiWorkspaceCanvas",
+              action: "keeping_canvas_alive",
+              metadata: {
+                workspaceId: runtime.workspaceId,
+                reason: "previously_rendered_but_no_notes",
+                openNotesCount: runtime.openNotes.length,
+              },
+            })
+          }
+
+          return shouldRender
+        })
         .map((runtime) => ({
           ...runtime,
           isActive: runtime.workspaceId === activeWorkspaceId,
         }))
+
+      return result
     }, [hotRuntimes, activeWorkspaceId])
+
+    // Track newly rendered workspaces (update ref after render completes)
+    useEffect(() => {
+      canvasesToRender.forEach((runtime) => {
+        if (!everRenderedWorkspacesRef.current.has(runtime.workspaceId)) {
+          debugLog({
+            component: "MultiWorkspaceCanvas",
+            action: "tracking_new_canvas",
+            metadata: {
+              workspaceId: runtime.workspaceId,
+              openNotesCount: runtime.openNotes.length,
+              totalTracked: everRenderedWorkspacesRef.current.size + 1,
+            },
+          })
+          everRenderedWorkspacesRef.current.add(runtime.workspaceId)
+        }
+      })
+    }, [canvasesToRender])
 
     // Keep refs to all canvas instances - stable Map that persists across renders
     const canvasRefsMap = useRef<Map<string, MutableRefObject<any>>>(new Map())
@@ -165,9 +216,12 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
                 workspaceId={runtime.workspaceId}
                 noteIds={runtime.openNotes.map((n) => n.noteId)}
                 primaryNoteId={runtime.openNotes[0]?.noteId ?? null}
+                // FIX 10: Always pass workspaceSnapshotRevision to ALL canvases
+                // This prevents the revision from jumping 0 → N when a hidden canvas becomes active
+                workspaceSnapshotRevision={workspaceSnapshotRevision}
                 // Only pass interactive props and children to the visible canvas
                 {...(runtime.isActive
-                  ? { ...canvasProps, children }
+                  ? { ...interactiveCanvasProps, children }
                   : {
                       // Hidden canvases get minimal props - no event handlers or children
                       onCanvasStateChange: undefined,

@@ -100,14 +100,26 @@ export function useCanvasNoteSync({
     })
 
     if (!hasNotes) {
-      debugLog({
-        component: "AnnotationCanvas",
-        action: "clearing_canvas_items_no_notes",
-        metadata: {
-          reason: "hasNotes_is_false",
-        },
+      // FIX 16: Use functional update to prevent render loop.
+      // Previously, setCanvasItems([]) created a NEW empty array every time,
+      // causing React to detect a state change ([] !== []) and re-render,
+      // which re-triggered this effect in an infinite loop.
+      // Now we check if already empty and return prev to prevent the loop.
+      setCanvasItems(prev => {
+        if (prev.length === 0) {
+          // Already empty - return same reference to prevent re-render
+          return prev
+        }
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "clearing_canvas_items_no_notes",
+          metadata: {
+            reason: "hasNotes_is_false",
+            previousCount: prev.length,
+          },
+        })
+        return []
       })
-      setCanvasItems([])
       return
     }
 

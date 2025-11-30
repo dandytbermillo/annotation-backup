@@ -175,21 +175,27 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     [],
   )
 
-  const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
-    const resolvedId = resolveWorkspaceId(noteId)
-    let workspace = workspacesRef.current.get(resolvedId)
+  // FIX 19: getWorkspace must use the passed-in workspace ID directly, NOT resolveWorkspaceId.
+  // When a hidden canvas calls getWorkspace("ws-A") while activeWorkspaceId is "ws-B",
+  // resolveWorkspaceId would return "ws-B" instead of "ws-A", causing the canvas to get
+  // the WRONG workspace and DataStore. This manifests as `branch_not_found` after switching
+  // back to a previously active workspace because the canvas is using the wrong DataStore.
+  const getWorkspace = useCallback((workspaceId: string): NoteWorkspace => {
+    // Use the passed-in workspaceId directly - honor what the caller explicitly requested
+    const targetId = workspaceId || SHARED_WORKSPACE_ID
+    let workspace = workspacesRef.current.get(targetId)
     if (!workspace) {
-      const runtime = getWorkspaceRuntime(resolvedId)
+      const runtime = getWorkspaceRuntime(targetId)
       workspace = {
         dataStore: runtime.dataStore,
         events: new EventEmitter(),
         layerManager: runtime.layerManager,
         loadedNotes: new Set<string>(),
       }
-      workspacesRef.current.set(resolvedId, workspace)
+      workspacesRef.current.set(targetId, workspace)
     }
     return workspace
-  }, [resolveWorkspaceId])
+  }, []) // No dependencies - uses passed-in ID directly
 
   const hasWorkspace = useCallback((noteId: string) => workspacesRef.current.has(resolveWorkspaceId(noteId)), [resolveWorkspaceId])
 
@@ -281,7 +287,7 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
   )
 
   const closeNote = useCallback(
-    async (noteId: string) => {
+    async (noteId: string, options?: CloseNoteOptions) => {
       if (!noteId) return
       const workspaceId = resolveWorkspaceId(noteId)
       const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
@@ -291,7 +297,10 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
         setCurrentOpenNotes(next)
       }
       syncRuntimeOpenState(workspaceId, next)
-      removeWorkspace(noteId)
+      // Only remove workspace runtime if explicitly requested (default: true for backward compat)
+      if (options?.removeWorkspace !== false) {
+        removeWorkspace(noteId)
+      }
       clearNoteWorkspaceOwner(noteId)
     },
     [activeWorkspaceId, removeWorkspace, resolveWorkspaceId, syncRuntimeOpenState],
@@ -458,20 +467,21 @@ export function CanvasWorkspaceProvider({ children }: { children: ReactNode }) {
       [],
     )
 
-    const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
-      const resolvedId = resolveWorkspaceId(noteId)
-      let workspace = workspacesRef.current.get(resolvedId)
+    // FIX 19: Use passed-in workspace ID directly (see main fix comment above)
+    const getWorkspace = useCallback((workspaceId: string): NoteWorkspace => {
+      const targetId = workspaceId || SHARED_WORKSPACE_ID
+      let workspace = workspacesRef.current.get(targetId)
       if (!workspace) {
         workspace = {
-          dataStore: getWorkspaceStore(resolvedId) ?? new DataStore(),
+          dataStore: getWorkspaceStore(targetId) ?? new DataStore(),
           events: new EventEmitter(),
           layerManager: new LayerManager(),
           loadedNotes: new Set<string>(),
         }
-        workspacesRef.current.set(resolvedId, workspace)
+        workspacesRef.current.set(targetId, workspace)
       }
       return workspace
-    }, [resolveWorkspaceId])
+    }, [])
 
     const hasWorkspace = useCallback((noteId: string) => workspacesRef.current.has(resolveWorkspaceId(noteId)), [resolveWorkspaceId])
 
@@ -607,9 +617,10 @@ const closeNote = useCallback(
     return <CanvasWorkspaceContext.Provider value={value}>{children}</CanvasWorkspaceContext.Provider>
   }
 
-  const getWorkspace = useCallback((noteId: string): NoteWorkspace => {
-    const resolvedId = resolveWorkspaceId(noteId)
-    if (!NOTE_WORKSPACES_V2_ENABLED && resolvedId === SHARED_WORKSPACE_ID) {
+  // FIX 19: Use passed-in workspace ID directly (see main fix comment in CanvasWorkspaceProviderV2)
+  const getWorkspace = useCallback((workspaceId: string): NoteWorkspace => {
+    const targetId = workspaceId || SHARED_WORKSPACE_ID
+    if (!NOTE_WORKSPACES_V2_ENABLED && targetId === SHARED_WORKSPACE_ID) {
       if (!sharedWorkspaceRef.current) {
         sharedWorkspaceRef.current = {
           dataStore: new DataStore(),
@@ -621,18 +632,18 @@ const closeNote = useCallback(
       return sharedWorkspaceRef.current
     }
 
-    let workspace = workspacesRef.current.get(resolvedId)
+    let workspace = workspacesRef.current.get(targetId)
     if (!workspace) {
       workspace = {
-        dataStore: NOTE_WORKSPACES_V2_ENABLED ? getWorkspaceStore(resolvedId) ?? new DataStore() : new DataStore(),
+        dataStore: NOTE_WORKSPACES_V2_ENABLED ? getWorkspaceStore(targetId) ?? new DataStore() : new DataStore(),
         events: new EventEmitter(),
         layerManager: new LayerManager(),
         loadedNotes: new Set<string>(),
       }
-      workspacesRef.current.set(resolvedId, workspace)
+      workspacesRef.current.set(targetId, workspace)
     }
     return workspace
-  }, [resolveWorkspaceId])
+  }, []) // No dependencies - uses passed-in ID directly
 
   const hasWorkspace = useCallback((noteId: string) => workspacesRef.current.has(resolveWorkspaceId(noteId)), [resolveWorkspaceId])
 

@@ -44,17 +44,27 @@ export function useNonMainPanelHydration({
   hydrationInProgressRef,
   workspaceRestorationInProgressRef,
 }: UseNonMainPanelHydrationOptions) {
-  const lastRevisionRef = useRef(workspaceSnapshotRevision)
+  // FIX 13: Initialize to null so we ALWAYS detect first mount.
+  // Previously initialized to workspaceSnapshotRevision, which meant:
+  // - Canvas mounts at revision X
+  // - lastRevisionRef.current = X (initialized)
+  // - revisionChanged = (X !== X) = false
+  // - Hydration never runs on first mount!
+  // - workspaceRestorationInProgressRef stays true forever
+  // With null initialization, first mount always triggers hydration.
+  const lastRevisionRef = useRef<number | null>(null)
   const hydratedRevisionRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!enabled) return
 
+    const isFirstMount = lastRevisionRef.current === null
     const revisionChanged = lastRevisionRef.current !== workspaceSnapshotRevision
     lastRevisionRef.current = workspaceSnapshotRevision
 
-    // Only hydrate when workspace revision changes (workspace switch)
-    if (!revisionChanged) return
+    // FIX 13: Run hydration on first mount OR revision change
+    // First mount is critical - it clears workspaceRestorationInProgressRef
+    if (!isFirstMount && !revisionChanged) return
 
     // Skip if we already hydrated this revision
     if (hydratedRevisionRef.current === workspaceSnapshotRevision) return
@@ -71,6 +81,9 @@ export function useNonMainPanelHydration({
         noteIds,
         workspaceSnapshotRevision,
         currentCanvasItemsCount: canvasItems.length,
+        // FIX 13: Log whether this is first mount to verify fix is working
+        isFirstMount,
+        revisionChanged,
       },
     })
 

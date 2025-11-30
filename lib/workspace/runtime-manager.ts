@@ -136,18 +136,37 @@ export const markRuntimePaused = (workspaceId: string) => {
 
 export const removeWorkspaceRuntime = (workspaceId: string) => {
   // DEBUG: Track when runtimes are removed
+  const hadKey = runtimes.has(workspaceId)
+  const runtime = runtimes.get(workspaceId)
+  const previousOpenNotesCount = runtime?.openNotes?.length ?? 0
+  const previousOpenNoteIds = runtime?.openNotes?.map(n => n.noteId) ?? []
+  const callStack = new Error().stack?.split('\n').slice(2, 7).join('\n') ?? ''
+
+  // Phase 2 DEBUG: Log to database for tracing
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "runtime_removed",
+    metadata: {
+      workspaceId,
+      hadKey,
+      previousOpenNotesCount,
+      previousOpenNoteIds,
+      keysBeforeRemoval: Array.from(runtimes.keys()),
+      callStack,
+    },
+  })
+
   if (process.env.NODE_ENV === "development") {
     console.log(`[WorkspaceRuntime] removeWorkspaceRuntime called`, {
       moduleInstanceId: MODULE_INSTANCE_ID,
       workspaceId,
-      hadKey: runtimes.has(workspaceId),
+      hadKey,
       keysBeforeRemoval: Array.from(runtimes.keys()),
-      stack: new Error().stack?.split('\n').slice(1, 5).join('\n'),
+      stack: callStack,
     })
   }
 
-  if (!runtimes.has(workspaceId)) return
-  const runtime = runtimes.get(workspaceId)
+  if (!hadKey) return
   if (runtime) {
     runtime.pendingPanels.clear()
     runtime.pendingComponents.clear()

@@ -7,6 +7,7 @@ import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { createComponentItem, isComponent, type CanvasItem, type ComponentType } from "@/types/canvas-items"
 import type { LayerManager } from "@/lib/canvas/layer-manager"
 import { markComponentPersistencePending, markComponentPersistenceReady } from "@/lib/note-workspaces/state"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 interface UseComponentCreationHandlerOptions {
   canvasState: CanvasViewportState
@@ -65,10 +66,37 @@ export function useComponentCreationHandler({
 
       console.log("[Canvas] Created component:", newComponent)
       console.log("[Canvas] Adding to canvasItems")
+
+      // FIX 17 DEBUG: Log component addition with workspace context
+      debugLog({
+        component: "ComponentCreation",
+        action: "CREATING_COMPONENT",
+        metadata: {
+          workspaceId: workspaceKey ?? "unknown",
+          componentId: newComponent.id,
+          componentType: type,
+          position: componentPosition,
+        },
+      })
+
       if (workspaceKey) {
         markComponentPersistencePending(workspaceKey, newComponent.id)
       }
-      setCanvasItems(prev => [...prev, newComponent])
+      setCanvasItems(prev => {
+        // FIX 17 DEBUG: Log the actual state before and after
+        debugLog({
+          component: "ComponentCreation",
+          action: "ADDING_TO_CANVAS_ITEMS",
+          metadata: {
+            workspaceId: workspaceKey ?? "unknown",
+            componentId: newComponent.id,
+            prevItemCount: prev.length,
+            prevComponentCount: prev.filter(i => i.itemType === "component").length,
+            prevComponentIds: prev.filter(i => i.itemType === "component").map(c => c.id),
+          },
+        })
+        return [...prev, newComponent]
+      })
       if (layerMgr) {
         try {
           layerMgr.registerNode({

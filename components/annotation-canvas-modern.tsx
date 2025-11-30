@@ -181,9 +181,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
 
-  if (!hasNotes) {
-    return null
-  }
+  // FIX 11: Don't return null early - this causes hook order violations when
+  // multi-workspace-canvas-container keeps a canvas alive with 0 notes.
+  // Instead, we check hasNotes at the render phase (after all hooks run).
+  // This allows the component to stay mounted during hot switches where notes
+  // temporarily become empty.
+
   const { state: canvasContextState, dispatch, dataStore } = useCanvas()
   const {
     openNotes,
@@ -310,7 +313,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     canvasItemsRef,
     dedupeWarnings,
     updateDedupeWarnings,
-  } = useCanvasItems({ noteId, initialItems: initialCanvasItems })
+  } = useCanvasItems({ noteId, initialItems: initialCanvasItems, workspaceId: workspaceId ?? undefined })
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
@@ -400,20 +403,40 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   // Use layoutEffect to run synchronously before other effects
   useLayoutEffect(() => {
     const previousRevision = lastWorkspaceRevisionRef.current
+    const isFirstMount = previousRevision === null
 
     if (previousRevision !== workspaceSnapshotRevision) {
-      workspaceRestorationInProgressRef.current = true
       lastWorkspaceRevisionRef.current = workspaceSnapshotRevision
 
-      debugLog({
-        component: "AnnotationCanvas",
-        action: "workspace_restoration_started",
-        metadata: {
-          previousRevision,
-          newRevision: workspaceSnapshotRevision,
-          isFirstMount: previousRevision === null,
-        },
-      })
+      // FIX 11: Only set restoration flag on FIRST mount.
+      // Hot canvases (already mounted, just hidden/shown) should NOT trigger restoration
+      // because they already have their state. Setting this flag causes:
+      // - initialCanvasItems to recompute (losing component positions)
+      // - Sync hooks to skip updates (causing stale data)
+      // - Component state (alarms, etc.) to be lost
+      // For hot switches, the canvas already has valid state - no restoration needed.
+      if (isFirstMount) {
+        workspaceRestorationInProgressRef.current = true
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "workspace_restoration_started",
+          metadata: {
+            previousRevision,
+            newRevision: workspaceSnapshotRevision,
+            isFirstMount: true,
+          },
+        })
+      } else {
+        debugLog({
+          component: "AnnotationCanvas",
+          action: "workspace_revision_change_skipped",
+          metadata: {
+            previousRevision,
+            newRevision: workspaceSnapshotRevision,
+            reason: "not_first_mount_hot_switch",
+          },
+        })
+      }
     }
   }, [workspaceSnapshotRevision])
 
@@ -561,6 +584,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     dataStore,
     persistCameraSnapshot,
     workspaceSnapshotRevision,
+    workspaceId: workspaceId ?? undefined, // FIX 17 DEBUG: Track workspace for cross-contamination debugging
   })
 
   // Cleanup auto-save timer on unmount
@@ -648,7 +672,12 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     if (!lm || typeof lm.getNodes !== "function") return
     const nodes = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component")
     if (nodes.length === 0) {
-      setCanvasItems((prev: CanvasItem[]) => prev.filter((item: CanvasItem) => item.itemType !== "component"))
+      // FIX 15: Don't remove components when LayerManager is empty.
+      // Components may have been restored from snapshot (via FIX 14) and are valid.
+      // LayerManager might be empty/stale after a workspace switch or snapshot restore,
+      // but that doesn't mean we should remove the components from canvasItems.
+      // Previously, this line removed all components, undoing the snapshot restore:
+      // setCanvasItems((prev: CanvasItem[]) => prev.filter((item: CanvasItem) => item.itemType !== "component"))
       return
     }
     setCanvasItems((prev: CanvasItem[]) => {
@@ -773,6 +802,28 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent, resolveWorkspacePosition, dataStore, noteId])
 
   useCanvasOutlineDebug()
+
+  // FIX 11: Check hasNotes AFTER all hooks have run (moved from top of component).
+  // Return a hidden placeholder to keep the component mounted during hot switches
+  // where notes temporarily become empty. This allows React hooks to run consistently.
+  if (!hasNotes) {
+    debugLog({
+      component: "AnnotationCanvas",
+      action: "render_placeholder_no_notes",
+      metadata: {
+        noteId,
+        noteIdsLength: noteIds.length,
+        workspaceSnapshotRevision,
+      },
+    })
+    return (
+      <div
+        className="annotation-canvas-placeholder"
+        data-reason="no-notes"
+        style={{ display: "none" }}
+      />
+    )
+  }
 
   return (
     <>

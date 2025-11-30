@@ -61,6 +61,7 @@ export type UseCanvasSnapshotOptions = {
   dataStore: DataStore
   persistCameraSnapshot?: (camera: { x: number; y: number; zoom: number }) => void | Promise<void>
   workspaceSnapshotRevision?: number
+  workspaceId?: string // FIX 17 DEBUG: Track workspace for cross-contamination debugging
 }
 
 export function useCanvasSnapshot({
@@ -93,6 +94,7 @@ export function useCanvasSnapshot({
   dataStore,
   persistCameraSnapshot,
   workspaceSnapshotRevision = 0,
+  workspaceId,
 }: UseCanvasSnapshotOptions) {
   const applySnapshotCamera = useSnapshotCameraSync({
     noteId,
@@ -101,7 +103,74 @@ export function useCanvasSnapshot({
   })
   const lastWorkspaceSnapshotRevisionRef = useRef(workspaceSnapshotRevision)
 
+  // FIX 17 DEBUG: Track previous dependency values to log what triggered the effect
+  const prevDepsRef = useRef<{
+    noteId: string
+    activeWorkspaceVersion: number | null
+    workspaceSnapshotRevision: number
+    applySnapshotCameraId: string
+    onSnapshotLoadCompleteId: string
+    onSnapshotSettledId: string
+  } | null>(null)
+
+  // Create stable IDs for functions to detect reference changes
+  const applySnapshotCameraIdRef = useRef(0)
+  const onSnapshotLoadCompleteIdRef = useRef(0)
+  const onSnapshotSettledIdRef = useRef(0)
+  const prevApplySnapshotCameraRef = useRef(applySnapshotCamera)
+  const prevOnSnapshotLoadCompleteRef = useRef(onSnapshotLoadComplete)
+  const prevOnSnapshotSettledRef = useRef(onSnapshotSettled)
+
+  if (prevApplySnapshotCameraRef.current !== applySnapshotCamera) {
+    prevApplySnapshotCameraRef.current = applySnapshotCamera
+    applySnapshotCameraIdRef.current++
+  }
+  if (prevOnSnapshotLoadCompleteRef.current !== onSnapshotLoadComplete) {
+    prevOnSnapshotLoadCompleteRef.current = onSnapshotLoadComplete
+    onSnapshotLoadCompleteIdRef.current++
+  }
+  if (prevOnSnapshotSettledRef.current !== onSnapshotSettled) {
+    prevOnSnapshotSettledRef.current = onSnapshotSettled
+    onSnapshotSettledIdRef.current++
+  }
+
   useEffect(() => {
+    // FIX 17 DEBUG: Log what triggered this effect
+    const currentDeps = {
+      noteId,
+      activeWorkspaceVersion,
+      workspaceSnapshotRevision,
+      applySnapshotCameraId: `v${applySnapshotCameraIdRef.current}`,
+      onSnapshotLoadCompleteId: `v${onSnapshotLoadCompleteIdRef.current}`,
+      onSnapshotSettledId: `v${onSnapshotSettledIdRef.current}`,
+    }
+
+    const changedDeps: string[] = []
+    if (prevDepsRef.current) {
+      if (prevDepsRef.current.noteId !== currentDeps.noteId) changedDeps.push("noteId")
+      if (prevDepsRef.current.activeWorkspaceVersion !== currentDeps.activeWorkspaceVersion) changedDeps.push("activeWorkspaceVersion")
+      if (prevDepsRef.current.workspaceSnapshotRevision !== currentDeps.workspaceSnapshotRevision) changedDeps.push("workspaceSnapshotRevision")
+      if (prevDepsRef.current.applySnapshotCameraId !== currentDeps.applySnapshotCameraId) changedDeps.push("applySnapshotCamera")
+      if (prevDepsRef.current.onSnapshotLoadCompleteId !== currentDeps.onSnapshotLoadCompleteId) changedDeps.push("onSnapshotLoadComplete")
+      if (prevDepsRef.current.onSnapshotSettledId !== currentDeps.onSnapshotSettledId) changedDeps.push("onSnapshotSettled")
+    } else {
+      changedDeps.push("FIRST_RUN")
+    }
+
+    debugLog({
+      component: "CanvasSnapshot",
+      action: "EFFECT_TRIGGERED",
+      metadata: {
+        noteId,
+        workspaceId: workspaceId ?? "unknown",
+        changedDeps,
+        currentDeps,
+        isFirstRun: !prevDepsRef.current,
+      },
+    })
+
+    prevDepsRef.current = currentDeps
+
     const revisionChanged = lastWorkspaceSnapshotRevisionRef.current !== workspaceSnapshotRevision
     lastWorkspaceSnapshotRevisionRef.current = workspaceSnapshotRevision
 
@@ -542,6 +611,12 @@ export function useCanvasSnapshot({
       prev.forEach(item => {
         const itemNoteId = getItemNoteId(item)
         if (!itemNoteId) {
+          // FIX 14: Items without noteId (like components/alarms/timers) belong to the
+          // workspace context, not a specific note. Include them with this note's items
+          // so they're preserved during merge instead of being dropped.
+          // Previously, these items were silently dropped (return without pushing),
+          // causing components to disappear when snapshot restore ran.
+          existingNoteItems.push(item)
           return
         }
         if (itemNoteId === noteId) {
@@ -559,20 +634,37 @@ export function useCanvasSnapshot({
         mergedById.set(item.id, item)
       })
       const restoredIds = new Set(restoredItems.map(item => item.id))
-      const carriedForwardCount = existingNoteItems.filter(item => !restoredIds.has(item.id)).length
+      const carriedForwardItems = existingNoteItems.filter(item => !restoredIds.has(item.id))
+      const carriedForwardCount = carriedForwardItems.length
       const mergedSameNoteItems = Array.from(mergedById.values())
+
+      // FIX 17 DEBUG: Detailed logging for component cross-contamination investigation
+      const prevComponents = prev.filter(item => item.itemType === "component")
+      const itemsWithoutNoteId = existingNoteItems.filter(item => !getItemNoteId(item))
+      const carriedForwardComponents = carriedForwardItems.filter(item => item.itemType === "component")
 
       debugLog({
         component: "AnnotationCanvas",
         action: "SNAPSHOT_RESTORE_MERGE",
         metadata: {
           noteId,
+          workspaceId: workspaceId ?? "unknown",
+          // Overall counts
           restoredItemsCount: restoredItems.length,
           existingNoteItemsCount: existingNoteItems.length,
           carriedForwardCount,
           mergedSameNoteCount: mergedSameNoteItems.length,
           otherNotesItemsCount: otherNotesItems.length,
           totalItemsCount: otherNotesItems.length + mergedSameNoteItems.length,
+          // FIX 17 DEBUG: Component-specific details
+          prevTotalCount: prev.length,
+          prevComponentCount: prevComponents.length,
+          prevComponentIds: prevComponents.map(c => c.id),
+          prevComponentTypes: prevComponents.map(c => (c as any).componentType),
+          itemsWithoutNoteIdCount: itemsWithoutNoteId.length,
+          itemsWithoutNoteIdTypes: itemsWithoutNoteId.map(i => i.itemType),
+          carriedForwardComponentCount: carriedForwardComponents.length,
+          carriedForwardComponentIds: carriedForwardComponents.map(c => c.id),
         },
       })
 
