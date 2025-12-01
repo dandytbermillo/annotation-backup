@@ -7,6 +7,14 @@ import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manage
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import { debugLog } from "@/lib/utils/debug-logger"
 
+// Phase 1: Component registration types
+export type RegisteredComponent = {
+  componentId: string
+  componentType: "calculator" | "timer" | "alarm" | "widget" | string
+  workspaceId: string
+  registeredAt: number
+}
+
 export type WorkspaceRuntime = {
   id: string
   dataStore: DataStore
@@ -23,6 +31,22 @@ export type WorkspaceRuntime = {
   // Phase 2: Visibility state for multi-runtime hide/show
   isVisible: boolean
   lastVisibleAt: number
+  // Phase 1: Registered components (calculators, timers, alarms, etc.)
+  registeredComponents: Map<string, RegisteredComponent>
+}
+
+// Phase 3: Max live runtime configuration
+export const MAX_LIVE_WORKSPACES = {
+  desktop: 4,
+  tablet: 2,
+} as const
+
+// Detect platform for runtime cap (can be overridden via feature flag)
+const getMaxLiveRuntimes = (): number => {
+  if (typeof window === "undefined") return MAX_LIVE_WORKSPACES.desktop
+  // Simple heuristic: touch device with narrow screen = tablet
+  const isTablet = "ontouchstart" in window && window.innerWidth < 1024
+  return isTablet ? MAX_LIVE_WORKSPACES.tablet : MAX_LIVE_WORKSPACES.desktop
 }
 
 const runtimes = new Map<string, WorkspaceRuntime>()
@@ -87,6 +111,41 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     return existing
   }
 
+  // Phase 3: LRU eviction - ensure we don't exceed MAX_LIVE_WORKSPACES
+  // Evict before creating a new runtime if we're at capacity
+  const maxRuntimes = getMaxLiveRuntimes()
+  if (runtimes.size >= maxRuntimes) {
+    const lruId = getLeastRecentlyVisibleRuntimeId()
+    if (lruId) {
+      const lruRuntime = runtimes.get(lruId)
+      void debugLog({
+        component: "WorkspaceRuntime",
+        action: "runtime_evicted_for_capacity",
+        metadata: {
+          evictedWorkspaceId: lruId,
+          newWorkspaceId: workspaceId,
+          maxRuntimes,
+          currentCount: runtimes.size,
+          evictedComponentCount: lruRuntime?.registeredComponents.size ?? 0,
+          evictedOpenNotesCount: lruRuntime?.openNotes.length ?? 0,
+          evictedLastVisibleAt: lruRuntime?.lastVisibleAt,
+        },
+      })
+
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[WorkspaceRuntime] Evicting LRU runtime for capacity`, {
+          evictedWorkspaceId: lruId,
+          newWorkspaceId: workspaceId,
+          maxRuntimes,
+          currentCount: runtimes.size,
+        })
+      }
+
+      // Remove the LRU runtime
+      removeWorkspaceRuntime(lruId)
+    }
+  }
+
   const dataStore = getWorkspaceStore(workspaceId) ?? new DataStore()
   const layerManager = getWorkspaceLayerManager(workspaceId) ?? new LayerManager()
 
@@ -106,6 +165,8 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     // Phase 2: New runtimes start hidden
     isVisible: false,
     lastVisibleAt: 0,
+    // Phase 1: Component registry
+    registeredComponents: new Map(),
   }
   runtimes.set(workspaceId, runtime)
 
@@ -172,6 +233,7 @@ export const removeWorkspaceRuntime = (workspaceId: string) => {
     runtime.pendingComponents.clear()
     runtime.openNotes = []
     runtime.membership.clear()
+    runtime.registeredComponents.clear()  // Phase 1: Clean up component registry
   }
   runtimes.delete(workspaceId)
 
@@ -421,4 +483,233 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
   }
 
   return oldestId
+}
+
+// =============================================================================
+// Phase 1: Component Registration API
+// =============================================================================
+
+/**
+ * Register a component (calculator, timer, alarm, etc.) with a workspace runtime.
+ * Components must call this on mount to participate in the workspace lifecycle.
+ *
+ * @param workspaceId - The workspace this component belongs to
+ * @param componentId - Unique identifier for this component instance
+ * @param componentType - Type of component ("calculator", "timer", "alarm", etc.)
+ */
+export const registerComponent = (
+  workspaceId: string,
+  componentId: string,
+  componentType: string,
+): void => {
+  // Dev-mode assertion: workspaceId is required
+  if (process.env.NODE_ENV === "development") {
+    if (!workspaceId || typeof workspaceId !== "string" || workspaceId.trim() === "") {
+      console.error(
+        `[WorkspaceRuntime] Component registration failed: invalid workspaceId`,
+        { workspaceId, componentId, componentType }
+      )
+      throw new Error(
+        `Component "${componentId}" (type: ${componentType}) attempted to register without a valid workspaceId. ` +
+        `All components must specify their target workspace.`
+      )
+    }
+  }
+
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] Cannot register component - runtime not found for workspace: ${workspaceId}`,
+        { componentId, componentType }
+      )
+    }
+    return
+  }
+
+  const component: RegisteredComponent = {
+    componentId,
+    componentType,
+    workspaceId,
+    registeredAt: Date.now(),
+  }
+
+  runtime.registeredComponents.set(componentId, component)
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Component registered`, {
+      workspaceId,
+      componentId,
+      componentType,
+      totalComponents: runtime.registeredComponents.size,
+    })
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "component_registered",
+    metadata: {
+      workspaceId,
+      componentId,
+      componentType,
+      totalComponents: runtime.registeredComponents.size,
+    },
+  })
+}
+
+/**
+ * Deregister a component from a workspace runtime.
+ * Components must call this on unmount to clean up.
+ *
+ * @param workspaceId - The workspace this component belongs to
+ * @param componentId - Unique identifier for this component instance
+ */
+export const deregisterComponent = (
+  workspaceId: string,
+  componentId: string,
+): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  const hadComponent = runtime.registeredComponents.has(componentId)
+  runtime.registeredComponents.delete(componentId)
+
+  if (process.env.NODE_ENV === "development" && hadComponent) {
+    console.log(`[WorkspaceRuntime] Component deregistered`, {
+      workspaceId,
+      componentId,
+      remainingComponents: runtime.registeredComponents.size,
+    })
+  }
+
+  if (hadComponent) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "component_deregistered",
+      metadata: {
+        workspaceId,
+        componentId,
+        remainingComponents: runtime.registeredComponents.size,
+      },
+    })
+  }
+}
+
+/**
+ * Get all registered components for a workspace.
+ */
+export const getRegisteredComponents = (workspaceId: string): RegisteredComponent[] => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return []
+  return Array.from(runtime.registeredComponents.values())
+}
+
+/**
+ * Get count of registered components for a workspace.
+ */
+export const getRegisteredComponentCount = (workspaceId: string): number => {
+  return runtimes.get(workspaceId)?.registeredComponents.size ?? 0
+}
+
+/**
+ * Check if a component is registered with a workspace.
+ */
+export const isComponentRegistered = (workspaceId: string, componentId: string): boolean => {
+  return runtimes.get(workspaceId)?.registeredComponents.has(componentId) ?? false
+}
+
+// =============================================================================
+// Phase 3: LRU Eviction for Max Live Workspaces
+// =============================================================================
+
+/**
+ * Evict the least recently used runtime to stay within MAX_LIVE_WORKSPACES limit.
+ * Called before creating a new runtime when at capacity.
+ *
+ * Returns the evicted workspace ID, or null if eviction wasn't needed/possible.
+ */
+export const evictLRURuntime = (): string | null => {
+  const maxRuntimes = getMaxLiveRuntimes()
+
+  // Check if we're at capacity
+  if (runtimes.size < maxRuntimes) {
+    return null
+  }
+
+  const lruId = getLeastRecentlyVisibleRuntimeId()
+  if (!lruId) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[WorkspaceRuntime] Cannot evict - no eligible runtime found`)
+    }
+    return null
+  }
+
+  const runtime = runtimes.get(lruId)
+  const componentCount = runtime?.registeredComponents.size ?? 0
+  const openNotesCount = runtime?.openNotes.length ?? 0
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "runtime_evicted",
+    metadata: {
+      workspaceId: lruId,
+      reason: "max_live_workspaces_exceeded",
+      maxRuntimes,
+      runtimeCount: runtimes.size,
+      evictedOpenNotesCount: openNotesCount,
+      evictedComponentCount: componentCount,
+      lastVisibleAt: runtime?.lastVisibleAt,
+    },
+  })
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Evicting LRU runtime`, {
+      workspaceId: lruId,
+      maxRuntimes,
+      currentCount: runtimes.size,
+      lastVisibleAt: runtime?.lastVisibleAt,
+      componentCount,
+      openNotesCount,
+    })
+  }
+
+  // Remove the runtime
+  removeWorkspaceRuntime(lruId)
+
+  return lruId
+}
+
+/**
+ * Check if creating a new runtime would exceed the limit.
+ * If so, evict LRU runtime first.
+ *
+ * Call this before getWorkspaceRuntime when you know you'll be creating a new runtime.
+ */
+export const ensureRuntimeCapacity = (): string | null => {
+  const maxRuntimes = getMaxLiveRuntimes()
+
+  // If we're at or over capacity, evict
+  if (runtimes.size >= maxRuntimes) {
+    return evictLRURuntime()
+  }
+
+  return null
+}
+
+/**
+ * Get current runtime count and capacity info.
+ */
+export const getRuntimeCapacityInfo = (): {
+  currentCount: number
+  maxCount: number
+  atCapacity: boolean
+  runtimeIds: string[]
+} => {
+  const maxRuntimes = getMaxLiveRuntimes()
+  return {
+    currentCount: runtimes.size,
+    maxCount: maxRuntimes,
+    atCapacity: runtimes.size >= maxRuntimes,
+    runtimeIds: Array.from(runtimes.keys()),
+  }
 }

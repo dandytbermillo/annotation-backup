@@ -2,14 +2,24 @@
 
 import React, { useState } from 'react'
 import { Calculator as CalcIcon } from 'lucide-react'
+import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
 
 interface CalculatorProps {
   componentId: string
+  workspaceId?: string | null
   state?: any
   onStateUpdate?: (state: any) => void
 }
 
-export function Calculator({ componentId, state, onStateUpdate }: CalculatorProps) {
+export function Calculator({ componentId, workspaceId, state, onStateUpdate }: CalculatorProps) {
+  // Phase 1: Register with workspace runtime for lifecycle management
+  useComponentRegistration({
+    workspaceId,
+    componentId,
+    componentType: 'calculator',
+    // strict: false for now - will be strict: true once all call sites pass workspaceId
+    strict: false,
+  })
   const [display, setDisplay] = useState(state?.display || '0')
   const [previousValue, setPreviousValue] = useState(state?.previousValue || null)
   const [operation, setOperation] = useState(state?.operation || null)

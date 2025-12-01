@@ -18,6 +18,7 @@ interface ComponentPanelProps {
   id: string
   type: ComponentType
   position: { x: number; y: number }
+  workspaceId?: string | null
   onClose?: (id: string) => void
   onPositionChange?: (id: string, position: { x: number; y: number }) => void
 }
@@ -25,7 +26,7 @@ interface ComponentPanelProps {
 // Global variable to track which component is currently being dragged
 let globalDraggingComponentId: string | null = null
 
-export function ComponentPanel({ id, type, position, onClose, onPositionChange }: ComponentPanelProps) {
+export function ComponentPanel({ id, type, position, workspaceId, onClose, onPositionChange }: ComponentPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const [componentState, setComponentState] = useState({})
@@ -287,9 +288,9 @@ export function ComponentPanel({ id, type, position, onClose, onPositionChange }
   const renderComponent = () => {
     switch (type) {
       case 'calculator':
-        return <Calculator componentId={id} state={componentState} onStateUpdate={setComponentState} />
+        return <Calculator componentId={id} workspaceId={workspaceId} state={componentState} onStateUpdate={setComponentState} />
       case 'timer':
-        return <Timer componentId={id} state={componentState} onStateUpdate={setComponentState} />
+        return <Timer componentId={id} workspaceId={workspaceId} state={componentState} onStateUpdate={setComponentState} />
       case 'sticky-note':
         return <StickyNote componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'dragtest':

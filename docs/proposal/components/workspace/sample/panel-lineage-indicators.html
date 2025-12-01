@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel Lineage Indicators - Interactive Samples</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      padding: 40px;
+      color: #fff;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-bottom: 40px;
+      font-size: 14px;
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 30px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .option-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .option-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .option-description {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    .pros-cons {
+      display: flex;
+      gap: 16px;
+      margin-top: 16px;
+      font-size: 12px;
+    }
+
+    .pros, .cons {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .pros {
+      background: rgba(39, 174, 96, 0.15);
+      border: 1px solid rgba(39, 174, 96, 0.3);
+    }
+
+    .cons {
+      background: rgba(231, 76, 60, 0.15);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+    }
+
+    .pros-title, .cons-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .pros-title { color: #27ae60; }
+    .cons-title { color: #e74c3c; }
+
+    /* Panel Styles */
+    .panel-demo {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      min-height: 180px;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      color: white;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+      user-select: none;
+    }
+
+    .header-main {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .header-note {
+      background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    }
+
+    .header-explore {
+      background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+    }
+
+    .header-promote {
+      background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+    }
+
+    .panel-content {
+      padding: 16px;
+      color: #333;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .close-btn {
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .close-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.1);
+    }
+
+    /* Option 1: Badge/Pill */
+    .parent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.25);
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-right: 10px;
+    }
+
+    .parent-badge:hover {
+      background: rgba(255, 255, 255, 0.4);
+      transform: scale(1.05);
+    }
+
+    .parent-badge .arrow {
+      font-size: 10px;
+    }
+
+    /* Option 2: Icon with Tooltip */
+    .link-icon {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      cursor: pointer;
+      margin-right: 8px;
+      transition: all 0.2s;
+    }
+
+    .link-icon:hover {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .link-icon svg {
+      width: 14px;
+      height: 14px;
+      fill: white;
+    }
+
+    .tooltip {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+      margin-top: 8px;
+      z-index: 100;
+    }
+
+    .tooltip::before {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-bottom-color: rgba(0, 0, 0, 0.9);
+    }
+
+    .link-icon:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* Option 3: Subtitle */
+    .header-with-subtitle {
+      flex-direction: column;
+      align-items: flex-start;
+      padding: 10px 16px;
+    }
+
+    .header-with-subtitle .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+    }
+
+    .subtitle-row {
+      font-size: 11px;
+      opacity: 0.8;
+      font-weight: 400;
+      margin-top: 2px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .subtitle-row .from-arrow {
+      font-size: 10px;
+    }
+
+    /* Option 4: Breadcrumb */
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      flex-wrap: wrap;
+    }
+
+    .breadcrumb-item {
+      cursor: pointer;
+      opacity: 0.7;
+      transition: all 0.2s;
+    }
+
+    .breadcrumb-item:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+
+    .breadcrumb-item.current {
+      opacity: 1;
+      cursor: default;
+    }
+
+    .breadcrumb-item.current:hover {
+      text-decoration: none;
+    }
+
+    .breadcrumb-separator {
+      opacity: 0.5;
+      font-size: 10px;
+    }
+
+    /* Option 5: Corner Ribbon */
+    .corner-ribbon {
+      position: absolute;
+      top: 0;
+      left: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 3px 20px 3px 6px;
+      clip-path: polygon(0 0, 100% 0, 80% 100%, 0 100%);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .panel-header.with-ribbon {
+      padding-left: 70px;
+    }
+
+    /* Option 6: Color Border */
+    .color-accent-border {
+      border-left: 4px solid;
+      border-image: linear-gradient(135deg, #667eea 0%, #764ba2 100%) 1;
+    }
+
+    .accent-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      opacity: 0.85;
+      margin-right: 10px;
+    }
+
+    .accent-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    /* Option 7: Collapsible */
+    .collapsible-trigger {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 8px;
+      font-size: 10px;
+      transition: all 0.2s;
+    }
+
+    .collapsible-trigger:hover {
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .collapsible-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .collapsible-content.expanded {
+      max-height: 50px;
+    }
+
+    .lineage-path {
+      padding: 8px 16px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .lineage-path span {
+      opacity: 0.8;
+    }
+
+    .lineage-path .current {
+      opacity: 1;
+      font-weight: 600;
+    }
+
+    /* Interactive states */
+    .interactive-hint {
+      text-align: center;
+      font-size: 11px;
+      color: #666;
+      margin-top: 8px;
+      font-style: italic;
+    }
+
+    /* Comparison section */
+    .comparison-section {
+      max-width: 1400px;
+      margin: 60px auto 0;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .comparison-title {
+      font-size: 20px;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    .side-by-side {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .main-panel-demo, .branch-panel-demo {
+      flex: 1;
+      min-width: 300px;
+      max-width: 450px;
+    }
+
+    .panel-label {
+      text-align: center;
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .connection-line {
+      display: none;
+    }
+
+    @media (min-width: 700px) {
+      .connection-line {
+        display: block;
+        width: 60px;
+        height: 3px;
+        background: linear-gradient(90deg, #667eea, #f39c12);
+        align-self: center;
+        position: relative;
+      }
+
+      .connection-line::after {
+        content: '';
+        position: absolute;
+        right: -6px;
+        top: -4px;
+        border: 6px solid transparent;
+        border-left-color: #f39c12;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Panel Lineage Indicators</h1>
+  <p class="subtitle">Interactive samples showing different ways to indicate a panel's parent relationship when connection lines are hidden</p>
+
+  <div class="options-grid">
+    <!-- Option 1: Badge/Pill -->
+    <div class="option-card">
+      <div class="option-title">1. Badge/Pill in Header</div>
+      <div class="option-description">
+        A clickable badge showing the parent panel name. Click to pan camera to parent.
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-explore">
+          <div style="display: flex; align-items: center;">
+            <div class="parent-badge" onclick="showPanAction('Panning to Main panel...')">
+              <span class="arrow">←</span>
+              <span>Main</span>
+            </div>
+            <span>Explore: Research Notes</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. The badge clearly shows this is a branch of "Main" and clicking it would navigate to the parent panel.
+        </div>
+      </div>
+      <p class="interactive-hint">Click the badge to simulate navigation</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Always visible, clear hierarchy, clickable for navigation</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Takes horizontal space in header</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 2: Icon with Tooltip -->
+    <div class="option-card">
+      <div class="option-title">2. Icon Indicator with Tooltip</div>
+      <div class="option-description">
+        A small link/branch icon that reveals parent info on hover.
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-note">
+          <div style="display: flex; align-items: center;">
+            <div class="link-icon">
+              <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              <div class="tooltip">
+                <strong>Branch of:</strong> Main<br>
+                <span style="opacity: 0.7; font-size: 11px;">Click to navigate</span>
+              </div>
+            </div>
+            <span>Note: Meeting Summary</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. Hover over the link icon to see the parent relationship.
+        </div>
+      </div>
+      <p class="interactive-hint">Hover over the link icon</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Minimal space, discoverable, clean look</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Requires hover to see info</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 3: Subtitle -->
+    <div class="option-card">
+      <div class="option-title">3. Secondary Line/Subtitle</div>
+      <div class="option-description">
+        A smaller text line below the title showing lineage.
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-promote header-with-subtitle">
+          <div class="title-row">
+            <span>Promote: Final Draft</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="subtitle-row">
+            <span class="from-arrow">↳</span>
+            <span>from Main</span>
+          </div>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. The subtitle clearly indicates this panel's origin without requiring any interaction.
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Always visible, full context, elegant</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Increases header height slightly</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 4: Breadcrumb Trail -->
+    <div class="option-card">
+      <div class="option-title">4. Breadcrumb Trail</div>
+      <div class="option-description">
+        Full ancestry path displayed in the header. Already exists in codebase!
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-explore">
+          <div class="breadcrumb">
+            <span class="breadcrumb-item" onclick="showPanAction('Navigating to Main...')">Main</span>
+            <span class="breadcrumb-separator">›</span>
+            <span class="breadcrumb-item" onclick="showPanAction('Navigating to Sub-branch...')">Sub-branch</span>
+            <span class="breadcrumb-separator">›</span>
+            <span class="breadcrumb-item current">Current Panel</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. Each breadcrumb item is clickable to navigate to that ancestor panel.
+        </div>
+      </div>
+      <p class="interactive-hint">Click breadcrumb items to simulate navigation</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Shows full ancestry, clickable navigation</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Can get long with deep nesting</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 5: Corner Badge -->
+    <div class="option-card">
+      <div class="option-title">5. Corner Badge/Ribbon</div>
+      <div class="option-description">
+        A small corner indicator showing the parent relationship.
+      </div>
+
+      <div class="panel-demo" style="position: relative;">
+        <div class="corner-ribbon">FROM MAIN</div>
+        <div class="panel-header header-note with-ribbon">
+          <span>Note: Ideas Collection</span>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. The corner ribbon subtly indicates the parent without interfering with the title area.
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Doesn't interfere with title, distinctive look</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Less obvious, may feel decorative</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 6: Color Border -->
+    <div class="option-card">
+      <div class="option-title">6. Color-Coded Border Accent</div>
+      <div class="option-description">
+        A subtle left border that matches the parent's type color.
+      </div>
+
+      <div class="panel-demo color-accent-border">
+        <div class="panel-header header-explore">
+          <div style="display: flex; align-items: center;">
+            <div class="accent-indicator">
+              <div class="accent-dot"></div>
+              <span>Main</span>
+            </div>
+            <span>Explore: Deep Dive</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. The purple left border and dot indicate this is a child of the Main panel (which uses purple gradient).
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Visual hierarchy, minimal text</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Color meaning not immediately obvious</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Option 7: Collapsible -->
+    <div class="option-card">
+      <div class="option-title">7. Collapsible Parent Indicator</div>
+      <div class="option-description">
+        An expandable section that reveals lineage on click.
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-promote">
+          <div style="display: flex; align-items: center;">
+            <div class="collapsible-trigger" onclick="toggleCollapsible(this)">▶</div>
+            <span>Promote: Published Version</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="collapsible-content">
+          <div class="lineage-path">
+            <span>Main</span>
+            <span>→</span>
+            <span>Draft</span>
+            <span>→</span>
+            <span class="current">Published Version</span>
+          </div>
+        </div>
+        <div class="panel-content">
+          Panel content goes here. Click the arrow to expand/collapse the lineage path.
+        </div>
+      </div>
+      <p class="interactive-hint">Click the arrow to expand/collapse</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Compact by default, full info on demand</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Requires interaction, adds complexity</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recommendation -->
+    <div class="option-card" style="border: 2px solid #667eea; background: rgba(102, 126, 234, 0.1);">
+      <div class="option-title" style="color: #667eea;">Recommended: Combined Approach</div>
+      <div class="option-description">
+        Combine badge (option 1) with clickable navigation. Best balance of visibility and functionality.
+      </div>
+
+      <div class="panel-demo">
+        <div class="panel-header header-explore">
+          <div style="display: flex; align-items: center;">
+            <div class="parent-badge" onclick="showPanAction('Panning camera to Main panel...')" style="background: rgba(102, 126, 234, 0.4);">
+              <span class="arrow">←</span>
+              <span>Main</span>
+            </div>
+            <span>Explore: My Topic</span>
+          </div>
+          <button class="close-btn">×</button>
+        </div>
+        <div class="panel-content">
+          <strong>This is the recommended approach:</strong>
+          <ul style="margin-top: 10px; margin-left: 20px;">
+            <li>Always visible badge shows parent</li>
+            <li>Click to pan camera to parent panel</li>
+            <li>Minimal horizontal space</li>
+            <li>Uses existing <code>renderBreadcrumbs()</code> logic</li>
+          </ul>
+        </div>
+      </div>
+      <p class="interactive-hint">Click the badge to simulate camera pan</p>
+    </div>
+  </div>
+
+  <!-- Side by side comparison -->
+  <div class="comparison-section">
+    <div class="comparison-title">Side-by-Side: Main Panel vs Branch Panel</div>
+    <div class="side-by-side">
+      <div class="main-panel-demo">
+        <div class="panel-label">Main Panel (No indicator needed)</div>
+        <div class="panel-demo">
+          <div class="panel-header header-main">
+            <span>Main: Project Overview</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            This is the main panel. It has no parent, so no lineage indicator is shown.
+          </div>
+        </div>
+      </div>
+
+      <div class="connection-line"></div>
+
+      <div class="branch-panel-demo">
+        <div class="panel-label">Branch Panel (With indicator)</div>
+        <div class="panel-demo">
+          <div class="panel-header header-explore">
+            <div style="display: flex; align-items: center;">
+              <div class="parent-badge" onclick="showPanAction('Panning to Main...')">
+                <span class="arrow">←</span>
+                <span>Main</span>
+              </div>
+              <span>Explore: Details</span>
+            </div>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            This branch panel shows its parent relationship via the badge, even when the connection line is hidden due to panel resizing.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" style="
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: transform 0.3s ease;
+    z-index: 1000;
+  "></div>
+
+  <script>
+    function showPanAction(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+
+      setTimeout(() => {
+        toast.style.transform = 'translateX(-50%) translateY(100px)';
+      }, 2000);
+    }
+
+    function toggleCollapsible(trigger) {
+      const content = trigger.closest('.panel-header').nextElementSibling;
+      const isExpanded = content.classList.toggle('expanded');
+      trigger.textContent = isExpanded ? '▼' : '▶';
+    }
+  </script>
+</body>
+</html>

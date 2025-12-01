@@ -1049,6 +1049,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
                 id={component.id}
                 type={component.componentType!}
                 position={component.position}
+                workspaceId={workspaceId}
                 onClose={handleComponentClose}
                 onPositionChange={handleComponentPositionChange}
               />

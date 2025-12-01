@@ -2,9 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { Timer as TimerIcon, Play, Pause, RotateCcw } from 'lucide-react'
+import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
 
 interface TimerProps {
   componentId: string
+  workspaceId?: string | null
   state?: Partial<TimerState>
   onStateUpdate?: (state: TimerState) => void
 }
@@ -15,7 +17,15 @@ interface TimerState {
   isRunning: boolean
 }
 
-export function Timer({ componentId, state, onStateUpdate }: TimerProps) {
+export function Timer({ componentId, workspaceId, state, onStateUpdate }: TimerProps) {
+  // Phase 1: Register with workspace runtime for lifecycle management
+  useComponentRegistration({
+    workspaceId,
+    componentId,
+    componentType: 'timer',
+    // strict: false for now - will be strict: true once all call sites pass workspaceId
+    strict: false,
+  })
   const [minutes, setMinutes] = useState<number>(state?.minutes ?? 5)
   const [seconds, setSeconds] = useState<number>(state?.seconds ?? 0)
   const [isRunning, setIsRunning] = useState<boolean>(state?.isRunning ?? false)

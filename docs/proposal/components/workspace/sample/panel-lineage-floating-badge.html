@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Floating Badge Above Panel - Interactive Samples</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      padding: 40px;
+      color: #fff;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #888;
+      margin-bottom: 40px;
+      font-size: 14px;
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 40px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .option-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .option-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .option-description {
+      font-size: 13px;
+      color: #aaa;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .pros-cons {
+      display: flex;
+      gap: 16px;
+      margin-top: 16px;
+      font-size: 12px;
+    }
+
+    .pros, .cons {
+      flex: 1;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .pros {
+      background: rgba(39, 174, 96, 0.15);
+      border: 1px solid rgba(39, 174, 96, 0.3);
+    }
+
+    .cons {
+      background: rgba(231, 76, 60, 0.15);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+    }
+
+    .pros-title, .cons-title {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .pros-title { color: #27ae60; }
+    .cons-title { color: #e74c3c; }
+
+    /* Panel Container - needs padding top for floating badge */
+    .panel-container {
+      position: relative;
+      padding-top: 28px; /* Space for floating badge */
+    }
+
+    /* Panel Styles */
+    .panel-demo {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      min-height: 160px;
+      position: relative;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      color: white;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+      user-select: none;
+    }
+
+    .header-main {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .header-note {
+      background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    }
+
+    .header-explore {
+      background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+    }
+
+    .header-promote {
+      background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
+    }
+
+    .panel-content {
+      padding: 16px;
+      color: #333;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .close-btn {
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      color: white;
+      cursor: pointer;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .close-btn:hover {
+      background: rgba(255, 255, 255, 0.3);
+      transform: scale(1.1);
+    }
+
+    /* ===== FLOATING BADGE STYLES ===== */
+
+    /* Style 1: Centered Tab Badge */
+    .floating-badge-centered {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 6px 16px;
+      border-radius: 8px 8px 0 0;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 -4px 12px rgba(102, 126, 234, 0.3);
+      z-index: 10;
+    }
+
+    .floating-badge-centered:hover {
+      transform: translateX(-50%) translateY(-2px);
+      box-shadow: 0 -6px 16px rgba(102, 126, 234, 0.5);
+    }
+
+    .floating-badge-centered .arrow {
+      font-size: 10px;
+    }
+
+    /* Style 2: Left-aligned Tab */
+    .floating-badge-left {
+      position: absolute;
+      top: 0;
+      left: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 5px 14px;
+      border-radius: 8px 8px 0 0;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 -4px 12px rgba(102, 126, 234, 0.3);
+      z-index: 10;
+    }
+
+    .floating-badge-left:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 -6px 16px rgba(102, 126, 234, 0.5);
+    }
+
+    /* Style 3: Pill Badge with Connector */
+    .floating-badge-pill {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+
+    .floating-badge-pill .badge {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .floating-badge-pill .badge:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 16px rgba(102, 126, 234, 0.6);
+    }
+
+    .floating-badge-pill .connector {
+      width: 2px;
+      height: 8px;
+      background: linear-gradient(to bottom, #667eea, #764ba2);
+      margin: 0 auto;
+    }
+
+    /* Style 4: Tag/Label Style */
+    .floating-badge-tag {
+      position: absolute;
+      top: 4px;
+      left: -8px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 4px 12px 4px 16px;
+      font-size: 10px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
+      clip-path: polygon(0 0, 100% 0, 100% 100%, 8px 100%, 0 50%);
+      z-index: 10;
+    }
+
+    .floating-badge-tag:hover {
+      transform: translateX(-2px);
+    }
+
+    /* Style 5: Bubble/Callout */
+    .floating-badge-bubble {
+      position: absolute;
+      top: 0;
+      left: 30px;
+      z-index: 10;
+    }
+
+    .floating-badge-bubble .badge {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      position: relative;
+    }
+
+    .floating-badge-bubble .badge::after {
+      content: '';
+      position: absolute;
+      bottom: -6px;
+      left: 15px;
+      border: 6px solid transparent;
+      border-top-color: #764ba2;
+      border-bottom: none;
+    }
+
+    .floating-badge-bubble .badge:hover {
+      transform: translateY(-2px);
+    }
+
+    /* Style 6: Icon-only Badge */
+    .floating-badge-icon {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      z-index: 10;
+    }
+
+    .floating-badge-icon:hover {
+      transform: translateX(-50%) scale(1.1);
+      box-shadow: 0 6px 16px rgba(102, 126, 234, 0.6);
+    }
+
+    .floating-badge-icon svg {
+      width: 16px;
+      height: 16px;
+      fill: white;
+    }
+
+    .floating-badge-icon .tooltip {
+      position: absolute;
+      top: -32px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+    }
+
+    .floating-badge-icon:hover .tooltip {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* Style 7: Mini Connection Indicator */
+    .floating-badge-connection {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .floating-badge-connection .parent-dot {
+      width: 12px;
+      height: 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(102, 126, 234, 0.5);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .floating-badge-connection .parent-dot:hover {
+      transform: scale(1.3);
+    }
+
+    .floating-badge-connection .line {
+      width: 2px;
+      height: 12px;
+      background: linear-gradient(to bottom, #667eea, #764ba2);
+    }
+
+    .floating-badge-connection .label {
+      position: absolute;
+      top: -20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      white-space: nowrap;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+    }
+
+    .floating-badge-connection:hover .label {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* Style 8: Animated Pulse Badge */
+    .floating-badge-pulse {
+      position: absolute;
+      top: 4px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 5px 14px;
+      border-radius: 16px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      z-index: 10;
+      animation: pulse 2s infinite;
+    }
+
+    .floating-badge-pulse:hover {
+      animation: none;
+      transform: translateX(-50%) scale(1.05);
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+      50% {
+        box-shadow: 0 4px 20px rgba(102, 126, 234, 0.8), 0 0 0 4px rgba(102, 126, 234, 0.2);
+      }
+    }
+
+    /* Interactive hint */
+    .interactive-hint {
+      text-align: center;
+      font-size: 11px;
+      color: #666;
+      margin-top: 8px;
+      font-style: italic;
+    }
+
+    /* Comparison section */
+    .comparison-section {
+      max-width: 1000px;
+      margin: 60px auto 0;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 30px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .comparison-title {
+      font-size: 20px;
+      margin-bottom: 30px;
+      text-align: center;
+    }
+
+    .visual-diagram {
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 60px;
+      flex-wrap: wrap;
+    }
+
+    .diagram-panel {
+      text-align: center;
+    }
+
+    .diagram-label {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .diagram-connection {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #888;
+      font-size: 24px;
+    }
+
+    .diagram-connection .dashed-line {
+      width: 80px;
+      height: 3px;
+      background: repeating-linear-gradient(
+        90deg,
+        #667eea 0px,
+        #667eea 8px,
+        transparent 8px,
+        transparent 16px
+      );
+      margin: 10px 0;
+    }
+
+    .diagram-connection .hidden-label {
+      font-size: 10px;
+      color: #e74c3c;
+      text-transform: uppercase;
+    }
+
+    /* Recommendation highlight */
+    .recommended {
+      border: 2px solid #667eea;
+      background: rgba(102, 126, 234, 0.1);
+    }
+
+    .recommended .option-title {
+      color: #667eea;
+    }
+
+    .recommended::before {
+      content: 'RECOMMENDED';
+      position: absolute;
+      top: -10px;
+      left: 20px;
+      background: #667eea;
+      color: white;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .option-card.recommended {
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <h1>Floating Badge Above Panel Header</h1>
+  <p class="subtitle">Badge/symbol positioned OUTSIDE the panel, sitting ON TOP of the header</p>
+
+  <!-- Visual explanation -->
+  <div class="comparison-section" style="margin-bottom: 40px;">
+    <div class="comparison-title">The Concept: Badge Floats Above Panel</div>
+    <div class="visual-diagram">
+      <div class="diagram-panel">
+        <div class="diagram-label">Main Panel</div>
+        <div class="panel-container" style="padding-top: 0;">
+          <div class="panel-demo" style="width: 200px; min-height: 100px;">
+            <div class="panel-header header-main">
+              <span style="font-size: 13px;">Main</span>
+            </div>
+            <div class="panel-content" style="font-size: 12px;">Parent panel</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagram-connection">
+        <div class="dashed-line"></div>
+        <div class="hidden-label">Line may be hidden</div>
+      </div>
+
+      <div class="diagram-panel">
+        <div class="diagram-label">Branch Panel with Floating Badge</div>
+        <div class="panel-container">
+          <div class="floating-badge-centered" onclick="showToast('Navigate to Main')">
+            <span class="arrow">←</span>
+            <span>Main</span>
+          </div>
+          <div class="panel-demo" style="width: 200px; min-height: 100px;">
+            <div class="panel-header header-explore">
+              <span style="font-size: 13px;">Explore</span>
+            </div>
+            <div class="panel-content" style="font-size: 12px;">Child panel</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="options-grid">
+    <!-- Style 1: Centered Tab -->
+    <div class="option-card recommended">
+      <div class="option-title">1. Centered Tab Badge</div>
+      <div class="option-description">
+        A tab-like badge centered above the panel header. Click to navigate to parent.
+      </div>
+
+      <div class="panel-container">
+        <div class="floating-badge-centered" onclick="showToast('Navigating to Main panel...')">
+          <span class="arrow">←</span>
+          <span>Main</span>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-explore">
+            <span>Explore: Research Notes</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The floating badge sits outside and above the panel, clearly showing lineage without taking any header space.
+          </div>
+        </div>
+      </div>
+      <p class="interactive-hint">Click the badge to simulate navigation</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Very visible, no header space used, clickable</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Needs vertical space above panel</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 2: Left-aligned Tab -->
+    <div class="option-card">
+      <div class="option-title">2. Left-Aligned Tab</div>
+      <div class="option-description">
+        Tab positioned at the left edge, like a folder tab.
+      </div>
+
+      <div class="panel-container">
+        <div class="floating-badge-left" onclick="showToast('Navigating to Main panel...')">
+          <span>←</span>
+          <span>Main</span>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-note">
+            <span>Note: Meeting Summary</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            Left-aligned badge gives a folder-tab feel, showing the panel's origin.
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Familiar folder-tab metaphor</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Asymmetric look</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 3: Pill with Connector -->
+    <div class="option-card">
+      <div class="option-title">3. Pill Badge with Connector</div>
+      <div class="option-description">
+        A floating pill with a visual connector line to the panel.
+      </div>
+
+      <div class="panel-container" style="padding-top: 34px;">
+        <div class="floating-badge-pill">
+          <div class="badge" onclick="showToast('Navigating to Main panel...')">
+            <span>←</span>
+            <span>Main</span>
+          </div>
+          <div class="connector"></div>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-promote">
+            <span>Promote: Final Draft</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The connector line reinforces the relationship between badge and panel.
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Clear visual connection, modern look</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Takes more vertical space</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 4: Tag/Label -->
+    <div class="option-card">
+      <div class="option-title">4. Side Tag/Label</div>
+      <div class="option-description">
+        A tag that extends from the left side of the panel.
+      </div>
+
+      <div class="panel-container" style="padding-left: 10px;">
+        <div class="floating-badge-tag" onclick="showToast('Navigating to Main...')">
+          <span>← MAIN</span>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-explore">
+            <span>Explore: Ideas</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The tag sticks out from the side, like a file folder label.
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Unique look, no vertical space needed</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Requires horizontal margin</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 5: Bubble/Callout -->
+    <div class="option-card">
+      <div class="option-title">5. Speech Bubble Callout</div>
+      <div class="option-description">
+        A callout bubble pointing down to the panel.
+      </div>
+
+      <div class="panel-container" style="padding-top: 32px;">
+        <div class="floating-badge-bubble">
+          <div class="badge" onclick="showToast('Navigating to Main...')">
+            <span>←</span>
+            <span>Main</span>
+          </div>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-note">
+            <span>Note: Quick Thoughts</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The speech bubble style with pointer creates a clear "this came from" relationship.
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Clear directional indicator</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Speech bubble may imply message</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 6: Icon Only -->
+    <div class="option-card">
+      <div class="option-title">6. Icon-Only Badge (Hover for Label)</div>
+      <div class="option-description">
+        Minimal icon that reveals parent name on hover.
+      </div>
+
+      <div class="panel-container" style="padding-top: 40px;">
+        <div class="floating-badge-icon" onclick="showToast('Navigating to Main...')">
+          <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+          <div class="tooltip">← Main</div>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-promote">
+            <span>Promote: Published</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            Hover over the icon to see the parent name. Very minimal footprint.
+          </div>
+        </div>
+      </div>
+      <p class="interactive-hint">Hover over the icon</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Very minimal, clean look</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Requires hover to see parent name</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 7: Mini Connection -->
+    <div class="option-card">
+      <div class="option-title">7. Mini Connection Dot</div>
+      <div class="option-description">
+        A small dot with line, representing the connection point.
+      </div>
+
+      <div class="panel-container" style="padding-top: 28px;">
+        <div class="floating-badge-connection">
+          <div class="label">← Main</div>
+          <div class="parent-dot" onclick="showToast('Navigating to Main...')"></div>
+          <div class="line"></div>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-explore">
+            <span>Explore: Deep Dive</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The dot represents where the connection line would attach. Hover to see parent.
+          </div>
+        </div>
+      </div>
+      <p class="interactive-hint">Hover over the dot</p>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Subtle, represents connection point</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>May be too subtle to notice</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Style 8: Animated Pulse -->
+    <div class="option-card">
+      <div class="option-title">8. Animated Pulse Badge</div>
+      <div class="option-description">
+        Badge with subtle pulse animation to draw attention.
+      </div>
+
+      <div class="panel-container" style="padding-top: 32px;">
+        <div class="floating-badge-pulse" onclick="showToast('Navigating to Main...')">
+          <span>←</span>
+          <span>Main</span>
+        </div>
+        <div class="panel-demo">
+          <div class="panel-header header-note">
+            <span>Note: Active Topic</span>
+            <button class="close-btn">×</button>
+          </div>
+          <div class="panel-content">
+            The pulsing animation draws attention to the parent relationship.
+          </div>
+        </div>
+      </div>
+
+      <div class="pros-cons">
+        <div class="pros">
+          <div class="pros-title">Pros</div>
+          <div>Eye-catching, hard to miss</div>
+        </div>
+        <div class="cons">
+          <div class="cons-title">Cons</div>
+          <div>Animation may be distracting</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Multi-level example -->
+  <div class="comparison-section">
+    <div class="comparison-title">Multi-Level Lineage Example</div>
+    <p style="text-align: center; color: #888; margin-bottom: 20px; font-size: 13px;">
+      When a panel has multiple ancestors, the badge can show the immediate parent or full path
+    </p>
+    <div class="visual-diagram" style="gap: 30px;">
+      <div class="diagram-panel">
+        <div class="diagram-label">Immediate Parent Only</div>
+        <div class="panel-container">
+          <div class="floating-badge-centered" style="font-size: 11px; padding: 4px 12px;">
+            <span class="arrow">←</span>
+            <span>Sub-branch</span>
+          </div>
+          <div class="panel-demo" style="width: 180px; min-height: 80px;">
+            <div class="panel-header header-explore" style="padding: 8px 12px;">
+              <span style="font-size: 12px;">Deep Panel</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagram-panel">
+        <div class="diagram-label">Full Path (Breadcrumb)</div>
+        <div class="panel-container">
+          <div class="floating-badge-centered" style="font-size: 10px; padding: 4px 10px;">
+            <span>Main › Sub › </span>
+            <span style="font-weight: 700;">Current</span>
+          </div>
+          <div class="panel-demo" style="width: 180px; min-height: 80px;">
+            <div class="panel-header header-promote" style="padding: 8px 12px;">
+              <span style="font-size: 12px;">Deep Panel</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" style="
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 14px;
+    transition: transform 0.3s ease;
+    z-index: 1000;
+  "></div>
+
+  <script>
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+
+      setTimeout(() => {
+        toast.style.transform = 'translateX(-50%) translateY(100px)';
+      }, 2000);
+    }
+  </script>
+</body>
+</html>
