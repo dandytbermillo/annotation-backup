@@ -2587,6 +2587,263 @@ export function useNoteWorkspaces({
     emitDebugLog,
   ])
 
+  /**
+   * Persist any workspace (active or background) by ID.
+   *
+   * For the active workspace: uses buildPayload() which collects fresh data and caches properly.
+   * For background workspaces: ensures snapshot is captured/cached before reading.
+   *
+   * This addresses the issue where persistWorkspaceSnapshot reads from stale cache
+   * because cacheWorkspaceSnapshot() was only called for the active workspace.
+   */
+  const persistWorkspaceById = useCallback(
+    async (
+      targetWorkspaceId: string,
+      reason: string,
+      options?: { skipReadinessCheck?: boolean; isBackground?: boolean }
+    ): Promise<boolean> => {
+      if (!targetWorkspaceId || !adapterRef.current) {
+        return false
+      }
+
+      const isActiveWorkspace = targetWorkspaceId === currentWorkspaceId
+      const isBackground = options?.isBackground ?? !isActiveWorkspace
+      const saveStart = Date.now()
+
+      // Get open notes from runtime to check if workspace has notes
+      const workspaceOpenNotes = getWorkspaceOpenNotes(targetWorkspaceId)
+
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "persist_by_id_start",
+        metadata: {
+          workspaceId: targetWorkspaceId,
+          reason,
+          isActiveWorkspace,
+          isBackground,
+          openCount: workspaceOpenNotes.length,
+          skipReadinessCheck: options?.skipReadinessCheck ?? false,
+        },
+      })
+
+      // Check if save is in flight (for now using global ref, will be per-workspace in phase 2)
+      if (saveInFlightRef.current) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "persist_by_id_skip_in_flight",
+          metadata: { workspaceId: targetWorkspaceId, reason },
+        })
+        return false
+      }
+
+      // Skip if hydrating or replaying
+      if (isHydratingRef.current || replayingWorkspaceRef.current > 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "persist_by_id_skip_busy",
+          metadata: {
+            workspaceId: targetWorkspaceId,
+            reason,
+            hydrating: isHydratingRef.current,
+            replaying: replayingWorkspaceRef.current > 0,
+          },
+        })
+        return false
+      }
+
+      saveInFlightRef.current = true
+
+      try {
+        // Wait for panel snapshot readiness unless skipped
+        if (!options?.skipReadinessCheck) {
+          const ready = await waitForPanelSnapshotReadiness(
+            `persist_by_id_${reason}`,
+            800,
+            targetWorkspaceId
+          )
+          if (!ready) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_by_id_skip_not_ready",
+              metadata: { workspaceId: targetWorkspaceId, reason },
+            })
+            saveInFlightRef.current = false
+            return false
+          }
+        }
+
+        let payload: NoteWorkspacePayload
+
+        if (isActiveWorkspace) {
+          // For active workspace, use buildPayload() which handles caching correctly
+          payload = buildPayload()
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "persist_by_id_used_build_payload",
+            metadata: {
+              workspaceId: targetWorkspaceId,
+              panelCount: payload.panels.length,
+              openCount: payload.openNotes.length,
+            },
+          })
+        } else {
+          // For background workspace, we need to ensure the snapshot is properly cached
+          // First, set membership from observed notes in runtime
+          if (workspaceOpenNotes.length > 0) {
+            const membershipNoteIds = new Set(workspaceOpenNotes.map((n) => n.noteId))
+            setWorkspaceNoteMembership(targetWorkspaceId, membershipNoteIds)
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_by_id_set_membership",
+              metadata: {
+                workspaceId: targetWorkspaceId,
+                membershipSize: membershipNoteIds.size,
+              },
+            })
+          }
+
+          // Capture the snapshot to update the cache
+          await captureCurrentWorkspaceSnapshot(targetWorkspaceId, {
+            readinessReason: `persist_by_id_capture_${reason}`,
+            readinessMaxWaitMs: options?.skipReadinessCheck ? 0 : 500,
+          })
+
+          // Now read the freshly cached snapshot
+          const snapshot = getWorkspaceSnapshot(targetWorkspaceId)
+          if (!snapshot) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_by_id_no_snapshot",
+              metadata: { workspaceId: targetWorkspaceId, reason },
+            })
+            saveInFlightRef.current = false
+            return false
+          }
+
+          // Check if snapshot is empty but runtime has notes (cache wasn't updated properly)
+          if (snapshot.panels.length === 0 && workspaceOpenNotes.length > 0) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_by_id_snapshot_empty_but_has_notes",
+              metadata: {
+                workspaceId: targetWorkspaceId,
+                reason,
+                snapshotPanels: snapshot.panels.length,
+                runtimeNotes: workspaceOpenNotes.length,
+              },
+            })
+            // Don't save empty data when runtime has notes - this would cause data loss
+            saveInFlightRef.current = false
+            return false
+          }
+
+          payload = buildPayloadFromSnapshot(targetWorkspaceId, snapshot)
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "persist_by_id_used_snapshot",
+            metadata: {
+              workspaceId: targetWorkspaceId,
+              panelCount: payload.panels.length,
+              openCount: payload.openNotes.length,
+            },
+          })
+        }
+
+        // Compare hash to check for changes
+        const payloadHash = serializeWorkspacePayload(payload)
+        const previousHash = lastSavedPayloadHashRef.current.get(targetWorkspaceId)
+
+        if (previousHash === payloadHash) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "persist_by_id_skip_no_changes",
+            metadata: {
+              workspaceId: targetWorkspaceId,
+              reason,
+              panelCount: payload.panels.length,
+              openCount: payload.openNotes.length,
+              durationMs: Date.now() - saveStart,
+            },
+          })
+          saveInFlightRef.current = false
+          return true // No changes needed, but not a failure
+        }
+
+        // Perform the save
+        const revision = workspaceRevisionRef.current.get(targetWorkspaceId) ?? ""
+        const updated = await adapterRef.current.saveWorkspace({
+          id: targetWorkspaceId,
+          payload,
+          revision,
+        })
+
+        // Update tracking refs
+        workspaceRevisionRef.current.set(targetWorkspaceId, updated.revision ?? null)
+        lastSavedPayloadHashRef.current.set(targetWorkspaceId, payloadHash)
+
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "persist_by_id_success",
+          metadata: {
+            workspaceId: targetWorkspaceId,
+            reason,
+            isBackground,
+            panelCount: payload.panels.length,
+            openCount: payload.openNotes.length,
+            componentCount: payload.components?.length ?? 0,
+            durationMs: Date.now() - saveStart,
+          },
+        })
+
+        // Update workspace list if this is the active workspace
+        if (isActiveWorkspace) {
+          setWorkspaces((prev) =>
+            prev.map((workspace) =>
+              workspace.id === updated.id
+                ? {
+                    ...workspace,
+                    revision: updated.revision,
+                    updatedAt: updated.updatedAt,
+                    noteCount: updated.noteCount,
+                  }
+                : workspace
+            )
+          )
+          setStatusHelperText(formatSyncedLabel(updated.updatedAt))
+        }
+
+        saveInFlightRef.current = false
+        return true
+      } catch (error) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "persist_by_id_error",
+          metadata: {
+            workspaceId: targetWorkspaceId,
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+            durationMs: Date.now() - saveStart,
+          },
+        })
+        console.warn("[NoteWorkspace] persistWorkspaceById failed", error)
+        skipSavesUntilRef.current = Date.now() + 1000
+        saveInFlightRef.current = false
+        return false
+      }
+    },
+    [
+      adapterRef,
+      buildPayload,
+      buildPayloadFromSnapshot,
+      captureCurrentWorkspaceSnapshot,
+      currentWorkspaceId,
+      emitDebugLog,
+      getWorkspaceOpenNotes,
+      setWorkspaceNoteMembership,
+      waitForPanelSnapshotReadiness,
+    ]
+  )
+
   const persistWorkspaceNow = useCallback(async () => {
     const now = Date.now()
     if (now < skipSavesUntilRef.current) {
