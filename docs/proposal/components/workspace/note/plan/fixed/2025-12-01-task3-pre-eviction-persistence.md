@@ -179,6 +179,71 @@ Key debug log actions for troubleshooting:
 
 ---
 
+## Bug Fix: Stale Closure Issue (2025-12-02)
+
+### Problem (Initial Investigation)
+During testing, the pre-eviction callback was persisting the WRONG workspace. The debug logs showed:
+- `pre_eviction_callback_start` with workspaceId = "Workspace c" (correct)
+- `pre_eviction_callback_complete` with workspaceId = "Default Workspace" (WRONG!)
+- `persist_by_id_success` for "Default Workspace" instead of "Workspace c"
+
+### Problem (Actual - Discovered in Second Test)
+Further testing revealed the **actual eviction path** goes through `use-note-workspace-runtime-manager.ts`, NOT the pre-eviction callback system in `runtime-manager.ts`. The logs showed:
+- `workspace_runtime_eviction_start` for correct workspace ✓
+- `workspace_runtime_evicted` for correct workspace ✓
+- **NO `persist_by_id_start` log at all** - persist wasn't being called!
+
+The hook's `evictWorkspaceRuntime` function captured `captureSnapshot` and `persistSnapshot` from its closure. During workspace switches, React re-renders and creates new versions of these functions, but `evictWorkspaceRuntime` was calling STALE versions that returned early without persisting.
+
+### Root Cause
+Stale closure issue in **TWO eviction paths**:
+
+| Path | Location | Issue |
+|------|----------|-------|
+| Pre-eviction callback | `use-note-workspaces.ts` | Safety net path - has stale closures |
+| **Primary eviction** | `use-note-workspace-runtime-manager.ts` | **Actually exercised** - has stale closures |
+
+### Solution
+Applied the same **refs pattern** to both locations:
+
+#### Fix 1: `use-note-workspaces.ts` (pre-eviction callback - safety net)
+- Added `persistWorkspaceByIdRef`, `captureSnapshotRef`, `emitDebugLogRef` refs
+- Refs updated synchronously after each function is created
+- Callback reads from refs at execution time
+
+#### Fix 2: `use-note-workspace-runtime-manager.ts` (PRIMARY FIX)
+- Added `captureSnapshotRef`, `persistSnapshotRef`, `emitDebugLogRef` refs (lines 57-59)
+- Refs updated synchronously each render (lines 62-64)
+- `evictWorkspaceRuntime` accesses functions via refs
+- Removed functions from dependency array
+- Added `workspace_runtime_eviction_persist_result` log for debugging
+
+### Code Changes in `use-note-workspace-runtime-manager.ts`
+
+```typescript
+// Added refs (lines 57-59)
+const captureSnapshotRef = useRef(captureSnapshot)
+const persistSnapshotRef = useRef(persistSnapshot)
+const emitDebugLogRef = useRef(emitDebugLog)
+
+// Updated each render (lines 62-64)
+captureSnapshotRef.current = captureSnapshot
+persistSnapshotRef.current = persistSnapshot
+emitDebugLogRef.current = emitDebugLog
+
+// In evictWorkspaceRuntime - access via refs:
+const captureFn = captureSnapshotRef.current
+await captureFn(targetWorkspaceId)
+
+const latestPersistFn = persistSnapshotRef.current
+const persistResult = await latestPersistFn(targetWorkspaceId, reason)
+```
+
+### New Debug Log
+Added `workspace_runtime_eviction_persist_result` log to track persist success/failure during eviction.
+
+---
+
 ## Known Limitations
 
 1. **Fire-and-forget timing:** Persistence may not complete before page unload if eviction happens right before user closes tab

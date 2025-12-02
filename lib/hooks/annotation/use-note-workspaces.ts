@@ -358,6 +358,16 @@ export function useNoteWorkspaces({
   const unavailableNoticeShownRef = useRef(false)
   const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
   const captureRetryAttemptsRef = useRef<Map<string, number>>(new Map())
+  // Phase 3: Refs for pre-eviction callback to avoid stale closures
+  // These refs always point to the latest versions of the functions,
+  // preventing the callback from using stale versions during async operations
+  const persistWorkspaceByIdRef = useRef<
+    ((workspaceId: string, reason: string, options?: { skipReadinessCheck?: boolean; isBackground?: boolean }) => Promise<boolean>) | null
+  >(null)
+  const captureSnapshotRef = useRef<
+    ((workspaceId?: string | null, options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean }) => Promise<void>) | null
+  >(null)
+  const emitDebugLogRef = useRef<((payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => void) | null>(null)
   const [snapshotRevision, setSnapshotRevision] = useState(0)
   const bumpSnapshotRevision = useCallback(() => {
     setSnapshotRevision((prev) => prev + 1)
@@ -766,6 +776,9 @@ export function useNoteWorkspaces({
     },
     [debugLogger, workspaces],
   )
+
+  // Keep emitDebugLogRef updated with the latest version
+  emitDebugLogRef.current = emitDebugLog
 
   const getProviderOpenNoteIds = useCallback(
     (workspaceId: string | null | undefined): Set<string> => {
@@ -2044,6 +2057,9 @@ export function useNoteWorkspaces({
     ],
   )
 
+  // Keep captureSnapshotRef updated with the latest version
+  captureSnapshotRef.current = captureCurrentWorkspaceSnapshot
+
   const buildPayloadFromSnapshot = useCallback(
     (workspaceId: string, snapshot: NoteWorkspaceSnapshot): NoteWorkspacePayload => {
       const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
@@ -2937,6 +2953,9 @@ export function useNoteWorkspaces({
     ]
   )
 
+  // Keep persistWorkspaceByIdRef updated with the latest version
+  persistWorkspaceByIdRef.current = persistWorkspaceById
+
   const persistWorkspaceNow = useCallback(async () => {
     // Early bail if no workspace
     if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
@@ -3563,15 +3582,31 @@ export function useNoteWorkspaces({
   // 3. Fires callbacks (fire-and-forget) that persist asynchronously
   // 4. Then immediately proceeds with sync deletion
   // This allows persistence to happen in the background without blocking eviction.
+  //
+  // CRITICAL: This callback uses REFS (persistWorkspaceByIdRef, captureSnapshotRef, emitDebugLogRef)
+  // instead of direct closure captures to avoid stale closure issues. During async awaits,
+  // the hook may re-render and recreate these functions with new closures. Using refs ensures
+  // we always call the LATEST version of each function, preventing bugs where:
+  // - The wrong workspace gets persisted
+  // - Logs show incorrect workspaceId values
+  // - persist_by_id_start logs are missing
   useEffect(() => {
     if (!featureEnabled || !liveStateEnabled) return
 
     const preEvictionCallback: PreEvictionCallback = async (workspaceId: string, reason: string) => {
-      emitDebugLog({
+      // Capture the workspaceId in a const to ensure it doesn't change
+      const targetWorkspaceId = workspaceId
+
+      // Use refs to get the LATEST versions of functions (avoiding stale closures)
+      const logFn = emitDebugLogRef.current
+      const captureFn = captureSnapshotRef.current
+      const persistFn = persistWorkspaceByIdRef.current
+
+      logFn?.({
         component: "NoteWorkspace",
         action: "pre_eviction_callback_start",
         metadata: {
-          workspaceId,
+          workspaceId: targetWorkspaceId,
           reason,
           currentWorkspaceId: currentWorkspaceIdRef.current,
         },
@@ -3579,33 +3614,43 @@ export function useNoteWorkspaces({
 
       try {
         // Capture snapshot first (uses runtime state or captured eviction state)
-        await captureCurrentWorkspaceSnapshot(workspaceId, {
-          readinessReason: "pre_eviction_capture",
-          readinessMaxWaitMs: 500,
-          skipReadiness: true, // Don't wait for readiness during eviction - use what we have
-        })
+        if (captureFn) {
+          await captureFn(targetWorkspaceId, {
+            readinessReason: "pre_eviction_capture",
+            readinessMaxWaitMs: 500,
+            skipReadiness: true, // Don't wait for readiness during eviction - use what we have
+          })
+        }
 
-        // Persist the captured state
-        const success = await persistWorkspaceById(workspaceId, `pre_eviction_${reason}`, {
-          skipReadinessCheck: true,
-          isBackground: true,
-        })
+        // Persist the captured state - use LATEST persistFn via ref
+        let success = false
+        const latestPersistFn = persistWorkspaceByIdRef.current
+        if (latestPersistFn) {
+          success = await latestPersistFn(targetWorkspaceId, `pre_eviction_${reason}`, {
+            skipReadinessCheck: true,
+            isBackground: true,
+          })
+        }
 
-        emitDebugLog({
+        // Use LATEST logFn via ref for completion log
+        const latestLogFn = emitDebugLogRef.current
+        latestLogFn?.({
           component: "NoteWorkspace",
           action: "pre_eviction_callback_complete",
           metadata: {
-            workspaceId,
+            workspaceId: targetWorkspaceId,
             reason,
             success,
           },
         })
       } catch (error) {
-        emitDebugLog({
+        // Use LATEST logFn via ref for error log
+        const latestLogFn = emitDebugLogRef.current
+        latestLogFn?.({
           component: "NoteWorkspace",
           action: "pre_eviction_callback_error",
           metadata: {
-            workspaceId,
+            workspaceId: targetWorkspaceId,
             reason,
             error: error instanceof Error ? error.message : String(error),
           },
@@ -3621,9 +3666,10 @@ export function useNoteWorkspaces({
   }, [
     featureEnabled,
     liveStateEnabled,
-    captureCurrentWorkspaceSnapshot,
-    persistWorkspaceById,
-    emitDebugLog,
+    // Note: We intentionally DO NOT include captureCurrentWorkspaceSnapshot, persistWorkspaceById,
+    // or emitDebugLog in deps. The callback uses refs to access the latest versions, so it
+    // doesn't need to be re-registered when these functions change. This prevents unnecessary
+    // unregister/register cycles that could cause race conditions during eviction.
   ])
 
   useEffect(() => {

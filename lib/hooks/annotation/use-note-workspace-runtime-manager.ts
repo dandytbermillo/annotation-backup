@@ -42,6 +42,27 @@ export function useNoteWorkspaceRuntimeManager({
 }: RuntimeManagerOptions): NoteWorkspaceRuntimeManagerResult {
   const runtimeAccessRef = useRef<Map<string, number>>(new Map())
 
+  // CRITICAL: Use refs to avoid stale closure issues during eviction.
+  //
+  // Problem: During workspace switches, React re-renders and creates new versions of
+  // captureSnapshot/persistSnapshot (because their dependencies like currentWorkspaceId change).
+  // If evictWorkspaceRuntime captures these functions in its closure and is called before
+  // React finishes propagating updates, it calls STALE versions that may not work correctly.
+  //
+  // Symptom: workspace_runtime_eviction_start/evicted logs appear (they use the workspaceId
+  // parameter directly), but persist_by_id_* logs are missing (persistSnapshot returns early).
+  //
+  // Solution: Store functions in refs, update refs synchronously each render, and access
+  // via refs in evictWorkspaceRuntime. This ensures we always call the LATEST versions.
+  const captureSnapshotRef = useRef(captureSnapshot)
+  const persistSnapshotRef = useRef(persistSnapshot)
+  const emitDebugLogRef = useRef(emitDebugLog)
+
+  // Keep refs updated synchronously every render
+  captureSnapshotRef.current = captureSnapshot
+  persistSnapshotRef.current = persistSnapshot
+  emitDebugLogRef.current = emitDebugLog
+
   const updateRuntimeAccess = useCallback(
     (workspaceId: string | null | undefined) => {
       if (!liveStateEnabled || !workspaceId) return
@@ -55,31 +76,63 @@ export function useNoteWorkspaceRuntimeManager({
       if (!liveStateEnabled || !workspaceId) return false
       if (!hasWorkspaceRuntime(workspaceId)) return false
       if (workspaceId === currentWorkspaceId) return false
-      emitDebugLog?.({
+
+      // Capture the workspaceId in a const to ensure it doesn't change during async operations
+      const targetWorkspaceId = workspaceId
+
+      // Get LATEST functions via refs (avoiding stale closures)
+      const logFn = emitDebugLogRef.current
+      const captureFn = captureSnapshotRef.current
+
+      logFn?.({
         component: "NoteWorkspaceRuntime",
         action: "workspace_runtime_eviction_start",
         metadata: {
-          workspaceId,
+          workspaceId: targetWorkspaceId,
           reason,
           runtimeCount: listWorkspaceRuntimeIds().length,
         },
       })
-      await captureSnapshot(workspaceId)
-      await persistSnapshot(workspaceId, reason)
-      removeWorkspaceRuntime(workspaceId)
-      runtimeAccessRef.current.delete(workspaceId)
-      emitDebugLog?.({
+
+      // Capture snapshot using LATEST function
+      await captureFn(targetWorkspaceId)
+
+      // Persist using LATEST function - re-read ref in case it changed during capture await
+      const latestPersistFn = persistSnapshotRef.current
+      const persistResult = await latestPersistFn(targetWorkspaceId, reason)
+
+      // Log persist result for debugging
+      emitDebugLogRef.current?.({
+        component: "NoteWorkspaceRuntime",
+        action: "workspace_runtime_eviction_persist_result",
+        metadata: {
+          workspaceId: targetWorkspaceId,
+          reason,
+          persistResult,
+        },
+      })
+
+      removeWorkspaceRuntime(targetWorkspaceId)
+      runtimeAccessRef.current.delete(targetWorkspaceId)
+
+      // Get LATEST logFn for completion log
+      const latestLogFn = emitDebugLogRef.current
+      latestLogFn?.({
         component: "NoteWorkspaceRuntime",
         action: "workspace_runtime_evicted",
         metadata: {
-          workspaceId,
+          workspaceId: targetWorkspaceId,
           reason,
           runtimeCount: listWorkspaceRuntimeIds().length,
         },
       })
       return true
     },
-    [captureSnapshot, currentWorkspaceId, emitDebugLog, liveStateEnabled, persistSnapshot],
+    // Note: We intentionally DO NOT include captureSnapshot, persistSnapshot, or emitDebugLog
+    // in the dependency array. The function uses refs to access the latest versions, so it
+    // doesn't need to be recreated when these functions change. This prevents the stale
+    // closure issue that was causing eviction to fail to persist.
+    [currentWorkspaceId, liveStateEnabled],
   )
 
   const ensureRuntimePrepared = useCallback(
@@ -109,7 +162,8 @@ export function useNoteWorkspaceRuntimeManager({
         if (!hasWorkspaceRuntime(workspaceId)) {
           getWorkspaceRuntime(workspaceId)
           runtimeAccessRef.current.set(workspaceId, Date.now())
-          emitDebugLog?.({
+          // Use ref for logging to ensure we get the latest version
+          emitDebugLogRef.current?.({
             component: "NoteWorkspaceRuntime",
             action: "workspace_runtime_created",
             metadata: {
@@ -123,12 +177,12 @@ export function useNoteWorkspaceRuntimeManager({
     },
     [
       currentWorkspaceId,
-      emitDebugLog,
       evictWorkspaceRuntime,
       liveStateEnabled,
       pendingWorkspaceId,
       runtimeCapacity,
       updateRuntimeAccess,
+      // Note: emitDebugLog removed from deps - using ref instead
     ],
   )
 
