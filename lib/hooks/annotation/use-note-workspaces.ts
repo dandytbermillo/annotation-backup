@@ -868,9 +868,16 @@ export function useNoteWorkspaces({
     [commitWorkspaceOpenNotes, emitDebugLog, getProviderOpenNoteIds, openNotesWorkspaceId, v2Enabled],
   )
 
-  const collectPanelSnapshotsFromDataStore = useCallback((): NoteWorkspacePanelSnapshot[] => {
+  // FIX 9: Accept optional targetWorkspaceId parameter to prevent workspace ID mismatch.
+  // Previously, this function independently resolved the workspace ID using refs that could
+  // be stale (snapshotOwnerWorkspaceIdRef → currentWorkspaceIdRef → currentWorkspaceId),
+  // while buildPayload used a different order (currentWorkspaceId → snapshotOwnerWorkspaceIdRef
+  // → currentWorkspaceIdRef). This mismatch caused panels from one workspace to be read and
+  // saved to another workspace when refs were stale during workspace transitions.
+  const collectPanelSnapshotsFromDataStore = useCallback((targetWorkspaceId?: string | null): NoteWorkspacePanelSnapshot[] => {
     const snapshots: NoteWorkspacePanelSnapshot[] = []
-    const activeWorkspaceId = snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
+    // FIX 9: Prefer targetWorkspaceId if explicitly provided by caller (e.g., buildPayload)
+    const activeWorkspaceId = targetWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current ?? currentWorkspaceId
     const primaryStore = getWorkspaceDataStore(activeWorkspaceId)
     const workspaceMembership = getWorkspaceNoteMembership(activeWorkspaceId)
     const membershipKnown = workspaceMembership !== null && workspaceMembership !== undefined
@@ -2591,9 +2598,12 @@ export function useNoteWorkspaces({
     let hasKnownNotes = Boolean(
       (workspaceMembership && workspaceMembership.size > 0) || storedOpenNotesForWorkspace.length > 0,
     )
+    // FIX 9: Pass workspaceIdForComponents to ensure we read panels from the correct workspace's
+    // DataStore. Previously, collectPanelSnapshotsFromDataStore() would independently resolve the
+    // workspace ID using refs that could be stale, causing cross-workspace panel contamination.
     let panelSnapshots =
       v2Enabled && currentWorkspaceId
-        ? collectPanelSnapshotsFromDataStore()
+        ? collectPanelSnapshotsFromDataStore(workspaceIdForComponents)
         : getAllPanelSnapshots({ useFallback: false })
     const observedNoteIds = new Set(
       panelSnapshots

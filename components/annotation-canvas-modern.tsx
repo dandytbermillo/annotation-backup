@@ -317,6 +317,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
+  // FIX 7: Track non-main panel hydration completions to trigger re-renders.
+  // When hydration completes, the hydrationInProgressRef is cleared, but refs
+  // don't trigger re-renders. This counter is incremented after hydration
+  // completes, and is included in hydrationStateKey to trigger the canvas
+  // note sync effect to re-run with the cleared ref.
+  const [nonMainHydrationCompleteCount, setNonMainHydrationCompleteCount] = useState(0)
+  const handleNonMainHydrationComplete = useCallback(() => {
+    setNonMainHydrationCompleteCount(c => c + 1)
+  }, [])
   const mainPanelSeededRef = useRef(false)
   const provider = useMemo(() => UnifiedProvider.getInstance(), [])
   const branchesMap = useMemo(() => provider.getBranchesMap(), [provider])
@@ -453,7 +462,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     resolveWorkspacePosition,
     dataStore,
     branchesMap,
-    hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}`,
+    // FIX 7: Include nonMainHydrationCompleteCount to trigger re-render when hydration completes
+    hydrationStateKey: `${primaryHydrationStatus.success}-${primaryHydrationStatus.panelsLoaded}-${nonMainHydrationCompleteCount}`,
     workspaceSnapshotRevision,
     hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
     workspaceRestorationInProgressRef,
@@ -468,6 +478,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     enabled: hasNotes,
     hydrationInProgressRef: nonMainPanelHydrationInProgressRef,
     workspaceRestorationInProgressRef,
+    // FIX 7: Callback to trigger re-render when hydration completes
+    onHydrationComplete: handleNonMainHydrationComplete,
   })
 
   useWorkspaceHydrationSeed({

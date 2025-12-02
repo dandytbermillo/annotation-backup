@@ -26,6 +26,15 @@ type UseNonMainPanelHydrationOptions = {
   enabled?: boolean
   hydrationInProgressRef?: React.MutableRefObject<boolean>
   workspaceRestorationInProgressRef?: React.MutableRefObject<boolean>
+  /**
+   * FIX 7: Callback invoked when hydration completes.
+   * This is critical because hydrationInProgressRef is a ref (not state),
+   * so clearing it doesn't trigger React re-renders. The canvas note sync
+   * effect won't re-run just because the ref changed. This callback allows
+   * the parent component to increment a state variable that IS a dependency
+   * of the note sync effect, triggering the necessary re-render.
+   */
+  onHydrationComplete?: () => void
 }
 
 /**
@@ -43,6 +52,7 @@ export function useNonMainPanelHydration({
   enabled = true,
   hydrationInProgressRef,
   workspaceRestorationInProgressRef,
+  onHydrationComplete,
 }: UseNonMainPanelHydrationOptions) {
   // FIX 13: Initialize to null so we ALWAYS detect first mount.
   // Previously initialized to workspaceSnapshotRevision, which meant:
@@ -187,6 +197,8 @@ export function useNonMainPanelHydration({
             },
           })
         }
+        // FIX 7: Trigger re-render so canvas note sync can run with cleared ref
+        onHydrationComplete?.()
         return
       }
 
@@ -256,6 +268,8 @@ export function useNonMainPanelHydration({
           },
         })
       }
+      // FIX 7: Trigger re-render so canvas note sync can run with cleared ref
+      onHydrationComplete?.()
     }).catch((error) => {
       debugLog({
         component: "NonMainPanelHydration",
@@ -280,6 +294,8 @@ export function useNonMainPanelHydration({
           },
         })
       }
+      // FIX 7: Trigger re-render so canvas note sync can run with cleared ref
+      onHydrationComplete?.()
     })
-  }, [noteIds, canvasItems, setCanvasItems, workspaceSnapshotRevision, enabled])
+  }, [noteIds, canvasItems, setCanvasItems, workspaceSnapshotRevision, enabled, onHydrationComplete])
 }
