@@ -51,6 +51,73 @@ const getMaxLiveRuntimes = (): number => {
 
 const runtimes = new Map<string, WorkspaceRuntime>()
 
+// Phase 3: Pre-eviction callback registry
+// Callbacks are invoked BEFORE a runtime is removed, allowing persistence of dirty state
+export type PreEvictionCallback = (workspaceId: string, reason: string) => Promise<void>
+const preEvictionCallbacks = new Set<PreEvictionCallback>()
+
+export const registerPreEvictionCallback = (cb: PreEvictionCallback): void => {
+  preEvictionCallbacks.add(cb)
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Pre-eviction callback registered`, {
+      callbackCount: preEvictionCallbacks.size,
+    })
+  }
+}
+
+export const unregisterPreEvictionCallback = (cb: PreEvictionCallback): void => {
+  preEvictionCallbacks.delete(cb)
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Pre-eviction callback unregistered`, {
+      callbackCount: preEvictionCallbacks.size,
+    })
+  }
+}
+
+// Internal helper to invoke all pre-eviction callbacks
+const invokePreEvictionCallbacks = async (workspaceId: string, reason: string): Promise<void> => {
+  if (preEvictionCallbacks.size === 0) return
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "pre_eviction_callbacks_start",
+    metadata: {
+      workspaceId,
+      reason,
+      callbackCount: preEvictionCallbacks.size,
+    },
+  })
+
+  const startTime = Date.now()
+  const errors: string[] = []
+
+  for (const callback of preEvictionCallbacks) {
+    try {
+      await callback(workspaceId, reason)
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      errors.push(errorMsg)
+      console.warn(`[WorkspaceRuntime] Pre-eviction callback failed`, {
+        workspaceId,
+        reason,
+        error: errorMsg,
+      })
+    }
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "pre_eviction_callbacks_complete",
+    metadata: {
+      workspaceId,
+      reason,
+      callbackCount: preEvictionCallbacks.size,
+      durationMs: Date.now() - startTime,
+      errors: errors.length > 0 ? errors : undefined,
+    },
+  })
+}
+
 // Phase 2: Runtime change listeners for re-rendering multi-canvas
 const runtimeChangeListeners = new Set<() => void>()
 
@@ -84,6 +151,9 @@ if (process.env.NODE_ENV === "development") {
   console.log(`[WorkspaceRuntime] Module loaded, instance ID: ${MODULE_INSTANCE_ID}`)
 }
 
+// The shared workspace ID is a legacy placeholder and should NOT trigger eviction
+const SHARED_WORKSPACE_ID_INTERNAL = "__workspace__"
+
 export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
   // Dev-mode assertion: workspace ID must be valid
   if (process.env.NODE_ENV === "development") {
@@ -111,10 +181,14 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     return existing
   }
 
+  // Skip eviction for the shared/placeholder workspace ID
+  // This is a legacy fallback that shouldn't trigger eviction of real workspaces
+  const isSharedWorkspace = workspaceId === SHARED_WORKSPACE_ID_INTERNAL
+
   // Phase 3: LRU eviction - ensure we don't exceed MAX_LIVE_WORKSPACES
-  // Evict before creating a new runtime if we're at capacity
+  // Evict before creating a new runtime if we're at capacity (but not for shared workspace)
   const maxRuntimes = getMaxLiveRuntimes()
-  if (runtimes.size >= maxRuntimes) {
+  if (!isSharedWorkspace && runtimes.size >= maxRuntimes) {
     const lruId = getLeastRecentlyVisibleRuntimeId()
     if (lruId) {
       const lruRuntime = runtimes.get(lruId)
@@ -195,6 +269,28 @@ export const markRuntimePaused = (workspaceId: string) => {
   runtime.status = "paused"
 }
 
+// Internal helper to perform the actual runtime removal (no callbacks)
+const performRuntimeRemoval = (workspaceId: string, hadKey: boolean, runtime: WorkspaceRuntime | undefined) => {
+  if (!hadKey) return
+
+  if (runtime) {
+    runtime.pendingPanels.clear()
+    runtime.pendingComponents.clear()
+    runtime.openNotes = []
+    runtime.membership.clear()
+    runtime.registeredComponents.clear()  // Phase 1: Clean up component registry
+  }
+  runtimes.delete(workspaceId)
+
+  // Phase 2: Notify listeners when runtime is removed
+  notifyRuntimeChanges()
+}
+
+/**
+ * Remove a workspace runtime (synchronous version).
+ * Pre-eviction callbacks are fired but NOT awaited.
+ * Use removeWorkspaceRuntimeAsync when you need to wait for persistence.
+ */
 export const removeWorkspaceRuntime = (workspaceId: string) => {
   // DEBUG: Track when runtimes are removed
   const hadKey = runtimes.has(workspaceId)
@@ -227,18 +323,64 @@ export const removeWorkspaceRuntime = (workspaceId: string) => {
     })
   }
 
-  if (!hadKey) return
-  if (runtime) {
-    runtime.pendingPanels.clear()
-    runtime.pendingComponents.clear()
-    runtime.openNotes = []
-    runtime.membership.clear()
-    runtime.registeredComponents.clear()  // Phase 1: Clean up component registry
-  }
-  runtimes.delete(workspaceId)
+  // Phase 3: DO NOT fire callbacks in sync version
+  // Callbacks must be awaited (use removeWorkspaceRuntimeAsync) otherwise they'll
+  // try to access the runtime after it's deleted, potentially causing infinite loops
+  // when they call getWorkspaceRuntime and trigger more evictions.
 
-  // Phase 2: Notify listeners when runtime is removed
-  notifyRuntimeChanges()
+  performRuntimeRemoval(workspaceId, hadKey, runtime)
+}
+
+/**
+ * Remove a workspace runtime (async version).
+ * Awaits all pre-eviction callbacks before removal.
+ * Use this when you need to ensure persistence completes before eviction.
+ */
+export const removeWorkspaceRuntimeAsync = async (
+  workspaceId: string,
+  reason: string = "runtime_removal"
+): Promise<void> => {
+  // DEBUG: Track when runtimes are removed
+  const hadKey = runtimes.has(workspaceId)
+  const runtime = runtimes.get(workspaceId)
+  const previousOpenNotesCount = runtime?.openNotes?.length ?? 0
+  const previousOpenNoteIds = runtime?.openNotes?.map(n => n.noteId) ?? []
+  const callStack = new Error().stack?.split('\n').slice(2, 7).join('\n') ?? ''
+
+  // Phase 2 DEBUG: Log to database for tracing
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "runtime_removed_async",
+    metadata: {
+      workspaceId,
+      reason,
+      hadKey,
+      previousOpenNotesCount,
+      previousOpenNoteIds,
+      keysBeforeRemoval: Array.from(runtimes.keys()),
+      callStack,
+    },
+  })
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] removeWorkspaceRuntimeAsync called`, {
+      moduleInstanceId: MODULE_INSTANCE_ID,
+      workspaceId,
+      reason,
+      hadKey,
+      keysBeforeRemoval: Array.from(runtimes.keys()),
+      stack: callStack,
+    })
+  }
+
+  if (!hadKey) return
+
+  // Phase 3: Await pre-eviction callbacks BEFORE removal
+  if (preEvictionCallbacks.size > 0) {
+    await invokePreEvictionCallbacks(workspaceId, reason)
+  }
+
+  performRuntimeRemoval(workspaceId, hadKey, runtime)
 }
 
 export const listWorkspaceRuntimeIds = () => Array.from(runtimes.keys())
@@ -476,6 +618,9 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
     // Don't evict the visible runtime
     if (runtime.isVisible) continue
 
+    // Don't evict the shared/placeholder workspace
+    if (id === SHARED_WORKSPACE_ID_INTERNAL) continue
+
     if (runtime.lastVisibleAt < oldestTime) {
       oldestTime = runtime.lastVisibleAt
       oldestId = id
@@ -625,6 +770,7 @@ export const isComponentRegistered = (workspaceId: string, componentId: string):
 /**
  * Evict the least recently used runtime to stay within MAX_LIVE_WORKSPACES limit.
  * Called before creating a new runtime when at capacity.
+ * Pre-eviction callbacks are fired but NOT awaited (use evictLRURuntimeAsync for that).
  *
  * Returns the evicted workspace ID, or null if eviction wasn't needed/possible.
  */
@@ -673,15 +819,73 @@ export const evictLRURuntime = (): string | null => {
     })
   }
 
-  // Remove the runtime
+  // Remove the runtime (sync version - callbacks fire-and-forget)
   removeWorkspaceRuntime(lruId)
 
   return lruId
 }
 
 /**
+ * Evict the least recently used runtime (async version).
+ * Awaits all pre-eviction callbacks before removal.
+ * Use this when you need to ensure persistence completes before eviction.
+ *
+ * Returns the evicted workspace ID, or null if eviction wasn't needed/possible.
+ */
+export const evictLRURuntimeAsync = async (): Promise<string | null> => {
+  const maxRuntimes = getMaxLiveRuntimes()
+
+  // Check if we're at capacity
+  if (runtimes.size < maxRuntimes) {
+    return null
+  }
+
+  const lruId = getLeastRecentlyVisibleRuntimeId()
+  if (!lruId) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[WorkspaceRuntime] Cannot evict - no eligible runtime found`)
+    }
+    return null
+  }
+
+  const runtime = runtimes.get(lruId)
+  const componentCount = runtime?.registeredComponents.size ?? 0
+  const openNotesCount = runtime?.openNotes.length ?? 0
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "runtime_evicted_async",
+    metadata: {
+      workspaceId: lruId,
+      reason: "max_live_workspaces_exceeded_async",
+      maxRuntimes,
+      runtimeCount: runtimes.size,
+      evictedOpenNotesCount: openNotesCount,
+      evictedComponentCount: componentCount,
+      lastVisibleAt: runtime?.lastVisibleAt,
+    },
+  })
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Evicting LRU runtime (async)`, {
+      workspaceId: lruId,
+      maxRuntimes,
+      currentCount: runtimes.size,
+      lastVisibleAt: runtime?.lastVisibleAt,
+      componentCount,
+      openNotesCount,
+    })
+  }
+
+  // Remove the runtime (async version - awaits callbacks)
+  await removeWorkspaceRuntimeAsync(lruId, "lru_eviction_capacity")
+
+  return lruId
+}
+
+/**
  * Check if creating a new runtime would exceed the limit.
- * If so, evict LRU runtime first.
+ * If so, evict LRU runtime first (sync version - callbacks fire-and-forget).
  *
  * Call this before getWorkspaceRuntime when you know you'll be creating a new runtime.
  */

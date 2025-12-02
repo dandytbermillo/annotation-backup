@@ -26,6 +26,10 @@ import {
   isRuntimeVisible,
   listHotRuntimes,
   notifyRuntimeChanges,
+  // Phase 3: Pre-eviction callbacks
+  registerPreEvictionCallback,
+  unregisterPreEvictionCallback,
+  type PreEvictionCallback,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -334,14 +338,16 @@ export function useNoteWorkspaces({
   const inferredWorkspaceNotesRef = useRef<Map<string, Set<string>>>(new Map())
   const previousVisibleWorkspaceRef = useRef<string | null>(null)
   const lastSaveReasonRef = useRef<string>("initial_schedule")
-  const saveInFlightRef = useRef(false)
-  const skipSavesUntilRef = useRef(0)
+  // Phase 2: Per-workspace save state tracking (Maps instead of singletons)
+  const saveInFlightRef = useRef<Map<string, boolean>>(new Map())
+  const skipSavesUntilRef = useRef<Map<string, number>>(new Map())
+  const workspaceDirtyRef = useRef<Map<string, number>>(new Map())
+  const saveTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [statusHelperText, setStatusHelperText] = useState<string | null>(null)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const isHydratingRef = useRef(false)
   const lastCameraRef = useRef(DEFAULT_CAMERA)
   const [isUnavailable, setIsUnavailable] = useState(false)
@@ -2626,8 +2632,19 @@ export function useNoteWorkspaces({
         },
       })
 
-      // Check if save is in flight (for now using global ref, will be per-workspace in phase 2)
-      if (saveInFlightRef.current) {
+      // Check cooldown period for this workspace
+      const skipUntil = skipSavesUntilRef.current.get(targetWorkspaceId) ?? 0
+      if (Date.now() < skipUntil) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "persist_by_id_skip_cooldown",
+          metadata: { workspaceId: targetWorkspaceId, reason, skipUntil },
+        })
+        return false
+      }
+
+      // Check if save is in flight for this workspace
+      if (saveInFlightRef.current.get(targetWorkspaceId)) {
         emitDebugLog({
           component: "NoteWorkspace",
           action: "persist_by_id_skip_in_flight",
@@ -2651,7 +2668,7 @@ export function useNoteWorkspaces({
         return false
       }
 
-      saveInFlightRef.current = true
+      saveInFlightRef.current.set(targetWorkspaceId, true)
 
       try {
         // Wait for panel snapshot readiness unless skipped
@@ -2667,7 +2684,7 @@ export function useNoteWorkspaces({
               action: "persist_by_id_skip_not_ready",
               metadata: { workspaceId: targetWorkspaceId, reason },
             })
-            saveInFlightRef.current = false
+            saveInFlightRef.current.set(targetWorkspaceId, false)
             return false
           }
         }
@@ -2716,7 +2733,7 @@ export function useNoteWorkspaces({
               action: "persist_by_id_no_snapshot",
               metadata: { workspaceId: targetWorkspaceId, reason },
             })
-            saveInFlightRef.current = false
+            saveInFlightRef.current.set(targetWorkspaceId, false)
             return false
           }
 
@@ -2733,7 +2750,7 @@ export function useNoteWorkspaces({
               },
             })
             // Don't save empty data when runtime has notes - this would cause data loss
-            saveInFlightRef.current = false
+            saveInFlightRef.current.set(targetWorkspaceId, false)
             return false
           }
 
@@ -2765,7 +2782,9 @@ export function useNoteWorkspaces({
               durationMs: Date.now() - saveStart,
             },
           })
-          saveInFlightRef.current = false
+          saveInFlightRef.current.set(targetWorkspaceId, false)
+          // Clear dirty flag since no changes needed
+          workspaceDirtyRef.current.delete(targetWorkspaceId)
           return true // No changes needed, but not a failure
         }
 
@@ -2812,7 +2831,9 @@ export function useNoteWorkspaces({
           setStatusHelperText(formatSyncedLabel(updated.updatedAt))
         }
 
-        saveInFlightRef.current = false
+        // Clear dirty flag and in-flight status on success
+        workspaceDirtyRef.current.delete(targetWorkspaceId)
+        saveInFlightRef.current.set(targetWorkspaceId, false)
         return true
       } catch (error) {
         emitDebugLog({
@@ -2826,8 +2847,9 @@ export function useNoteWorkspaces({
           },
         })
         console.warn("[NoteWorkspace] persistWorkspaceById failed", error)
-        skipSavesUntilRef.current = Date.now() + 1000
-        saveInFlightRef.current = false
+        // Set cooldown for this workspace only
+        skipSavesUntilRef.current.set(targetWorkspaceId, Date.now() + 1000)
+        saveInFlightRef.current.set(targetWorkspaceId, false)
         return false
       }
     },
@@ -2845,16 +2867,8 @@ export function useNoteWorkspaces({
   )
 
   const persistWorkspaceNow = useCallback(async () => {
-    const now = Date.now()
-    if (now < skipSavesUntilRef.current) {
-      return
-    }
-    if (saveInFlightRef.current) {
-      return
-    }
-    saveInFlightRef.current = true
+    // Early bail if no workspace
     if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
-      saveInFlightRef.current = false
       emitDebugLog({
         component: "NoteWorkspace",
         action: "save_skipped_workspace_busy",
@@ -2866,8 +2880,24 @@ export function useNoteWorkspaces({
       return
     }
     if (!adapterRef.current) return
-    const saveStart = Date.now()
+
     const workspaceId = currentWorkspaceSummary.id
+    const now = Date.now()
+
+    // Check cooldown for this workspace
+    const skipUntil = skipSavesUntilRef.current.get(workspaceId) ?? 0
+    if (now < skipUntil) {
+      return
+    }
+
+    // Check if save already in flight for this workspace
+    if (saveInFlightRef.current.get(workspaceId)) {
+      return
+    }
+
+    saveInFlightRef.current.set(workspaceId, true)
+
+    const saveStart = Date.now()
     const reason = lastSaveReasonRef.current
     const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
     emitDebugLog({
@@ -2891,7 +2921,7 @@ export function useNoteWorkspaces({
             reason,
           },
         })
-        saveInFlightRef.current = false
+        saveInFlightRef.current.set(workspaceId, false)
         return
       }
       const payload = buildPayload()
@@ -2909,7 +2939,8 @@ export function useNoteWorkspaces({
             reason,
           },
         })
-        saveInFlightRef.current = false
+        saveInFlightRef.current.set(workspaceId, false)
+        workspaceDirtyRef.current.delete(workspaceId)
         return
       }
       const updated = await adapterRef.current.saveWorkspace({
@@ -2929,7 +2960,8 @@ export function useNoteWorkspaces({
           reason,
         },
       })
-      saveInFlightRef.current = false
+      workspaceDirtyRef.current.delete(workspaceId)
+      saveInFlightRef.current.set(workspaceId, false)
       lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
       setWorkspaces((prev) =>
         prev.map((workspace) =>
@@ -2956,11 +2988,10 @@ export function useNoteWorkspaces({
             reason,
           },
         })
-        skipSavesUntilRef.current = Date.now() + 1000
-        saveInFlightRef.current = false
+        skipSavesUntilRef.current.set(workspaceId, Date.now() + 1000)
+        saveInFlightRef.current.set(workspaceId, false)
         return
     }
-    saveInFlightRef.current = false
   }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, getWorkspaceOpenNotes])
 
   useEffect(() => {
@@ -3055,37 +3086,53 @@ export function useNoteWorkspaces({
       }
       const { immediate = false, reason = "unspecified" } = options ?? {}
       if (!adapterRef.current) return
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-        saveTimeoutRef.current = null
+      const workspaceId = currentWorkspaceSummary.id
+
+      // Clear any existing timeout for this workspace
+      const existingTimeout = saveTimeoutRef.current.get(workspaceId)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        saveTimeoutRef.current.delete(workspaceId)
       }
+
+      // Mark workspace as dirty
+      if (!workspaceDirtyRef.current.has(workspaceId)) {
+        workspaceDirtyRef.current.set(workspaceId, Date.now())
+      }
+
       lastSaveReasonRef.current = reason
       emitDebugLog({
         component: "NoteWorkspace",
         action: "save_schedule",
         metadata: {
-          workspaceId: currentWorkspaceSummary.id,
+          workspaceId,
           immediate,
           reason,
+          dirtyAt: workspaceDirtyRef.current.get(workspaceId),
         },
       })
       if (immediate) {
         void persistWorkspaceNow()
         return
       }
-      saveTimeoutRef.current = setTimeout(() => {
-        saveTimeoutRef.current = null
+      const timeout = setTimeout(() => {
+        saveTimeoutRef.current.delete(workspaceId)
         void persistWorkspaceNow()
       }, 2500)
+      saveTimeoutRef.current.set(workspaceId, timeout)
     },
     [currentWorkspaceSummary, emitDebugLog, featureEnabled, persistWorkspaceNow],
   )
 
   const flushPendingSave = useCallback(
     (reason = "manual_flush") => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-        saveTimeoutRef.current = null
+      if (!currentWorkspaceSummaryId) return
+
+      // Clear any pending timeout for this workspace
+      const existingTimeout = saveTimeoutRef.current.get(currentWorkspaceSummaryId)
+      if (existingTimeout) {
+        clearTimeout(existingTimeout)
+        saveTimeoutRef.current.delete(currentWorkspaceSummaryId)
       }
       lastSaveReasonRef.current = reason
       emitDebugLog({
@@ -3334,10 +3381,11 @@ export function useNoteWorkspaces({
     })()
     return () => {
       cancelled = true
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-        saveTimeoutRef.current = null
-      }
+      // Phase 2: Clear all per-workspace timeouts on unmount
+      saveTimeoutRef.current.forEach((timeout) => {
+        clearTimeout(timeout)
+      })
+      saveTimeoutRef.current.clear()
     }
   }, [flagEnabled, isUnavailable, emitDebugLog, markUnavailable])
 
@@ -3381,6 +3429,14 @@ export function useNoteWorkspaces({
       }
     }
   }, [featureEnabled, flushPendingSave])
+
+  // Phase 3: Pre-eviction persistence callback - DISABLED
+  // This feature cannot work with current architecture because:
+  // 1. getWorkspaceRuntime() is sync and triggers eviction via sync removeWorkspaceRuntime()
+  // 2. Callbacks need to be async to persist, but sync eviction can't wait
+  // 3. If we fire callbacks without waiting, they run AFTER runtime deletion causing loops
+  // To enable this, we'd need to redesign eviction to use an async path.
+  // For now, rely on dirty-workspace detection during switchWorkspace to persist before switch.
 
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) return
