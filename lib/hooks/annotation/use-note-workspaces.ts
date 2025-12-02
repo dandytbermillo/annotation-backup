@@ -358,6 +358,10 @@ export function useNoteWorkspaces({
   const unavailableNoticeShownRef = useRef(false)
   const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
   const captureRetryAttemptsRef = useRef<Map<string, number>>(new Map())
+  // Loop breaker for deferred cached open notes capture - prevents infinite retry loop
+  // when runtime is empty but cache has stale data (e.g., after eviction with REVISION_MISMATCH)
+  const deferredCachedCaptureCountRef = useRef<Map<string, number>>(new Map())
+  const MAX_DEFERRED_CACHED_CAPTURES = 3
   // Phase 3: Refs for pre-eviction callback to avoid stale closures
   // These refs always point to the latest versions of the functions,
   // preventing the callback from using stale versions during async operations
@@ -1756,28 +1760,60 @@ export function useNoteWorkspaces({
               })
               // Continue with capture using current state, not stale cache
             } else {
-              // Legitimate wait for notes to be added to open list
-              emitDebugLog({
-                component: "NoteWorkspace",
-                action: "snapshot_capture_deferred_cached_open_notes",
-                metadata: {
-                  workspaceId,
-                  missingNoteIds: missingCachedNotes,
-                  cachedNoteCount: cachedNoteIds.size,
-                  openNoteCount: openNoteIds.size,
-                  timestampMs: Date.now(),
-                },
-              })
-              setTimeout(() => {
-                captureCurrentWorkspaceSnapshot(workspaceId, {
-                  readinessReason: "deferred_cached_open_notes",
-                  readinessMaxWaitMs,
+              // Loop breaker: Check if we've exceeded max deferred capture attempts
+              // This prevents infinite loops when runtime is empty but cache has stale data
+              const deferredCount = deferredCachedCaptureCountRef.current.get(workspaceId) ?? 0
+              if (deferredCount >= MAX_DEFERRED_CACHED_CAPTURES) {
+                emitDebugLog({
+                  component: "NoteWorkspace",
+                  action: "snapshot_deferred_capture_loop_breaker",
+                  metadata: {
+                    workspaceId,
+                    deferredCount,
+                    missingNoteIds: missingCachedNotes,
+                    cachedNoteCount: cachedNoteIds.size,
+                    openNoteCount: openNoteIds.size,
+                    reason: "max_deferred_retries_exceeded",
+                  },
                 })
-              }, CAPTURE_DEFER_DELAY_MS)
-              return
+                // Stop the loop by not scheduling another retry, but DO NOT delete the cache!
+                // The cache contains the last known good state and is needed by other code paths
+                // (e.g., pre-eviction persist) as a fallback. Deleting it causes data loss.
+                deferredCachedCaptureCountRef.current.delete(workspaceId)
+                // Return early - don't capture with empty state, let pre-eviction or other
+                // paths use the cached snapshot when they need to persist
+                return
+              } else {
+                // Legitimate wait for notes to be added to open list
+                deferredCachedCaptureCountRef.current.set(workspaceId, deferredCount + 1)
+                emitDebugLog({
+                  component: "NoteWorkspace",
+                  action: "snapshot_capture_deferred_cached_open_notes",
+                  metadata: {
+                    workspaceId,
+                    missingNoteIds: missingCachedNotes,
+                    cachedNoteCount: cachedNoteIds.size,
+                    openNoteCount: openNoteIds.size,
+                    deferredAttempt: deferredCount + 1,
+                    timestampMs: Date.now(),
+                  },
+                })
+                setTimeout(() => {
+                  captureCurrentWorkspaceSnapshot(workspaceId, {
+                    readinessReason: "deferred_cached_open_notes",
+                    readinessMaxWaitMs,
+                  })
+                }, CAPTURE_DEFER_DELAY_MS)
+                return
+              }
             }
           }
         }
+      }
+      // Reset deferred capture counter when we successfully proceed to capture
+      // This indicates the workspace is in a healthy state
+      if (workspaceId) {
+        deferredCachedCaptureCountRef.current.delete(workspaceId)
       }
       const captureStartedAt = Date.now()
       emitDebugLog({
