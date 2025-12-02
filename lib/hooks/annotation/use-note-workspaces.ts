@@ -2276,6 +2276,42 @@ export function useNoteWorkspaces({
       // IMPORTANT: Do NOT call bumpSnapshotRevision() here - it triggers the canvas's internal
       // restoration logic which sets workspaceRestorationInProgress=true and skips component rendering.
       if (runtimeState === "hot") {
+        // FIX 6: When skipping replay due to hot runtime, check if components need restoration.
+        // React components deregister on unmount, so we need to restore component nodes to
+        // LayerManager even for hot runtimes. The notes are preserved but components may be lost.
+        const runtimeComponentCount = getRegisteredComponentCount(workspaceId)
+        if (runtimeComponentCount === 0 && snapshot.components && snapshot.components.length > 0) {
+          const layerMgr = getWorkspaceLayerManager(workspaceId)
+          if (layerMgr) {
+            snapshot.components.forEach((component) => {
+              if (!component.id || !component.type) return
+              const componentMetadata = {
+                ...(component.metadata ?? {}),
+                componentType: component.type,
+              } as Record<string, unknown>
+              layerMgr.registerNode({
+                id: component.id,
+                type: "component",
+                position: component.position ?? { x: 0, y: 0 },
+                dimensions: component.size ?? undefined,
+                zIndex: component.zIndex ?? undefined,
+                metadata: componentMetadata,
+              } as any)
+            })
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "preview_hot_runtime_component_restore",
+              metadata: {
+                workspaceId,
+                componentCount: snapshot.components.length,
+              },
+            })
+            // Bump revision to trigger canvas useEffect that reads from LayerManager.
+            // This is safe for hot runtimes because the canvas's FIX 11 only sets
+            // workspaceRestorationInProgressRef on first mount, not on revision bumps.
+            bumpSnapshotRevision()
+          }
+        }
         emitDebugLog({
           component: "NoteWorkspace",
           action: "preview_snapshot_skip_hot_runtime",
@@ -2284,10 +2320,11 @@ export function useNoteWorkspaces({
             reason: "Hot runtime maintains own state, skip snapshot replay",
             openNotesInSnapshot: snapshot.openNotes?.length ?? 0,
             panelsInSnapshot: snapshot.panels?.length ?? 0,
+            runtimeComponentCount,
+            componentsInSnapshot: snapshot.components?.length ?? 0,
           },
         })
         lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
-        // No bumpSnapshotRevision() - canvas already has its content, just becoming visible
         return
       }
 
@@ -3607,6 +3644,48 @@ export function useNoteWorkspaces({
       const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
       // Skip hydration if runtime has notes OR components (either indicates meaningful state)
       if (runtimeOpenNotes.length > 0 || runtimeComponentCount > 0) {
+        // FIX 6: When skipping hydration due to hot runtime, check if components need restoration.
+        // React components deregister on unmount, so runtimeComponentCount may be 0 even though
+        // component DATA exists in cache. We need to restore component nodes to LayerManager
+        // so that the React components can render when they mount.
+        if (runtimeComponentCount === 0) {
+          const cachedComponents = lastComponentsSnapshotRef.current.get(currentWorkspaceId)
+          const snapshotComponents = workspaceSnapshotsRef.current.get(currentWorkspaceId)?.components
+          const componentsToRestore = cachedComponents ?? snapshotComponents
+          if (componentsToRestore && componentsToRestore.length > 0) {
+            const layerMgr = getWorkspaceLayerManager(currentWorkspaceId)
+            if (layerMgr) {
+              componentsToRestore.forEach((component) => {
+                if (!component.id || !component.type) return
+                const componentMetadata = {
+                  ...(component.metadata ?? {}),
+                  componentType: component.type,
+                } as Record<string, unknown>
+                layerMgr.registerNode({
+                  id: component.id,
+                  type: "component",
+                  position: component.position ?? { x: 0, y: 0 },
+                  dimensions: component.size ?? undefined,
+                  zIndex: component.zIndex ?? undefined,
+                  metadata: componentMetadata,
+                } as any)
+              })
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "hydrate_hot_runtime_component_restore",
+                metadata: {
+                  workspaceId: currentWorkspaceId,
+                  componentCount: componentsToRestore.length,
+                  source: cachedComponents ? "lastComponentsSnapshotRef" : "workspaceSnapshotsRef",
+                },
+              })
+              // Bump revision to trigger canvas useEffect that reads from LayerManager.
+              // This is safe for hot runtimes because the canvas's FIX 11 only sets
+              // workspaceRestorationInProgressRef on first mount, not on revision bumps.
+              bumpSnapshotRevision()
+            }
+          }
+        }
         emitDebugLog({
           component: "NoteWorkspace",
           action: "hydrate_skipped_hot_runtime",
@@ -3639,7 +3718,7 @@ export function useNoteWorkspaces({
       },
     })
     hydrateWorkspace(currentWorkspaceId)
-  }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady, liveStateEnabled])
+  }, [bumpSnapshotRevision, currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady, liveStateEnabled])
 
   useEffect(() => {
     if (!featureEnabled) return
