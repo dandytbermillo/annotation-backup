@@ -118,6 +118,93 @@ const invokePreEvictionCallbacks = async (workspaceId: string, reason: string): 
   })
 }
 
+/**
+ * Fire pre-eviction callbacks synchronously (fire-and-forget).
+ * The callbacks themselves are async, but we don't await them.
+ * This is used when we need sync eviction but still want to attempt persistence.
+ *
+ * IMPORTANT: Callbacks must capture runtime state SYNCHRONOUSLY at the start,
+ * because the runtime will be deleted immediately after this call returns.
+ * The async persistence can then happen in the background.
+ */
+const firePreEvictionCallbacksSync = (workspaceId: string, reason: string): void => {
+  if (preEvictionCallbacks.size === 0) return
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "pre_eviction_callbacks_fire_and_forget",
+    metadata: {
+      workspaceId,
+      reason,
+      callbackCount: preEvictionCallbacks.size,
+    },
+  })
+
+  // Capture the runtime reference BEFORE deletion for callbacks to use
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  // Clone critical state that callbacks might need (in case they can't access runtime in time)
+  const capturedState = {
+    openNotes: [...runtime.openNotes],
+    registeredComponents: new Map(runtime.registeredComponents),
+    dataStore: runtime.dataStore,
+    layerManager: runtime.layerManager,
+  }
+
+  // Store the captured state BEFORE firing callbacks so callbacks can access it immediately
+  // (even in their synchronous portion before the first await)
+  capturedEvictionStates.set(workspaceId, {
+    state: capturedState,
+    capturedAt: Date.now(),
+  })
+
+  // Clean up old captured states after 30 seconds
+  setTimeout(() => {
+    capturedEvictionStates.delete(workspaceId)
+  }, 30000)
+
+  for (const callback of preEvictionCallbacks) {
+    // Fire each callback but don't await - it runs in background
+    void callback(workspaceId, reason).catch(error => {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.warn(`[WorkspaceRuntime] Fire-and-forget pre-eviction callback failed`, {
+        workspaceId,
+        reason,
+        error: errorMsg,
+      })
+      void debugLog({
+        component: "WorkspaceRuntime",
+        action: "pre_eviction_callback_fire_and_forget_error",
+        metadata: {
+          workspaceId,
+          reason,
+          error: errorMsg,
+        },
+      })
+    })
+  }
+}
+
+// Temporary storage for captured runtime state during fire-and-forget eviction
+const capturedEvictionStates = new Map<string, {
+  state: {
+    openNotes: NoteWorkspaceSlot[]
+    registeredComponents: Map<string, RegisteredComponent>
+    dataStore: DataStore
+    layerManager: LayerManager
+  }
+  capturedAt: number
+}>()
+
+/**
+ * Get captured eviction state for a workspace that was evicted via fire-and-forget.
+ * This allows callbacks to access runtime state even after the runtime is deleted.
+ */
+export const getCapturedEvictionState = (workspaceId: string) => {
+  return capturedEvictionStates.get(workspaceId)?.state ?? null
+}
+
 // Phase 2: Runtime change listeners for re-rendering multi-canvas
 const runtimeChangeListeners = new Set<() => void>()
 
@@ -214,6 +301,10 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
           currentCount: runtimes.size,
         })
       }
+
+      // Phase 3: Fire pre-eviction callbacks (fire-and-forget) to persist dirty state
+      // Callbacks capture state synchronously, then persist asynchronously
+      firePreEvictionCallbacksSync(lruId, "capacity_eviction_sync")
 
       // Remove the LRU runtime
       removeWorkspaceRuntime(lruId)

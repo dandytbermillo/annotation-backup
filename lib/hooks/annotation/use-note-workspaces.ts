@@ -29,6 +29,7 @@ import {
   // Phase 3: Pre-eviction callbacks
   registerPreEvictionCallback,
   unregisterPreEvictionCallback,
+  getCapturedEvictionState,
   type PreEvictionCallback,
   // Phase 1: Component registration
   getRegisteredComponentCount,
@@ -627,7 +628,27 @@ export function useNoteWorkspaces({
       // Phase 1: When live state enabled, runtime is the ONLY source of truth
       // No fallbacks to provider/refs/cache - they would overwrite runtime
       if (liveStateEnabled) {
-        const runtimeSlots = getRuntimeOpenNotes(workspaceId)
+        let runtimeSlots = getRuntimeOpenNotes(workspaceId)
+
+        // Phase 3: Fall back to captured eviction state if runtime is empty/deleted
+        // This happens during pre-eviction persistence when callback runs after runtime deletion
+        if (runtimeSlots.length === 0) {
+          const capturedState = getCapturedEvictionState(workspaceId)
+          if (capturedState && capturedState.openNotes.length > 0) {
+            runtimeSlots = capturedState.openNotes
+            void debugLog({
+              component: "NoteDelay",
+              action: "get_open_notes_from_captured_eviction_state",
+              metadata: {
+                workspaceId,
+                noteCount: runtimeSlots.length,
+                noteIds: runtimeSlots.map(n => n.noteId),
+                reason: "runtime_empty_using_captured_state",
+              },
+            })
+          }
+        }
+
         // DEBUG: Log what we got from runtime
         void debugLog({
           component: "NoteDelay",
@@ -3535,13 +3556,75 @@ export function useNoteWorkspaces({
     }
   }, [featureEnabled, flushPendingSave])
 
-  // Phase 3: Pre-eviction persistence callback - DISABLED
-  // This feature cannot work with current architecture because:
-  // 1. getWorkspaceRuntime() is sync and triggers eviction via sync removeWorkspaceRuntime()
-  // 2. Callbacks need to be async to persist, but sync eviction can't wait
-  // 3. If we fire callbacks without waiting, they run AFTER runtime deletion causing loops
-  // To enable this, we'd need to redesign eviction to use an async path.
-  // For now, rely on dirty-workspace detection during switchWorkspace to persist before switch.
+  // Phase 3: Pre-eviction persistence callback - ENABLED
+  // The runtime-manager now uses firePreEvictionCallbacksSync() which:
+  // 1. Captures runtime state SYNCHRONOUSLY before deletion
+  // 2. Stores it in capturedEvictionStates for callback access
+  // 3. Fires callbacks (fire-and-forget) that persist asynchronously
+  // 4. Then immediately proceeds with sync deletion
+  // This allows persistence to happen in the background without blocking eviction.
+  useEffect(() => {
+    if (!featureEnabled || !liveStateEnabled) return
+
+    const preEvictionCallback: PreEvictionCallback = async (workspaceId: string, reason: string) => {
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "pre_eviction_callback_start",
+        metadata: {
+          workspaceId,
+          reason,
+          currentWorkspaceId: currentWorkspaceIdRef.current,
+        },
+      })
+
+      try {
+        // Capture snapshot first (uses runtime state or captured eviction state)
+        await captureCurrentWorkspaceSnapshot(workspaceId, {
+          readinessReason: "pre_eviction_capture",
+          readinessMaxWaitMs: 500,
+          skipReadiness: true, // Don't wait for readiness during eviction - use what we have
+        })
+
+        // Persist the captured state
+        const success = await persistWorkspaceById(workspaceId, `pre_eviction_${reason}`, {
+          skipReadinessCheck: true,
+          isBackground: true,
+        })
+
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "pre_eviction_callback_complete",
+          metadata: {
+            workspaceId,
+            reason,
+            success,
+          },
+        })
+      } catch (error) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "pre_eviction_callback_error",
+          metadata: {
+            workspaceId,
+            reason,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
+      }
+    }
+
+    registerPreEvictionCallback(preEvictionCallback)
+
+    return () => {
+      unregisterPreEvictionCallback(preEvictionCallback)
+    }
+  }, [
+    featureEnabled,
+    liveStateEnabled,
+    captureCurrentWorkspaceSnapshot,
+    persistWorkspaceById,
+    emitDebugLog,
+  ])
 
   useEffect(() => {
     if (!featureEnabled || !v2Enabled) return
