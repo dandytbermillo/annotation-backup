@@ -1099,7 +1099,17 @@ const initialWorkspaceSyncRef = useRef(false)
   const handleSnapshotSettled = useCallback((noteId: string) => {
     setSkipSnapshotForNote(current => (current === noteId ? null : current))
   }, [])
-  
+
+  // FIX: Clear skipSnapshotForNote when workspace changes
+  // The skipSnapshotForNote mechanism is designed for clicking on an already-open note tab
+  // (to preserve in-memory state), NOT for workspace switches. When switching workspaces,
+  // we WANT to restore from snapshot. Without this, a stale skipSnapshotForNote value
+  // from a previous note selection could cause snapshot restoration to be skipped,
+  // leading to cache mismatch and notes being treated as new (losing their panel data).
+  useEffect(() => {
+    setSkipSnapshotForNote(null)
+  }, [noteWorkspaceState.currentWorkspaceId])
+
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget

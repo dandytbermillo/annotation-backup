@@ -30,6 +30,8 @@ import {
   registerPreEvictionCallback,
   unregisterPreEvictionCallback,
   type PreEvictionCallback,
+  // Phase 1: Component registration
+  getRegisteredComponentCount,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -1095,13 +1097,22 @@ export function useNoteWorkspaces({
           const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, ownerId)
           cache.panels = []
           workspaceNoteMembershipRef.current.set(ownerId, new Set())
-          lastNonEmptySnapshotsRef.current.delete(ownerId)
+          // FIX: Do NOT delete lastNonEmptySnapshotsRef here.
+          // This ref serves as a fallback when panels are temporarily empty (e.g., during hydration
+          // of a workspace that was saved with 0 panels due to DataStore not being seeded).
+          // Keeping the fallback allows buildPayload to recover panels at line 2484.
+          // Previously, deleting it here caused a feedback loop where:
+          // 1. Workspace saved with 0 panels (DataStore not seeded)
+          // 2. hydrateWorkspace loads 0 panels, calls this with allowEmpty=true
+          // 3. lastNonEmptySnapshotsRef deleted, destroying the fallback
+          // 4. Next save also has 0 panels, and so on...
           emitDebugLog({
             component: "NoteWorkspace",
             action: "panel_snapshot_cleared",
             metadata: {
               reason,
               workspaceId: ownerId,
+              preservedFallback: lastNonEmptySnapshotsRef.current.has(ownerId),
             },
           })
           const dataStore = getWorkspaceDataStore(ownerId)
@@ -2492,6 +2503,45 @@ export function useNoteWorkspaces({
         },
       })
     }
+    // FIX: Last resort fallback - generate main panel snapshots from open notes
+    // This handles the case where:
+    // 1. DataStore wasn't seeded (useCanvasNoteSync skipped during workspace restoration)
+    // 2. No cached panels exist (new workspace or cache was cleared)
+    // 3. But we have open notes that need to be preserved
+    // Without this, workspaces with notes but no DataStore seeding would save with 0 panels,
+    // causing notes to disappear when switching back.
+    if (panelSnapshots.length === 0 && hasKnownNotes) {
+      const openNotesForWorkspace = storedOpenNotesForWorkspace.length > 0
+        ? storedOpenNotesForWorkspace
+        : workspaceMembership
+          ? Array.from(workspaceMembership).map((noteId) => ({ noteId, mainPosition: null }))
+          : []
+      if (openNotesForWorkspace.length > 0) {
+        panelSnapshots = openNotesForWorkspace.map((note) => ({
+          noteId: note.noteId,
+          panelId: "main",
+          type: "main",
+          title: null,
+          position: note.mainPosition ?? null,
+          size: null,
+          zIndex: null,
+          metadata: null,
+          parentId: null,
+          branches: null,
+          worldPosition: note.mainPosition ?? null,
+          worldSize: null,
+        }))
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "panel_snapshot_generated_from_open_notes",
+          metadata: {
+            workspaceId: workspaceIdForComponents,
+            generatedCount: panelSnapshots.length,
+            reason: "datastore_and_cache_empty_but_notes_exist",
+          },
+        })
+      }
+    }
     const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
     const lm = getWorkspaceLayerManager(workspaceIdForComponents)
@@ -3112,40 +3162,55 @@ export function useNoteWorkspaces({
         },
       })
       if (immediate) {
-        void persistWorkspaceNow()
+        void persistWorkspaceById(workspaceId, reason)
         return
       }
       const timeout = setTimeout(() => {
         saveTimeoutRef.current.delete(workspaceId)
-        void persistWorkspaceNow()
+        void persistWorkspaceById(workspaceId, reason)
       }, 2500)
       saveTimeoutRef.current.set(workspaceId, timeout)
     },
-    [currentWorkspaceSummary, emitDebugLog, featureEnabled, persistWorkspaceNow],
+    [currentWorkspaceSummary, emitDebugLog, featureEnabled, persistWorkspaceById],
   )
 
   const flushPendingSave = useCallback(
     (reason = "manual_flush") => {
-      if (!currentWorkspaceSummaryId) return
+      // Flush ALL pending dirty workspaces, not just current
+      // This is important for beforeunload/visibility_hidden scenarios
+      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys())
 
-      // Clear any pending timeout for this workspace
-      const existingTimeout = saveTimeoutRef.current.get(currentWorkspaceSummaryId)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-        saveTimeoutRef.current.delete(currentWorkspaceSummaryId)
-      }
-      lastSaveReasonRef.current = reason
       emitDebugLog({
         component: "NoteWorkspace",
-        action: "save_flush",
+        action: "save_flush_all",
         metadata: {
-          workspaceId: currentWorkspaceSummaryId,
           reason,
+          pendingCount: pendingWorkspaceIds.length,
+          pendingWorkspaceIds,
+          currentWorkspaceId: currentWorkspaceSummaryId,
         },
       })
-      void persistWorkspaceNow()
+
+      // Clear and save all pending workspaces
+      for (const workspaceId of pendingWorkspaceIds) {
+        const existingTimeout = saveTimeoutRef.current.get(workspaceId)
+        if (existingTimeout) {
+          clearTimeout(existingTimeout)
+          saveTimeoutRef.current.delete(workspaceId)
+        }
+        void persistWorkspaceById(workspaceId, reason)
+      }
+
+      // Also save current workspace if dirty but no timeout was pending
+      if (
+        currentWorkspaceSummaryId &&
+        workspaceDirtyRef.current.has(currentWorkspaceSummaryId) &&
+        !pendingWorkspaceIds.includes(currentWorkspaceSummaryId)
+      ) {
+        void persistWorkspaceById(currentWorkspaceSummaryId, reason)
+      }
     },
-    [currentWorkspaceSummaryId, emitDebugLog, persistWorkspaceNow],
+    [currentWorkspaceSummaryId, emitDebugLog, persistWorkspaceById],
   )
 
   const hydrateWorkspace = useCallback(
@@ -3392,6 +3457,43 @@ export function useNoteWorkspaces({
   useEffect(() => {
     if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return
     if (lastHydratedWorkspaceIdRef.current === currentWorkspaceId) return
+    // FIX: Skip hydration for HOT runtimes that have actual notes.
+    // When a workspace has a hot runtime WITH notes, calling hydrateWorkspace would:
+    // 1. Load potentially stale data from DB
+    // 2. Call updatePanelSnapshotMap with allowEmpty:true, clearing panel caches
+    // 3. Conflict with the hot runtime's in-memory state
+    // This caused notes to "appear and instantly disappear" because the cache clearing
+    // destroyed the panel data that the hot runtime was relying on.
+    //
+    // IMPORTANT: We only skip hydration if the runtime has actual notes (openNotes.length > 0).
+    // On app reload, runtimes are created EMPTY before hydration runs. If we skip hydration
+    // for empty runtimes, the workspace would never load its saved state from the DB.
+    // We do NOT update lastHydratedWorkspaceIdRef here so that if the runtime gets
+    // evicted later, we will properly hydrate from DB on next switch.
+    if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
+      const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
+      if (runtimeOpenNotes.length > 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "hydrate_skipped_hot_runtime",
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            reason: "workspace_has_hot_runtime_with_notes",
+            runtimeNoteCount: runtimeOpenNotes.length,
+          },
+        })
+        return
+      }
+      // Runtime exists but is empty - fall through to hydration
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "hydrate_empty_runtime",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          reason: "runtime_exists_but_empty_will_hydrate",
+        },
+      })
+    }
     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
     emitDebugLog({
       component: "NoteWorkspace",
@@ -3402,7 +3504,7 @@ export function useNoteWorkspaces({
       },
     })
     hydrateWorkspace(currentWorkspaceId)
-  }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady])
+  }, [currentWorkspaceId, featureEnabled, hydrateWorkspace, isWorkspaceReady, liveStateEnabled])
 
   useEffect(() => {
     if (!featureEnabled) return
