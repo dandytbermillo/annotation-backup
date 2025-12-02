@@ -163,25 +163,28 @@ persist_by_id_error | "Failed to save workspace: 412"  ← Revision conflict pre
 
 ### Fix Applied
 
-**Location:** `lib/hooks/annotation/use-note-workspaces.ts` (lines 3471-3494)
+**Location:** `lib/hooks/annotation/use-note-workspaces.ts` (lines 3473-3499)
 
-The fix now checks if the runtime has **actual notes** before skipping hydration:
+The fix now checks if the runtime has **actual notes OR components** before skipping hydration:
 
 ```typescript
 if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
   const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
-  if (runtimeOpenNotes.length > 0) {
-    // Skip hydration ONLY if runtime has actual notes to preserve
+  const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
+  // Skip hydration if runtime has notes OR components (either indicates meaningful state)
+  if (runtimeOpenNotes.length > 0 || runtimeComponentCount > 0) {
+    // Skip hydration - runtime has meaningful state to preserve
     return
   }
-  // Runtime exists but is empty - fall through to hydration from DB
+  // Runtime exists but is empty (no notes, no components) - fall through to hydration from DB
 }
 // Continue with hydrateWorkspace(currentWorkspaceId)
 ```
 
 **Behavior After Fix:**
-- **App reload:** Runtime exists but empty (`openNotes: []`) → hydrates from DB ✓
-- **Workspace switch (HOT):** Runtime exists with notes → skips hydration ✓
+- **App reload:** Runtime exists but empty (`openNotes: []`, no components) → hydrates from DB ✓
+- **Workspace switch (HOT with notes):** Runtime has notes → skips hydration ✓
+- **Workspace switch (HOT with components only):** Runtime has components → skips hydration ✓
 
 ---
 
@@ -202,10 +205,17 @@ Added fallback to generate main panel snapshots from `openNotes` when DataStore 
 
 Added `useEffect` to clear `skipSnapshotForNote` when workspace changes to ensure proper snapshot restoration.
 
-### Fix 4: Check Runtime Note Count Before Skipping Hydration
-**File:** `lib/hooks/annotation/use-note-workspaces.ts` (lines 3471-3494)
+### Fix 4: Check Runtime State Before Skipping Hydration
+**File:** `lib/hooks/annotation/use-note-workspaces.ts` (lines 3473-3499)
 
-Modified the hydration skip logic to check `getRuntimeOpenNotes(workspaceId).length > 0` before skipping. Only skip hydration if the runtime has actual notes to preserve.
+Modified the hydration skip logic to check both notes AND components before skipping:
+- `getRuntimeOpenNotes(workspaceId).length > 0` - runtime has notes
+- `getRegisteredComponentCount(workspaceId) > 0` - runtime has components (calculator, timer, etc.)
+
+Only skip hydration if the runtime has meaningful state (notes OR components) to preserve. This handles:
+- App reload: Empty runtime → hydrates from DB
+- HOT switch with notes: Skip hydration, preserve in-memory notes
+- HOT switch with components only: Skip hydration, preserve in-memory components
 
 ---
 

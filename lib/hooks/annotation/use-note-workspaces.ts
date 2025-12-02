@@ -3472,19 +3472,22 @@ export function useNoteWorkspaces({
     // evicted later, we will properly hydrate from DB on next switch.
     if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
       const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
-      if (runtimeOpenNotes.length > 0) {
+      const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
+      // Skip hydration if runtime has notes OR components (either indicates meaningful state)
+      if (runtimeOpenNotes.length > 0 || runtimeComponentCount > 0) {
         emitDebugLog({
           component: "NoteWorkspace",
           action: "hydrate_skipped_hot_runtime",
           metadata: {
             workspaceId: currentWorkspaceId,
-            reason: "workspace_has_hot_runtime_with_notes",
+            reason: "workspace_has_hot_runtime_with_state",
             runtimeNoteCount: runtimeOpenNotes.length,
+            runtimeComponentCount,
           },
         })
         return
       }
-      // Runtime exists but is empty - fall through to hydration
+      // Runtime exists but is empty (no notes, no components) - fall through to hydration
       emitDebugLog({
         component: "NoteWorkspace",
         action: "hydrate_empty_runtime",
