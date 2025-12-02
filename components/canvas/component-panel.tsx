@@ -288,9 +288,11 @@ export function ComponentPanel({ id, type, position, workspaceId, onClose, onPos
   const renderComponent = () => {
     switch (type) {
       case 'calculator':
-        return <Calculator componentId={id} workspaceId={workspaceId} state={componentState} onStateUpdate={setComponentState} />
+        // Phase 3 Unification: Pass position to component for runtime ledger registration
+        return <Calculator componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={setComponentState} />
       case 'timer':
-        return <Timer componentId={id} workspaceId={workspaceId} state={componentState} onStateUpdate={setComponentState} />
+        // Phase 3 Unification: Pass position to component for runtime ledger registration
+        return <Timer componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={setComponentState} />
       case 'sticky-note':
         return <StickyNote componentId={id} state={componentState} onStateUpdate={setComponentState} />
       case 'dragtest':

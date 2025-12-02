@@ -7,16 +7,19 @@ import { useComponentRegistration } from '@/lib/hooks/use-component-registration
 interface CalculatorProps {
   componentId: string
   workspaceId?: string | null
+  position?: { x: number; y: number }
   state?: any
   onStateUpdate?: (state: any) => void
 }
 
-export function Calculator({ componentId, workspaceId, state, onStateUpdate }: CalculatorProps) {
-  // Phase 1: Register with workspace runtime for lifecycle management
+export function Calculator({ componentId, workspaceId, position, state, onStateUpdate }: CalculatorProps) {
+  // Phase 1 & 3 Unification: Register with workspace runtime for lifecycle management
+  // Now includes position for runtime ledger persistence
   useComponentRegistration({
     workspaceId,
     componentId,
     componentType: 'calculator',
+    position,
     // strict: false for now - will be strict: true once all call sites pass workspaceId
     strict: false,
   })

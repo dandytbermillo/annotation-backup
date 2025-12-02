@@ -7,12 +7,26 @@ import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manage
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import { debugLog } from "@/lib/utils/debug-logger"
 
-// Phase 1: Component registration types
+// Phase 1: Component registration types (legacy - for React lifecycle tracking)
 export type RegisteredComponent = {
   componentId: string
   componentType: "calculator" | "timer" | "alarm" | "widget" | string
   workspaceId: string
   registeredAt: number
+}
+
+// Phase 1 Unification: Runtime component ledger entry
+// This is the authoritative source of truth for component data, persists even when React unmounts
+export type RuntimeComponent = {
+  componentId: string
+  componentType: "calculator" | "timer" | "alarm" | "widget" | string
+  workspaceId: string
+  position: { x: number; y: number }
+  size: { width: number; height: number } | null
+  metadata: Record<string, unknown>
+  zIndex: number
+  createdAt: number
+  lastSeenAt: number  // Updated when component is visible/interacted with
 }
 
 export type WorkspaceRuntime = {
@@ -31,8 +45,10 @@ export type WorkspaceRuntime = {
   // Phase 2: Visibility state for multi-runtime hide/show
   isVisible: boolean
   lastVisibleAt: number
-  // Phase 1: Registered components (calculators, timers, alarms, etc.)
+  // Phase 1: Registered components (calculators, timers, alarms, etc.) - React lifecycle tracking
   registeredComponents: Map<string, RegisteredComponent>
+  // Phase 1 Unification: Runtime component ledger - authoritative data source, persists across unmounts
+  components: Map<string, RuntimeComponent>
 }
 
 // Phase 3: Max live runtime configuration
@@ -148,6 +164,7 @@ const firePreEvictionCallbacksSync = (workspaceId: string, reason: string): void
   const capturedState = {
     openNotes: [...runtime.openNotes],
     registeredComponents: new Map(runtime.registeredComponents),
+    components: new Map(runtime.components),  // Phase 1 Unification: Capture component ledger
     dataStore: runtime.dataStore,
     layerManager: runtime.layerManager,
   }
@@ -191,6 +208,7 @@ const capturedEvictionStates = new Map<string, {
   state: {
     openNotes: NoteWorkspaceSlot[]
     registeredComponents: Map<string, RegisteredComponent>
+    components: Map<string, RuntimeComponent>  // Phase 1 Unification: Include component ledger
     dataStore: DataStore
     layerManager: LayerManager
   }
@@ -330,8 +348,10 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     // Phase 2: New runtimes start hidden
     isVisible: false,
     lastVisibleAt: 0,
-    // Phase 1: Component registry
+    // Phase 1: Component registry (React lifecycle tracking)
     registeredComponents: new Map(),
+    // Phase 1 Unification: Component ledger (authoritative data, persists across unmounts)
+    components: new Map(),
   }
   runtimes.set(workspaceId, runtime)
 
@@ -370,6 +390,7 @@ const performRuntimeRemoval = (workspaceId: string, hadKey: boolean, runtime: Wo
     runtime.openNotes = []
     runtime.membership.clear()
     runtime.registeredComponents.clear()  // Phase 1: Clean up component registry
+    runtime.components.clear()  // Phase 1 Unification: Clean up component ledger on eviction
   }
   runtimes.delete(workspaceId)
 
@@ -1007,4 +1028,356 @@ export const getRuntimeCapacityInfo = (): {
     atCapacity: runtimes.size >= maxRuntimes,
     runtimeIds: Array.from(runtimes.keys()),
   }
+}
+
+// =============================================================================
+// Phase 1 Unification: Runtime Component Ledger API
+// This is the authoritative source of truth for component data.
+// Unlike registeredComponents (React lifecycle), this persists across unmounts.
+// =============================================================================
+
+export type RuntimeComponentInput = {
+  componentId: string
+  componentType: "calculator" | "timer" | "alarm" | "widget" | string
+  position: { x: number; y: number }
+  size?: { width: number; height: number } | null
+  metadata?: Record<string, unknown>
+  zIndex?: number
+}
+
+/**
+ * Register or update a component in the runtime ledger.
+ * This is the authoritative data store - persists even when React component unmounts.
+ *
+ * @param workspaceId - The workspace this component belongs to
+ * @param input - Component data (id, type, position, size, metadata, zIndex)
+ * @returns The created/updated RuntimeComponent, or null if runtime doesn't exist
+ */
+export const registerRuntimeComponent = (
+  workspaceId: string,
+  input: RuntimeComponentInput,
+): RuntimeComponent | null => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] Cannot register runtime component - runtime not found for workspace: ${workspaceId}`,
+        { componentId: input.componentId, componentType: input.componentType }
+      )
+    }
+    return null
+  }
+
+  const now = Date.now()
+  const existing = runtime.components.get(input.componentId)
+
+  const component: RuntimeComponent = {
+    componentId: input.componentId,
+    componentType: input.componentType,
+    workspaceId,
+    position: input.position,
+    size: input.size ?? null,
+    metadata: input.metadata ?? {},
+    zIndex: input.zIndex ?? existing?.zIndex ?? 100,
+    createdAt: existing?.createdAt ?? now,
+    lastSeenAt: now,
+  }
+
+  runtime.components.set(input.componentId, component)
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Runtime component registered/updated`, {
+      workspaceId,
+      componentId: input.componentId,
+      componentType: input.componentType,
+      isNew: !existing,
+      totalComponents: runtime.components.size,
+    })
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: existing ? "runtime_component_updated" : "runtime_component_registered",
+    metadata: {
+      workspaceId,
+      componentId: input.componentId,
+      componentType: input.componentType,
+      position: input.position,
+      zIndex: component.zIndex,
+      totalComponents: runtime.components.size,
+    },
+  })
+
+  return component
+}
+
+/**
+ * Update specific fields of a runtime component.
+ * Only updates provided fields, preserves others.
+ *
+ * @param workspaceId - The workspace this component belongs to
+ * @param componentId - The component to update
+ * @param updates - Partial updates (position, size, metadata, zIndex)
+ * @returns The updated RuntimeComponent, or null if not found
+ */
+export const updateRuntimeComponent = (
+  workspaceId: string,
+  componentId: string,
+  updates: Partial<Pick<RuntimeComponent, "position" | "size" | "metadata" | "zIndex">>,
+): RuntimeComponent | null => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return null
+
+  const existing = runtime.components.get(componentId)
+  if (!existing) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] Cannot update runtime component - not found: ${componentId}`,
+        { workspaceId }
+      )
+    }
+    return null
+  }
+
+  const updated: RuntimeComponent = {
+    ...existing,
+    position: updates.position ?? existing.position,
+    size: updates.size !== undefined ? updates.size : existing.size,
+    metadata: updates.metadata !== undefined
+      ? { ...existing.metadata, ...updates.metadata }
+      : existing.metadata,
+    zIndex: updates.zIndex ?? existing.zIndex,
+    lastSeenAt: Date.now(),
+  }
+
+  runtime.components.set(componentId, updated)
+
+  return updated
+}
+
+/**
+ * Mark a runtime component as "seen" (update lastSeenAt).
+ * Call this when the component is visible or interacted with.
+ */
+export const touchRuntimeComponent = (
+  workspaceId: string,
+  componentId: string,
+): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  const existing = runtime.components.get(componentId)
+  if (existing) {
+    existing.lastSeenAt = Date.now()
+  }
+}
+
+/**
+ * Remove a runtime component from the ledger.
+ * Only call this for explicit deletion (user deletes component),
+ * NOT for React unmount (component data should persist).
+ *
+ * @param workspaceId - The workspace this component belongs to
+ * @param componentId - The component to remove
+ * @returns true if component was removed, false if not found
+ */
+export const removeRuntimeComponent = (
+  workspaceId: string,
+  componentId: string,
+): boolean => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return false
+
+  const had = runtime.components.has(componentId)
+  if (had) {
+    runtime.components.delete(componentId)
+
+    if (process.env.NODE_ENV === "development") {
+      console.log(`[WorkspaceRuntime] Runtime component removed`, {
+        workspaceId,
+        componentId,
+        remainingComponents: runtime.components.size,
+      })
+    }
+
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "runtime_component_removed",
+      metadata: {
+        workspaceId,
+        componentId,
+        remainingComponents: runtime.components.size,
+      },
+    })
+  }
+
+  return had
+}
+
+/**
+ * Get a specific runtime component by ID.
+ */
+export const getRuntimeComponent = (
+  workspaceId: string,
+  componentId: string,
+): RuntimeComponent | null => {
+  return runtimes.get(workspaceId)?.components.get(componentId) ?? null
+}
+
+/**
+ * List all runtime components for a workspace.
+ * Returns components from the authoritative ledger (persists across unmounts).
+ */
+export const listRuntimeComponents = (workspaceId: string): RuntimeComponent[] => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return []
+  return Array.from(runtime.components.values())
+}
+
+/**
+ * Get count of runtime components for a workspace.
+ */
+export const getRuntimeComponentCount = (workspaceId: string): number => {
+  return runtimes.get(workspaceId)?.components.size ?? 0
+}
+
+/**
+ * Check if a runtime component exists in the ledger.
+ */
+export const hasRuntimeComponent = (
+  workspaceId: string,
+  componentId: string,
+): boolean => {
+  return runtimes.get(workspaceId)?.components.has(componentId) ?? false
+}
+
+/**
+ * Populate runtime component ledger from a snapshot (during hydration/replay).
+ * This is called when restoring a workspace from persisted state.
+ *
+ * @param workspaceId - The workspace to populate
+ * @param components - Array of component snapshots from persisted payload
+ */
+export const populateRuntimeComponents = (
+  workspaceId: string,
+  components: Array<{
+    id: string
+    type: string
+    position?: { x: number; y: number } | null
+    size?: { width: number; height: number } | null
+    metadata?: Record<string, unknown> | null
+    zIndex?: number | null
+  }>,
+): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] Cannot populate runtime components - runtime not found: ${workspaceId}`
+      )
+    }
+    return
+  }
+
+  const now = Date.now()
+
+  for (const comp of components) {
+    if (!comp.id || !comp.type) continue
+
+    const existing = runtime.components.get(comp.id)
+    const component: RuntimeComponent = {
+      componentId: comp.id,
+      componentType: comp.type,
+      workspaceId,
+      position: comp.position ?? { x: 0, y: 0 },
+      size: comp.size ?? null,
+      metadata: comp.metadata ?? {},
+      zIndex: comp.zIndex ?? 100,
+      createdAt: existing?.createdAt ?? now,
+      lastSeenAt: now,
+    }
+
+    runtime.components.set(comp.id, component)
+  }
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Runtime components populated`, {
+      workspaceId,
+      count: components.length,
+      totalComponents: runtime.components.size,
+    })
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "runtime_components_populated",
+    metadata: {
+      workspaceId,
+      populatedCount: components.length,
+      totalComponents: runtime.components.size,
+    },
+  })
+}
+
+/**
+ * Sync LayerManager nodes from runtime component ledger.
+ * This ensures LayerManager has nodes for all components in the runtime ledger.
+ * Used during hydration/replay to ensure rendering layer matches authoritative data.
+ *
+ * @param workspaceId - The workspace to sync
+ * @returns Number of components synced to LayerManager
+ */
+export const syncLayerManagerFromRuntime = (workspaceId: string): number => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime || runtime.components.size === 0) {
+    return 0
+  }
+
+  const layerMgr = getWorkspaceLayerManager(workspaceId)
+  if (!layerMgr) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] Cannot sync LayerManager - not found for workspace: ${workspaceId}`
+      )
+    }
+    return 0
+  }
+
+  let syncedCount = 0
+  for (const component of runtime.components.values()) {
+    // Check if node already exists in LayerManager
+    const existingNodes = layerMgr.getNodes()
+    const exists = existingNodes?.has(component.componentId)
+
+    if (!exists) {
+      const componentMetadata = {
+        ...(component.metadata ?? {}),
+        componentType: component.componentType,
+      } as Record<string, unknown>
+
+      layerMgr.registerNode({
+        id: component.componentId,
+        type: "component",
+        position: component.position,
+        dimensions: component.size ?? undefined,
+        zIndex: component.zIndex,
+        metadata: componentMetadata,
+      } as any)
+      syncedCount++
+    }
+  }
+
+  if (syncedCount > 0) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "layer_manager_synced_from_runtime",
+      metadata: {
+        workspaceId,
+        syncedCount,
+        totalInLedger: runtime.components.size,
+      },
+    })
+  }
+
+  return syncedCount
 }

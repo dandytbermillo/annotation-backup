@@ -7,6 +7,7 @@ import { useComponentRegistration } from '@/lib/hooks/use-component-registration
 interface TimerProps {
   componentId: string
   workspaceId?: string | null
+  position?: { x: number; y: number }
   state?: Partial<TimerState>
   onStateUpdate?: (state: TimerState) => void
 }
@@ -17,12 +18,14 @@ interface TimerState {
   isRunning: boolean
 }
 
-export function Timer({ componentId, workspaceId, state, onStateUpdate }: TimerProps) {
-  // Phase 1: Register with workspace runtime for lifecycle management
+export function Timer({ componentId, workspaceId, position, state, onStateUpdate }: TimerProps) {
+  // Phase 1 & 3 Unification: Register with workspace runtime for lifecycle management
+  // Now includes position for runtime ledger persistence
   useComponentRegistration({
     workspaceId,
     componentId,
     componentType: 'timer',
+    position,
     // strict: false for now - will be strict: true once all call sites pass workspaceId
     strict: false,
   })

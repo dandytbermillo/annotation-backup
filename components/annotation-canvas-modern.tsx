@@ -65,6 +65,7 @@ import { useMainOnlyPanelFilter } from "@/lib/hooks/annotation/use-main-only-pan
 import { useAddComponentMenu } from "@/lib/hooks/annotation/use-add-component-menu"
 import { useDedupeWarningBanner } from "@/lib/hooks/annotation/use-dedupe-warning-banner"
 import { useCanvasOutlineDebug } from "@/lib/hooks/annotation/use-canvas-outline-debug"
+import { useRuntimeComponents, runtimeComponentsToCanvasItems } from "@/lib/hooks/use-runtime-components"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -678,8 +679,27 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     workspaceId: workspaceId ?? null,
   })
 
-  // Rehydrate component items from the current workspace LayerManager when snapshot/revision changes.
+  // Phase 3 Unification: Read components from runtime ledger (authoritative source)
+  const runtimeComponents = useRuntimeComponents(workspaceId)
+
+  // Phase 3 Unification: Rehydrate component items from runtime ledger when snapshot/revision changes.
+  // The runtime ledger is now the authoritative source (populated during hydration/replay in Phase 2).
+  // LayerManager is still used as a fallback for components not yet in the ledger.
   useEffect(() => {
+    // Primary source: runtime ledger (Phase 3 Unification)
+    if (runtimeComponents.length > 0) {
+      setCanvasItems((prev: CanvasItem[]) => {
+        const nonComponentItems = prev.filter((item: CanvasItem) => item.itemType !== "component")
+        const nextComponents = runtimeComponentsToCanvasItems(runtimeComponents)
+        const byId = new Map<string, any>()
+        nextComponents.forEach((c) => byId.set(c.id, c))
+        nonComponentItems.forEach((item) => byId.set(item.id, item))
+        return Array.from(byId.values())
+      })
+      return
+    }
+
+    // Fallback: LayerManager (for backwards compatibility during transition)
     const lm = layerManagerApi.manager
     if (!lm || typeof lm.getNodes !== "function") return
     const nodes = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component")
@@ -688,8 +708,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       // Components may have been restored from snapshot (via FIX 14) and are valid.
       // LayerManager might be empty/stale after a workspace switch or snapshot restore,
       // but that doesn't mean we should remove the components from canvasItems.
-      // Previously, this line removed all components, undoing the snapshot restore:
-      // setCanvasItems((prev: CanvasItem[]) => prev.filter((item: CanvasItem) => item.itemType !== "component"))
       return
     }
     setCanvasItems((prev: CanvasItem[]) => {
@@ -707,7 +725,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       nonComponentItems.forEach((item) => byId.set(item.id, item))
       return Array.from(byId.values())
     })
-  }, [layerManagerApi.manager, setCanvasItems, workspaceSnapshotRevision])
+  }, [layerManagerApi.manager, setCanvasItems, workspaceSnapshotRevision, runtimeComponents])
   const { stickyNoteOverlayPortal } = useStickyNoteOverlayPanels({
     stickyOverlayEl,
     stickyNoteItems,

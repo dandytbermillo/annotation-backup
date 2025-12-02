@@ -33,6 +33,10 @@ import {
   type PreEvictionCallback,
   // Phase 1: Component registration
   getRegisteredComponentCount,
+  // Phase 1 Unification: Runtime component ledger
+  listRuntimeComponents,
+  populateRuntimeComponents,
+  getRuntimeComponentCount,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -2283,40 +2287,51 @@ export function useNoteWorkspaces({
       // IMPORTANT: Do NOT call bumpSnapshotRevision() here - it triggers the canvas's internal
       // restoration logic which sets workspaceRestorationInProgress=true and skips component rendering.
       if (runtimeState === "hot") {
-        // FIX 6: When skipping replay due to hot runtime, check if components need restoration.
-        // React components deregister on unmount, so we need to restore component nodes to
-        // LayerManager even for hot runtimes. The notes are preserved but components may be lost.
+        // Phase 1 Unification: Check runtime ledger first (authoritative source)
+        const runtimeLedgerCount = getRuntimeComponentCount(workspaceId)
         const runtimeComponentCount = getRegisteredComponentCount(workspaceId)
-        if (runtimeComponentCount === 0 && snapshot.components && snapshot.components.length > 0) {
-          const layerMgr = getWorkspaceLayerManager(workspaceId)
-          if (layerMgr) {
-            snapshot.components.forEach((component) => {
-              if (!component.id || !component.type) return
-              const componentMetadata = {
-                ...(component.metadata ?? {}),
-                componentType: component.type,
-              } as Record<string, unknown>
-              layerMgr.registerNode({
-                id: component.id,
-                type: "component",
-                position: component.position ?? { x: 0, y: 0 },
-                dimensions: component.size ?? undefined,
-                zIndex: component.zIndex ?? undefined,
-                metadata: componentMetadata,
-              } as any)
-            })
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "preview_hot_runtime_component_restore",
-              metadata: {
-                workspaceId,
-                componentCount: snapshot.components.length,
-              },
-            })
-            // Bump revision to trigger canvas useEffect that reads from LayerManager.
-            // This is safe for hot runtimes because the canvas's FIX 11 only sets
-            // workspaceRestorationInProgressRef on first mount, not on revision bumps.
-            bumpSnapshotRevision()
+
+        // FIX 6 + Phase 1 Unification: When hot runtime has components in ledger but React hasn't
+        // mounted them yet, OR when ledger is empty but snapshot has components, restore them.
+        if (snapshot.components && snapshot.components.length > 0) {
+          // Always populate runtime ledger from snapshot (ensures data is in authoritative source)
+          if (runtimeLedgerCount === 0) {
+            populateRuntimeComponents(workspaceId, snapshot.components)
+          }
+
+          // If React components aren't registered yet, also register to LayerManager for rendering
+          if (runtimeComponentCount === 0) {
+            const layerMgr = getWorkspaceLayerManager(workspaceId)
+            if (layerMgr) {
+              snapshot.components.forEach((component) => {
+                if (!component.id || !component.type) return
+                const componentMetadata = {
+                  ...(component.metadata ?? {}),
+                  componentType: component.type,
+                } as Record<string, unknown>
+                layerMgr.registerNode({
+                  id: component.id,
+                  type: "component",
+                  position: component.position ?? { x: 0, y: 0 },
+                  dimensions: component.size ?? undefined,
+                  zIndex: component.zIndex ?? undefined,
+                  metadata: componentMetadata,
+                } as any)
+              })
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "preview_hot_runtime_component_restore",
+                metadata: {
+                  workspaceId,
+                  componentCount: snapshot.components.length,
+                  runtimeLedgerCount,
+                },
+              })
+              // Bump revision to trigger canvas useEffect that reads from LayerManager.
+              // This is safe for hot runtimes because the canvas's FIX 11 only sets
+              // workspaceRestorationInProgressRef on first mount, not on revision bumps.
+              bumpSnapshotRevision()
+            }
           }
         }
         emitDebugLog({
@@ -2352,6 +2367,12 @@ export function useNoteWorkspaces({
       const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
       cache.panels = scopedPanels
       cache.components = Array.isArray(snapshot.components) ? [...snapshot.components] : []
+
+      // Phase 1 Unification: Populate runtime component ledger for cold runtimes
+      if (snapshot.components && snapshot.components.length > 0) {
+        populateRuntimeComponents(workspaceId, snapshot.components)
+      }
+
       const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
         noteId: entry.noteId,
         mainPosition: entry.mainPosition ?? null,
@@ -2680,27 +2701,52 @@ export function useNoteWorkspaces({
     }
     const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
-    const lm = getWorkspaceLayerManager(workspaceIdForComponents)
-    let components: NoteWorkspaceComponentSnapshot[] =
-      lm && typeof lm.getNodes === "function"
-        ? Array.from(lm.getNodes().values())
-            .filter((node: any) => node.type === "component")
-            .map((node: any) => ({
-              id: node.id,
-              type:
-                (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
-                  ? (node as any).metadata.componentType
-                  : typeof node.type === "string"
-                    ? node.type
-                    : "component",
-              position: (node as any).position ?? null,
-              size: (node as any).dimensions ?? null,
-              zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
-              metadata: (node as any).metadata ?? null,
-            }))
-        : []
+    // Phase 1 Unification: Read components from runtime ledger first (authoritative source)
+    // This ensures component data persists across React unmounts
+    const runtimeComponents = listRuntimeComponents(workspaceIdForComponents)
+    let components: NoteWorkspaceComponentSnapshot[] = runtimeComponents.map((comp) => ({
+      id: comp.componentId,
+      type: comp.componentType,
+      position: comp.position,
+      size: comp.size,
+      zIndex: comp.zIndex,
+      metadata: comp.metadata,
+    }))
 
-    // FIX: Fallback to cached components if LayerManager returns empty but we had components before.
+    // Fallback 1: If runtime ledger is empty, try LayerManager (backward compatibility)
+    if (components.length === 0) {
+      const lm = getWorkspaceLayerManager(workspaceIdForComponents)
+      if (lm && typeof lm.getNodes === "function") {
+        components = Array.from(lm.getNodes().values())
+          .filter((node: any) => node.type === "component")
+          .map((node: any) => ({
+            id: node.id,
+            type:
+              (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
+                ? (node as any).metadata.componentType
+                : typeof node.type === "string"
+                  ? node.type
+                  : "component",
+            position: (node as any).position ?? null,
+            size: (node as any).dimensions ?? null,
+            zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
+            metadata: (node as any).metadata ?? null,
+          }))
+        if (components.length > 0) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "build_payload_component_fallback",
+            metadata: {
+              workspaceId: workspaceIdForComponents,
+              fallbackSource: "layerManager",
+              componentCount: components.length,
+            },
+          })
+        }
+      }
+    }
+
+    // Fallback 2: If still empty, try cached components (existing Fix 5)
     // This prevents component loss when the workspace is in a transitional state (evicted, cold).
     if (components.length === 0 && workspaceIdForComponents) {
       const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceIdForComponents)
@@ -2728,6 +2774,20 @@ export function useNoteWorkspaces({
           },
         })
       }
+    }
+
+    // Log component source for debugging
+    if (components.length > 0) {
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "build_payload_components",
+        metadata: {
+          workspaceId: workspaceIdForComponents,
+          componentCount: components.length,
+          runtimeLedgerCount: runtimeComponents.length,
+          source: runtimeComponents.length > 0 ? "runtime_ledger" : "fallback",
+        },
+      })
     }
 
     let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
@@ -3429,6 +3489,9 @@ export function useNoteWorkspaces({
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
+          // Phase 1 Unification: Populate runtime component ledger from hydrated components
+          // This ensures components are available in the runtime before React renders them
+          populateRuntimeComponents(workspaceId, resolvedComponents)
         }
         const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
         panelNoteIds.forEach((id) => targetIds.add(id))
@@ -3654,15 +3717,25 @@ export function useNoteWorkspaces({
       const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
       // Skip hydration if runtime has notes OR components (either indicates meaningful state)
       if (runtimeOpenNotes.length > 0 || runtimeComponentCount > 0) {
-        // FIX 6: When skipping hydration due to hot runtime, check if components need restoration.
-        // React components deregister on unmount, so runtimeComponentCount may be 0 even though
-        // component DATA exists in cache. We need to restore component nodes to LayerManager
-        // so that the React components can render when they mount.
+        // Phase 1 Unification: Check runtime ledger first (authoritative source)
+        const runtimeLedgerCount = getRuntimeComponentCount(currentWorkspaceId)
+
+        // FIX 6 + Phase 1 Unification: When skipping hydration due to hot runtime, check if
+        // components need restoration. React components deregister on unmount, so
+        // runtimeComponentCount may be 0 even though component DATA exists in cache or ledger.
         if (runtimeComponentCount === 0) {
+          // Try to get components from: runtime ledger > cache > snapshot
           const cachedComponents = lastComponentsSnapshotRef.current.get(currentWorkspaceId)
           const snapshotComponents = workspaceSnapshotsRef.current.get(currentWorkspaceId)?.components
           const componentsToRestore = cachedComponents ?? snapshotComponents
+
           if (componentsToRestore && componentsToRestore.length > 0) {
+            // Phase 1 Unification: Always populate runtime ledger first (authoritative source)
+            if (runtimeLedgerCount === 0) {
+              populateRuntimeComponents(currentWorkspaceId, componentsToRestore)
+            }
+
+            // Also register to LayerManager for rendering
             const layerMgr = getWorkspaceLayerManager(currentWorkspaceId)
             if (layerMgr) {
               componentsToRestore.forEach((component) => {
@@ -3686,6 +3759,7 @@ export function useNoteWorkspaces({
                 metadata: {
                   workspaceId: currentWorkspaceId,
                   componentCount: componentsToRestore.length,
+                  runtimeLedgerCount,
                   source: cachedComponents ? "lastComponentsSnapshotRef" : "workspaceSnapshotsRef",
                 },
               })
