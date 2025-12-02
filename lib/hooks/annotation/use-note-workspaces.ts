@@ -2103,6 +2103,16 @@ export function useNoteWorkspaces({
         position: entry.mainPosition ?? null,
       }))
       const active = snapshot.activeNoteId ?? normalizedOpenNotes[0]?.noteId ?? null
+
+      // FIX: Fallback to cached components if snapshot has none but we had components before.
+      let components = snapshot.components ?? []
+      if (components.length === 0) {
+        const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceId)
+        if (cachedComponents && cachedComponents.length > 0) {
+          components = cachedComponents
+        }
+      }
+
       const payload: NoteWorkspacePayload = {
         schemaVersion: "1.1.0",
         openNotes: normalizedOpenNotes,
@@ -2110,8 +2120,8 @@ export function useNoteWorkspaces({
         camera: snapshot.camera ?? DEFAULT_CAMERA,
         panels: snapshot.panels ?? [],
       }
-      if (snapshot.components && snapshot.components.length > 0) {
-        payload.components = snapshot.components
+      if (components.length > 0) {
+        payload.components = components
       }
       return payload
     },
@@ -2362,6 +2372,10 @@ export function useNoteWorkspaces({
       }
 
       lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
+
+      // FIX: Set save cooldown after replay to prevent race condition (same as hydrate).
+      skipSavesUntilRef.current.set(workspaceId, Date.now() + 500)
+
       emitDebugLog({
         component: "NoteWorkspace",
         action: "preview_snapshot_applied",
@@ -2369,7 +2383,9 @@ export function useNoteWorkspaces({
           workspaceId,
           panelCount: scopedPanels.length,
           openCount: snapshot.openNotes.length,
+          componentCount: snapshot.components?.length ?? 0,
           activeNoteId: nextActive,
+          saveCooldownSet: true,
         },
       })
       bumpSnapshotRevision()
@@ -2618,7 +2634,7 @@ export function useNoteWorkspaces({
     const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
     const lm = getWorkspaceLayerManager(workspaceIdForComponents)
-    const components: NoteWorkspaceComponentSnapshot[] =
+    let components: NoteWorkspaceComponentSnapshot[] =
       lm && typeof lm.getNodes === "function"
         ? Array.from(lm.getNodes().values())
             .filter((node: any) => node.type === "component")
@@ -2636,6 +2652,36 @@ export function useNoteWorkspaces({
               metadata: (node as any).metadata ?? null,
             }))
         : []
+
+    // FIX: Fallback to cached components if LayerManager returns empty but we had components before.
+    // This prevents component loss when the workspace is in a transitional state (evicted, cold).
+    if (components.length === 0 && workspaceIdForComponents) {
+      const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceIdForComponents)
+      const snapshotComponents = workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.components
+      if (cachedComponents && cachedComponents.length > 0) {
+        components = cachedComponents
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "build_payload_component_fallback",
+          metadata: {
+            workspaceId: workspaceIdForComponents,
+            fallbackSource: "lastComponentsSnapshotRef",
+            componentCount: components.length,
+          },
+        })
+      } else if (snapshotComponents && snapshotComponents.length > 0) {
+        components = snapshotComponents
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "build_payload_component_fallback",
+          metadata: {
+            workspaceId: workspaceIdForComponents,
+            fallbackSource: "workspaceSnapshotsRef",
+            componentCount: components.length,
+          },
+        })
+      }
+    }
 
     let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
     if (workspaceOpenNotes.length === 0 && workspaceMembership && workspaceMembership.size > 0) {
@@ -3410,6 +3456,14 @@ export function useNoteWorkspaces({
         ),
         )
         lastSavedPayloadHashRef.current.set(workspaceId, serializeWorkspacePayload(record.payload))
+
+        // FIX: Set save cooldown after hydration to prevent race condition.
+        // When bumpSnapshotRevision() triggers panelSnapshotVersion change, the components_changed
+        // effect runs in the next render cycle. By that time, isHydratingRef.current is already false.
+        // Setting a cooldown ensures persistWorkspaceById will skip saves for a short period after
+        // hydration, preventing the effect from saving empty/incomplete data.
+        skipSavesUntilRef.current.set(workspaceId, Date.now() + 500)
+
         emitDebugLog({
           component: "NoteWorkspace",
           action: "hydrate_success",
@@ -3417,7 +3471,9 @@ export function useNoteWorkspaces({
             workspaceId,
             panelCount: incomingPanels.length,
             openCount: record.payload.openNotes.length,
+            componentCount: resolvedComponents?.length ?? 0,
             durationMs: Date.now() - hydrateStart,
+            saveCooldownSet: true,
           },
         })
         bumpSnapshotRevision()
