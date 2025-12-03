@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entry-Workspace Dashboard - Interactive Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    :root {
+      --bg-primary: #0f0f0f;
+      --bg-secondary: #1a1a1a;
+      --bg-tertiary: #252525;
+      --bg-hover: #2a2a2a;
+      --border-color: #333;
+      --text-primary: #e5e5e5;
+      --text-secondary: #999;
+      --text-muted: #666;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --panel-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* App Shell */
+    .app-shell {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* Entry Navigator */
+    .entry-navigator {
+      width: 260px;
+      background: var(--bg-secondary);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .entry-navigator.collapsed {
+      width: 50px;
+    }
+
+    .entry-navigator.floating {
+      position: fixed;
+      left: 20px;
+      top: 80px;
+      width: 280px;
+      height: auto;
+      max-height: calc(100vh - 160px);
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+      box-shadow: var(--panel-shadow);
+      z-index: 1000;
+    }
+
+    .entry-navigator.floating.pinned {
+      box-shadow: 0 0 0 2px var(--accent), var(--panel-shadow);
+    }
+
+    .nav-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+      user-select: none;
+    }
+
+    .nav-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-controls {
+      display: flex;
+      gap: 4px;
+    }
+
+    .nav-controls button {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .nav-controls button:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .nav-controls button.active {
+      color: var(--accent);
+      background: rgba(59, 130, 246, 0.1);
+    }
+
+    .nav-search {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .nav-search input {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: var(--text-primary);
+      font-size: 13px;
+      outline: none;
+    }
+
+    .nav-search input:focus {
+      border-color: var(--accent);
+    }
+
+    .nav-search input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .nav-tree {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .nav-item {
+      padding: 8px 16px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .nav-item.selected {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent);
+    }
+
+    .nav-item .chevron {
+      font-size: 10px;
+      transition: transform 0.2s;
+    }
+
+    .nav-item .chevron.expanded {
+      transform: rotate(90deg);
+    }
+
+    .nav-item.nested-1 { padding-left: 32px; }
+    .nav-item.nested-2 { padding-left: 48px; }
+
+    .nav-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .nav-footer button {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .nav-footer button:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+
+    /* Main Content */
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Top Bar */
+    .top-bar {
+      height: 50px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+    }
+
+    .top-bar .logo {
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--accent);
+    }
+
+    .view-toggle {
+      display: flex;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .view-toggle button {
+      background: transparent;
+      border: none;
+      padding: 6px 14px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+
+    .view-toggle button.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .top-bar-spacer { flex: 1; }
+
+    /* Dashboard Content */
+    .dashboard {
+      flex: 1;
+      padding: 32px;
+      overflow-y: auto;
+    }
+
+    .dashboard.hidden { display: none; }
+
+    /* Continue Card */
+    .continue-card {
+      background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 32px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .continue-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .continue-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(59, 130, 246, 0.15);
+    }
+
+    .continue-card:hover::before {
+      opacity: 1;
+    }
+
+    .continue-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      position: relative;
+    }
+
+    .continue-card-header .play-icon {
+      width: 44px;
+      height: 44px;
+      background: var(--accent);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      color: white;
+    }
+
+    .continue-card-header h3 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .continue-card-header .shortcut {
+      position: absolute;
+      right: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      background: var(--bg-tertiary);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .continue-card-content {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-primary);
+      border-radius: 10px;
+      padding: 16px 20px;
+      position: relative;
+    }
+
+    .continue-card-info h4 {
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+
+    .continue-card-info p {
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .continue-card-action {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s;
+    }
+
+    .continue-card-action:hover {
+      background: var(--accent-hover);
+      transform: translateX(4px);
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 32px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .section-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .section-header a {
+      color: var(--accent);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    /* Workspace Cards Grid */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .workspace-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .workspace-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .workspace-card-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--bg-tertiary);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 14px;
+      font-size: 20px;
+    }
+
+    .workspace-card h4 {
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .workspace-card p {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .workspace-card .meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .workspace-card .status-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--success);
+      border-radius: 50%;
+    }
+
+    /* Quick Actions */
+    .quick-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .quick-action {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 14px 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: all 0.15s ease;
+    }
+
+    .quick-action:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--accent);
+    }
+
+    .quick-action .icon {
+      font-size: 18px;
+    }
+
+    /* Workspace View */
+    .workspace-view {
+      flex: 1;
+      position: relative;
+      background: var(--bg-primary);
+      display: none;
+    }
+
+    .workspace-view.active {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .workspace-tabs {
+      display: flex;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      padding: 0 16px;
+      gap: 4px;
+    }
+
+    .workspace-tab {
+      padding: 12px 16px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+      margin-bottom: -1px;
+    }
+
+    .workspace-tab:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+
+    .workspace-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      background: transparent;
+    }
+
+    .workspace-tab-add {
+      padding: 12px 16px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .workspace-tab-add:hover {
+      color: var(--text-primary);
+    }
+
+    /* Canvas */
+    .canvas {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.03) 0%, transparent 50%),
+        linear-gradient(var(--bg-primary) 1px, transparent 1px),
+        linear-gradient(90deg, var(--bg-primary) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+      background-position: center, -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+    }
+
+    /* Canvas Panels */
+    .canvas-panel {
+      position: absolute;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      box-shadow: var(--panel-shadow);
+      min-width: 200px;
+      cursor: default;
+      transition: box-shadow 0.2s;
+    }
+
+    .canvas-panel:hover {
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .canvas-panel.dragging {
+      box-shadow: 0 12px 40px rgba(59, 130, 246, 0.2);
+      z-index: 100;
+    }
+
+    .canvas-panel-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: move;
+      border-radius: 10px 10px 0 0;
+      background: var(--bg-tertiary);
+    }
+
+    .canvas-panel-header .close-btn {
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .canvas-panel-header .close-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .canvas-panel-content {
+      padding: 14px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Workspace Link */
+    .workspace-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(59, 130, 246, 0.1);
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+      transition: all 0.15s;
+    }
+
+    .workspace-link:hover {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    /* Status Bar */
+    .status-bar {
+      height: 28px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      font-size: 11px;
+      color: var(--text-muted);
+      gap: 16px;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 12px 24px;
+      box-shadow: var(--panel-shadow);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.3s ease;
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Help Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 3000;
+      backdrop-filter: blur(4px);
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    .modal {
+      background: var(--bg-secondary);
+      border-radius: 16px;
+      padding: 28px;
+      max-width: 520px;
+      width: 90%;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal h3 {
+      margin-bottom: 20px;
+      font-size: 18px;
+    }
+
+    .modal ul {
+      list-style: none;
+      margin-bottom: 24px;
+    }
+
+    .modal li {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 13px;
+      color: var(--text-secondary);
+      display: flex;
+      gap: 12px;
+    }
+
+    .modal li:last-child {
+      border-bottom: none;
+    }
+
+    .modal li .key {
+      background: var(--bg-tertiary);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .modal button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .modal button:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Collapsed navigator */
+    .entry-navigator.collapsed .nav-search,
+    .entry-navigator.collapsed .nav-tree,
+    .entry-navigator.collapsed .nav-footer,
+    .entry-navigator.collapsed .nav-header span:not(.icon),
+    .entry-navigator.collapsed .nav-controls {
+      display: none;
+    }
+
+    .entry-navigator.collapsed .nav-header {
+      justify-content: center;
+      padding: 16px 8px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .entry-navigator:not(.floating) {
+        position: fixed;
+        left: 0;
+        top: 50px;
+        bottom: 28px;
+        z-index: 100;
+        transform: translateX(-100%);
+      }
+
+      .entry-navigator:not(.floating).open {
+        transform: translateX(0);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Entry Navigator -->
+    <aside class="entry-navigator" id="navigator">
+      <div class="nav-header" id="navHeader">
+        <h2><span class="icon">📁</span> <span>Entries</span></h2>
+        <div class="nav-controls">
+          <button onclick="togglePin()" id="pinBtn" title="Pin as overlay">📌</button>
+          <button onclick="toggleFloat()" id="floatBtn" title="Float">⬜</button>
+          <button onclick="toggleCollapse()" id="collapseBtn" title="Collapse">◀</button>
+        </div>
+      </div>
+      <div class="nav-search">
+        <input type="text" placeholder="Search entries..." id="searchInput" />
+      </div>
+      <nav class="nav-tree" id="navTree">
+        <div class="nav-item" onclick="toggleFolder(this)" data-folder="kb">
+          <span class="chevron expanded">▶</span>
+          <span>📁</span> Knowledge Base
+        </div>
+        <div class="nav-item nested-1 selected" onclick="selectEntry(this, 'Project Alpha')">
+          <span>📄</span> Project Alpha
+        </div>
+        <div class="nav-item nested-1" onclick="selectEntry(this, 'Project Beta')">
+          <span>📄</span> Project Beta
+        </div>
+        <div class="nav-item nested-1" onclick="selectEntry(this, 'Meeting Notes')">
+          <span>📄</span> Meeting Notes
+        </div>
+        <div class="nav-item" onclick="toggleFolder(this)" data-folder="archive">
+          <span class="chevron">▶</span>
+          <span>📁</span> Archive
+        </div>
+        <div class="nav-item nested-1 archive-child" style="display:none" onclick="selectEntry(this, 'Old Project')">
+          <span>📄</span> Old Project
+        </div>
+        <div class="nav-item" onclick="toggleFolder(this)" data-folder="templates">
+          <span class="chevron">▶</span>
+          <span>📁</span> Templates
+        </div>
+      </nav>
+      <div class="nav-footer">
+        <button onclick="showToast('✨ New entry created!')">
+          <span>+</span> New Entry
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <div class="logo">📋 Annotation</div>
+        <div class="view-toggle">
+          <button class="active" id="dashboardBtn" onclick="showView('dashboard')">Dashboard</button>
+          <button id="workspaceBtn" onclick="showView('workspace')">Workspace</button>
+        </div>
+        <div class="top-bar-spacer"></div>
+        <button onclick="toggleNavigator()" style="background:var(--bg-tertiary);border:1px solid var(--border-color);padding:6px 12px;color:var(--text-secondary);border-radius:6px;cursor:pointer;font-size:12px;">
+          📁 Navigator
+        </button>
+        <button onclick="showHelp()" style="background:var(--bg-tertiary);border:1px solid var(--border-color);padding:6px 12px;color:var(--text-secondary);border-radius:6px;cursor:pointer;font-size:12px;">
+          ? Help
+        </button>
+      </header>
+
+      <!-- Dashboard View -->
+      <div class="dashboard" id="dashboardView">
+        <!-- Continue Card -->
+        <div class="continue-card" onclick="continueWork()">
+          <div class="continue-card-header">
+            <div class="play-icon">▶</div>
+            <div>
+              <h3>Continue where you left off</h3>
+            </div>
+            <div class="shortcut">Press Enter ↵</div>
+          </div>
+          <div class="continue-card-content">
+            <div class="continue-card-info">
+              <h4>📋 Research Workspace</h4>
+              <p>Project Alpha • 3 panels • Last edited 2 minutes ago</p>
+            </div>
+            <button class="continue-card-action">
+              Open <span>→</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Recent Workspaces -->
+        <div class="section">
+          <div class="section-header">
+            <h3>⏱ Recent Workspaces</h3>
+            <a href="#" onclick="showToast('View all workspaces')">View all</a>
+          </div>
+          <div class="workspace-grid">
+            <div class="workspace-card" onclick="openWorkspace('Planning')">
+              <div class="workspace-card-icon">📋</div>
+              <h4>Planning</h4>
+              <p>Project Alpha</p>
+              <div class="meta">
+                <span class="status-dot"></span>
+                <span>5 panels</span>
+                <span>•</span>
+                <span>1 hour ago</span>
+              </div>
+            </div>
+            <div class="workspace-card" onclick="openWorkspace('Review')">
+              <div class="workspace-card-icon">✅</div>
+              <h4>Review</h4>
+              <p>Project Beta</p>
+              <div class="meta">
+                <span>3 panels</span>
+                <span>•</span>
+                <span>3 hours ago</span>
+              </div>
+            </div>
+            <div class="workspace-card" onclick="openWorkspace('Notes')">
+              <div class="workspace-card-icon">📝</div>
+              <h4>Meeting Notes</h4>
+              <p>Weekly Sync</p>
+              <div class="meta">
+                <span>2 panels</span>
+                <span>•</span>
+                <span>Yesterday</span>
+              </div>
+            </div>
+            <div class="workspace-card" onclick="showToast('✨ Creating new workspace...')">
+              <div class="workspace-card-icon" style="background:var(--accent);color:white;">+</div>
+              <h4>New Workspace</h4>
+              <p>Start from scratch</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="section">
+          <div class="section-header">
+            <h3>⚡ Quick Actions</h3>
+          </div>
+          <div class="quick-actions">
+            <button class="quick-action" onclick="showToast('📁 Creating new entry...')">
+              <span class="icon">📁</span> New Entry
+            </button>
+            <button class="quick-action" onclick="showToast('📋 Creating new workspace...')">
+              <span class="icon">📋</span> New Workspace
+            </button>
+            <button class="quick-action" onclick="showToast('🔍 Opening search...')">
+              <span class="icon">🔍</span> Search
+            </button>
+            <button class="quick-action" onclick="showToast('📄 Opening templates...')">
+              <span class="icon">📄</span> Templates
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workspace View -->
+      <div class="workspace-view" id="workspaceView">
+        <div class="workspace-tabs">
+          <div class="workspace-tab active" onclick="selectTab(this)">Default</div>
+          <div class="workspace-tab" onclick="selectTab(this)">Research</div>
+          <div class="workspace-tab" onclick="selectTab(this)">Planning</div>
+          <div class="workspace-tab-add" onclick="showToast('➕ Adding new workspace tab...')">+</div>
+        </div>
+        <div class="canvas" id="canvas">
+          <div class="canvas-panel" style="left:60px;top:40px;width:320px;" id="panel1">
+            <div class="canvas-panel-header">
+              <span>📄 Project Overview</span>
+              <span class="close-btn">×</span>
+            </div>
+            <div class="canvas-panel-content">
+              <p style="margin-bottom:12px;">This note contains a link to another workspace:</p>
+              <p style="margin-bottom:16px;">
+                <span class="workspace-link" onclick="handleWorkspaceLink('Planning')">
+                  📋 [[workspace:Planning]]
+                </span>
+              </p>
+              <p style="font-size:11px;color:var(--text-muted);">
+                Click the link above to switch workspaces!<br>
+                The navigator can stay pinned while you switch.
+              </p>
+            </div>
+          </div>
+          <div class="canvas-panel" style="left:420px;top:80px;width:260px;" id="panel2">
+            <div class="canvas-panel-header">
+              <span>🧮 Calculator</span>
+              <span class="close-btn">×</span>
+            </div>
+            <div class="canvas-panel-content">
+              <div style="font-size:28px;text-align:right;margin-bottom:12px;font-family:monospace;">42</div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;">
+                <button style="padding:10px;background:var(--bg-tertiary);border:none;color:var(--text-primary);border-radius:6px;cursor:pointer;">7</button>
+                <button style="padding:10px;background:var(--bg-tertiary);border:none;color:var(--text-primary);border-radius:6px;cursor:pointer;">8</button>
+                <button style="padding:10px;background:var(--bg-tertiary);border:none;color:var(--text-primary);border-radius:6px;cursor:pointer;">9</button>
+                <button style="padding:10px;background:var(--accent);border:none;color:white;border-radius:6px;cursor:pointer;">÷</button>
+              </div>
+            </div>
+          </div>
+          <div class="canvas-panel" style="left:120px;top:300px;width:300px;" id="panel3">
+            <div class="canvas-panel-header">
+              <span>📝 Quick Notes</span>
+              <span class="close-btn">×</span>
+            </div>
+            <div class="canvas-panel-content">
+              <p>Panels can be dragged around the canvas.</p>
+              <p style="margin-top:8px;">
+                Another workspace link:
+                <span class="workspace-link" onclick="handleWorkspaceLink('Research')">
+                  🔬 [[workspace:Research]]
+                </span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Status Bar -->
+      <footer class="status-bar">
+        <div class="status-item">
+          <span class="status-dot"></span>
+          <span>Synced</span>
+        </div>
+        <div class="status-item" id="statusEntry">
+          <span>Project Alpha</span>
+        </div>
+        <div class="status-item" id="statusWorkspace">
+          <span>Default Workspace</span>
+        </div>
+        <div style="flex:1;"></div>
+        <div class="status-item">
+          <span>3 panels • 2 hot runtimes</span>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast">
+    <span id="toastMessage"></span>
+  </div>
+
+  <!-- Help Modal -->
+  <div class="modal-overlay" id="helpModal" onclick="hideHelp()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h3>🎯 Interactive Demo Guide</h3>
+      <ul>
+        <li>
+          <span class="key">Enter</span>
+          Press Enter on dashboard to continue last workspace
+        </li>
+        <li>
+          <span class="key">📌 Pin</span>
+          Pin the navigator to keep it visible across workspace switches
+        </li>
+        <li>
+          <span class="key">⬜ Float</span>
+          Make the navigator a floating, draggable panel
+        </li>
+        <li>
+          <span class="key">◀ Collapse</span>
+          Collapse navigator to icon-only mode
+        </li>
+        <li>
+          <span class="key">[[link]]</span>
+          Click workspace links in notes to switch workspaces
+        </li>
+        <li>
+          <span class="key">Drag</span>
+          Drag panel headers to move them on canvas
+        </li>
+      </ul>
+      <button onclick="hideHelp()">Got it!</button>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let currentView = 'dashboard';
+    let isCollapsed = false;
+    let isFloating = false;
+    let isPinned = false;
+
+    // View switching
+    function showView(view) {
+      currentView = view;
+      document.getElementById('dashboardView').classList.toggle('hidden', view !== 'dashboard');
+      document.getElementById('workspaceView').classList.toggle('active', view === 'workspace');
+      document.getElementById('dashboardBtn').classList.toggle('active', view === 'dashboard');
+      document.getElementById('workspaceBtn').classList.toggle('active', view === 'workspace');
+
+      if (view === 'workspace' && !isPinned && !isFloating) {
+        document.getElementById('navigator').style.display = 'none';
+      } else {
+        document.getElementById('navigator').style.display = 'flex';
+      }
+    }
+
+    function continueWork() {
+      showView('workspace');
+      showToast('▶ Opened Research workspace');
+    }
+
+    function openWorkspace(name) {
+      showView('workspace');
+      showToast(`📋 Opened ${name} workspace`);
+      document.getElementById('statusWorkspace').innerHTML = `<span>${name} Workspace</span>`;
+    }
+
+    // Navigator controls
+    function toggleCollapse() {
+      isCollapsed = !isCollapsed;
+      document.getElementById('navigator').classList.toggle('collapsed', isCollapsed);
+      document.getElementById('collapseBtn').textContent = isCollapsed ? '▶' : '◀';
+    }
+
+    function toggleFloat() {
+      isFloating = !isFloating;
+      const nav = document.getElementById('navigator');
+      nav.classList.toggle('floating', isFloating);
+      document.getElementById('floatBtn').classList.toggle('active', isFloating);
+
+      if (isFloating) {
+        showToast('🎯 Navigator is floating - drag to reposition');
+        makeDraggable(nav, document.getElementById('navHeader'));
+        nav.style.display = 'flex';
+      }
+    }
+
+    function togglePin() {
+      isPinned = !isPinned;
+      document.getElementById('navigator').classList.toggle('pinned', isPinned);
+      document.getElementById('pinBtn').classList.toggle('active', isPinned);
+
+      showToast(isPinned ? '📌 Navigator pinned - stays visible across workspaces' : '📌 Navigator unpinned');
+
+      if (isPinned) {
+        document.getElementById('navigator').style.display = 'flex';
+      }
+    }
+
+    function toggleNavigator() {
+      const nav = document.getElementById('navigator');
+      const isHidden = nav.style.display === 'none';
+      nav.style.display = isHidden ? 'flex' : 'none';
+
+      if (isHidden && currentView === 'workspace' && !isFloating) {
+        isFloating = true;
+        nav.classList.add('floating');
+        document.getElementById('floatBtn').classList.add('active');
+        makeDraggable(nav, document.getElementById('navHeader'));
+      }
+    }
+
+    // Folder toggle
+    function toggleFolder(el) {
+      const chevron = el.querySelector('.chevron');
+      const folder = el.dataset.folder;
+      const isExpanded = chevron.classList.toggle('expanded');
+
+      if (folder === 'archive') {
+        document.querySelectorAll('.archive-child').forEach(child => {
+          child.style.display = isExpanded ? 'flex' : 'none';
+        });
+      }
+    }
+
+    // Entry selection
+    function selectEntry(el, name) {
+      document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('selected'));
+      el.classList.add('selected');
+      document.getElementById('statusEntry').innerHTML = `<span>${name}</span>`;
+      showToast(`📁 Selected: ${name}`);
+    }
+
+    // Tab selection
+    function selectTab(el) {
+      document.querySelectorAll('.workspace-tab').forEach(tab => tab.classList.remove('active'));
+      el.classList.add('active');
+      document.getElementById('statusWorkspace').innerHTML = `<span>${el.textContent} Workspace</span>`;
+      showToast(`📋 Switched to ${el.textContent} workspace`);
+    }
+
+    // Workspace link
+    function handleWorkspaceLink(workspace) {
+      document.querySelectorAll('.workspace-tab').forEach(tab => {
+        tab.classList.toggle('active', tab.textContent === workspace);
+      });
+      document.getElementById('statusWorkspace').innerHTML = `<span>${workspace} Workspace</span>`;
+      showToast(`🔗 Navigated to ${workspace} workspace via link`);
+    }
+
+    // Toast
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toastMessage').textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // Help modal
+    function showHelp() {
+      document.getElementById('helpModal').classList.add('show');
+    }
+
+    function hideHelp() {
+      document.getElementById('helpModal').classList.remove('show');
+    }
+
+    // Draggable
+    function makeDraggable(element, handle) {
+      let offsetX, offsetY, isDragging = false;
+
+      handle.addEventListener('mousedown', (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        isDragging = true;
+        offsetX = e.clientX - element.offsetLeft;
+        offsetY = e.clientY - element.offsetTop;
+        element.classList.add('dragging');
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        element.style.left = (e.clientX - offsetX) + 'px';
+        element.style.top = (e.clientY - offsetY) + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        isDragging = false;
+        element.classList.remove('dragging');
+      });
+    }
+
+    // Make canvas panels draggable
+    document.querySelectorAll('.canvas-panel').forEach(panel => {
+      makeDraggable(panel, panel.querySelector('.canvas-panel-header'));
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && currentView === 'dashboard') {
+        continueWork();
+      }
+      if (e.key === 'Escape') {
+        hideHelp();
+      }
+    });
+
+    // Search filter
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+      const query = e.target.value.toLowerCase();
+      document.querySelectorAll('.nav-item').forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(query) ? 'flex' : 'none';
+      });
+    });
+
+    // Show help on load
+    setTimeout(showHelp, 600);
+  </script>
+</body>
+</html>

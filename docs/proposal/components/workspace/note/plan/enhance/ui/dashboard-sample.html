@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Entry Dashboard Sample</title>
+  <style>
+    :root {
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI";
+      color: #111;
+      background: #f3f4f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 16px 24px;
+      background: #111827;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header button {
+      background: #6366f1;
+      border: none;
+      padding: 8px 14px;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #container {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 24px;
+      padding: 24px;
+    }
+    /* Entry Navigator */
+    #entry-nav {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 120px);
+    }
+    #entry-nav h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+    }
+    #entry-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .entry-group {
+      margin-bottom: 16px;
+    }
+    .entry-title {
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+    }
+    .entry-title span { font-size: 14px; }
+    .workspace-pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      color: #4338ca;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .workspace-pill:hover {
+      background: rgba(99, 102, 241, 0.08);
+    }
+    .workspace-pill.active {
+      background: rgba(99, 102, 241, 0.15);
+      border-color: rgba(99, 102, 241, 0.5);
+    }
+    .workspace-pill button {
+      background: transparent;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #main-panel {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 5px 16px rgba(15, 23, 42, 0.08);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+    }
+    #workspace-tabs {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .workspace-tab {
+      padding: 8px 14px;
+      border-radius: 8px;
+      background: rgba(99, 102, 241, 0.08);
+      color: #4338ca;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .workspace-tab.active {
+      background: rgba(99, 102, 241, 0.2);
+    }
+    #canvas-preview {
+      flex: 1;
+      background: #f9fafb;
+      border-radius: 12px;
+      border: 1px dashed rgba(30, 64, 175, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      color: #4b5563;
+    }
+    #notes-list {
+      margin-top: 24px;
+    }
+    .note-item {
+      padding: 12px 14px;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 14px;
+    }
+    .note-item button {
+      border: none;
+      background: transparent;
+      color: #6366f1;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Entry Dashboard</h1>
+    <button onclick="alert('Create entry flow')">New Entry</button>
+  </header>
+  <div id="container">
+    <aside id="entry-nav">
+      <h2>Entries</h2>
+      <div id="entry-list"></div>
+    </aside>
+    <main id="main-panel">
+      <div id="workspace-tabs"></div>
+      <div id="canvas-preview">Select a workspace to view its canvas</div>
+      <section id="notes-list"></section>
+    </main>
+  </div>
+  <script>
+    const entries = [
+      {
+        id: "entry-alpha",
+        title: "Project Alpha",
+        workspaces: [
+          { id: "alpha-default", name: "Default", isDefault: true },
+          { id: "alpha-research", name: "Research" },
+          { id: "alpha-planning", name: "Planning" },
+        ],
+        pinnedNotes: [
+          { id: "note-alpha-1", title: "Overview Doc" },
+          { id: "note-alpha-2", title: "Key Risks" },
+        ],
+      },
+      {
+        id: "entry-beta",
+        title: "Project Beta",
+        workspaces: [
+          { id: "beta-default", name: "Default", isDefault: true },
+          { id: "beta-drafts", name: "Drafts" },
+        ],
+        pinnedNotes: [
+          { id: "note-beta-1", title: "Initial Proposal" },
+        ],
+      },
+      {
+        id: "entry-ideas",
+        title: "Ideas Inbox",
+        workspaces: [
+          { id: "ideas-default", name: "Default", isDefault: true },
+        ],
+        pinnedNotes: [
+          { id: "note-ideas-1", title: "Quick Thoughts" },
+          { id: "note-ideas-2", title: "Wishlist" },
+        ],
+      },
+    ]
+
+    let currentEntryId = entries[0].id
+    let currentWorkspaceId = entries[0].workspaces[0].id
+
+    const entryListEl = document.getElementById("entry-list")
+    const workspaceTabsEl = document.getElementById("workspace-tabs")
+    const canvasPreviewEl = document.getElementById("canvas-preview")
+    const notesListEl = document.getElementById("notes-list")
+
+    function renderEntries() {
+      entryListEl.innerHTML = ""
+      entries.forEach(entry => {
+        const group = document.createElement("div")
+        group.className = "entry-group"
+
+        const header = document.createElement("div")
+        header.className = "entry-title"
+        header.innerHTML = `<span>${entry.title}</span>`
+        header.onclick = () => switchEntry(entry.id)
+        group.appendChild(header)
+
+        const pills = document.createElement("div")
+        entry.workspaces.forEach(ws => {
+          const pill = document.createElement("div")
+          pill.className = "workspace-pill"
+          if (entry.id === currentEntryId && ws.id === currentWorkspaceId) {
+            pill.classList.add("active")
+          }
+          pill.innerHTML = `<span>${ws.name}</span>`
+          pill.onclick = (e) => {
+            e.stopPropagation()
+            switchEntry(entry.id)
+            switchWorkspace(ws.id)
+          }
+          pills.appendChild(pill)
+        })
+        group.appendChild(pills)
+        entryListEl.appendChild(group)
+      })
+    }
+
+    function switchEntry(entryId) {
+      currentEntryId = entryId
+      const entry = entries.find(e => e.id === entryId)
+      if (!entry) return
+      if (!entry.workspaces.find(ws => ws.id === currentWorkspaceId)) {
+        currentWorkspaceId = entry.workspaces[0]?.id || null
+      }
+      renderWorkspaceTabs()
+      renderNotes()
+      renderEntries()
+    }
+
+    function switchWorkspace(workspaceId) {
+      currentWorkspaceId = workspaceId
+      renderWorkspaceTabs()
+      renderNotes()
+      renderEntries()
+    }
+
+    function renderWorkspaceTabs() {
+      workspaceTabsEl.innerHTML = ""
+      const entry = entries.find(e => e.id === currentEntryId)
+      if (!entry) return
+      entry.workspaces.forEach(ws => {
+        const tab = document.createElement("div")
+        tab.className = "workspace-tab"
+        if (ws.id === currentWorkspaceId) tab.classList.add("active")
+        tab.textContent = ws.name
+        tab.onclick = () => switchWorkspace(ws.id)
+        workspaceTabsEl.appendChild(tab)
+      })
+      canvasPreviewEl.textContent = currentWorkspaceId
+        ? `Canvas content → Entry: ${entry.title} • Workspace: ${entry.workspaces.find(ws => ws.id === currentWorkspaceId)?.name}`
+        : "No workspace selected"
+    }
+
+    function renderNotes() {
+      notesListEl.innerHTML = ""
+      const entry = entries.find(e => e.id === currentEntryId)
+      if (!entry) return
+      notesListEl.innerHTML = `<h3>Pinned Notes</h3>`
+      entry.pinnedNotes.forEach(note => {
+        const el = document.createElement("div")
+        el.className = "note-item"
+        el.innerHTML = `<span>${note.title}</span><button>Open</button>`
+        notesListEl.appendChild(el)
+      })
+    }
+
+    renderEntries()
+    renderWorkspaceTabs()
+    renderNotes()
+  </script>
+</body>
+</html>

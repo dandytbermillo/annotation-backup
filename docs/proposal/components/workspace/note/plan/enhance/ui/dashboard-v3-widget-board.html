@@ -1,0 +1,1797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard v3 - Bounded Widget Board</title>
+  <style>
+    :root {
+      --bg-dark: #0f1117;
+      --bg-card: #1a1d24;
+      --bg-widget: #1e222a;
+      --bg-hover: #252830;
+      --bg-canvas: #0a0c10;
+      --bg-input: #12141a;
+      --border: rgba(255,255,255,0.08);
+      --border-widget: rgba(255,255,255,0.12);
+      --text-primary: #f0f0f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5c6070;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-dim: rgba(99,102,241,0.15);
+      --accent-glow: rgba(99,102,241,0.3);
+      --success: #22c55e;
+      --success-dim: rgba(34,197,94,0.15);
+      --warning: #f59e0b;
+      --widget-shadow: 0 4px 20px rgba(0,0,0,0.4);
+      --widget-shadow-hover: 0 8px 32px rgba(0,0,0,0.5);
+      --widget-shadow-drag: 0 12px 40px rgba(99,102,241,0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ========== APP SHELL ========== */
+    #app {
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+
+    /* ========== VIEW CONTAINERS ========== */
+    .view {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .view.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* ========== DASHBOARD VIEW ========== */
+    #dashboard-view {
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-dark);
+    }
+
+    /* Dashboard Header */
+    .dashboard-header {
+      height: 56px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--accent) 0%, #8b5cf6 100%);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    .app-title {
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .btn-icon:hover {
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    /* Dashboard Board (Fixed Viewport - No Scrolling) */
+    .dashboard-board {
+      flex: 1;
+      position: relative;
+      overflow: hidden; /* KEY: No scrolling */
+      padding: 20px;
+    }
+
+    .board-surface {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      /* Subtle grid pattern */
+      background-image:
+        radial-gradient(circle at 50% 50%, rgba(99,102,241,0.03) 0%, transparent 50%),
+        radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px);
+      background-size: 100% 100%, 24px 24px;
+      border-radius: 16px;
+      border: 1px dashed var(--border);
+    }
+
+    /* ========== WIDGETS ========== */
+    .widget {
+      position: absolute;
+      background: var(--bg-widget);
+      border: 1px solid var(--border-widget);
+      border-radius: 12px;
+      box-shadow: var(--widget-shadow);
+      display: flex;
+      flex-direction: column;
+      min-width: 200px;
+      max-width: 400px;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .widget:hover {
+      border-color: rgba(255,255,255,0.15);
+      box-shadow: var(--widget-shadow-hover);
+    }
+
+    .widget.dragging {
+      box-shadow: var(--widget-shadow-drag);
+      border-color: var(--accent);
+      z-index: 1000;
+      cursor: grabbing;
+    }
+
+    .widget-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .widget-header:active {
+      cursor: grabbing;
+    }
+
+    .widget-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+    }
+
+    .widget-title-icon {
+      font-size: 14px;
+    }
+
+    .widget-actions {
+      display: flex;
+      gap: 2px;
+    }
+
+    .widget-action {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .widget-action:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .widget-content {
+      padding: 12px 14px;
+      flex: 1;
+      overflow-y: auto;
+      max-height: 300px;
+    }
+
+    /* ========== CONTINUE WIDGET (Special) ========== */
+    .widget-continue {
+      background: linear-gradient(135deg, var(--bg-widget) 0%, rgba(99,102,241,0.08) 100%);
+      border-color: var(--accent-dim);
+    }
+
+    .widget-continue:hover {
+      border-color: var(--accent);
+    }
+
+    .continue-content {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 4px 0;
+      cursor: pointer;
+    }
+
+    .continue-icon {
+      width: 44px;
+      height: 44px;
+      background: var(--accent-dim);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: var(--accent);
+    }
+
+    .continue-info {
+      flex: 1;
+    }
+
+    .continue-label {
+      font-size: 11px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .continue-label::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .continue-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .continue-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ========== LINKS NOTE WIDGET ========== */
+    .links-note-content {
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .links-note-content .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 12px;
+      margin-bottom: 6px;
+    }
+
+    .links-note-content .section-label:first-child {
+      margin-top: 0;
+    }
+
+    .workspace-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      margin: 2px 0;
+    }
+
+    .workspace-link:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    .workspace-link-icon {
+      font-size: 10px;
+    }
+
+    .link-description {
+      color: var(--text-muted);
+      font-size: 12px;
+      margin-left: 4px;
+    }
+
+    .links-line {
+      margin: 4px 0;
+    }
+
+    /* Editable Links Note */
+    .links-note-editable {
+      display: none;
+      width: 100%;
+      min-height: 150px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: 12px;
+      color: var(--text-primary);
+      resize: none;
+      line-height: 1.6;
+    }
+
+    .links-note-editable:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .widget.editing .links-note-content {
+      display: none;
+    }
+
+    .widget.editing .links-note-editable {
+      display: block;
+    }
+
+    /* ========== RECENT WIDGET ========== */
+    .recent-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      margin: -2px -10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .recent-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .recent-item-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .recent-item-icon {
+      width: 28px;
+      height: 28px;
+      background: var(--bg-hover);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .recent-item-name {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .recent-item-entry {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .recent-item-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ========== ENTRIES WIDGET ========== */
+    .entry-tree-item {
+      margin-bottom: 2px;
+    }
+
+    .entry-tree-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      margin: 0 -8px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+      font-size: 13px;
+    }
+
+    .entry-tree-header:hover {
+      background: var(--bg-hover);
+    }
+
+    .entry-tree-toggle {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 10px;
+      transition: transform 0.15s ease;
+    }
+
+    .entry-tree-item.expanded .entry-tree-toggle {
+      transform: rotate(90deg);
+    }
+
+    .entry-tree-icon {
+      font-size: 14px;
+    }
+
+    .entry-tree-name {
+      flex: 1;
+      font-weight: 500;
+    }
+
+    .entry-tree-children {
+      display: none;
+      padding-left: 22px;
+    }
+
+    .entry-tree-item.expanded .entry-tree-children {
+      display: block;
+    }
+
+    .workspace-tree-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      margin: 1px -8px 1px 0;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .workspace-tree-item:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .workspace-tree-item.current {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .workspace-tree-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .workspace-tree-item.current .workspace-tree-dot {
+      background: var(--accent);
+    }
+
+    /* ========== QUICK CAPTURE WIDGET ========== */
+    .quick-capture-input {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--text-primary);
+      resize: none;
+      min-height: 60px;
+      font-family: inherit;
+    }
+
+    .quick-capture-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .quick-capture-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .quick-capture-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+
+    .quick-capture-dest {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .quick-capture-btn {
+      padding: 6px 12px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .quick-capture-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    /* ========== PINNED WIDGET ========== */
+    .pinned-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      margin: -2px -10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .pinned-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .pinned-item-icon {
+      font-size: 14px;
+    }
+
+    .pinned-item-name {
+      flex: 1;
+      font-size: 13px;
+    }
+
+    .pinned-item-location {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ========== ADD WIDGET BUTTON ========== */
+    .add-widget-btn {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      width: 48px;
+      height: 48px;
+      background: var(--accent);
+      border: none;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: white;
+      font-size: 24px;
+      box-shadow: 0 4px 20px var(--accent-glow);
+      transition: all 0.2s ease;
+      z-index: 100;
+    }
+
+    .add-widget-btn:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 28px var(--accent-glow);
+    }
+
+    /* Widget Picker Modal */
+    .widget-picker {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    }
+
+    .widget-picker.visible {
+      display: flex;
+    }
+
+    .widget-picker-content {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+      width: 400px;
+      max-width: 90vw;
+    }
+
+    .widget-picker-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .widget-picker-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .widget-picker-item {
+      padding: 16px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .widget-picker-item:hover {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    .widget-picker-item-icon {
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+
+    .widget-picker-item-name {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .widget-picker-item-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ========== WORKSPACE VIEW ========== */
+    #workspace-view {
+      background: var(--bg-canvas);
+    }
+
+    .workspace-topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: rgba(15,17,23,0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 100;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .back-btn {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .back-btn:hover {
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .breadcrumb-entry {
+      color: var(--text-secondary);
+    }
+
+    .breadcrumb-separator {
+      color: var(--text-muted);
+    }
+
+    .breadcrumb-workspace {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .topbar-center {
+      display: flex;
+      gap: 6px;
+    }
+
+    .workspace-tab {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .workspace-tab:hover {
+      background: var(--bg-hover);
+    }
+
+    .workspace-tab.active {
+      background: var(--accent-dim);
+      border-color: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-toggle {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .nav-toggle:hover {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .nav-toggle.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .canvas-area {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow: hidden;
+    }
+
+    .canvas-surface {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background:
+        radial-gradient(circle at center, rgba(99,102,241,0.03) 0%, transparent 70%),
+        linear-gradient(var(--bg-canvas) 1px, transparent 1px),
+        linear-gradient(90deg, var(--bg-canvas) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+    }
+
+    .canvas-panel {
+      position: absolute;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      min-width: 200px;
+      cursor: move;
+    }
+
+    .canvas-panel:hover {
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    .canvas-panel.dragging {
+      box-shadow: 0 12px 48px rgba(99,102,241,0.3);
+      z-index: 1000;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-content {
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      cursor: default;
+    }
+
+    .panel-content p {
+      margin-bottom: 10px;
+    }
+
+    .panel-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Floating Navigator */
+    .floating-navigator {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      width: 280px;
+      max-height: calc(100vh - 120px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 48px rgba(0,0,0,0.5);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .floating-navigator.visible {
+      display: flex;
+    }
+
+    .floating-nav-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .floating-nav-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .floating-nav-close {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+
+    .floating-nav-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .floating-nav-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .canvas-backdrop {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: 150;
+      display: none;
+    }
+
+    .canvas-backdrop.visible {
+      display: block;
+    }
+
+    /* Floating Toolbar */
+    .floating-toolbar {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      display: flex;
+      gap: 4px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      z-index: 100;
+    }
+
+    .toolbar-btn {
+      width: 40px;
+      height: 40px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 18px;
+      transition: all 0.15s ease;
+    }
+
+    .toolbar-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      background: var(--border);
+      margin: 4px;
+    }
+
+    /* Keyboard Hints */
+    .keyboard-hint {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      display: flex;
+      gap: 16px;
+      z-index: 100;
+    }
+
+    .hint-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .hint-key {
+      padding: 2px 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 10px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-card);
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 12px 20px;
+      color: var(--text-primary);
+      font-size: 14px;
+      box-shadow: 0 4px 24px rgba(99,102,241,0.3);
+      z-index: 3000;
+      opacity: 0;
+      transition: all 0.3s ease;
+    }
+
+    .toast.visible {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ========== DASHBOARD VIEW ========== -->
+    <div id="dashboard-view" class="view active">
+      <header class="dashboard-header">
+        <div class="header-left">
+          <div class="logo">A</div>
+          <span class="app-title">Annotation</span>
+        </div>
+        <div class="header-actions">
+          <button class="btn-icon" onclick="showHelp()" title="Help">?</button>
+          <button class="btn btn-ghost" onclick="resetLayout()">Reset Layout</button>
+          <button class="btn btn-primary" onclick="showToast('Create entry dialog')">+ New Entry</button>
+        </div>
+      </header>
+
+      <div class="dashboard-board">
+        <div class="board-surface" id="board-surface">
+          <!-- Widgets rendered by JS -->
+        </div>
+        <button class="add-widget-btn" onclick="showWidgetPicker()" title="Add Widget">+</button>
+      </div>
+    </div>
+
+    <!-- ========== WORKSPACE VIEW ========== -->
+    <div id="workspace-view" class="view">
+      <nav class="workspace-topbar">
+        <div class="topbar-left">
+          <button class="back-btn" onclick="goToDashboard()" title="Dashboard (Esc)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+              <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+          </button>
+          <div class="breadcrumb">
+            <span class="breadcrumb-entry" id="breadcrumb-entry">Project Alpha</span>
+            <span class="breadcrumb-separator">/</span>
+            <span class="breadcrumb-workspace" id="breadcrumb-workspace">Planning</span>
+          </div>
+        </div>
+        <div class="topbar-center" id="workspace-tabs"></div>
+        <div class="topbar-right">
+          <button class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px;">Share</button>
+          <button class="nav-toggle" id="nav-toggle" onclick="toggleNavigator()" title="Navigator (N)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+            </svg>
+          </button>
+        </div>
+      </nav>
+
+      <div class="canvas-area">
+        <div class="canvas-backdrop" id="canvas-backdrop" onclick="toggleNavigator()"></div>
+        <div class="canvas-surface" id="canvas-surface"></div>
+
+        <div class="floating-navigator" id="floating-navigator">
+          <div class="floating-nav-header">
+            <h3>Entries</h3>
+            <button class="floating-nav-close" onclick="toggleNavigator()">x</button>
+          </div>
+          <div class="floating-nav-content" id="floating-nav-content"></div>
+        </div>
+
+        <div class="floating-toolbar">
+          <button class="toolbar-btn" title="Select">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+            </svg>
+          </button>
+          <button class="toolbar-btn" title="Pan">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>
+            </svg>
+          </button>
+          <div class="toolbar-divider"></div>
+          <button class="toolbar-btn" title="Add Note">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M12 8v8M8 12h8"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="keyboard-hint">
+          <div class="hint-item"><span class="hint-key">N</span> Navigator</div>
+          <div class="hint-item"><span class="hint-key">Esc</span> Dashboard</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Widget Picker Modal -->
+  <div class="widget-picker" id="widget-picker">
+    <div class="widget-picker-content">
+      <div class="widget-picker-title">Add Widget</div>
+      <div class="widget-picker-grid" id="widget-picker-grid"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ========== DATA ==========
+    const entries = [
+      {
+        id: "alpha",
+        name: "Project Alpha",
+        icon: "A",
+        workspaces: [
+          { id: "alpha-default", name: "Default", isDefault: true },
+          { id: "alpha-planning", name: "Planning" },
+          { id: "alpha-research", name: "Research" }
+        ]
+      },
+      {
+        id: "beta",
+        name: "Project Beta",
+        icon: "B",
+        workspaces: [
+          { id: "beta-default", name: "Default", isDefault: true },
+          { id: "beta-drafts", name: "Drafts" }
+        ]
+      },
+      {
+        id: "ideas",
+        name: "Ideas Inbox",
+        icon: "I",
+        workspaces: [
+          { id: "ideas-default", name: "Default", isDefault: true }
+        ]
+      }
+    ];
+
+    const panelData = {
+      "alpha-planning": [
+        {
+          id: "note-1",
+          title: "Project Overview",
+          x: 80, y: 60, width: 320,
+          content: `<p>Main planning document for Project Alpha.</p>
+            <p>See <span class="workspace-link" onclick="switchWorkspace('alpha-research')">[[Research]]</span> for background.</p>`
+        },
+        {
+          id: "note-2",
+          title: "Timeline",
+          x: 450, y: 100, width: 280,
+          content: `<p>Q1: Research</p><p>Q2: Design</p><p>Q3: Build</p><p>Q4: Launch</p>`
+        }
+      ],
+      "alpha-research": [
+        {
+          id: "research-1",
+          title: "Research Notes",
+          x: 100, y: 80, width: 350,
+          content: `<p>User research findings...</p>
+            <p>Back to <span class="workspace-link" onclick="switchWorkspace('alpha-planning')">[[Planning]]</span></p>`
+        }
+      ]
+    };
+
+    // Widget definitions
+    const widgetTypes = [
+      { id: "continue", name: "Continue", icon: "▶", desc: "Resume last workspace" },
+      { id: "links", name: "Links Note", icon: "📝", desc: "Custom workspace links" },
+      { id: "recent", name: "Recent", icon: "🕐", desc: "Recently visited" },
+      { id: "entries", name: "Entries", icon: "📁", desc: "Entry navigator tree" },
+      { id: "capture", name: "Quick Capture", icon: "✏️", desc: "Capture quick notes" },
+      { id: "pinned", name: "Pinned", icon: "📌", desc: "Pinned notes" }
+    ];
+
+    // Default widget layout
+    const defaultWidgets = [
+      { type: "continue", x: 20, y: 20, width: 320 },
+      { type: "links", x: 20, y: 150, width: 280 },
+      { type: "recent", x: 360, y: 20, width: 260 },
+      { type: "entries", x: 360, y: 220, width: 260 },
+      { type: "capture", x: 640, y: 20, width: 280 }
+    ];
+
+    // Links note content (editable by user)
+    let linksNoteContent = `## Daily Work
+[[Alpha/Planning]] - main tasks
+[[Alpha/Research]] - background
+
+## Side Projects
+[[Beta/Drafts]] - experiments
+
+## Quick Access
+[[Ideas]] - capture ideas`;
+
+    // ========== STATE ==========
+    let currentView = 'dashboard';
+    let currentEntry = entries[0];
+    let currentWorkspace = entries[0].workspaces[1];
+    let lastWorkspace = { entry: entries[0], workspace: entries[0].workspaces[1] };
+    let widgets = [...defaultWidgets];
+    let navigatorVisible = false;
+    let draggingWidget = null;
+    let dragOffset = { x: 0, y: 0 };
+
+    // ========== NAVIGATION ==========
+    function goToDashboard() {
+      currentView = 'dashboard';
+      document.getElementById('dashboard-view').classList.add('active');
+      document.getElementById('workspace-view').classList.remove('active');
+      hideNavigator();
+    }
+
+    function goToWorkspace(entryId, workspaceId) {
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+      const workspace = entry.workspaces.find(w => w.id === workspaceId);
+      if (!workspace) return;
+
+      currentEntry = entry;
+      currentWorkspace = workspace;
+      lastWorkspace = { entry, workspace };
+      currentView = 'workspace';
+
+      document.getElementById('workspace-view').classList.add('active');
+      document.getElementById('dashboard-view').classList.remove('active');
+
+      renderWorkspace();
+      showToast(`Opened ${entry.name} > ${workspace.name}`);
+    }
+
+    function switchWorkspace(workspaceId) {
+      const workspace = currentEntry.workspaces.find(w => w.id === workspaceId);
+      if (workspace) {
+        currentWorkspace = workspace;
+        lastWorkspace = { entry: currentEntry, workspace };
+        renderWorkspace();
+        showToast(`Switched to ${workspace.name}`);
+      }
+    }
+
+    function goToEntry(entryId) {
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+      const defaultWs = entry.workspaces.find(w => w.isDefault) || entry.workspaces[0];
+      goToWorkspace(entry.id, defaultWs.id);
+    }
+
+    function parseWorkspaceLink(text) {
+      // Parse [[Entry/Workspace]] or [[Entry]] or [[Workspace]]
+      const match = text.match(/\[\[([^\]]+)\]\]/);
+      if (!match) return null;
+
+      const parts = match[1].split('/');
+      if (parts.length === 2) {
+        const entry = entries.find(e => e.name.toLowerCase().includes(parts[0].toLowerCase()));
+        if (entry) {
+          const ws = entry.workspaces.find(w => w.name.toLowerCase().includes(parts[1].toLowerCase()));
+          if (ws) return { entryId: entry.id, workspaceId: ws.id };
+        }
+      } else {
+        // Single name - could be entry or workspace
+        const entryMatch = entries.find(e => e.name.toLowerCase().includes(parts[0].toLowerCase()));
+        if (entryMatch) {
+          const defaultWs = entryMatch.workspaces.find(w => w.isDefault) || entryMatch.workspaces[0];
+          return { entryId: entryMatch.id, workspaceId: defaultWs.id };
+        }
+        // Try workspace in current entry
+        if (currentEntry) {
+          const ws = currentEntry.workspaces.find(w => w.name.toLowerCase().includes(parts[0].toLowerCase()));
+          if (ws) return { entryId: currentEntry.id, workspaceId: ws.id };
+        }
+      }
+      return null;
+    }
+
+    function handleWorkspaceLink(linkText) {
+      const target = parseWorkspaceLink(`[[${linkText}]]`);
+      if (target) {
+        goToWorkspace(target.entryId, target.workspaceId);
+      }
+    }
+
+    // ========== DASHBOARD RENDER ==========
+    function renderDashboard() {
+      const board = document.getElementById('board-surface');
+      board.innerHTML = '';
+
+      widgets.forEach((widget, index) => {
+        const el = createWidget(widget, index);
+        board.appendChild(el);
+      });
+    }
+
+    function createWidget(widget, index) {
+      const el = document.createElement('div');
+      el.className = 'widget' + (widget.type === 'continue' ? ' widget-continue' : '');
+      el.dataset.index = index;
+      el.style.left = widget.x + 'px';
+      el.style.top = widget.y + 'px';
+      el.style.width = widget.width + 'px';
+
+      const type = widgetTypes.find(t => t.id === widget.type);
+
+      let content = '';
+      switch (widget.type) {
+        case 'continue':
+          content = renderContinueWidget();
+          break;
+        case 'links':
+          content = renderLinksWidget();
+          break;
+        case 'recent':
+          content = renderRecentWidget();
+          break;
+        case 'entries':
+          content = renderEntriesWidget();
+          break;
+        case 'capture':
+          content = renderCaptureWidget();
+          break;
+        case 'pinned':
+          content = renderPinnedWidget();
+          break;
+      }
+
+      el.innerHTML = `
+        <div class="widget-header" onmousedown="startWidgetDrag(event, ${index})">
+          <span class="widget-title">
+            <span class="widget-title-icon">${type?.icon || '📦'}</span>
+            ${type?.name || 'Widget'}
+          </span>
+          <div class="widget-actions">
+            ${widget.type === 'links' ? '<button class="widget-action" onclick="toggleLinksEdit(' + index + ')" title="Edit">✎</button>' : ''}
+            <button class="widget-action" onclick="removeWidget(${index})" title="Remove">×</button>
+          </div>
+        </div>
+        <div class="widget-content">${content}</div>
+      `;
+
+      return el;
+    }
+
+    function renderContinueWidget() {
+      return `
+        <div class="continue-content" onclick="goToWorkspace('${lastWorkspace.entry.id}', '${lastWorkspace.workspace.id}')">
+          <div class="continue-icon">▶</div>
+          <div class="continue-info">
+            <div class="continue-label">Continue where you left off</div>
+            <div class="continue-title">${lastWorkspace.entry.name} > ${lastWorkspace.workspace.name}</div>
+            <div class="continue-meta">Last edited 5 minutes ago</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLinksWidget() {
+      // Parse markdown-like content into clickable links
+      const lines = linksNoteContent.split('\n');
+      let html = '<div class="links-note-content">';
+
+      lines.forEach(line => {
+        if (line.startsWith('## ')) {
+          html += `<div class="section-label">${line.slice(3)}</div>`;
+        } else if (line.trim()) {
+          // Parse [[...]] links
+          const parsed = line.replace(/\[\[([^\]]+)\]\]/g, (match, linkText) => {
+            return `<span class="workspace-link" onclick="handleWorkspaceLink('${linkText}')">
+              <span class="workspace-link-icon">→</span>${linkText}
+            </span>`;
+          });
+          // Extract description after the link
+          const desc = parsed.replace(/<span[^>]*>.*?<\/span>/g, '').replace(/^[\s-]+/, '');
+          const linkPart = parsed.match(/<span[^>]*>.*?<\/span>/)?.[0] || '';
+          html += `<div class="links-line">${linkPart}${desc ? `<span class="link-description">${desc}</span>` : ''}</div>`;
+        }
+      });
+
+      html += '</div>';
+      html += `<textarea class="links-note-editable" onblur="saveLinksNote(this)">${linksNoteContent}</textarea>`;
+
+      return html;
+    }
+
+    function renderRecentWidget() {
+      const recentItems = [
+        { entry: entries[0], workspace: entries[0].workspaces[1], time: '5m' },
+        { entry: entries[1], workspace: entries[1].workspaces[1], time: '1h' },
+        { entry: entries[2], workspace: entries[2].workspaces[0], time: '2d' }
+      ];
+
+      return recentItems.map(item => `
+        <div class="recent-item" onclick="goToWorkspace('${item.entry.id}', '${item.workspace.id}')">
+          <div class="recent-item-info">
+            <div class="recent-item-icon">${item.entry.icon}</div>
+            <div>
+              <div class="recent-item-name">${item.workspace.name}</div>
+              <div class="recent-item-entry">${item.entry.name}</div>
+            </div>
+          </div>
+          <span class="recent-item-time">${item.time}</span>
+        </div>
+      `).join('');
+    }
+
+    function renderEntriesWidget() {
+      return entries.map(entry => `
+        <div class="entry-tree-item expanded">
+          <div class="entry-tree-header" onclick="toggleEntryTree(this.parentElement)">
+            <span class="entry-tree-toggle">▸</span>
+            <span class="entry-tree-icon">${entry.icon}</span>
+            <span class="entry-tree-name">${entry.name}</span>
+          </div>
+          <div class="entry-tree-children">
+            ${entry.workspaces.map(ws => `
+              <div class="workspace-tree-item ${lastWorkspace.workspace.id === ws.id ? 'current' : ''}"
+                   onclick="goToWorkspace('${entry.id}', '${ws.id}')">
+                <span class="workspace-tree-dot"></span>
+                ${ws.name}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderCaptureWidget() {
+      return `
+        <textarea class="quick-capture-input" placeholder="Type a quick thought..."></textarea>
+        <div class="quick-capture-footer">
+          <span class="quick-capture-dest">→ Ideas / Default</span>
+          <button class="quick-capture-btn" onclick="captureNote()">Send</button>
+        </div>
+      `;
+    }
+
+    function renderPinnedWidget() {
+      const pinned = [
+        { name: 'Project Overview', location: 'Alpha' },
+        { name: 'Key Decisions', location: 'Alpha' },
+        { name: 'Meeting Notes', location: 'Beta' }
+      ];
+
+      return pinned.map(item => `
+        <div class="pinned-item" onclick="showToast('Open ${item.name}')">
+          <span class="pinned-item-icon">📄</span>
+          <span class="pinned-item-name">${item.name}</span>
+          <span class="pinned-item-location">${item.location}</span>
+        </div>
+      `).join('');
+    }
+
+    // ========== WIDGET INTERACTIONS ==========
+    function toggleEntryTree(el) {
+      el.classList.toggle('expanded');
+    }
+
+    function toggleLinksEdit(index) {
+      const widgetEl = document.querySelector(`[data-index="${index}"]`);
+      widgetEl.classList.toggle('editing');
+      if (widgetEl.classList.contains('editing')) {
+        widgetEl.querySelector('.links-note-editable').focus();
+      }
+    }
+
+    function saveLinksNote(textarea) {
+      linksNoteContent = textarea.value;
+      renderDashboard();
+      showToast('Links saved');
+    }
+
+    function captureNote() {
+      const input = document.querySelector('.quick-capture-input');
+      if (input.value.trim()) {
+        showToast(`Note captured: "${input.value.slice(0, 30)}..."`);
+        input.value = '';
+      }
+    }
+
+    function removeWidget(index) {
+      widgets.splice(index, 1);
+      renderDashboard();
+      showToast('Widget removed');
+    }
+
+    function resetLayout() {
+      widgets = [...defaultWidgets];
+      renderDashboard();
+      showToast('Layout reset');
+    }
+
+    // ========== WIDGET DRAG ==========
+    function startWidgetDrag(e, index) {
+      if (e.target.closest('.widget-actions')) return;
+
+      draggingWidget = document.querySelector(`[data-index="${index}"]`);
+      draggingWidget.classList.add('dragging');
+
+      const rect = draggingWidget.getBoundingClientRect();
+      const board = document.getElementById('board-surface').getBoundingClientRect();
+      dragOffset = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+
+      document.addEventListener('mousemove', onWidgetDrag);
+      document.addEventListener('mouseup', stopWidgetDrag);
+    }
+
+    function onWidgetDrag(e) {
+      if (!draggingWidget) return;
+
+      const board = document.getElementById('board-surface').getBoundingClientRect();
+      let x = e.clientX - board.left - dragOffset.x;
+      let y = e.clientY - board.top - dragOffset.y;
+
+      // Constrain to board
+      x = Math.max(0, Math.min(x, board.width - draggingWidget.offsetWidth));
+      y = Math.max(0, Math.min(y, board.height - draggingWidget.offsetHeight));
+
+      draggingWidget.style.left = x + 'px';
+      draggingWidget.style.top = y + 'px';
+
+      // Update data
+      const index = parseInt(draggingWidget.dataset.index);
+      widgets[index].x = x;
+      widgets[index].y = y;
+    }
+
+    function stopWidgetDrag() {
+      if (draggingWidget) {
+        draggingWidget.classList.remove('dragging');
+        draggingWidget = null;
+      }
+      document.removeEventListener('mousemove', onWidgetDrag);
+      document.removeEventListener('mouseup', stopWidgetDrag);
+    }
+
+    // ========== WIDGET PICKER ==========
+    function showWidgetPicker() {
+      const picker = document.getElementById('widget-picker');
+      const grid = document.getElementById('widget-picker-grid');
+
+      grid.innerHTML = widgetTypes.map(type => `
+        <div class="widget-picker-item" onclick="addWidget('${type.id}')">
+          <div class="widget-picker-item-icon">${type.icon}</div>
+          <div class="widget-picker-item-name">${type.name}</div>
+          <div class="widget-picker-item-desc">${type.desc}</div>
+        </div>
+      `).join('');
+
+      picker.classList.add('visible');
+    }
+
+    function hideWidgetPicker() {
+      document.getElementById('widget-picker').classList.remove('visible');
+    }
+
+    function addWidget(typeId) {
+      const board = document.getElementById('board-surface').getBoundingClientRect();
+      widgets.push({
+        type: typeId,
+        x: Math.random() * (board.width - 300),
+        y: Math.random() * (board.height - 200),
+        width: 260
+      });
+      hideWidgetPicker();
+      renderDashboard();
+      showToast('Widget added');
+    }
+
+    document.getElementById('widget-picker').addEventListener('click', (e) => {
+      if (e.target.id === 'widget-picker') hideWidgetPicker();
+    });
+
+    // ========== WORKSPACE RENDER ==========
+    function renderWorkspace() {
+      document.getElementById('breadcrumb-entry').textContent = currentEntry.name;
+      document.getElementById('breadcrumb-workspace').textContent = currentWorkspace.name;
+
+      // Tabs
+      const tabsEl = document.getElementById('workspace-tabs');
+      tabsEl.innerHTML = currentEntry.workspaces.map(ws => `
+        <button class="workspace-tab ${ws.id === currentWorkspace.id ? 'active' : ''}"
+                onclick="switchWorkspace('${ws.id}')">${ws.name}</button>
+      `).join('');
+
+      // Canvas
+      renderCanvasPanels();
+      renderFloatingNavigator();
+    }
+
+    function renderCanvasPanels() {
+      const canvas = document.getElementById('canvas-surface');
+      const panels = panelData[currentWorkspace.id] || [];
+
+      canvas.innerHTML = panels.map(panel => `
+        <div class="canvas-panel" style="left:${panel.x}px;top:${panel.y}px;width:${panel.width}px">
+          <div class="panel-header">
+            <span class="panel-title">📝 ${panel.title}</span>
+          </div>
+          <div class="panel-content">${panel.content}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderFloatingNavigator() {
+      const content = document.getElementById('floating-nav-content');
+      content.innerHTML = entries.map(entry => `
+        <div class="entry-tree-item expanded">
+          <div class="entry-tree-header" onclick="toggleEntryTree(this.parentElement)">
+            <span class="entry-tree-toggle">▸</span>
+            <span class="entry-tree-icon">${entry.icon}</span>
+            <span class="entry-tree-name">${entry.name}</span>
+          </div>
+          <div class="entry-tree-children">
+            ${entry.workspaces.map(ws => `
+              <div class="workspace-tree-item ${currentEntry.id === entry.id && currentWorkspace.id === ws.id ? 'current' : ''}"
+                   onclick="goToWorkspace('${entry.id}', '${ws.id}'); hideNavigator();">
+                <span class="workspace-tree-dot"></span>
+                ${ws.name}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function toggleNavigator() {
+      navigatorVisible = !navigatorVisible;
+      document.getElementById('floating-navigator').classList.toggle('visible', navigatorVisible);
+      document.getElementById('canvas-backdrop').classList.toggle('visible', navigatorVisible);
+      document.getElementById('nav-toggle').classList.toggle('active', navigatorVisible);
+    }
+
+    function hideNavigator() {
+      navigatorVisible = false;
+      document.getElementById('floating-navigator').classList.remove('visible');
+      document.getElementById('canvas-backdrop').classList.remove('visible');
+      document.getElementById('nav-toggle').classList.remove('active');
+    }
+
+    // ========== UTILS ==========
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), 2000);
+    }
+
+    function showHelp() {
+      alert(`Dashboard v3 - Bounded Widget Board
+
+DASHBOARD:
+• Drag widgets by their header to rearrange
+• Click + to add new widgets
+• Edit Links Note by clicking ✎
+• Use [[Entry/Workspace]] syntax for links
+• No scrolling - everything in view
+
+LINKS SYNTAX:
+• [[Alpha/Planning]] - specific workspace
+• [[Alpha]] - entry's default workspace
+• [[Planning]] - workspace in current entry
+
+WORKSPACE:
+• N - Toggle navigator
+• Esc - Return to dashboard
+• Click workspace links in notes to navigate`);
+    }
+
+    // ========== KEYBOARD ==========
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (navigatorVisible) {
+          hideNavigator();
+        } else if (currentView === 'workspace') {
+          goToDashboard();
+        } else {
+          hideWidgetPicker();
+        }
+      }
+      if ((e.key === 'n' || e.key === 'N') && currentView === 'workspace') {
+        toggleNavigator();
+      }
+    });
+
+    // ========== INIT ==========
+    renderDashboard();
+  </script>
+</body>
+</html>

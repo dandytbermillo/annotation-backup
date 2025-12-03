@@ -1,0 +1,1542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Entry Dashboard v2 - Peer Views Architecture</title>
+  <style>
+    :root {
+      --bg-dark: #0f1117;
+      --bg-card: #1a1d24;
+      --bg-hover: #252830;
+      --bg-canvas: #0a0c10;
+      --border: rgba(255,255,255,0.08);
+      --text-primary: #f0f0f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5c6070;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-dim: rgba(99,102,241,0.15);
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ========== APP SHELL ========== */
+    #app {
+      height: 100vh;
+      width: 100vw;
+      position: relative;
+    }
+
+    /* ========== VIEW CONTAINERS ========== */
+    .view {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    .view.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* ========== DASHBOARD VIEW ========== */
+    #dashboard-view {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      grid-template-rows: 60px 1fr;
+      grid-template-areas:
+        "header header"
+        "sidebar main";
+    }
+
+    /* Dashboard Header */
+    .dashboard-header {
+      grid-area: header;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+    }
+
+    .dashboard-header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dashboard-header h1 .logo {
+      width: 28px;
+      height: 28px;
+      background: var(--accent);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    /* Dashboard Sidebar (Entry Navigator - Persistent) */
+    .dashboard-sidebar {
+      grid-area: sidebar;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-header h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .entry-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .entry-group {
+      margin-bottom: 8px;
+    }
+
+    .entry-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .entry-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .entry-item.selected {
+      background: var(--accent-dim);
+    }
+
+    .entry-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--bg-hover);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .entry-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .entry-name {
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .entry-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .workspace-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 4px 12px 12px 54px;
+    }
+
+    .workspace-pill {
+      padding: 4px 10px;
+      background: var(--bg-hover);
+      border-radius: 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .workspace-pill:hover {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .workspace-pill.default {
+      border: 1px solid var(--accent-dim);
+    }
+
+    /* Dashboard Main Content */
+    .dashboard-main {
+      grid-area: main;
+      padding: 32px;
+      overflow-y: auto;
+    }
+
+    .welcome-section {
+      margin-bottom: 40px;
+    }
+
+    .welcome-section h2 {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .welcome-section p {
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+
+    /* Continue Card */
+    .continue-card {
+      background: linear-gradient(135deg, var(--bg-card) 0%, rgba(99,102,241,0.1) 100%);
+      border: 1px solid var(--accent-dim);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 40px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .continue-card:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(99,102,241,0.2);
+    }
+
+    .continue-label {
+      font-size: 12px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .continue-label::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .continue-title {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .continue-meta {
+      color: var(--text-secondary);
+      font-size: 14px;
+      display: flex;
+      gap: 16px;
+    }
+
+    /* Recent Workspaces Grid */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .section-header h3 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .section-header a {
+      color: var(--accent);
+      font-size: 13px;
+      text-decoration: none;
+    }
+
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .workspace-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .workspace-card:hover {
+      border-color: var(--accent-dim);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    }
+
+    .workspace-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .workspace-card-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--accent-dim);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .workspace-card-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .workspace-card-entry {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .workspace-card-preview {
+      background: var(--bg-dark);
+      border-radius: 8px;
+      height: 80px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .workspace-card-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* ========== WORKSPACE VIEW ========== */
+    #workspace-view {
+      background: var(--bg-canvas);
+    }
+
+    /* Workspace Top Bar */
+    .workspace-topbar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 48px;
+      background: rgba(15,17,23,0.9);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 100;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .back-btn {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .back-btn:hover {
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+
+    .breadcrumb-entry {
+      color: var(--text-secondary);
+    }
+
+    .breadcrumb-separator {
+      color: var(--text-muted);
+    }
+
+    .breadcrumb-workspace {
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .topbar-center {
+      display: flex;
+      gap: 8px;
+    }
+
+    .workspace-tab {
+      padding: 6px 14px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .workspace-tab:hover {
+      background: var(--bg-hover);
+    }
+
+    .workspace-tab.active {
+      background: var(--accent-dim);
+      border-color: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-toggle {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .nav-toggle:hover {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-color: var(--accent-dim);
+    }
+
+    .nav-toggle.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    /* Canvas Area */
+    .canvas-area {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow: hidden;
+    }
+
+    .canvas-surface {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background:
+        radial-gradient(circle at center, rgba(99,102,241,0.03) 0%, transparent 70%),
+        linear-gradient(var(--bg-canvas) 1px, transparent 1px),
+        linear-gradient(90deg, var(--bg-canvas) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 100px 100px, 100px 100px, 20px 20px, 20px 20px;
+      background-position: center, -1px -1px, -1px -1px, -1px -1px, -1px -1px;
+    }
+
+    /* Canvas Panels */
+    .canvas-panel {
+      position: absolute;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      min-width: 200px;
+      cursor: move;
+      transition: box-shadow 0.2s ease;
+    }
+
+    .canvas-panel:hover {
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+
+    .canvas-panel.dragging {
+      box-shadow: 0 12px 48px rgba(99,102,241,0.3);
+      z-index: 1000;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: move;
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .panel-action {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .panel-action:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .panel-content {
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      cursor: default;
+    }
+
+    .panel-content p {
+      margin-bottom: 12px;
+    }
+
+    .panel-content p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* Workspace Link in Panel */
+    .workspace-link {
+      color: var(--accent);
+      background: var(--accent-dim);
+      padding: 2px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+
+    .workspace-link:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* Floating Entry Navigator (Overlay) */
+    .floating-navigator {
+      position: absolute;
+      top: 60px;
+      right: 16px;
+      width: 300px;
+      max-height: calc(100vh - 120px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 48px rgba(0,0,0,0.5);
+      z-index: 200;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .floating-navigator.visible {
+      display: flex;
+    }
+
+    .floating-nav-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .floating-nav-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .floating-nav-close {
+      width: 28px;
+      height: 28px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+
+    .floating-nav-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .floating-nav-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .floating-entry-item {
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 4px;
+      transition: background 0.15s ease;
+    }
+
+    .floating-entry-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .floating-entry-item.current {
+      background: var(--accent-dim);
+      border-left: 3px solid var(--accent);
+    }
+
+    .floating-entry-name {
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+
+    .floating-workspace-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .floating-ws-pill {
+      padding: 4px 10px;
+      background: var(--bg-hover);
+      border-radius: 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .floating-ws-pill:hover {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .floating-ws-pill.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* Canvas Backdrop (when navigator open) */
+    .canvas-backdrop {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.3);
+      z-index: 150;
+      display: none;
+    }
+
+    .canvas-backdrop.visible {
+      display: block;
+    }
+
+    /* Floating Toolbar */
+    .floating-toolbar {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      display: flex;
+      gap: 4px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+      z-index: 100;
+    }
+
+    .toolbar-btn {
+      width: 40px;
+      height: 40px;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 18px;
+      transition: all 0.15s ease;
+    }
+
+    .toolbar-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .toolbar-btn.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .toolbar-divider {
+      width: 1px;
+      background: var(--border);
+      margin: 4px 4px;
+    }
+
+    /* Zoom Controls */
+    .zoom-controls {
+      position: absolute;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 100;
+    }
+
+    .zoom-btn {
+      width: 36px;
+      height: 36px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s ease;
+    }
+
+    .zoom-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .zoom-level {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 4px 0;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-card);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 20px;
+      color: var(--text-primary);
+      font-size: 14px;
+      box-shadow: 0 4px 24px rgba(99,102,241,0.3);
+      z-index: 1000;
+      opacity: 0;
+      transition: all 0.3s ease;
+    }
+
+    .toast.visible {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+
+    /* Keyboard Hints */
+    .keyboard-hint {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      display: flex;
+      gap: 16px;
+      z-index: 100;
+    }
+
+    .hint-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .hint-key {
+      padding: 2px 6px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- ========== DASHBOARD VIEW ========== -->
+    <div id="dashboard-view" class="view active">
+      <header class="dashboard-header">
+        <h1>
+          <span class="logo">A</span>
+          Annotation
+        </h1>
+        <div class="header-actions">
+          <button class="btn btn-ghost" onclick="showHelp()">? Help</button>
+          <button class="btn btn-primary" onclick="createEntry()">+ New Entry</button>
+        </div>
+      </header>
+
+      <aside class="dashboard-sidebar">
+        <div class="sidebar-header">
+          <h2>Entries</h2>
+        </div>
+        <div class="entry-list" id="dashboard-entry-list">
+          <!-- Populated by JS -->
+        </div>
+      </aside>
+
+      <main class="dashboard-main">
+        <div class="welcome-section">
+          <h2>Welcome back</h2>
+          <p>Continue where you left off or start something new</p>
+        </div>
+
+        <div class="continue-card" id="continue-card" onclick="openLastWorkspace()">
+          <div class="continue-label">Continue where you left off</div>
+          <div class="continue-title" id="continue-title">Project Alpha > Planning</div>
+          <div class="continue-meta">
+            <span id="continue-time">Last edited 5 minutes ago</span>
+            <span id="continue-panels">3 panels open</span>
+          </div>
+        </div>
+
+        <section>
+          <div class="section-header">
+            <h3>Recent Workspaces</h3>
+            <a href="#">View all</a>
+          </div>
+          <div class="workspace-grid" id="workspace-grid">
+            <!-- Populated by JS -->
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ========== WORKSPACE VIEW ========== -->
+    <div id="workspace-view" class="view">
+      <nav class="workspace-topbar">
+        <div class="topbar-left">
+          <button class="back-btn" onclick="goToDashboard()" title="Back to Dashboard">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div class="breadcrumb">
+            <span class="breadcrumb-entry" id="breadcrumb-entry">Project Alpha</span>
+            <span class="breadcrumb-separator">/</span>
+            <span class="breadcrumb-workspace" id="breadcrumb-workspace">Planning</span>
+          </div>
+        </div>
+
+        <div class="topbar-center" id="workspace-tabs">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="topbar-right">
+          <button class="btn btn-ghost" style="padding: 6px 12px; font-size: 12px;">Share</button>
+          <button class="nav-toggle" id="nav-toggle" onclick="toggleNavigator()" title="Toggle Entry Navigator (N)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+            </svg>
+          </button>
+        </div>
+      </nav>
+
+      <div class="canvas-area">
+        <div class="canvas-backdrop" id="canvas-backdrop" onclick="toggleNavigator()"></div>
+
+        <div class="canvas-surface" id="canvas-surface">
+          <!-- Panels added by JS -->
+        </div>
+
+        <!-- Floating Entry Navigator (Overlay) -->
+        <div class="floating-navigator" id="floating-navigator">
+          <div class="floating-nav-header">
+            <h3>Entries</h3>
+            <button class="floating-nav-close" onclick="toggleNavigator()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+          <div class="floating-nav-content" id="floating-nav-content">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Floating Toolbar -->
+        <div class="floating-toolbar">
+          <button class="toolbar-btn" title="Select (V)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+            </svg>
+          </button>
+          <button class="toolbar-btn" title="Pan (H)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>
+            </svg>
+          </button>
+          <div class="toolbar-divider"></div>
+          <button class="toolbar-btn" title="Add Note (+)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M12 8v8M8 12h8"/>
+            </svg>
+          </button>
+          <button class="toolbar-btn" title="Add Panel">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M3 9h18M9 21V9"/>
+            </svg>
+          </button>
+          <div class="toolbar-divider"></div>
+          <button class="toolbar-btn" title="Link">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="zoom-controls">
+          <button class="zoom-btn" onclick="zoomIn()">+</button>
+          <div class="zoom-level" id="zoom-level">100%</div>
+          <button class="zoom-btn" onclick="zoomOut()">-</button>
+          <button class="zoom-btn" onclick="zoomFit()" title="Fit to view">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Keyboard Hints -->
+        <div class="keyboard-hint">
+          <div class="hint-item">
+            <span class="hint-key">N</span>
+            <span>Navigator</span>
+          </div>
+          <div class="hint-item">
+            <span class="hint-key">Esc</span>
+            <span>Dashboard</span>
+          </div>
+          <div class="hint-item">
+            <span class="hint-key">Space</span>
+            <span>Pan</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ========== DATA ==========
+    const entries = [
+      {
+        id: "alpha",
+        name: "Project Alpha",
+        icon: "A",
+        workspaces: [
+          { id: "alpha-default", name: "Default", isDefault: true },
+          { id: "alpha-planning", name: "Planning" },
+          { id: "alpha-research", name: "Research" }
+        ],
+        lastAccessed: Date.now() - 300000
+      },
+      {
+        id: "beta",
+        name: "Project Beta",
+        icon: "B",
+        workspaces: [
+          { id: "beta-default", name: "Default", isDefault: true },
+          { id: "beta-drafts", name: "Drafts" }
+        ],
+        lastAccessed: Date.now() - 3600000
+      },
+      {
+        id: "ideas",
+        name: "Ideas Inbox",
+        icon: "I",
+        workspaces: [
+          { id: "ideas-default", name: "Default", isDefault: true }
+        ],
+        lastAccessed: Date.now() - 86400000
+      }
+    ];
+
+    const panelData = {
+      "alpha-planning": [
+        {
+          id: "note-1",
+          type: "note",
+          title: "Project Overview",
+          x: 100,
+          y: 80,
+          width: 340,
+          content: `<p>This is the main planning document for Project Alpha.</p>
+            <p>Key milestones:</p>
+            <p>1. Research phase - see <span class="workspace-link" onclick="switchWorkspace('alpha-research')">[[workspace:Research]]</span></p>
+            <p>2. Design phase</p>
+            <p>3. Implementation</p>`
+        },
+        {
+          id: "note-2",
+          type: "note",
+          title: "Timeline",
+          x: 500,
+          y: 120,
+          width: 300,
+          content: `<p>Q1: Research & Discovery</p>
+            <p>Q2: Design & Prototyping</p>
+            <p>Q3: Implementation</p>
+            <p>Q4: Testing & Launch</p>`
+        },
+        {
+          id: "panel-1",
+          type: "panel",
+          title: "Team Notes",
+          x: 200,
+          y: 380,
+          width: 280,
+          content: `<p>Team sync every Monday 10am</p>
+            <p>Check <span class="workspace-link" onclick="goToEntry('beta')">[[entry:Project Beta]]</span> for related work.</p>`
+        }
+      ],
+      "alpha-research": [
+        {
+          id: "research-1",
+          type: "note",
+          title: "Research Findings",
+          x: 120,
+          y: 100,
+          width: 400,
+          content: `<p>User interviews revealed key insights...</p>
+            <p>Back to <span class="workspace-link" onclick="switchWorkspace('alpha-planning')">[[workspace:Planning]]</span> for next steps.</p>`
+        }
+      ],
+      "alpha-default": [
+        {
+          id: "default-1",
+          type: "note",
+          title: "Welcome to Alpha",
+          x: 150,
+          y: 100,
+          width: 320,
+          content: `<p>This is the default workspace for Project Alpha.</p>`
+        }
+      ]
+    };
+
+    // ========== STATE ==========
+    let currentView = 'dashboard';
+    let currentEntry = entries[0];
+    let currentWorkspace = entries[0].workspaces[1]; // Planning
+    let lastWorkspace = { entry: entries[0], workspace: entries[0].workspaces[1] };
+    let navigatorVisible = false;
+    let zoom = 100;
+    let draggingPanel = null;
+    let dragOffset = { x: 0, y: 0 };
+
+    // ========== NAVIGATION ==========
+    function goToDashboard() {
+      currentView = 'dashboard';
+      document.getElementById('dashboard-view').classList.add('active');
+      document.getElementById('workspace-view').classList.remove('active');
+      hideNavigator();
+      renderDashboard();
+    }
+
+    function goToWorkspace(entryId, workspaceId) {
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+
+      const workspace = entry.workspaces.find(w => w.id === workspaceId);
+      if (!workspace) return;
+
+      currentEntry = entry;
+      currentWorkspace = workspace;
+      lastWorkspace = { entry, workspace };
+      currentView = 'workspace';
+
+      document.getElementById('workspace-view').classList.add('active');
+      document.getElementById('dashboard-view').classList.remove('active');
+
+      renderWorkspace();
+      showToast(`Opened ${entry.name} > ${workspace.name}`);
+    }
+
+    function openLastWorkspace() {
+      goToWorkspace(lastWorkspace.entry.id, lastWorkspace.workspace.id);
+    }
+
+    function switchWorkspace(workspaceId) {
+      const workspace = currentEntry.workspaces.find(w => w.id === workspaceId);
+      if (!workspace) {
+        // Search in all entries
+        for (const entry of entries) {
+          const ws = entry.workspaces.find(w => w.id === workspaceId);
+          if (ws) {
+            goToWorkspace(entry.id, workspaceId);
+            return;
+          }
+        }
+        return;
+      }
+
+      currentWorkspace = workspace;
+      lastWorkspace = { entry: currentEntry, workspace };
+      renderWorkspace();
+      showToast(`Switched to ${workspace.name}`);
+    }
+
+    function goToEntry(entryId) {
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+
+      const defaultWs = entry.workspaces.find(w => w.isDefault) || entry.workspaces[0];
+      goToWorkspace(entry.id, defaultWs.id);
+    }
+
+    // ========== DASHBOARD RENDER ==========
+    function renderDashboard() {
+      renderDashboardEntries();
+      renderWorkspaceGrid();
+      updateContinueCard();
+    }
+
+    function renderDashboardEntries() {
+      const container = document.getElementById('dashboard-entry-list');
+      container.innerHTML = '';
+
+      entries.forEach(entry => {
+        const group = document.createElement('div');
+        group.className = 'entry-group';
+
+        const item = document.createElement('div');
+        item.className = 'entry-item';
+        item.onclick = () => {
+          const defaultWs = entry.workspaces.find(w => w.isDefault) || entry.workspaces[0];
+          goToWorkspace(entry.id, defaultWs.id);
+        };
+        item.innerHTML = `
+          <div class="entry-icon">${entry.icon}</div>
+          <div class="entry-info">
+            <div class="entry-name">${entry.name}</div>
+            <div class="entry-meta">${entry.workspaces.length} workspace${entry.workspaces.length > 1 ? 's' : ''}</div>
+          </div>
+        `;
+        group.appendChild(item);
+
+        if (entry.workspaces.length > 1) {
+          const pills = document.createElement('div');
+          pills.className = 'workspace-pills';
+          entry.workspaces.forEach(ws => {
+            const pill = document.createElement('span');
+            pill.className = 'workspace-pill' + (ws.isDefault ? ' default' : '');
+            pill.textContent = ws.name;
+            pill.onclick = (e) => {
+              e.stopPropagation();
+              goToWorkspace(entry.id, ws.id);
+            };
+            pills.appendChild(pill);
+          });
+          group.appendChild(pills);
+        }
+
+        container.appendChild(group);
+      });
+    }
+
+    function renderWorkspaceGrid() {
+      const grid = document.getElementById('workspace-grid');
+      grid.innerHTML = '';
+
+      // Flatten and sort by access time
+      const allWorkspaces = [];
+      entries.forEach(entry => {
+        entry.workspaces.forEach(ws => {
+          allWorkspaces.push({ entry, workspace: ws });
+        });
+      });
+
+      // Show top 6
+      allWorkspaces.slice(0, 6).forEach(({ entry, workspace }) => {
+        const card = document.createElement('div');
+        card.className = 'workspace-card';
+        card.onclick = () => goToWorkspace(entry.id, workspace.id);
+        card.innerHTML = `
+          <div class="workspace-card-header">
+            <div class="workspace-card-icon">${entry.icon}</div>
+            <div>
+              <div class="workspace-card-title">${workspace.name}</div>
+              <div class="workspace-card-entry">${entry.name}</div>
+            </div>
+          </div>
+          <div class="workspace-card-preview">Canvas preview</div>
+          <div class="workspace-card-meta">Last edited recently</div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function updateContinueCard() {
+      document.getElementById('continue-title').textContent =
+        `${lastWorkspace.entry.name} > ${lastWorkspace.workspace.name}`;
+    }
+
+    // ========== WORKSPACE RENDER ==========
+    function renderWorkspace() {
+      // Breadcrumb
+      document.getElementById('breadcrumb-entry').textContent = currentEntry.name;
+      document.getElementById('breadcrumb-workspace').textContent = currentWorkspace.name;
+
+      // Tabs
+      const tabsContainer = document.getElementById('workspace-tabs');
+      tabsContainer.innerHTML = '';
+      currentEntry.workspaces.forEach(ws => {
+        const tab = document.createElement('button');
+        tab.className = 'workspace-tab' + (ws.id === currentWorkspace.id ? ' active' : '');
+        tab.textContent = ws.name;
+        tab.onclick = () => switchWorkspace(ws.id);
+        tabsContainer.appendChild(tab);
+      });
+
+      // Canvas panels
+      renderCanvasPanels();
+
+      // Floating navigator
+      renderFloatingNavigator();
+    }
+
+    function renderCanvasPanels() {
+      const canvas = document.getElementById('canvas-surface');
+      canvas.innerHTML = '';
+
+      const panels = panelData[currentWorkspace.id] || [];
+      panels.forEach(panel => {
+        const el = document.createElement('div');
+        el.className = 'canvas-panel';
+        el.id = `panel-${panel.id}`;
+        el.style.left = panel.x + 'px';
+        el.style.top = panel.y + 'px';
+        el.style.width = panel.width + 'px';
+
+        el.innerHTML = `
+          <div class="panel-header" onmousedown="startDrag(event, '${panel.id}')">
+            <span class="panel-title">
+              ${panel.type === 'note' ? '📝' : '📋'} ${panel.title}
+            </span>
+            <div class="panel-actions">
+              <button class="panel-action" title="More">⋮</button>
+              <button class="panel-action" title="Close">×</button>
+            </div>
+          </div>
+          <div class="panel-content">${panel.content}</div>
+        `;
+
+        canvas.appendChild(el);
+      });
+    }
+
+    // ========== FLOATING NAVIGATOR ==========
+    function toggleNavigator() {
+      navigatorVisible = !navigatorVisible;
+      document.getElementById('floating-navigator').classList.toggle('visible', navigatorVisible);
+      document.getElementById('canvas-backdrop').classList.toggle('visible', navigatorVisible);
+      document.getElementById('nav-toggle').classList.toggle('active', navigatorVisible);
+    }
+
+    function hideNavigator() {
+      navigatorVisible = false;
+      document.getElementById('floating-navigator').classList.remove('visible');
+      document.getElementById('canvas-backdrop').classList.remove('visible');
+      document.getElementById('nav-toggle').classList.remove('active');
+    }
+
+    function renderFloatingNavigator() {
+      const container = document.getElementById('floating-nav-content');
+      container.innerHTML = '';
+
+      entries.forEach(entry => {
+        const item = document.createElement('div');
+        item.className = 'floating-entry-item' + (entry.id === currentEntry.id ? ' current' : '');
+
+        const name = document.createElement('div');
+        name.className = 'floating-entry-name';
+        name.textContent = entry.name;
+        item.appendChild(name);
+
+        const wsList = document.createElement('div');
+        wsList.className = 'floating-workspace-list';
+        entry.workspaces.forEach(ws => {
+          const pill = document.createElement('span');
+          pill.className = 'floating-ws-pill';
+          if (entry.id === currentEntry.id && ws.id === currentWorkspace.id) {
+            pill.classList.add('active');
+          }
+          pill.textContent = ws.name;
+          pill.onclick = () => {
+            goToWorkspace(entry.id, ws.id);
+            hideNavigator();
+          };
+          wsList.appendChild(pill);
+        });
+        item.appendChild(wsList);
+
+        container.appendChild(item);
+      });
+    }
+
+    // ========== DRAG & DROP ==========
+    function startDrag(e, panelId) {
+      if (e.target.closest('.panel-actions')) return;
+
+      draggingPanel = document.getElementById(`panel-${panelId}`);
+      draggingPanel.classList.add('dragging');
+
+      const rect = draggingPanel.getBoundingClientRect();
+      dragOffset = {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+
+      document.addEventListener('mousemove', onDrag);
+      document.addEventListener('mouseup', stopDrag);
+    }
+
+    function onDrag(e) {
+      if (!draggingPanel) return;
+
+      const canvas = document.getElementById('canvas-surface').getBoundingClientRect();
+      const x = e.clientX - canvas.left - dragOffset.x;
+      const y = e.clientY - canvas.top - dragOffset.y;
+
+      draggingPanel.style.left = Math.max(0, x) + 'px';
+      draggingPanel.style.top = Math.max(0, y) + 'px';
+    }
+
+    function stopDrag() {
+      if (draggingPanel) {
+        draggingPanel.classList.remove('dragging');
+        draggingPanel = null;
+      }
+      document.removeEventListener('mousemove', onDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    }
+
+    // ========== ZOOM ==========
+    function zoomIn() {
+      zoom = Math.min(200, zoom + 10);
+      updateZoom();
+    }
+
+    function zoomOut() {
+      zoom = Math.max(25, zoom - 10);
+      updateZoom();
+    }
+
+    function zoomFit() {
+      zoom = 100;
+      updateZoom();
+    }
+
+    function updateZoom() {
+      document.getElementById('zoom-level').textContent = zoom + '%';
+      document.getElementById('canvas-surface').style.transform = `scale(${zoom / 100})`;
+      document.getElementById('canvas-surface').style.transformOrigin = 'top left';
+    }
+
+    // ========== TOAST ==========
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), 2000);
+    }
+
+    // ========== HELPERS ==========
+    function createEntry() {
+      showToast('Create entry dialog would open');
+    }
+
+    function showHelp() {
+      alert(`Keyboard Shortcuts:
+
+N - Toggle Entry Navigator
+Esc - Return to Dashboard
+Space + Drag - Pan canvas
++ / - - Zoom in/out
+
+Click workspace pills to switch workspaces.
+Click [[workspace:X]] links to navigate.`);
+    }
+
+    // ========== KEYBOARD ==========
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (navigatorVisible) {
+          hideNavigator();
+        } else if (currentView === 'workspace') {
+          goToDashboard();
+        }
+      }
+      if (e.key === 'n' || e.key === 'N') {
+        if (currentView === 'workspace') {
+          toggleNavigator();
+        }
+      }
+    });
+
+    // ========== INIT ==========
+    renderDashboard();
+  </script>
+</body>
+</html>
