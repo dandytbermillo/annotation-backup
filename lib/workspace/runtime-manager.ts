@@ -240,17 +240,32 @@ export const subscribeToRuntimeChanges = (listener: () => void) => {
   return () => runtimeChangeListeners.delete(listener)
 }
 
+// Track pending notification to batch multiple calls
+let notificationPending = false
+
 export const notifyRuntimeChanges = () => {
   // Increment version so useSyncExternalStore detects the change
+  // This must happen synchronously so getSnapshot() returns the current value
   runtimeVersion++
 
-  runtimeChangeListeners.forEach((listener) => {
-    try {
-      listener()
-    } catch {
-      // Ignore listener errors
-    }
-  })
+  // Defer listener notification to avoid setState-during-render errors
+  // When notifyRuntimeChanges() is called during another component's render phase,
+  // calling listeners synchronously would trigger React to update subscribed components
+  // (via useSyncExternalStore), which violates React's rules.
+  // Using queueMicrotask ensures listeners are called after the current execution context.
+  if (!notificationPending) {
+    notificationPending = true
+    queueMicrotask(() => {
+      notificationPending = false
+      runtimeChangeListeners.forEach((listener) => {
+        try {
+          listener()
+        } catch {
+          // Ignore listener errors
+        }
+      })
+    })
+  }
 }
 
 // DEBUG: Unique ID to detect multiple module instances
