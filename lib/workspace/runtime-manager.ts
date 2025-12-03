@@ -49,6 +49,8 @@ export type WorkspaceRuntime = {
   registeredComponents: Map<string, RegisteredComponent>
   // Phase 1 Unification: Runtime component ledger - authoritative data source, persists across unmounts
   components: Map<string, RuntimeComponent>
+  // Phase 4: Deleted components tracking - prevents fallback from resurrecting deleted components
+  deletedComponents: Set<string>
 }
 
 // Phase 3: Max live runtime configuration
@@ -165,6 +167,7 @@ const firePreEvictionCallbacksSync = (workspaceId: string, reason: string): void
     openNotes: [...runtime.openNotes],
     registeredComponents: new Map(runtime.registeredComponents),
     components: new Map(runtime.components),  // Phase 1 Unification: Capture component ledger
+    deletedComponents: new Set(runtime.deletedComponents),  // Phase 4: Capture deleted components
     dataStore: runtime.dataStore,
     layerManager: runtime.layerManager,
   }
@@ -352,6 +355,8 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
     registeredComponents: new Map(),
     // Phase 1 Unification: Component ledger (authoritative data, persists across unmounts)
     components: new Map(),
+    // Phase 4: Deleted components tracking
+    deletedComponents: new Set(),
   }
   runtimes.set(workspaceId, runtime)
 
@@ -1280,9 +1285,27 @@ export const populateRuntimeComponents = (
   }
 
   const now = Date.now()
+  let populatedCount = 0
+  let skippedDeletedCount = 0
 
   for (const comp of components) {
     if (!comp.id || !comp.type) continue
+
+    // Phase 4: Skip components that were marked as deleted
+    // This prevents resurrection of deleted components during hydration/workspace switch
+    if (runtime.deletedComponents.has(comp.id)) {
+      skippedDeletedCount++
+      void debugLog({
+        component: "WorkspaceRuntime",
+        action: "populate_skipped_deleted_component",
+        metadata: {
+          workspaceId,
+          componentId: comp.id,
+          componentType: comp.type,
+        },
+      })
+      continue
+    }
 
     const existing = runtime.components.get(comp.id)
     const component: RuntimeComponent = {
@@ -1298,12 +1321,15 @@ export const populateRuntimeComponents = (
     }
 
     runtime.components.set(comp.id, component)
+    populatedCount++
   }
 
   if (process.env.NODE_ENV === "development") {
     console.log(`[WorkspaceRuntime] Runtime components populated`, {
       workspaceId,
-      count: components.length,
+      requestedCount: components.length,
+      populatedCount,
+      skippedDeletedCount,
       totalComponents: runtime.components.size,
     })
   }
@@ -1313,7 +1339,9 @@ export const populateRuntimeComponents = (
     action: "runtime_components_populated",
     metadata: {
       workspaceId,
-      populatedCount: components.length,
+      requestedCount: components.length,
+      populatedCount,
+      skippedDeletedCount,
       totalComponents: runtime.components.size,
     },
   })
@@ -1380,4 +1408,113 @@ export const syncLayerManagerFromRuntime = (workspaceId: string): number => {
   }
 
   return syncedCount
+}
+
+// =============================================================================
+// Phase 4: Deleted Component Tracking
+// =============================================================================
+// These functions track components that have been intentionally deleted by the user.
+// This prevents fallback paths (LayerManager, caches) from resurrecting deleted components.
+
+/**
+ * Mark a component as deleted.
+ * This should be called when a user explicitly closes/deletes a component.
+ * The deleted ID will be excluded from fallback paths during buildPayload and canvas rendering.
+ *
+ * @param workspaceId - The workspace containing the component
+ * @param componentId - The ID of the deleted component
+ */
+export const markComponentDeleted = (
+  workspaceId: string,
+  componentId: string,
+): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) {
+    // Create a temporary tracking even if runtime doesn't exist
+    // This handles edge cases where runtime was evicted but component is being closed
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[WorkspaceRuntime] markComponentDeleted called but runtime not found: ${workspaceId}`
+      )
+    }
+    return
+  }
+
+  runtime.deletedComponents.add(componentId)
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Component marked as deleted`, {
+      workspaceId,
+      componentId,
+      deletedCount: runtime.deletedComponents.size,
+    })
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "component_marked_deleted",
+    metadata: {
+      workspaceId,
+      componentId,
+      deletedCount: runtime.deletedComponents.size,
+    },
+  })
+}
+
+/**
+ * Check if a component has been marked as deleted.
+ * Used by fallback paths to avoid resurrecting deleted components.
+ *
+ * @param workspaceId - The workspace to check
+ * @param componentId - The component ID to check
+ * @returns true if the component was deleted, false otherwise
+ */
+export const isComponentDeleted = (
+  workspaceId: string,
+  componentId: string,
+): boolean => {
+  return runtimes.get(workspaceId)?.deletedComponents.has(componentId) ?? false
+}
+
+/**
+ * Get all deleted component IDs for a workspace.
+ *
+ * @param workspaceId - The workspace to get deleted components for
+ * @returns Set of deleted component IDs
+ */
+export const getDeletedComponents = (workspaceId: string): Set<string> => {
+  return runtimes.get(workspaceId)?.deletedComponents ?? new Set()
+}
+
+/**
+ * Clear the deleted components set for a workspace.
+ * This should be called after a successful save to allow the same IDs to be reused
+ * for new components in the future.
+ *
+ * @param workspaceId - The workspace to clear deleted components for
+ */
+export const clearDeletedComponents = (workspaceId: string): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  const previousCount = runtime.deletedComponents.size
+  if (previousCount === 0) return
+
+  runtime.deletedComponents.clear()
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Deleted components cleared after save`, {
+      workspaceId,
+      clearedCount: previousCount,
+    })
+  }
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "deleted_components_cleared",
+    metadata: {
+      workspaceId,
+      clearedCount: previousCount,
+    },
+  })
 }

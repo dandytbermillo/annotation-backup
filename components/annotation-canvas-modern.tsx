@@ -66,6 +66,7 @@ import { useAddComponentMenu } from "@/lib/hooks/annotation/use-add-component-me
 import { useDedupeWarningBanner } from "@/lib/hooks/annotation/use-dedupe-warning-banner"
 import { useCanvasOutlineDebug } from "@/lib/hooks/annotation/use-canvas-outline-debug"
 import { useRuntimeComponents, runtimeComponentsToCanvasItems } from "@/lib/hooks/use-runtime-components"
+import { getDeletedComponents } from "@/lib/workspace/runtime-manager"
 import {
   createDefaultCanvasState,
   createDefaultCanvasItems,
@@ -702,7 +703,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     // Fallback: LayerManager (for backwards compatibility during transition)
     const lm = layerManagerApi.manager
     if (!lm || typeof lm.getNodes !== "function") return
-    const nodes = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component")
+
+    // Phase 4: Get deleted components to exclude from fallback resurrection
+    const deletedComponents = workspaceId ? getDeletedComponents(workspaceId) : new Set<string>()
+
+    // Filter out deleted components from LayerManager nodes
+    const allNodes = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component")
+    const nodes = allNodes.filter((node: any) => !deletedComponents.has(node.id))
+
     if (nodes.length === 0) {
       // FIX 15: Don't remove components when LayerManager is empty.
       // Components may have been restored from snapshot (via FIX 14) and are valid.
@@ -710,6 +718,29 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       // but that doesn't mean we should remove the components from canvasItems.
       return
     }
+
+    // Phase 4: Dev-mode warning when falling back to LayerManager
+    // This indicates runtime ledger was empty but LayerManager has components.
+    // Once this warning stops appearing, we can safely remove the LayerManager fallback.
+    if (process.env.NODE_ENV === "development") {
+      console.warn(
+        `[RuntimeLedger] WARNING: Falling back to LayerManager for ${nodes.length} component(s). ` +
+        `Runtime ledger was empty for workspace "${workspaceId}". ` +
+        `Component IDs: ${nodes.map((n: any) => n.id).join(", ")}`
+      )
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "runtime_ledger_fallback_to_layermanager",
+        metadata: {
+          workspaceId,
+          componentCount: nodes.length,
+          componentIds: nodes.map((n: any) => n.id),
+          reason: "runtime_ledger_empty_layermanager_has_components",
+          deletedFilteredCount: deletedComponents.size,
+        },
+      })
+    }
+
     setCanvasItems((prev: CanvasItem[]) => {
       const nonComponentItems = prev.filter((item: CanvasItem) => item.itemType !== "component")
       const nextComponents = nodes.map((node: any) => ({
@@ -725,7 +756,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       nonComponentItems.forEach((item) => byId.set(item.id, item))
       return Array.from(byId.values())
     })
-  }, [layerManagerApi.manager, setCanvasItems, workspaceSnapshotRevision, runtimeComponents])
+  }, [layerManagerApi.manager, setCanvasItems, workspaceSnapshotRevision, runtimeComponents, workspaceId])
   const { stickyNoteOverlayPortal } = useStickyNoteOverlayPanels({
     stickyOverlayEl,
     stickyNoteItems,

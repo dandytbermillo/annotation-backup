@@ -8,6 +8,7 @@ import { createComponentItem, isComponent, type CanvasItem, type ComponentType }
 import type { LayerManager } from "@/lib/canvas/layer-manager"
 import { markComponentPersistencePending, markComponentPersistenceReady } from "@/lib/note-workspaces/state"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { removeRuntimeComponent, markComponentDeleted } from "@/lib/workspace/runtime-manager"
 
 interface UseComponentCreationHandlerOptions {
   canvasState: CanvasViewportState
@@ -137,10 +138,42 @@ export function useComponentCreationHandler({
 
   const handleComponentClose = useCallback(
     (id: string) => {
+      // Phase 4: Mark as deleted FIRST to prevent fallback resurrection
+      // This must happen before any other cleanup
+      if (workspaceKey) {
+        markComponentDeleted(workspaceKey, id)
+      }
+
+      // Phase 4: Remove from runtime ledger
+      if (workspaceKey) {
+        removeRuntimeComponent(workspaceKey, id)
+      }
+
+      // Phase 4: Remove from LayerManager to prevent canvas fallback from re-rendering
+      if (layerMgr) {
+        try {
+          layerMgr.removeNode(id)
+        } catch {
+          // Ignore - node may not exist
+        }
+      }
+
+      // Log the removal
+      debugLog({
+        component: "ComponentCreation",
+        action: "REMOVING_COMPONENT",
+        metadata: {
+          workspaceId: workspaceKey ?? "unknown",
+          componentId: id,
+          removedFromLayerManager: !!layerMgr,
+        },
+      })
+
+      // Remove from canvas items
       setCanvasItems(prev => prev.filter(item => item.id !== id))
       onComponentChange?.()
     },
-    [setCanvasItems, onComponentChange],
+    [setCanvasItems, onComponentChange, workspaceKey, layerMgr],
   )
 
   const handleComponentPositionChange = useCallback(

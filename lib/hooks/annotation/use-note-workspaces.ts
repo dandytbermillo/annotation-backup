@@ -37,6 +37,9 @@ import {
   listRuntimeComponents,
   populateRuntimeComponents,
   getRuntimeComponentCount,
+  // Phase 4: Deleted component tracking
+  getDeletedComponents,
+  clearDeletedComponents,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -2171,6 +2174,12 @@ export function useNoteWorkspaces({
         })
         workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
         lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
+
+        // Phase 4: Clear deleted component tracking after successful save.
+        // Deleted components are now persisted (excluded from payload), so we can
+        // clear the tracking to avoid stale entries accumulating.
+        clearDeletedComponents(workspaceId)
+
         emitDebugLog({
           component: "NoteWorkspace",
           action: "save_success",
@@ -2713,12 +2722,18 @@ export function useNoteWorkspaces({
       metadata: comp.metadata,
     }))
 
+    // Phase 4: Get deleted components to exclude from fallback
+    const deletedComponents = getDeletedComponents(workspaceIdForComponents)
+
     // Fallback 1: If runtime ledger is empty, try LayerManager (backward compatibility)
     if (components.length === 0) {
       const lm = getWorkspaceLayerManager(workspaceIdForComponents)
       if (lm && typeof lm.getNodes === "function") {
+        const beforeFilterCount = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component").length
         components = Array.from(lm.getNodes().values())
           .filter((node: any) => node.type === "component")
+          // Phase 4: Exclude deleted components from fallback
+          .filter((node: any) => !deletedComponents.has(node.id))
           .map((node: any) => ({
             id: node.id,
             type:
@@ -2732,7 +2747,7 @@ export function useNoteWorkspaces({
             zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
             metadata: (node as any).metadata ?? null,
           }))
-        if (components.length > 0) {
+        if (components.length > 0 || beforeFilterCount > 0) {
           emitDebugLog({
             component: "NoteWorkspace",
             action: "build_payload_component_fallback",
@@ -2740,6 +2755,8 @@ export function useNoteWorkspaces({
               workspaceId: workspaceIdForComponents,
               fallbackSource: "layerManager",
               componentCount: components.length,
+              beforeFilterCount,
+              deletedCount: deletedComponents.size,
             },
           })
         }
@@ -2752,7 +2769,9 @@ export function useNoteWorkspaces({
       const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceIdForComponents)
       const snapshotComponents = workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.components
       if (cachedComponents && cachedComponents.length > 0) {
-        components = cachedComponents
+        // Phase 4: Exclude deleted components from fallback
+        const beforeFilterCount = cachedComponents.length
+        components = cachedComponents.filter((c) => !deletedComponents.has(c.id))
         emitDebugLog({
           component: "NoteWorkspace",
           action: "build_payload_component_fallback",
@@ -2760,10 +2779,14 @@ export function useNoteWorkspaces({
             workspaceId: workspaceIdForComponents,
             fallbackSource: "lastComponentsSnapshotRef",
             componentCount: components.length,
+            beforeFilterCount,
+            deletedCount: deletedComponents.size,
           },
         })
       } else if (snapshotComponents && snapshotComponents.length > 0) {
-        components = snapshotComponents
+        // Phase 4: Exclude deleted components from fallback
+        const beforeFilterCount = snapshotComponents.length
+        components = snapshotComponents.filter((c) => !deletedComponents.has(c.id))
         emitDebugLog({
           component: "NoteWorkspace",
           action: "build_payload_component_fallback",
@@ -2771,6 +2794,8 @@ export function useNoteWorkspaces({
             workspaceId: workspaceIdForComponents,
             fallbackSource: "workspaceSnapshotsRef",
             componentCount: components.length,
+            beforeFilterCount,
+            deletedCount: deletedComponents.size,
           },
         })
       }

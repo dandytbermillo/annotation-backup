@@ -86,6 +86,16 @@ export function useComponentRegistration({
   useEffect(() => {
     if (!workspaceId) return
 
+    // Phase 4: Dev-mode warning if component renders without position
+    // This means it won't be tracked in the runtime ledger and may be lost on workspace switch
+    if (!position && process.env.NODE_ENV === "development") {
+      console.warn(
+        `[RuntimeLedger] WARNING: Component "${componentId}" (type: ${componentType}) ` +
+        `rendered without position. It will NOT be tracked in the runtime ledger. ` +
+        `Ensure ComponentPanel passes position to this component.`
+      )
+    }
+
     // Register/update in runtime ledger
     if (position) {
       registerRuntimeComponent(workspaceId, {
