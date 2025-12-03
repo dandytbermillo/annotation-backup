@@ -89,7 +89,9 @@
   - Should we migrate calculators/alarms to Service Workers/Web Workers for better isolation? (Future exploration.)
 
   Next Steps
-  1. Land runtime registry skeleton + feature flag.
-  2. Update `useNoteWorkspaces` and canvas providers to request per-workspace runtimes and enforce the new component-registration API.
-  3. Implement idle eviction + telemetry with resource targets.
-  4. Add test coverage, document go/no-go thresholds, and begin staged rollout.
+ 1. Land runtime registry skeleton + feature flag.
+ 2. Update `useNoteWorkspaces` and canvas providers to request per-workspace runtimes and enforce the new component-registration API.
+ 3. Implement idle eviction + telemetry with resource targets.
+ 4. Add test coverage, document go/no-go thresholds, and begin staged rollout.
+
+> Phase 3 persistence work (`docs/proposal/components/workspace/note/plan/live-state-phase3-persistence.md`) tracks the remaining autosave/persist-by-id tasks mentioned above.

@@ -1,17 +1,28 @@
 ## Note Workspace Live-State – Phase 3 Persistence Plan
 
-Goal: make background workspaces persist independently so no dirty runtime depends on being “current” before its state is saved. This plan covers the four remaining tasks:
+Goal: make background workspaces persist independently so no dirty runtime depends on being "current" before its state is saved. This plan covers the four remaining tasks:
 
-1. `persistWorkspaceById`
-2. Per-workspace dirty-state/timers
-3. Eviction-triggered persistence
-4. Background autosave
+1. `persistWorkspaceById` - ✅ **IMPLEMENTED**
+2. Per-workspace dirty-state/timers - ✅ **IMPLEMENTED**
+3. Eviction-triggered persistence - ✅ **IMPLEMENTED**
+4. Background autosave - ⏸️ **DEFERRED**
 
 Each task includes scope, implementation steps, logging/telemetry, and validation.
 
 ---
 
-### 1. `persistWorkspaceById`
+### Implementation Status Summary
+
+| Task | Status | Notes |
+|------|--------|-------|
+| 1. persistWorkspaceById | ✅ Complete | `use-note-workspaces.ts:2906` |
+| 2. Per-workspace Maps | ✅ Complete | `saveInFlightRef`, `skipSavesUntilRef`, `workspaceDirtyRef`, `saveTimeoutRef` are all Maps |
+| 3. Eviction persistence | ✅ Complete | Pre-eviction callbacks registered and invoked via `firePreEvictionCallbacksSync` |
+| 4. Background autosave | ⏸️ Deferred | See rationale below |
+
+---
+
+### 1. `persistWorkspaceById` ✅ IMPLEMENTED
 
 **Objective:** Allow any workspace runtime (active or background) to serialize itself without relying on `currentWorkspaceSummary`.
 
@@ -45,7 +56,7 @@ Emit `save_attempt`/`save_success`/`save_skip_*` with metadata `{ workspaceId, r
 
 ---
 
-### 2. Maps instead of singletons
+### 2. Maps instead of singletons ✅ IMPLEMENTED
 
 **Objective:** Track dirty state per workspace.
 
@@ -72,7 +83,7 @@ Log `save_schedule`, `save_skipped_in_flight`, `save_skipped_cooldown` with work
 
 ---
 
-### 3. Eviction → persistence
+### 3. Eviction → persistence ✅ IMPLEMENTED
 
 **Objective:** When the runtime cap is reached and LRU eviction occurs, persist the workspace before removing it.
 
@@ -101,11 +112,27 @@ Log `workspace_runtime_evicted`, `pre_eviction_persist_start/complete`, and incl
 
 ---
 
-### 4. Background autosave
+### 4. Background autosave ⏸️ DEFERRED
 
-**Objective:** Persist dirty runtimes even when they’re not visible, so users don’t need to switch back before their work is saved.
+**Status:** Implementation deferred. Current save triggers are sufficient for most use cases.
 
-**Implementation**
+**Rationale for Deferral:**
+
+The existing save mechanisms already cover most scenarios:
+1. **Active workspace changes** - `scheduleSave` triggers on edits
+2. **Workspace switch** - Save triggered when switching away
+3. **Pre-eviction (Task 3)** - Persist before capacity eviction
+4. **Visibility change** - `save_flush_all` when tab becomes hidden
+5. **Component changes** - `save_flush_all` on `components_changed`
+
+Background autosave would add an additional safety net for edge cases (e.g., user stays in Workspace B for extended time while A has dirty changes, then app crashes). However, this is a low-priority enhancement given the existing triggers.
+
+**When to Reconsider:**
+- If users report data loss in background workspaces
+- If telemetry shows saves not triggering as expected
+- If the app needs to support longer idle periods without visibility changes
+
+**Original Implementation Plan (for future reference):**
 
 1. Add an effect in `useNoteWorkspaces` when `liveStateEnabled`:
    ```ts
@@ -126,22 +153,22 @@ Log `workspace_runtime_evicted`, `pre_eviction_persist_start/complete`, and incl
 2. Set constants (e.g., `DIRTY_THRESHOLD_MS = 10000`, `BACKGROUND_SAVE_INTERVAL_MS = 30000`).
 3. Emit `background_autosave_start`, `background_autosave_workspace`, `background_autosave_complete`.
 
-**Validation**
+**Validation (when implemented)**
 
 1. Manual: make edits in workspace B, switch to A, wait for autosave interval, verify B is persisted (check debug log / database).
-2. Negative: ensure background save doesn’t spam active workspace (skip when `workspaceId === currentWorkspaceId`).
+2. Negative: ensure background save doesn't spam active workspace (skip when `workspaceId === currentWorkspaceId`).
 
 ---
 
 ### Rollout & Verification Checklist
 
-1. Implement tasks in order (persist helper → per-workspace maps → eviction persistence → background autosave).
-2. Add unit tests for scheduling maps and eviction callback wiring.
-3. Add integration test: create note + calculator in workspace A, switch to B, wait for autosave, reload → changes persist.
-4. Telemetry dashboard:
+1. ✅ Implement tasks in order (persist helper → per-workspace maps → eviction persistence).
+2. ⏸️ Background autosave deferred.
+3. Add unit tests for scheduling maps and eviction callback wiring.
+4. Add integration test: create note + calculator in workspace A, switch to B, trigger eviction, reload → changes persist.
+5. Telemetry dashboard:
    - Count of `save_success` per workspace (active vs background).
-   - Average background autosave duration.
    - Eviction persistence success rate.
-5. Enable behind `NOTE_WORKSPACES_LIVE_STATE` until telemetry confirms stability (<1% save failures, no data loss reports).
+6. Enable behind `NOTE_WORKSPACES_LIVE_STATE` until telemetry confirms stability (<1% save failures, no data loss reports).
 
-Once all four tasks pass validation and telemetry thresholds, Phase 3 persistence is complete and we can move on to Phase 4 testing/rollout tasks.
+Phase 3 persistence (Tasks 1-3) is complete. Task 4 can be added later if needed based on user feedback or telemetry data.
