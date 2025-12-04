@@ -54,4 +54,5 @@ export type NoteWorkspaceRecord = {
   updatedAt: string
   isDefault: boolean
   noteCount: number
+  itemId?: string
 }

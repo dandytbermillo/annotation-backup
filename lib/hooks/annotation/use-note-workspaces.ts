@@ -64,6 +64,7 @@ import {
   waitForWorkspaceSnapshotReady,
   subscribeToWorkspaceSnapshotState,
   setActiveWorkspaceContext,
+  subscribeToWorkspaceListRefresh,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
 import { debugLog } from "@/lib/utils/debug-logger"
@@ -3720,6 +3721,40 @@ export function useNoteWorkspaces({
       saveTimeoutRef.current.clear()
     }
   }, [flagEnabled, isUnavailable, emitDebugLog, markUnavailable])
+
+  // Subscribe to external workspace list refresh requests (e.g., after LinksNotePanel creates a workspace)
+  useEffect(() => {
+    if (!flagEnabled || isUnavailable) return
+    if (!adapterRef.current) return
+
+    const handleRefresh = async () => {
+      try {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "refresh_list_requested",
+        })
+        const list = await adapterRef.current!.listWorkspaces()
+        setWorkspaces(list)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "refresh_list_success",
+          metadata: { count: list.length },
+        })
+      } catch (error) {
+        console.warn("[NoteWorkspace] refresh failed", error)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "refresh_list_error",
+          metadata: { error: error instanceof Error ? error.message : String(error) },
+        })
+      }
+    }
+
+    const unsubscribe = subscribeToWorkspaceListRefresh(handleRefresh)
+    return () => {
+      unsubscribe()
+    }
+  }, [flagEnabled, isUnavailable, emitDebugLog])
 
   useEffect(() => {
     if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return

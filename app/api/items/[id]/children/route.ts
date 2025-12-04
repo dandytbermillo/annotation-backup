@@ -62,7 +62,8 @@ export async function GET(
       updatedAt: row.updated_at
     }))
     
-    return NextResponse.json({ children })
+    // Return as 'items' to match what Navigator panel expects
+    return NextResponse.json({ items: children })
   } catch (error) {
     console.error('Error fetching children:', error)
     return NextResponse.json(

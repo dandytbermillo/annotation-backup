@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { isHomeDashboardEnabled } from "@/lib/flags/dashboard"
 import { debugLog } from "@/lib/utils/debug-logger"
+import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import { DashboardView } from "./DashboardView"
 
 interface DashboardInfo {
@@ -71,25 +72,18 @@ export function DashboardInitializer({
         console.log("[DashboardInitializer] Dashboard info:", data)
         setDashboardInfo(data)
 
-        // Check if we should show dashboard (no last workspace = cold start)
-        const prefsResponse = await fetch("/api/dashboard/preferences")
-        const prefs = prefsResponse.ok ? await prefsResponse.json() : null
-        console.log("[DashboardInitializer] Preferences:", prefs)
-
-        // Show dashboard on cold start (no last workspace) or if explicitly set
-        const hasLastWorkspace = prefs?.lastWorkspaceId != null
-        const shouldShow = !hasLastWorkspace
-
-        console.log("[DashboardInitializer] Should show dashboard:", shouldShow, "hasLastWorkspace:", hasLastWorkspace)
-        setShowDashboard(shouldShow)
+        // Always show dashboard on app start when feature is enabled
+        // The "Continue" panel will show the last workspace for quick access
+        // This gives users a "home base" to start from each session
+        console.log("[DashboardInitializer] Dashboard enabled, showing dashboard on startup")
+        setShowDashboard(true)
 
         void debugLog({
           component: "DashboardInitializer",
           action: "init_complete",
           metadata: {
             dashboardWorkspaceId: data.dashboardWorkspaceId,
-            hasLastWorkspace,
-            showDashboard: shouldShow,
+            showDashboard: true,
           },
         })
       } catch (err) {
@@ -105,7 +99,23 @@ export function DashboardInitializer({
   // Handle navigation from dashboard to a workspace
   const handleDashboardNavigate = useCallback((entryId: string, workspaceId: string) => {
     console.log("[DashboardInitializer] Navigating to workspace:", workspaceId)
+
+    // Set the active workspace context - this triggers the app to load that workspace
+    setActiveWorkspaceContext(workspaceId)
+
+    // Track the visit in user preferences
+    fetch("/api/dashboard/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lastWorkspaceId: workspaceId }),
+    }).catch((err) => {
+      console.error("[DashboardInitializer] Failed to track workspace visit:", err)
+    })
+
+    // Hide dashboard and show the main app
     setShowDashboard(false)
+
+    // Call optional callbacks
     onNavigateToWorkspace?.(entryId, workspaceId)
     onWorkspaceActivate?.(workspaceId)
   }, [onNavigateToWorkspace, onWorkspaceActivate])

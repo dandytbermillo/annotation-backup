@@ -48,6 +48,7 @@ import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-works
 import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
 import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
+import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import type { AnnotationWorkspaceViewProps } from "@/components/annotation-workspace-view/types"
 import { useOverlayPersistenceRefs } from "@/lib/hooks/annotation/use-overlay-persistence-refs"
 import { useWorkspacePreviewPortal } from "@/lib/hooks/annotation/use-workspace-preview-portal"
@@ -460,6 +461,40 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
     if (!noteWorkspaceV2Enabled) return
     setWorkspaceStoreId(noteWorkspaceState.currentWorkspaceId ?? SHARED_WORKSPACE_ID)
   }, [noteWorkspaceState.currentWorkspaceId, noteWorkspaceV2Enabled])
+
+  // Subscribe to workspace context changes from dashboard navigation
+  // This handles the case where user clicks a workspace link in dashboard (including newly created workspaces)
+  useEffect(() => {
+    if (noteWorkspaceState.isLoading) return
+    if (noteWorkspaceState.workspaces.length === 0) return
+
+    // Handler for context changes
+    const handleContextChange = (workspaceId: string | null) => {
+      if (!workspaceId) return
+      if (workspaceId === noteWorkspaceState.currentWorkspaceId) return
+
+      // Check if this workspace exists in our list
+      const exists = noteWorkspaceState.workspaces.some(ws => ws.id === workspaceId)
+      if (exists) {
+        console.log("[AnnotationAppShell] Activating workspace from context change:", workspaceId)
+        noteWorkspaceState.selectWorkspace(workspaceId)
+      } else {
+        console.log("[AnnotationAppShell] Workspace not in list yet:", workspaceId, "waiting for refresh...")
+      }
+    }
+
+    // Check for pending context on mount
+    const pendingWorkspaceId = getActiveWorkspaceContext()
+    if (pendingWorkspaceId && pendingWorkspaceId !== noteWorkspaceState.currentWorkspaceId) {
+      handleContextChange(pendingWorkspaceId)
+    }
+
+    // Subscribe to future context changes
+    const unsubscribe = subscribeToActiveWorkspaceContext(handleContextChange)
+    return () => {
+      unsubscribe()
+    }
+  }, [noteWorkspaceState.isLoading, noteWorkspaceState.workspaces, noteWorkspaceState.currentWorkspaceId, noteWorkspaceState.selectWorkspace])
 
   const currentNoteWorkspace = useMemo(
     () => noteWorkspaceState.workspaces.find((workspace) => workspace.id === noteWorkspaceState.currentWorkspaceId) ?? null,

@@ -82,6 +82,9 @@ const panelWorkspaceLookup = new Map<string, string>()
 let activeWorkspaceContext: string | null = null
 const workspaceContextListeners = new Set<(workspaceId: string | null) => void>()
 
+// Event listener for workspace list refresh requests
+const workspaceRefreshListeners = new Set<() => void>()
+
 const createWorkspaceState = (workspaceId: string): WorkspaceState => {
   if (!workspaceStates.has(workspaceId)) {
     workspaceStates.set(workspaceId, {
@@ -178,6 +181,29 @@ export function subscribeToActiveWorkspaceContext(listener: (workspaceId: string
   workspaceContextListeners.add(listener)
   return () => {
     workspaceContextListeners.delete(listener)
+  }
+}
+
+/**
+ * Request that workspace list be refreshed (e.g., after external creation)
+ */
+export function requestWorkspaceListRefresh() {
+  workspaceRefreshListeners.forEach((listener) => {
+    try {
+      listener()
+    } catch {
+      // Ignore listener errors
+    }
+  })
+}
+
+/**
+ * Subscribe to workspace list refresh requests
+ */
+export function subscribeToWorkspaceListRefresh(listener: () => void) {
+  workspaceRefreshListeners.add(listener)
+  return () => {
+    workspaceRefreshListeners.delete(listener)
   }
 }
 

@@ -18,6 +18,9 @@ async function ensureSchemaReady(): Promise<void> {
   }
   schemaReadyPromise = (async () => {
     await serverPool.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`)
+    // Note: The actual table schema is managed by migrations.
+    // This CREATE TABLE is kept for backwards compatibility but the real schema
+    // includes item_id and other columns added by migrations.
     await serverPool.query(`
       CREATE TABLE IF NOT EXISTS note_workspaces (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,10 +33,12 @@ async function ensureSchemaReady(): Promise<void> {
         is_default BOOLEAN NOT NULL DEFAULT FALSE
       )
     `)
+    // Use the per-entry unique constraint (one default per user+item)
+    // This replaces the old per-user constraint
     await serverPool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS note_workspaces_unique_default_per_user
-        ON note_workspaces(user_id)
-        WHERE is_default
+      CREATE UNIQUE INDEX IF NOT EXISTS note_workspaces_unique_default_per_entry
+        ON note_workspaces(user_id, item_id)
+        WHERE is_default AND item_id IS NOT NULL
     `)
     await serverPool.query(`
       CREATE INDEX IF NOT EXISTS note_workspaces_open_notes_idx
@@ -56,9 +61,98 @@ type NoteWorkspaceRow = {
   updated_at: string | Date
   is_default: boolean
   note_count: number | string | null
+  item_id?: string
 }
 
 const DEFAULT_WORKSPACE_NAME = "Default Workspace"
+
+// Default item ID for workspaces created without a specific entry
+// This is the "Legacy Workspaces" folder under the user's home
+const DEFAULT_LEGACY_WORKSPACES_PATH = '/knowledge-base/home-00000000-0000-0000-0000-000000000000/legacy-workspaces'
+
+async function getOrCreateLegacyWorkspacesFolder(userId: string): Promise<string> {
+  // First, try to find existing Legacy Workspaces folder
+  const existing = await serverPool.query<{ id: string }>(
+    `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL LIMIT 1`,
+    [DEFAULT_LEGACY_WORKSPACES_PATH],
+  )
+  if (existing.rows[0]) {
+    return existing.rows[0].id
+  }
+
+  // Create the folder hierarchy if it doesn't exist
+  // First ensure home folder exists
+  const userHomeSlug = `home-${userId}`
+  const userHomePath = `/knowledge-base/${userHomeSlug}`
+
+  // Get or create Knowledge Base root
+  const kbResult = await serverPool.query<{ id: string }>(
+    `SELECT id FROM items WHERE path = '/knowledge-base' AND deleted_at IS NULL LIMIT 1`,
+  )
+  const kbId = kbResult.rows[0]?.id
+  if (!kbId) {
+    throw new Error('Knowledge Base root folder not found')
+  }
+
+  // Get or create user home folder
+  let homeResult = await serverPool.query<{ id: string }>(
+    `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL LIMIT 1`,
+    [userHomePath],
+  )
+  let homeId = homeResult.rows[0]?.id
+  if (!homeId) {
+    const insertHome = await serverPool.query<{ id: string }>(
+      `INSERT INTO items (type, parent_id, path, name, slug)
+       VALUES ('folder', $1, $2, 'Home', $3)
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [kbId, userHomePath, userHomeSlug],
+    )
+    homeId = insertHome.rows[0]?.id
+    if (!homeId) {
+      // Race condition - try to fetch again
+      homeResult = await serverPool.query<{ id: string }>(
+        `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL LIMIT 1`,
+        [userHomePath],
+      )
+      homeId = homeResult.rows[0]?.id
+    }
+  }
+  if (!homeId) {
+    throw new Error('Failed to create or find user home folder')
+  }
+
+  // Get or create Legacy Workspaces folder
+  const legacyPath = `${userHomePath}/legacy-workspaces`
+  let legacyResult = await serverPool.query<{ id: string }>(
+    `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL LIMIT 1`,
+    [legacyPath],
+  )
+  let legacyId = legacyResult.rows[0]?.id
+  if (!legacyId) {
+    const insertLegacy = await serverPool.query<{ id: string }>(
+      `INSERT INTO items (type, parent_id, path, name, slug)
+       VALUES ('folder', $1, $2, 'Legacy Workspaces', 'legacy-workspaces')
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [homeId, legacyPath],
+    )
+    legacyId = insertLegacy.rows[0]?.id
+    if (!legacyId) {
+      // Race condition - try to fetch again
+      legacyResult = await serverPool.query<{ id: string }>(
+        `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL LIMIT 1`,
+        [legacyPath],
+      )
+      legacyId = legacyResult.rows[0]?.id
+    }
+  }
+  if (!legacyId) {
+    throw new Error('Failed to create or find Legacy Workspaces folder')
+  }
+
+  return legacyId
+}
 
 const normalizeTimestamp = (value: string | Date | null | undefined): string => {
   if (!value) {
@@ -208,6 +302,7 @@ const mapRowToRecord = (row: NoteWorkspaceRow): NoteWorkspaceRecord => ({
   updatedAt: normalizeTimestamp(row.updated_at),
   isDefault: row.is_default,
   noteCount: Number(row.note_count ?? 0),
+  itemId: row.item_id,
 })
 
 async function insertWorkspace({
@@ -215,11 +310,13 @@ async function insertWorkspace({
   name,
   payload,
   isDefault,
+  itemId,
 }: {
   userId: string
   name?: string
   payload?: NoteWorkspacePayload
   isDefault: boolean
+  itemId: string
 }): Promise<NoteWorkspaceRecord> {
   await ensureSchemaReady()
   const trimmedName = name?.trim()
@@ -227,11 +324,11 @@ async function insertWorkspace({
     trimmedName && trimmedName.length > 0 ? trimmedName : isDefault ? DEFAULT_WORKSPACE_NAME : "Workspace"
   const normalizedPayload = sanitizePayload(payload ?? DEFAULT_PAYLOAD)
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
-    `INSERT INTO note_workspaces (user_id, name, payload, is_default)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO note_workspaces (user_id, name, payload, is_default, item_id)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
-               jsonb_array_length(payload->'openNotes') AS note_count`,
-    [userId, workspaceName, normalizedPayload, isDefault],
+               jsonb_array_length(payload->'openNotes') AS note_count, item_id`,
+    [userId, workspaceName, normalizedPayload, isDefault, itemId],
   )
   return mapRowToRecord(rows[0])
 }
@@ -253,7 +350,8 @@ async function ensureDefaultWorkspace(userId: string): Promise<void> {
 
   if (anyWorkspace.rowCount === 0) {
     try {
-      await insertWorkspace({ userId, isDefault: true })
+      const itemId = await getOrCreateLegacyWorkspacesFolder(userId)
+      await insertWorkspace({ userId, isDefault: true, itemId })
     } catch (error) {
       const code = (error as { code?: string } | null)?.code
       if (code !== "23505") {
@@ -277,7 +375,7 @@ export async function ensureDefaultWorkspaceRecord(userId: string): Promise<Note
   await ensureDefaultWorkspace(userId)
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
     `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
-            jsonb_array_length(payload->'openNotes') AS note_count
+            jsonb_array_length(payload->'openNotes') AS note_count, item_id
        FROM note_workspaces
       WHERE user_id = $1 AND is_default = TRUE
       LIMIT 1`,
@@ -293,7 +391,7 @@ export async function listNoteWorkspaces(userId: string): Promise<NoteWorkspaceR
   await ensureDefaultWorkspace(userId)
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
     `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
-            jsonb_array_length(payload->'openNotes') AS note_count
+            jsonb_array_length(payload->'openNotes') AS note_count, item_id
        FROM note_workspaces
       WHERE user_id = $1
       ORDER BY is_default DESC, updated_at DESC`,
@@ -302,11 +400,28 @@ export async function listNoteWorkspaces(userId: string): Promise<NoteWorkspaceR
   return rows.map(mapRowToRecord)
 }
 
+/**
+ * List workspaces for a specific item (entry/folder)
+ * Used by Navigator panel to show workspaces when expanding an entry
+ */
+export async function listNoteWorkspacesByItemId(userId: string, itemId: string): Promise<NoteWorkspaceRecord[]> {
+  await ensureSchemaReady()
+  const { rows } = await serverPool.query<NoteWorkspaceRow>(
+    `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
+            jsonb_array_length(payload->'openNotes') AS note_count, item_id
+       FROM note_workspaces
+      WHERE user_id = $1 AND item_id = $2
+      ORDER BY is_default DESC, updated_at DESC`,
+    [userId, itemId],
+  )
+  return rows.map(mapRowToRecord)
+}
+
 export async function getNoteWorkspaceById(userId: string, workspaceId: string): Promise<NoteWorkspaceRecord | null> {
   await ensureSchemaReady()
   const { rows } = await serverPool.query<NoteWorkspaceRow>(
     `SELECT id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
-            jsonb_array_length(payload->'openNotes') AS note_count
+            jsonb_array_length(payload->'openNotes') AS note_count, item_id
        FROM note_workspaces
       WHERE user_id = $1 AND id = $2`,
     [userId, workspaceId],
@@ -320,9 +435,12 @@ export async function createNoteWorkspaceRecord(
   userId: string,
   name: string | undefined,
   payload: NoteWorkspacePayload,
+  itemId?: string,
 ): Promise<NoteWorkspaceRecord> {
   await ensureSchemaReady()
-  return insertWorkspace({ userId, name, payload, isDefault: false })
+  // If no itemId provided, use the Legacy Workspaces folder
+  const resolvedItemId = itemId || await getOrCreateLegacyWorkspacesFolder(userId)
+  return insertWorkspace({ userId, name, payload, isDefault: false, itemId: resolvedItemId })
 }
 
 export async function saveNoteWorkspaceRecord(input: {
@@ -342,7 +460,7 @@ export async function saveNoteWorkspaceRecord(input: {
             updated_at = now()
       WHERE user_id = $3 AND id = $4 AND revision::text = $5
       RETURNING id, name, payload, revision::text AS revision, created_at, updated_at, is_default,
-                jsonb_array_length(payload->'openNotes') AS note_count`,
+                jsonb_array_length(payload->'openNotes') AS note_count, item_id`,
     [normalizedPayload, input.name?.trim() ?? null, input.userId, input.workspaceId, input.revision],
   )
   if (rowCount === 0) {

@@ -14,7 +14,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { ChevronRight, Folder, FolderOpen, FileText, Loader2, RefreshCw } from 'lucide-react'
+import { ChevronRight, Folder, FolderOpen, FileText, Loader2, RefreshCw, Plus, FolderPlus, FilePlus, X } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
@@ -78,6 +78,35 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerHeight, setContainerHeight] = useState(0)
 
+  // Create item state
+  const [showCreateMenu, setShowCreateMenu] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
+  const [createType, setCreateType] = useState<'folder' | 'note' | null>(null)
+  const [newItemName, setNewItemName] = useState('')
+  const [selectedParentId, setSelectedParentId] = useState<string | null>(null)
+  const createMenuRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Close create menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setShowCreateMenu(false)
+      }
+    }
+    if (showCreateMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showCreateMenu])
+
+  // Focus input when creating
+  useEffect(() => {
+    if (createType && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [createType])
+
   // Measure container height for virtual list
   useEffect(() => {
     if (!containerRef.current) return
@@ -138,6 +167,78 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
     entryTreeCache.clear()
     fetchEntries(true)
   }, [fetchEntries])
+
+  // Start creating a new item
+  const startCreate = useCallback((type: 'folder' | 'note') => {
+    setCreateType(type)
+    setNewItemName('')
+    setShowCreateMenu(false)
+    // Use first expanded folder as parent, or find Knowledge Base
+    const knowledgeBase = entries.find(e => e.name === 'Knowledge Base')
+    setSelectedParentId(knowledgeBase?.id || null)
+  }, [entries])
+
+  // Cancel creating
+  const cancelCreate = useCallback(() => {
+    setCreateType(null)
+    setNewItemName('')
+    setSelectedParentId(null)
+  }, [])
+
+  // Create the new item
+  const handleCreate = useCallback(async () => {
+    if (!newItemName.trim() || !createType) return
+
+    setIsCreating(true)
+    try {
+      // Find parent - use Knowledge Base or first folder if no selection
+      let parentId = selectedParentId
+      if (!parentId) {
+        const knowledgeBase = entries.find(e => e.name === 'Knowledge Base')
+        parentId = knowledgeBase?.id || null
+      }
+
+      const response = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newItemName.trim(),
+          type: createType,
+          parentId,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create item')
+      }
+
+      // Clear cache and refresh
+      entryTreeCache.clear()
+      await fetchEntries(true)
+
+      // Expand parent to show new item
+      if (parentId) {
+        setExpandedIds(prev => new Set(prev).add(parentId))
+      }
+
+      // Reset create state
+      cancelCreate()
+    } catch (err) {
+      console.error('[EntryNavigatorPanel] Failed to create item:', err)
+    } finally {
+      setIsCreating(false)
+    }
+  }, [newItemName, createType, selectedParentId, entries, fetchEntries, cancelCreate])
+
+  // Handle Enter key in input
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleCreate()
+    } else if (e.key === 'Escape') {
+      cancelCreate()
+    }
+  }, [handleCreate, cancelCreate])
 
   // Flatten tree for virtual rendering
   const flattenTree = useCallback((
@@ -483,26 +584,114 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
   // Determine if we should use virtual scrolling
   const useVirtualScroll = flatItems.length > VIRTUAL_SCROLL_THRESHOLD
 
-  // Refresh button for header
+  // Header actions with create and refresh buttons
   const headerActions = (
-    <button
-      onClick={handleRefresh}
-      title="Refresh entries"
-      style={{
-        width: 24,
-        height: 24,
-        background: 'transparent',
-        border: 'none',
-        borderRadius: 4,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        color: '#5c6070',
-      }}
-    >
-      <RefreshCw size={12} />
-    </button>
+    <div className="flex items-center gap-1">
+      {/* Create dropdown */}
+      <div className="relative" ref={createMenuRef}>
+        <button
+          onClick={() => setShowCreateMenu(!showCreateMenu)}
+          title="Create new folder or note"
+          style={{
+            width: 24,
+            height: 24,
+            background: showCreateMenu ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+            border: 'none',
+            borderRadius: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            color: showCreateMenu ? '#6366f1' : '#5c6070',
+          }}
+        >
+          <Plus size={14} />
+        </button>
+
+        {showCreateMenu && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 4,
+              background: '#1e222a',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: 8,
+              padding: 4,
+              minWidth: 140,
+              zIndex: 50,
+              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+            }}
+          >
+            <button
+              onClick={() => startCreate('folder')}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 10px',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                color: '#f0f0f0',
+                fontSize: 13,
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <FolderPlus size={14} style={{ color: '#f59e0b' }} />
+              New Folder
+            </button>
+            <button
+              onClick={() => startCreate('note')}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 10px',
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                color: '#f0f0f0',
+                fontSize: 13,
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <FilePlus size={14} style={{ color: '#818cf8' }} />
+              New Note
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Refresh button */}
+      <button
+        onClick={handleRefresh}
+        title="Refresh entries"
+        style={{
+          width: 24,
+          height: 24,
+          background: 'transparent',
+          border: 'none',
+          borderRadius: 4,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          color: '#5c6070',
+        }}
+      >
+        <RefreshCw size={12} />
+      </button>
+    </div>
   )
 
   return (
@@ -514,6 +703,88 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
       contentClassName="p-2"
       headerActions={headerActions}
     >
+      {/* Inline create input */}
+      {createType && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '8px 8px',
+            marginBottom: 8,
+            background: 'rgba(99, 102, 241, 0.08)',
+            borderRadius: 8,
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+          }}
+        >
+          {createType === 'folder' ? (
+            <FolderPlus size={14} style={{ color: '#f59e0b', flexShrink: 0 }} />
+          ) : (
+            <FilePlus size={14} style={{ color: '#818cf8', flexShrink: 0 }} />
+          )}
+          <input
+            ref={inputRef}
+            type="text"
+            value={newItemName}
+            onChange={(e) => setNewItemName(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={createType === 'folder' ? 'Folder name...' : 'Note name...'}
+            disabled={isCreating}
+            style={{
+              flex: 1,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: '#f0f0f0',
+              fontSize: 13,
+            }}
+          />
+          {isCreating ? (
+            <Loader2 size={14} className="animate-spin" style={{ color: '#6366f1', flexShrink: 0 }} />
+          ) : (
+            <>
+              <button
+                onClick={handleCreate}
+                disabled={!newItemName.trim()}
+                style={{
+                  width: 24,
+                  height: 24,
+                  background: newItemName.trim() ? '#6366f1' : 'transparent',
+                  border: 'none',
+                  borderRadius: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: newItemName.trim() ? 'pointer' : 'not-allowed',
+                  color: newItemName.trim() ? '#fff' : '#5c6070',
+                  flexShrink: 0,
+                }}
+              >
+                <Plus size={14} />
+              </button>
+              <button
+                onClick={cancelCreate}
+                style={{
+                  width: 24,
+                  height: 24,
+                  background: 'transparent',
+                  border: 'none',
+                  borderRadius: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#5c6070',
+                  flexShrink: 0,
+                }}
+              >
+                <X size={14} />
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <NavigatorPanelSkeleton />
       ) : error ? (

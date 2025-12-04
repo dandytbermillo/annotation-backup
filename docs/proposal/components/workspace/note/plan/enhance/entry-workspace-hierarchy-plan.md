@@ -8,6 +8,8 @@ Extend the live-state system so users can organize work into hierarchical "Entri
 2. Allow each entry to maintain multiple workspaces (Default, Research, Drafts, etc.).
 3. Preserve all runtime/persistence work—switching entries is as seamless as switching workspaces.
 
+> **Quick Links integration:** see `Entry_Workspace_Hierarchy/quick-links-guide.md` for the detailed wiring that makes each Quick Links item open its own entry dashboard + workspace set. That guide builds on the phases below.
+
 ## Phase 1 – Data Model & API
 
 1. **Entry schema reuse**
