@@ -58,6 +58,7 @@ import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-t
 import { useNoteWorkspaces } from "@/lib/hooks/annotation/use-note-workspaces"
 import { isNoteWorkspaceV2Enabled, isNoteWorkspaceLiveStateEnabled } from "@/lib/flags/note"
 import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
+// Entry context is now managed inside useNoteWorkspaces hook
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
 
@@ -1046,6 +1047,9 @@ const initialWorkspaceSyncRef = useRef(false)
 
   const [noteWorkspaceMenuOpen, setNoteWorkspaceMenuOpen] = useState(false)
 
+  // Entry context is now managed inside useNoteWorkspaces hook
+  // Use noteWorkspaceState.currentEntryId and noteWorkspaceState.workspacesForCurrentEntry
+
   const currentWorkspace = useMemo(
     () => workspaces.find(ws => ws.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId]
@@ -1397,7 +1401,7 @@ const initialWorkspaceSyncRef = useRef(false)
         onCreateWorkspace={noteWorkspaceState.createWorkspace}
         disableCreate={noteWorkspaceState.isLoading}
         isListLoading={noteWorkspaceState.isLoading}
-        workspaces={noteWorkspaceState.workspaces}
+        workspaces={noteWorkspaceState.workspacesForCurrentEntry}
         currentWorkspaceId={noteWorkspaceState.currentWorkspaceId}
         deletingWorkspaceId={null}
         onSelectWorkspace={(workspaceId) => {

@@ -9,8 +9,12 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Search, Link, Loader2, X, ChevronRight } from 'lucide-react'
+import { Search, Link, Loader2, X, ChevronRight, Globe, FolderOpen, Filter } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { getActiveEntryContext, subscribeToActiveEntryContext } from '@/lib/entry'
+import { debugLog } from '@/lib/utils/debug-logger'
+
+type FilterMode = 'current_entry' | 'all_entries'
 
 export interface WorkspaceOption {
   id: string
@@ -47,21 +51,63 @@ export function WorkspaceLinkPicker({
   const [filteredWorkspaces, setFilteredWorkspaces] = useState<WorkspaceOption[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [filterMode, setFilterMode] = useState<FilterMode>('current_entry')
+  const [currentEntryId, setCurrentEntryId] = useState<string | null>(() => getActiveEntryContext())
+  const [currentEntryName, setCurrentEntryName] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Fetch workspaces on open
+  // Subscribe to entry context changes
+  useEffect(() => {
+    const unsubscribe = subscribeToActiveEntryContext((entryId) => {
+      debugLog({
+        component: 'WorkspaceLinkPicker',
+        action: 'entry_context_changed',
+        metadata: { newEntryId: entryId, previousEntryId: currentEntryId },
+      })
+      setCurrentEntryId(entryId)
+    })
+    return () => { unsubscribe() }
+  }, [currentEntryId])
+
+  // Fetch workspaces on open or when filter mode changes
   useEffect(() => {
     if (!isOpen) return
 
     const fetchWorkspaces = async () => {
       try {
         setIsLoading(true)
-        const response = await fetch('/api/dashboard/workspaces/search')
+        // Build query params based on filter mode
+        const params = new URLSearchParams()
+        if (filterMode === 'current_entry' && currentEntryId) {
+          params.set('entryId', currentEntryId)
+        }
+        const url = params.toString()
+          ? `/api/dashboard/workspaces/search?${params.toString()}`
+          : '/api/dashboard/workspaces/search'
+
+        debugLog({
+          component: 'WorkspaceLinkPicker',
+          action: 'fetching_workspaces',
+          metadata: { filterMode, currentEntryId, url },
+        })
+        const response = await fetch(url)
         if (response.ok) {
           const data = await response.json()
+          debugLog({
+            component: 'WorkspaceLinkPicker',
+            action: 'workspaces_fetched',
+            metadata: { filterMode, currentEntryId, workspaceCount: data.workspaces?.length ?? 0 },
+          })
           setWorkspaces(data.workspaces || [])
           setFilteredWorkspaces(data.workspaces || [])
+          // Update current entry name from first result if available
+          if (data.workspaces?.length > 0 && filterMode === 'current_entry' && currentEntryId) {
+            const firstWs = data.workspaces[0]
+            if (firstWs.entryName) {
+              setCurrentEntryName(firstWs.entryName)
+            }
+          }
         }
       } catch (err) {
         console.error('[WorkspaceLinkPicker] Failed to fetch workspaces:', err)
@@ -76,7 +122,7 @@ export function WorkspaceLinkPicker({
 
     // Focus input after render
     setTimeout(() => inputRef.current?.focus(), 50)
-  }, [isOpen])
+  }, [isOpen, filterMode, currentEntryId])
 
   // Filter workspaces based on search query
   useEffect(() => {
@@ -208,6 +254,50 @@ export function WorkspaceLinkPicker({
               outline: 'none',
             }}
           />
+        </div>
+
+        {/* Filter toggle */}
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            onClick={() => {
+              debugLog({
+                component: 'WorkspaceLinkPicker',
+                action: 'filter_mode_changed',
+                metadata: { newFilterMode: 'current_entry', previousFilterMode: filterMode, currentEntryId },
+              })
+              setFilterMode('current_entry')
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors"
+            style={{
+              background: filterMode === 'current_entry' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+              color: filterMode === 'current_entry' ? '#818cf8' : '#8b8fa3',
+              border: filterMode === 'current_entry' ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
+              cursor: 'pointer',
+            }}
+          >
+            <FolderOpen size={12} />
+            {currentEntryId ? (currentEntryName || 'Current Entry') : 'No Entry'}
+          </button>
+          <button
+            onClick={() => {
+              debugLog({
+                component: 'WorkspaceLinkPicker',
+                action: 'filter_mode_changed',
+                metadata: { newFilterMode: 'all_entries', previousFilterMode: filterMode, currentEntryId },
+              })
+              setFilterMode('all_entries')
+            }}
+            className="flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors"
+            style={{
+              background: filterMode === 'all_entries' ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+              color: filterMode === 'all_entries' ? '#818cf8' : '#8b8fa3',
+              border: filterMode === 'all_entries' ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
+              cursor: 'pointer',
+            }}
+          >
+            <Globe size={12} />
+            All Entries
+          </button>
         </div>
       </div>
 

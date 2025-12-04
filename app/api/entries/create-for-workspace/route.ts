@@ -1,0 +1,211 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { serverPool } from '@/lib/db/pool'
+import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
+import { panelTypeRegistry, type PanelTypeId } from '@/lib/dashboard/panel-registry'
+
+/**
+ * POST /api/entries/create-for-workspace
+ * Create an entry for a legacy workspace that doesn't have one
+ * This is used when clicking a Quick Link that points to a workspace without an entry
+ *
+ * Body:
+ * - workspaceId: string - The workspace to create an entry for
+ * - workspaceName: string - The name to use for the entry
+ */
+
+// Default panel layout for new entry dashboards
+const DEFAULT_PANEL_LAYOUT: Array<{
+  panelType: PanelTypeId
+  positionX: number
+  positionY: number
+  width: number
+  height: number
+  title: string
+}> = [
+  { panelType: 'continue', positionX: 40, positionY: 40, width: 320, height: 140, title: 'Continue' },
+  { panelType: 'navigator', positionX: 40, positionY: 200, width: 280, height: 320, title: 'Navigator' },
+  { panelType: 'recent', positionX: 380, positionY: 40, width: 280, height: 220, title: 'Recent' },
+  { panelType: 'quick_capture', positionX: 380, positionY: 280, width: 280, height: 180, title: 'Quick Capture' },
+  { panelType: 'links_note', positionX: 700, positionY: 40, width: 320, height: 320, title: 'Quick Links' },
+]
+
+export async function POST(request: NextRequest) {
+  const client = await serverPool.connect()
+
+  try {
+    const userId = resolveNoteWorkspaceUserId(request)
+    if (userId === 'invalid') {
+      return NextResponse.json({ error: 'Invalid userId' }, { status: 400 })
+    }
+
+    const body = await request.json()
+    const { workspaceId, workspaceName } = body
+
+    if (!workspaceId || !workspaceName) {
+      return NextResponse.json(
+        { error: 'workspaceId and workspaceName are required' },
+        { status: 400 }
+      )
+    }
+
+    await client.query('BEGIN')
+
+    // Verify workspace exists and get current item_id
+    const workspaceResult = await client.query(
+      `SELECT id, name, item_id FROM note_workspaces WHERE id = $1 AND user_id = $2`,
+      [workspaceId, userId]
+    )
+
+    if (workspaceResult.rows.length === 0) {
+      await client.query('ROLLBACK')
+      return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
+    }
+
+    const workspace = workspaceResult.rows[0]
+
+    // If workspace already has an item_id that's not the Legacy folder, return that entry
+    if (workspace.item_id) {
+      const existingEntry = await client.query(
+        `SELECT id, name, path, parent_id, is_system, created_at, updated_at
+         FROM items WHERE id = $1 AND deleted_at IS NULL`,
+        [workspace.item_id]
+      )
+
+      if (existingEntry.rows.length > 0) {
+        const row = existingEntry.rows[0]
+        // Check if it's not a Legacy Workspaces folder
+        if (row.name !== 'Legacy Workspaces') {
+          await client.query('ROLLBACK')
+          return NextResponse.json({
+            entry: {
+              id: row.id,
+              name: row.name,
+              path: row.path,
+              parentId: row.parent_id,
+              isSystem: row.is_system || false,
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            },
+            alreadyExists: true,
+          })
+        }
+      }
+    }
+
+    // Find or create the Knowledge Base folder as parent
+    let parentId: string | null = null
+    const kbResult = await client.query(
+      `SELECT id FROM items WHERE path = '/knowledge-base' AND deleted_at IS NULL LIMIT 1`
+    )
+    if (kbResult.rows.length > 0) {
+      parentId = kbResult.rows[0].id
+    }
+
+    // Generate unique path for the new entry
+    const basePath = parentId ? '/knowledge-base' : ''
+    let entryPath = `${basePath}/${workspaceName}`
+    let counter = 0
+
+    // Check for path conflicts
+    while (true) {
+      const pathCheck = await client.query(
+        `SELECT id FROM items WHERE path = $1 AND deleted_at IS NULL`,
+        [entryPath]
+      )
+      if (pathCheck.rows.length === 0) break
+      counter++
+      entryPath = `${basePath}/${workspaceName} ${counter}`
+      if (counter > 100) {
+        entryPath = `${basePath}/${workspaceName}-${Date.now()}`
+        break
+      }
+    }
+
+    // Create the entry
+    const entryName = counter > 0 ? `${workspaceName} ${counter}` : workspaceName
+    const createEntryResult = await client.query(
+      `INSERT INTO items (type, parent_id, path, name, is_system, created_at, updated_at)
+       VALUES ('folder', $1, $2, $3, false, NOW(), NOW())
+       RETURNING id, name, path, parent_id, is_system, created_at, updated_at`,
+      [parentId, entryPath, entryName]
+    )
+
+    const newEntry = createEntryResult.rows[0]
+
+    // Update the workspace to point to this entry
+    await client.query(
+      `UPDATE note_workspaces SET item_id = $1, updated_at = NOW() WHERE id = $2`,
+      [newEntry.id, workspaceId]
+    )
+
+    // Create a Dashboard workspace for this entry
+    const defaultPayload = {
+      schemaVersion: '1.1.0',
+      openNotes: [],
+      activeNoteId: null,
+      camera: { x: 0, y: 0, scale: 1 },
+      panels: [],
+      components: [],
+    }
+
+    const dashboardResult = await client.query(
+      `INSERT INTO note_workspaces (user_id, name, payload, item_id, is_default)
+       VALUES ($1, 'Dashboard', $2::jsonb, $3, true)
+       RETURNING id`,
+      [userId, JSON.stringify(defaultPayload), newEntry.id]
+    )
+
+    const dashboardWorkspaceId = dashboardResult.rows[0].id
+
+    // Seed dashboard panels
+    for (const panel of DEFAULT_PANEL_LAYOUT) {
+      const panelDef = panelTypeRegistry[panel.panelType]
+      await client.query(
+        `INSERT INTO workspace_panels (
+          workspace_id, panel_type, position_x, position_y, width, height, title, config
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          dashboardWorkspaceId,
+          panel.panelType,
+          panel.positionX,
+          panel.positionY,
+          panel.width,
+          panel.height,
+          panel.title,
+          JSON.stringify(panelDef?.defaultConfig || {}),
+        ]
+      )
+    }
+
+    // Make original workspace non-default (Dashboard is now default)
+    await client.query(
+      `UPDATE note_workspaces SET is_default = false WHERE id = $1`,
+      [workspaceId]
+    )
+
+    await client.query('COMMIT')
+
+    return NextResponse.json({
+      entry: {
+        id: newEntry.id,
+        name: newEntry.name,
+        path: newEntry.path,
+        parentId: newEntry.parent_id,
+        isSystem: newEntry.is_system || false,
+        createdAt: newEntry.created_at,
+        updatedAt: newEntry.updated_at,
+      },
+      dashboardWorkspaceId,
+      defaultWorkspaceId: workspaceId,
+    })
+  } catch (error) {
+    await client.query('ROLLBACK')
+    console.error('[entries/create-for-workspace] Error:', error)
+    return NextResponse.json(
+      { error: 'Failed to create entry for workspace' },
+      { status: 500 }
+    )
+  } finally {
+    client.release()
+  }
+}

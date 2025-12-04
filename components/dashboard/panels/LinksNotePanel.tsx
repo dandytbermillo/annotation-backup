@@ -7,7 +7,12 @@
  * A contenteditable note panel with highlight-to-link feature:
  * - Select text to show "Link to Workspace" toolbar
  * - Click to open workspace picker
- * - Creates clickable workspace links
+ * - Creates clickable workspace links with entry context
+ *
+ * Updated for Entry-Workspace Hierarchy:
+ * - Links store both entryId and workspaceId
+ * - Creates new entry when clicking "+ Create Workspace"
+ * - Sets entry context before navigating
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react'
@@ -15,12 +20,20 @@ import { Link2, Search, X, Plus, Loader2 } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { getPanelType, type BasePanelProps } from '@/lib/dashboard/panel-registry'
 import { requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
+import {
+  setActiveEntryContext,
+  getActiveEntryContext,
+  createEntryForWorkspace,
+  createWorkspaceForEntry,
+} from '@/lib/entry'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface WorkspaceOption {
   id: string
   name: string
   entryId: string
   entryName: string
+  isDefault?: boolean
 }
 
 export function LinksNotePanel({
@@ -42,6 +55,7 @@ export function LinksNotePanel({
   const [isSearching, setIsSearching] = useState(false)
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false)
   const [selectedText, setSelectedText] = useState('') // Store text as string to preserve it
+  const [filterByEntry, setFilterByEntry] = useState(true) // Default to filtering by current entry
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Load initial content
@@ -51,13 +65,35 @@ export function LinksNotePanel({
     }
   }, [])
 
-  // Search workspaces
-  const searchWorkspaces = useCallback(async (query: string) => {
+  // Search workspaces (with optional entry filtering)
+  const searchWorkspaces = useCallback(async (query: string, shouldFilterByEntry: boolean = true) => {
     setIsSearching(true)
     try {
-      const response = await fetch(`/api/dashboard/workspaces/search?q=${encodeURIComponent(query)}&limit=20`)
+      const params = new URLSearchParams()
+      if (query) params.set('q', query)
+      params.set('limit', '20')
+
+      // Filter by current entry if enabled
+      const currentEntryId = getActiveEntryContext()
+      if (shouldFilterByEntry && currentEntryId) {
+        params.set('entryId', currentEntryId)
+      }
+
+      const url = `/api/dashboard/workspaces/search?${params.toString()}`
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'searching_workspaces',
+        metadata: { query, filterByEntry: shouldFilterByEntry, currentEntryId, url },
+      })
+
+      const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'workspaces_loaded',
+          metadata: { workspaceCount: data.workspaces?.length ?? 0, filterByEntry: shouldFilterByEntry },
+        })
         setWorkspaces(data.workspaces || [])
       }
     } catch (err) {
@@ -67,23 +103,23 @@ export function LinksNotePanel({
     }
   }, [])
 
-  // Load workspaces when picker opens
+  // Load workspaces when picker opens or filter mode changes
   useEffect(() => {
     if (showPicker) {
-      searchWorkspaces('')
+      searchWorkspaces('', filterByEntry)
       setTimeout(() => searchInputRef.current?.focus(), 100)
     }
-  }, [showPicker, searchWorkspaces])
+  }, [showPicker, filterByEntry, searchWorkspaces])
 
   // Handle search input
   useEffect(() => {
     const timer = setTimeout(() => {
       if (showPicker) {
-        searchWorkspaces(searchQuery)
+        searchWorkspaces(searchQuery, filterByEntry)
       }
     }, 200)
     return () => clearTimeout(timer)
-  }, [searchQuery, showPicker, searchWorkspaces])
+  }, [searchQuery, showPicker, filterByEntry, searchWorkspaces])
 
   // Handle text selection
   const handleMouseUp = useCallback(() => {
@@ -117,12 +153,53 @@ export function LinksNotePanel({
     setShowLinkToolbar(true)
   }, [])
 
-  // Handle workspace link click - navigate
+  // Handle workspace link click - navigate with entry context
   const handleLinkClick = useCallback(async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement
     if (target.classList.contains('workspace-link')) {
       e.preventDefault()
+
+      // Get IDs from link attributes (preferred) or fallback to search
+      let entryId = target.getAttribute('data-entry-id')
+      let workspaceId = target.getAttribute('data-workspace-id')
       const workspaceName = target.getAttribute('data-workspace') || target.textContent
+
+      // If we have both IDs, navigate directly
+      if (entryId && workspaceId) {
+        console.log('[LinksNotePanel] Navigating with stored IDs:', { entryId, workspaceId })
+
+        // Handle legacy workspace (no entry) - create entry for it
+        if (!entryId && workspaceId && workspaceName) {
+          console.log('[LinksNotePanel] Legacy workspace detected, creating entry...')
+          try {
+            const result = await createEntryForWorkspace(workspaceId, workspaceName)
+            if (result) {
+              entryId = result.entry.id
+              // Update the link element with the new entry ID
+              target.setAttribute('data-entry-id', entryId)
+              target.setAttribute('data-entry-name', result.entry.name)
+              // Save updated content
+              if (contentRef.current) {
+                onConfigChange?.({ content: contentRef.current.innerHTML })
+              }
+            }
+          } catch (err) {
+            console.error('[LinksNotePanel] Failed to create entry for workspace:', err)
+          }
+        }
+
+        // Set entry context before navigating
+        if (entryId) {
+          setActiveEntryContext(entryId)
+        }
+
+        if (onNavigate) {
+          onNavigate(entryId || '', workspaceId)
+        }
+        return
+      }
+
+      // Fallback: search for workspace by name
       if (!workspaceName) return
 
       try {
@@ -133,25 +210,42 @@ export function LinksNotePanel({
             (ws: WorkspaceOption) => ws.name.toLowerCase() === workspaceName.toLowerCase()
           ) || data.workspaces?.[0]
 
-          if (workspace && onNavigate) {
-            onNavigate(workspace.entryId || '', workspace.id)
+          if (workspace) {
+            // Update link with found IDs for future clicks
+            target.setAttribute('data-workspace-id', workspace.id)
+            target.setAttribute('data-entry-id', workspace.entryId || '')
+            target.setAttribute('data-entry-name', workspace.entryName || '')
+            if (contentRef.current) {
+              onConfigChange?.({ content: contentRef.current.innerHTML })
+            }
+
+            // Set entry context and navigate
+            if (workspace.entryId) {
+              setActiveEntryContext(workspace.entryId)
+            }
+
+            if (onNavigate) {
+              onNavigate(workspace.entryId || '', workspace.id)
+            }
           }
         }
       } catch (err) {
         console.error('[LinksNotePanel] Navigation error:', err)
       }
     }
-  }, [onNavigate])
+  }, [onNavigate, onConfigChange])
 
   // Create workspace link from selection
   const createLink = useCallback((workspace: WorkspaceOption) => {
     if (!selectedRange || !contentRef.current) return
 
-    // Create the link element
+    // Create the link element with both entry and workspace IDs
     const link = document.createElement('span')
     link.className = 'workspace-link'
     link.setAttribute('data-workspace', workspace.name)
     link.setAttribute('data-workspace-id', workspace.id)
+    link.setAttribute('data-entry-id', workspace.entryId || '')
+    link.setAttribute('data-entry-name', workspace.entryName || '')
     link.textContent = selectedRange.toString()
 
     // Replace selection with link
@@ -172,7 +266,7 @@ export function LinksNotePanel({
     }
   }, [selectedRange, onConfigChange])
 
-  // Create a new workspace and link to it
+  // Create a new workspace (with entry) and link to it
   const createNewWorkspace = useCallback(async () => {
     console.log('[LinksNotePanel] createNewWorkspace called', { selectedRange, selectedText, contentRef: !!contentRef.current })
 
@@ -182,77 +276,92 @@ export function LinksNotePanel({
     }
 
     const workspaceName = selectedText.trim() || 'New Workspace'
-    console.log('[LinksNotePanel] Creating workspace:', workspaceName)
+    console.log('[LinksNotePanel] Creating entry and workspace:', workspaceName)
 
     setIsCreatingWorkspace(true)
     try {
-      // Create the workspace via API
-      const response = await fetch('/api/note-workspaces', {
+      // Step 1: Create a basic workspace first (will go to Legacy Workspaces)
+      const wsResponse = await fetch('/api/note-workspaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: workspaceName }),
       })
 
-      console.log('[LinksNotePanel] API response status:', response.status)
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
-        console.error('[LinksNotePanel] API error:', errorData)
+      if (!wsResponse.ok) {
+        const errorData = await wsResponse.json().catch(() => ({ error: 'Unknown error' }))
         throw new Error(errorData.details || errorData.error || 'Failed to create workspace')
       }
 
-      const data = await response.json()
-      console.log('[LinksNotePanel] Created workspace:', data)
-      const newWorkspace = data.workspace
+      const wsData = await wsResponse.json()
+      const newWorkspace = wsData.workspace
+      console.log('[LinksNotePanel] Created workspace:', newWorkspace.id)
 
-      if (newWorkspace) {
-        // Create the link element
-        const link = document.createElement('span')
-        link.className = 'workspace-link'
-        link.setAttribute('data-workspace', newWorkspace.name)
-        link.setAttribute('data-workspace-id', newWorkspace.id)
-        link.textContent = selectedText.trim() || newWorkspace.name
+      // Step 2: Create an entry for this workspace (this also seeds a dashboard)
+      let entryId = newWorkspace.itemId
+      let entryName = workspaceName
 
-        // Try to replace selection with link if range is still valid
-        if (selectedRange) {
-          try {
-            selectedRange.deleteContents()
-            selectedRange.insertNode(link)
-          } catch (rangeErr) {
-            console.warn('[LinksNotePanel] Range invalid, appending link instead:', rangeErr)
-            // Fallback: append link at end of content
-            contentRef.current.appendChild(document.createTextNode(' '))
-            contentRef.current.appendChild(link)
-          }
-        } else {
-          // No range, append at end
+      try {
+        const entryResult = await createEntryForWorkspace(newWorkspace.id, workspaceName)
+        if (entryResult) {
+          entryId = entryResult.entry.id
+          entryName = entryResult.entry.name
+          console.log('[LinksNotePanel] Created entry:', entryId)
+        }
+      } catch (entryErr) {
+        console.warn('[LinksNotePanel] Failed to create entry, continuing with workspace only:', entryErr)
+      }
+
+      // Create the link element with both entry and workspace IDs
+      const link = document.createElement('span')
+      link.className = 'workspace-link'
+      link.setAttribute('data-workspace', newWorkspace.name)
+      link.setAttribute('data-workspace-id', newWorkspace.id)
+      link.setAttribute('data-entry-id', entryId || '')
+      link.setAttribute('data-entry-name', entryName || '')
+      link.textContent = selectedText.trim() || newWorkspace.name
+
+      // Try to replace selection with link if range is still valid
+      if (selectedRange) {
+        try {
+          selectedRange.deleteContents()
+          selectedRange.insertNode(link)
+        } catch (rangeErr) {
+          console.warn('[LinksNotePanel] Range invalid, appending link instead:', rangeErr)
           contentRef.current.appendChild(document.createTextNode(' '))
           contentRef.current.appendChild(link)
         }
-
-        // Clear selection state
-        window.getSelection()?.removeAllRanges()
-        setShowLinkToolbar(false)
-        setShowPicker(false)
-        setSelectedRange(null)
-        setSelectedText('')
-        setSearchQuery('')
-
-        // Save content
-        onConfigChange?.({ content: contentRef.current.innerHTML })
-
-        // Request workspace list refresh so the hook picks up the new workspace
-        console.log('[LinksNotePanel] Requesting workspace list refresh...')
-        requestWorkspaceListRefresh()
-
-        // Wait a moment for the refresh to complete, then navigate
-        setTimeout(() => {
-          if (onNavigate) {
-            console.log('[LinksNotePanel] Navigating to new workspace:', newWorkspace.id)
-            onNavigate(newWorkspace.itemId || '', newWorkspace.id)
-          }
-        }, 300)
+      } else {
+        contentRef.current.appendChild(document.createTextNode(' '))
+        contentRef.current.appendChild(link)
       }
+
+      // Clear selection state
+      window.getSelection()?.removeAllRanges()
+      setShowLinkToolbar(false)
+      setShowPicker(false)
+      setSelectedRange(null)
+      setSelectedText('')
+      setSearchQuery('')
+
+      // Save content
+      onConfigChange?.({ content: contentRef.current.innerHTML })
+
+      // Request workspace list refresh
+      console.log('[LinksNotePanel] Requesting workspace list refresh...')
+      requestWorkspaceListRefresh()
+
+      // Set entry context and navigate to the entry's dashboard
+      if (entryId) {
+        setActiveEntryContext(entryId)
+      }
+
+      // Navigate after a short delay to allow refresh
+      setTimeout(() => {
+        if (onNavigate) {
+          console.log('[LinksNotePanel] Navigating to entry dashboard:', { entryId, workspaceId: newWorkspace.id })
+          onNavigate(entryId || '', newWorkspace.id)
+        }
+      }, 300)
     } catch (err) {
       console.error('[LinksNotePanel] Failed to create workspace:', err)
     } finally {
@@ -563,6 +672,51 @@ export function LinksNotePanel({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+              </div>
+              {/* Entry filter toggle */}
+              <div style={{ display: 'flex', gap: '8px', padding: '8px 12px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <button
+                  onClick={() => {
+                    debugLog({
+                      component: 'LinksNotePanel',
+                      action: 'filter_toggle_clicked',
+                      metadata: { newFilterByEntry: true, previousFilterByEntry: filterByEntry },
+                    })
+                    setFilterByEntry(true)
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: '11px',
+                    borderRadius: '4px',
+                    border: filterByEntry ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
+                    background: filterByEntry ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                    color: filterByEntry ? '#818cf8' : '#8b8fa3',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Current Entry
+                </button>
+                <button
+                  onClick={() => {
+                    debugLog({
+                      component: 'LinksNotePanel',
+                      action: 'filter_toggle_clicked',
+                      metadata: { newFilterByEntry: false, previousFilterByEntry: filterByEntry },
+                    })
+                    setFilterByEntry(false)
+                  }}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: '11px',
+                    borderRadius: '4px',
+                    border: !filterByEntry ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
+                    background: !filterByEntry ? 'rgba(99, 102, 241, 0.2)' : 'transparent',
+                    color: !filterByEntry ? '#818cf8' : '#8b8fa3',
+                    cursor: 'pointer',
+                  }}
+                >
+                  All Entries
+                </button>
               </div>
               <div className="workspace-picker-list">
                 {/* Create new workspace button */}

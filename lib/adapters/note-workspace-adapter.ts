@@ -7,6 +7,7 @@ export type NoteWorkspaceSummary = {
   updatedAt: string
   noteCount: number
   revision: string
+  itemId?: string
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -35,10 +36,11 @@ export class NoteWorkspaceAdapter {
       updatedAt: workspace.updatedAt,
       noteCount: workspace.noteCount,
       revision: workspace.revision,
+      itemId: workspace.itemId,
     }))
   }
 
-  async createWorkspace(input: { name?: string; payload: NoteWorkspacePayload }): Promise<NoteWorkspaceRecord> {
+  async createWorkspace(input: { name?: string; payload: NoteWorkspacePayload; itemId?: string }): Promise<NoteWorkspaceRecord> {
     const response = await fetch(this.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

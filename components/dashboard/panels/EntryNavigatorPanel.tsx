@@ -20,6 +20,8 @@ import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { cn } from '@/lib/utils'
 import { setActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+import { getActiveEntryContext, setActiveEntryContext, subscribeToActiveEntryContext } from '@/lib/entry'
+import { debugLog } from '@/lib/utils/debug-logger'
 import { VirtualList } from '@/components/canvas/VirtualList'
 import { NavigatorPanelSkeleton } from './PanelSkeletons'
 
@@ -78,6 +80,9 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerHeight, setContainerHeight] = useState(0)
 
+  // Track active entry for highlighting
+  const [activeEntryId, setActiveEntryId] = useState<string | null>(() => getActiveEntryContext())
+
   // Create item state
   const [showCreateMenu, setShowCreateMenu] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
@@ -86,6 +91,23 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
   const [selectedParentId, setSelectedParentId] = useState<string | null>(null)
   const createMenuRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Subscribe to active entry context changes for highlighting
+  useEffect(() => {
+    const unsubscribe = subscribeToActiveEntryContext((entryId) => {
+      debugLog({
+        component: 'EntryNavigatorPanel',
+        action: 'entry_context_changed',
+        metadata: { newEntryId: entryId, previousEntryId: activeEntryId },
+      })
+      setActiveEntryId(entryId)
+      // Auto-expand the active entry's parent chain if needed
+      if (entryId) {
+        setExpandedIds(prev => new Set(prev).add(entryId))
+      }
+    })
+    return () => { unsubscribe() }
+  }, [activeEntryId])
 
   // Close create menu when clicking outside
   useEffect(() => {
@@ -360,9 +382,16 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
   }, [expandedIds, config, onConfigChange, fetchChildren, fetchWorkspaces])
 
   const handleWorkspaceClick = useCallback((workspaceId: string, entryId: string) => {
+    debugLog({
+      component: 'EntryNavigatorPanel',
+      action: 'workspace_clicked',
+      metadata: { workspaceId, entryId, previousActiveEntry: activeEntryId },
+    })
+    // Set entry context first, then workspace context
+    setActiveEntryContext(entryId)
     setActiveWorkspaceContext(workspaceId)
     onNavigate?.(entryId, workspaceId)
-  }, [onNavigate])
+  }, [onNavigate, activeEntryId])
 
   // Helper to update an entry in the tree
   const updateEntryInTree = (
@@ -431,6 +460,7 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
       const isExpanded = expandedIds.has(entry.id)
       const isLoadingEntry = loadingChildren.has(entry.id)
       const hasChildren = entry.type === 'folder' || (entry.workspaces && entry.workspaces.length > 0)
+      const isActiveEntry = entry.id === activeEntryId
 
       return (
         <button
@@ -441,14 +471,18 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
             paddingRight: 8,
             paddingTop: 4,
             paddingBottom: 4,
-            background: 'transparent',
-            border: 'none',
+            background: isActiveEntry ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+            border: isActiveEntry ? '1px solid rgba(99, 102, 241, 0.3)' : 'none',
             borderRadius: 6,
             cursor: 'pointer',
-            transition: 'background 0.15s ease',
+            transition: 'background 0.15s ease, border 0.15s ease',
           }}
-          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
-          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          onMouseEnter={(e) => {
+            if (!isActiveEntry) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
+          }}
+          onMouseLeave={(e) => {
+            if (!isActiveEntry) e.currentTarget.style.background = 'transparent'
+          }}
         >
           {hasChildren ? (
             isLoadingEntry ? (
@@ -480,13 +514,14 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
     }
 
     return null
-  }, [expandedIds, loadingChildren, toggleExpand, handleWorkspaceClick])
+  }, [expandedIds, loadingChildren, toggleExpand, handleWorkspaceClick, activeEntryId])
 
   // Render entry recursively (for non-virtual rendering of small trees)
   const renderEntry = (entry: EntryItem, depth: number = 0) => {
     const isExpanded = expandedIds.has(entry.id)
     const isLoadingEntry = loadingChildren.has(entry.id)
     const hasChildren = entry.type === 'folder' || (entry.workspaces && entry.workspaces.length > 0)
+    const isActiveEntry = entry.id === activeEntryId
 
     return (
       <div key={entry.id}>
@@ -498,14 +533,18 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
             paddingRight: 8,
             paddingTop: 6,
             paddingBottom: 6,
-            background: 'transparent',
-            border: 'none',
+            background: isActiveEntry ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+            border: isActiveEntry ? '1px solid rgba(99, 102, 241, 0.3)' : 'none',
             borderRadius: 6,
             cursor: 'pointer',
-            transition: 'background 0.15s ease',
+            transition: 'background 0.15s ease, border 0.15s ease',
           }}
-          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
-          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          onMouseEnter={(e) => {
+            if (!isActiveEntry) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
+          }}
+          onMouseLeave={(e) => {
+            if (!isActiveEntry) e.currentTarget.style.background = 'transparent'
+          }}
         >
           {hasChildren ? (
             isLoadingEntry ? (

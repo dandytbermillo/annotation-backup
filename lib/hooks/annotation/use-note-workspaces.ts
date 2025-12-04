@@ -68,6 +68,11 @@ import {
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
 import { debugLog } from "@/lib/utils/debug-logger"
+import {
+  getActiveEntryContext,
+  subscribeToActiveEntryContext,
+  setActiveEntryContext,
+} from "@/lib/entry"
 
 const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
 // Enable workspace debug logging; can be toggled at runtime if needed.
@@ -285,10 +290,13 @@ type UseNoteWorkspaceResult = {
   featureEnabled: boolean
   isUnavailable: boolean
   workspaces: NoteWorkspaceSummary[]
+  workspacesForCurrentEntry: NoteWorkspaceSummary[]
   isLoading: boolean
   statusHelperText: string | null
   currentWorkspaceId: string | null
   targetWorkspaceId: string | null
+  currentEntryId: string | null
+  setCurrentEntryId: (entryId: string | null) => void
   snapshotRevision: number
   selectWorkspace: (workspaceId: string) => void
   createWorkspace: () => void
@@ -362,6 +370,9 @@ export function useNoteWorkspaces({
   const isHydratingRef = useRef(false)
   const lastCameraRef = useRef(DEFAULT_CAMERA)
   const [isUnavailable, setIsUnavailable] = useState(false)
+  // Entry context state - tracks which entry (item) the user is working in
+  const [currentEntryId, setCurrentEntryIdState] = useState<string | null>(() => getActiveEntryContext())
+  const previousEntryIdRef = useRef<string | null>(currentEntryId)
   const featureEnabled = flagEnabled && !isUnavailable
   const unavailableNoticeShownRef = useRef(false)
   const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
@@ -395,6 +406,17 @@ export function useNoteWorkspaces({
   )
   const targetWorkspaceId = pendingWorkspaceId ?? currentWorkspaceId
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
+
+  // Filter workspaces by current entry context
+  const workspacesForCurrentEntry = useMemo(() => {
+    if (!currentEntryId) {
+      // No entry selected - return all workspaces
+      return workspaces
+    }
+    const filtered = workspaces.filter((ws) => ws.itemId === currentEntryId)
+    // If no workspaces match, fall back to all (better UX than empty list)
+    return filtered.length > 0 ? filtered : workspaces
+  }, [workspaces, currentEntryId])
 
   const setWorkspaceNoteMembership = useCallback(
     (
@@ -3468,6 +3490,50 @@ export function useNoteWorkspaces({
     [currentWorkspaceSummaryId, emitDebugLog, persistWorkspaceById],
   )
 
+  // Entry switch handler - flushes dirty workspaces before changing entry
+  const handleEntryChange = useCallback(
+    (newEntryId: string | null) => {
+      const previousEntryId = previousEntryIdRef.current
+      if (previousEntryId === newEntryId) return
+
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "entry_switch",
+        metadata: {
+          previousEntryId,
+          newEntryId,
+          dirtyWorkspaceCount: workspaceDirtyRef.current.size,
+        },
+      })
+
+      // Flush all dirty workspaces from previous entry before switching
+      if (previousEntryId && workspaceDirtyRef.current.size > 0) {
+        flushPendingSave("entry_switch")
+      }
+
+      // Update entry state
+      previousEntryIdRef.current = newEntryId
+      setCurrentEntryIdState(newEntryId)
+      setActiveEntryContext(newEntryId)
+    },
+    [emitDebugLog, flushPendingSave],
+  )
+
+  // Subscribe to external entry context changes (e.g., from Quick Links)
+  useEffect(() => {
+    if (!featureEnabled) return
+
+    const unsubscribe = subscribeToActiveEntryContext((entryId) => {
+      if (entryId !== currentEntryId) {
+        handleEntryChange(entryId)
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [featureEnabled, currentEntryId, handleEntryChange])
+
   const hydrateWorkspace = useCallback(
     async (workspaceId: string) => {
       if (!adapterRef.current) return
@@ -4108,6 +4174,8 @@ export function useNoteWorkspaces({
           panels: [],
           components: [],
         },
+        // Associate new workspace with current entry context
+        itemId: currentEntryId || undefined,
       })
       await ensureRuntimePrepared(workspace.id, "create_workspace")
       setWorkspaces((prev) => [...prev, workspace])
@@ -4130,6 +4198,7 @@ export function useNoteWorkspaces({
     }
   }, [
     commitWorkspaceOpenNotes,
+    currentEntryId,
     emitDebugLog,
     ensureRuntimePrepared,
     featureEnabled,
@@ -4560,10 +4629,13 @@ export function useNoteWorkspaces({
     featureEnabled,
     isUnavailable,
     workspaces,
+    workspacesForCurrentEntry,
     isLoading,
     statusHelperText,
     currentWorkspaceId,
     targetWorkspaceId,
+    currentEntryId,
+    setCurrentEntryId: handleEntryChange,
     snapshotRevision,
     selectWorkspace: handleSelectWorkspace,
     createWorkspace: handleCreateWorkspace,
