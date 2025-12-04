@@ -157,38 +157,42 @@ export function WorkspaceLinkPicker({
   return (
     <div
       ref={containerRef}
-      className={cn(
-        'bg-popover border border-border rounded-lg shadow-lg w-80 max-h-96 overflow-hidden z-50',
-        className
-      )}
-      style={style}
+      className={cn('rounded-lg shadow-lg w-80 max-h-96 overflow-hidden z-50', className)}
+      style={{
+        ...style,
+        background: '#1e222a',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+      }}
       onKeyDown={handleKeyDown}
     >
       {/* Header with search */}
-      <div className="p-3 border-b border-border">
+      <div className="p-3" style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
         <div className="flex items-center gap-2 mb-2">
-          <Link size={14} className="text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">
+          <Link size={14} style={{ color: '#6366f1' }} />
+          <span className="text-sm font-medium" style={{ color: '#f0f0f0' }}>
             Link to Workspace
           </span>
           <button
             onClick={onClose}
-            className="ml-auto p-1 rounded hover:bg-muted text-muted-foreground"
+            className="ml-auto p-1 rounded"
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#5c6070' }}
           >
             <X size={14} />
           </button>
         </div>
 
         {selectedText && (
-          <div className="text-xs text-muted-foreground mb-2 truncate">
-            Link text: <span className="text-foreground">"{selectedText}"</span>
+          <div className="text-xs mb-2 truncate" style={{ color: '#8b8fa3' }}>
+            Link text: <span style={{ color: '#f0f0f0' }}>"{selectedText}"</span>
           </div>
         )}
 
         <div className="relative">
           <Search
             size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2"
+            style={{ color: '#5c6070' }}
           />
           <input
             ref={inputRef}
@@ -196,11 +200,13 @@ export function WorkspaceLinkPicker({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search workspaces..."
-            className={cn(
-              'w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-input bg-background',
-              'placeholder:text-muted-foreground',
-              'focus:outline-none focus:ring-2 focus:ring-ring'
-            )}
+            className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md"
+            style={{
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              color: '#f0f0f0',
+              outline: 'none',
+            }}
           />
         </div>
       </div>
@@ -209,10 +215,10 @@ export function WorkspaceLinkPicker({
       <div className="max-h-64 overflow-y-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <Loader2 size={20} className="animate-spin text-muted-foreground" />
+            <Loader2 size={20} className="animate-spin" style={{ color: '#5c6070' }} />
           </div>
         ) : filteredWorkspaces.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
+          <div className="py-8 text-center text-sm" style={{ color: '#8b8fa3' }}>
             {searchQuery ? 'No workspaces found' : 'No workspaces available'}
           </div>
         ) : (
@@ -224,19 +230,30 @@ export function WorkspaceLinkPicker({
                   onSelect(workspace)
                   onClose()
                 }}
-                className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 text-left rounded-md transition-colors',
-                  index === selectedIndex
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-muted'
-                )}
+                className="w-full flex items-center gap-2 px-3 py-2 text-left rounded-md transition-colors"
+                style={{
+                  background: index === selectedIndex ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                  color: index === selectedIndex ? '#818cf8' : '#f0f0f0',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  if (index !== selectedIndex) {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (index !== selectedIndex) {
+                    e.currentTarget.style.background = 'transparent'
+                  }
+                }}
               >
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">
                     {workspace.name}
                   </div>
                   {workspace.entryName && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1 text-xs" style={{ color: '#5c6070' }}>
                       <span className="truncate">{workspace.entryName}</span>
                       <ChevronRight size={10} />
                       <span className="truncate">{workspace.name}</span>
@@ -244,7 +261,15 @@ export function WorkspaceLinkPicker({
                   )}
                 </div>
                 {index === selectedIndex && (
-                  <kbd className="px-1.5 py-0.5 text-[10px] bg-muted rounded">
+                  <kbd
+                    className="px-1.5 py-0.5 rounded"
+                    style={{
+                      fontSize: 10,
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: '#8b8fa3',
+                    }}
+                  >
                     Enter
                   </kbd>
                 )}
@@ -255,10 +280,31 @@ export function WorkspaceLinkPicker({
       </div>
 
       {/* Footer hint */}
-      <div className="px-3 py-2 border-t border-border text-xs text-muted-foreground">
-        <kbd className="px-1 py-0.5 bg-muted rounded">↑↓</kbd> Navigate{' '}
-        <kbd className="px-1 py-0.5 bg-muted rounded ml-1">Enter</kbd> Select{' '}
-        <kbd className="px-1 py-0.5 bg-muted rounded ml-1">Esc</kbd> Close
+      <div
+        className="px-3 py-2 text-xs"
+        style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', color: '#5c6070' }}
+      >
+        <kbd
+          className="px-1 py-0.5 rounded"
+          style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+        >
+          ↑↓
+        </kbd>{' '}
+        Navigate{' '}
+        <kbd
+          className="px-1 py-0.5 rounded ml-1"
+          style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+        >
+          Enter
+        </kbd>{' '}
+        Select{' '}
+        <kbd
+          className="px-1 py-0.5 rounded ml-1"
+          style={{ background: 'rgba(255, 255, 255, 0.05)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+        >
+          Esc
+        </kbd>{' '}
+        Close
       </div>
     </div>
   )

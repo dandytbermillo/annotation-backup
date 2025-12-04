@@ -9,11 +9,10 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Loader2, CheckCircle, AlertCircle, Settings } from 'lucide-react'
+import { Send, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 interface QuickCaptureConfig extends PanelConfig {
@@ -114,7 +113,7 @@ export function QuickCapturePanel({ panel, onClose, onNavigate, isActive }: Base
       isActive={isActive}
       contentClassName="p-3 flex flex-col"
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-2 flex-1">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3 flex-1">
         <textarea
           ref={textareaRef}
           value={content}
@@ -122,26 +121,33 @@ export function QuickCapturePanel({ panel, onClose, onNavigate, isActive }: Base
           onKeyDown={handleKeyDown}
           placeholder="Capture a quick thought..."
           disabled={status === 'saving'}
-          className={cn(
-            'flex-1 min-h-[60px] px-3 py-2 text-sm rounded-md border border-input bg-background',
-            'placeholder:text-muted-foreground resize-none',
-            'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2',
-            'disabled:cursor-not-allowed disabled:opacity-50'
-          )}
+          className={cn('flex-1 resize-none', status === 'saving' && 'opacity-50 cursor-not-allowed')}
+          style={{
+            width: '100%',
+            minHeight: 80,
+            padding: 12,
+            background: 'rgba(255, 255, 255, 0.03)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            borderRadius: 8,
+            color: '#f0f0f0',
+            fontSize: 13,
+            outline: 'none',
+          }}
         />
 
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between">
           {/* Status indicator */}
           <div className="flex items-center gap-1 text-xs">
             {status === 'success' && (
               <>
-                <CheckCircle size={14} className="text-green-500" />
-                <span className="text-green-600">Saved!</span>
+                <CheckCircle size={14} style={{ color: '#22c55e' }} />
+                <span style={{ color: '#22c55e' }}>Saved!</span>
                 {lastCreatedNoteId && (
                   <button
                     type="button"
                     onClick={handleViewNote}
-                    className="text-primary hover:underline ml-1"
+                    className="ml-1"
+                    style={{ color: '#6366f1', fontSize: 12, background: 'none', border: 'none', cursor: 'pointer' }}
                   >
                     View
                   </button>
@@ -150,39 +156,66 @@ export function QuickCapturePanel({ panel, onClose, onNavigate, isActive }: Base
             )}
             {status === 'error' && (
               <>
-                <AlertCircle size={14} className="text-destructive" />
-                <span className="text-destructive">{errorMessage || 'Error'}</span>
+                <AlertCircle size={14} style={{ color: '#ef4444' }} />
+                <span style={{ color: '#ef4444' }}>{errorMessage || 'Error'}</span>
               </>
             )}
             {status === 'idle' && (
-              <span className="text-muted-foreground">
-                {/* Hint about keyboard shortcut */}
-                <kbd className="px-1 py-0.5 text-[10px] bg-muted rounded">Ctrl</kbd>
+              <span style={{ color: '#5c6070', fontSize: 11 }}>
+                <kbd
+                  className="px-1.5 py-0.5 rounded"
+                  style={{
+                    fontSize: 10,
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                  }}
+                >
+                  Ctrl
+                </kbd>
                 {' + '}
-                <kbd className="px-1 py-0.5 text-[10px] bg-muted rounded">Enter</kbd>
+                <kbd
+                  className="px-1.5 py-0.5 rounded"
+                  style={{
+                    fontSize: 10,
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                  }}
+                >
+                  Enter
+                </kbd>
                 {' to save'}
               </span>
             )}
           </div>
 
           {/* Submit button */}
-          <Button
+          <button
             type="submit"
-            size="sm"
             disabled={isSubmitDisabled}
+            className="flex items-center gap-1"
+            style={{
+              padding: '7px 14px',
+              borderRadius: 8,
+              background: isSubmitDisabled ? 'rgba(99, 102, 241, 0.3)' : 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              color: isSubmitDisabled ? 'rgba(255, 255, 255, 0.5)' : '#fff',
+              border: 'none',
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: isSubmitDisabled ? 'not-allowed' : 'pointer',
+            }}
           >
             {status === 'saving' ? (
               <>
-                <Loader2 size={14} className="animate-spin mr-1" />
+                <Loader2 size={14} className="animate-spin" />
                 Saving
               </>
             ) : (
               <>
-                <Send size={14} className="mr-1" />
+                <Send size={14} />
                 Capture
               </>
             )}
-          </Button>
+          </button>
         </div>
       </form>
     </BaseDashboardPanel>

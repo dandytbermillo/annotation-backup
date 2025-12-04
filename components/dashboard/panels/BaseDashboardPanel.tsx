@@ -37,24 +37,29 @@ export function BaseDashboardPanel({
 }: BaseDashboardPanelProps) {
   return (
     <div
-      className={cn(
-        'flex flex-col bg-card border border-border rounded-lg shadow-sm overflow-hidden',
-        isActive && 'ring-2 ring-primary/50',
-        className
-      )}
+      className={cn('flex flex-col overflow-hidden h-full', className)}
+      style={{
+        background: '#1e222a',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        borderRadius: 12,
+        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4)',
+        ...(isActive ? { boxShadow: '0 4px 24px rgba(0, 0, 0, 0.4), 0 0 0 2px rgba(99, 102, 241, 0.3)' } : {}),
+      }}
     >
       {/* Header - acts as drag handle */}
       <div
-        className={cn(
-          'dashboard-panel-header flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border cursor-move select-none',
-          headerClassName
-        )}
+        className={cn('flex items-center justify-between cursor-grab select-none', headerClassName)}
+        style={{
+          padding: '10px 14px',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+          borderRadius: '12px 12px 0 0',
+        }}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-base" aria-hidden="true">
+          <span style={{ fontSize: 14, opacity: 0.8 }} aria-hidden="true">
             {panelDef.icon}
           </span>
-          <span className="text-sm font-medium text-foreground truncate">
+          <span className="truncate" style={{ fontSize: 13, fontWeight: 600, color: '#f0f0f0' }}>
             {panel.title || panelDef.name}
           </span>
         </div>
@@ -63,8 +68,19 @@ export function BaseDashboardPanel({
           {showCloseButton && onClose && (
             <button
               onClick={onClose}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
               aria-label={`Close ${panelDef.name} panel`}
+              style={{
+                width: 24,
+                height: 24,
+                background: 'transparent',
+                border: 'none',
+                borderRadius: 4,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: '#5c6070',
+              }}
             >
               <X size={14} />
             </button>
@@ -73,7 +89,10 @@ export function BaseDashboardPanel({
       </div>
 
       {/* Content */}
-      <div className={cn('flex-1 overflow-auto', contentClassName)}>
+      <div
+        className={cn('flex-1 overflow-auto', contentClassName)}
+        style={{ padding: 14, color: '#f0f0f0' }}
+      >
         {children}
       </div>
     </div>

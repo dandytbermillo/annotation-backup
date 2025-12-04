@@ -22,6 +22,7 @@ interface FeatureFlags {
   'offline.swCaching': boolean;
   'offline.conflictUI': boolean;
   'ui.panMode': boolean;
+  'dashboard.homeDashboard': boolean;
 }
 
 // Default feature flag values (all OFF initially)
@@ -30,6 +31,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   'offline.swCaching': false,
   'offline.conflictUI': false,
   'ui.panMode': false,
+  'dashboard.homeDashboard': false,
 };
 
 // Environment-specific overrides
@@ -205,6 +207,18 @@ export const PHASE_ROLLOUT = {
     flags: ['offline.conflictUI'] as const,
     environments: ['dev'], // Start in dev only
     canaryPercentage: 20, // 20% when moving to production
+  },
+  dashboard: {
+    description: 'Home Dashboard (Entry + Workspace Hierarchy)',
+    flags: ['dashboard.homeDashboard'] as const,
+    environments: ['dev'], // Start in dev, then staging, then production
+    canaryPercentage: 20, // 20% when moving to production
+    telemetry: [
+      'dashboard_load_errors',
+      'panel_type_usage',
+      'quick_capture_success_rate',
+      'continue_panel_click_through',
+    ],
   },
 };
 

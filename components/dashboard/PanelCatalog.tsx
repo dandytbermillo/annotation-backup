@@ -10,7 +10,6 @@
 
 import React, { useState } from 'react'
 import { Plus, X, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import {
   getAllPanelTypes,
   getDashboardPanelTypes,
@@ -83,22 +82,45 @@ export function PanelCatalog({
   }
 
   const containerClass = cn(
-    'bg-popover border border-border rounded-lg shadow-lg',
+    'rounded-xl overflow-hidden',
     mode === 'dropdown' && 'w-64 max-h-80 overflow-auto',
     mode === 'modal' && 'w-96 max-h-[80vh] overflow-auto',
     mode === 'inline' && 'w-full'
   )
 
   return (
-    <div className={containerClass}>
+    <div
+      className={containerClass}
+      style={{
+        background: '#1e222a',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+      }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="text-sm font-medium text-foreground">Add Panel</span>
+      <div
+        className="flex items-center justify-between px-3 py-2"
+        style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}
+      >
+        <span className="text-sm font-medium" style={{ color: '#f0f0f0' }}>
+          Add Panel
+        </span>
         {onClose && (
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             aria-label="Close panel catalog"
+            style={{
+              width: 24,
+              height: 24,
+              background: 'transparent',
+              border: 'none',
+              borderRadius: 4,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: '#5c6070',
+            }}
           >
             <X size={14} />
           </button>
@@ -107,8 +129,8 @@ export function PanelCatalog({
 
       {/* Error message */}
       {error && (
-        <div className="px-3 py-2 bg-destructive/10 border-b border-destructive/20">
-          <p className="text-xs text-destructive">{error}</p>
+        <div className="px-3 py-2" style={{ background: 'rgba(239,68,68,0.1)', borderBottom: '1px solid rgba(239,68,68,0.2)' }}>
+          <p className="text-xs" style={{ color: '#ef4444' }}>{error}</p>
         </div>
       )}
 
@@ -120,11 +142,20 @@ export function PanelCatalog({
             onClick={() => handleAddPanel(panelType)}
             disabled={isAdding !== null}
             className={cn(
-              'w-full flex items-start gap-3 p-2 rounded-md text-left transition-colors',
-              'hover:bg-muted/50 focus:bg-muted/50 focus:outline-none',
-              isAdding === panelType.id && 'bg-muted/50',
+              'w-full flex items-start gap-3 p-3 rounded-lg text-left transition-all',
               isAdding !== null && isAdding !== panelType.id && 'opacity-50'
             )}
+            style={{
+              background: isAdding === panelType.id ? 'rgba(255, 255, 255, 0.04)' : 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              if (isAdding !== panelType.id) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
+            }}
+            onMouseLeave={(e) => {
+              if (isAdding !== panelType.id) e.currentTarget.style.background = 'transparent'
+            }}
           >
             {/* Icon */}
             <span className="text-xl shrink-0 mt-0.5">{panelType.icon}</span>
@@ -132,28 +163,28 @@ export function PanelCatalog({
             {/* Info */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-foreground">
+                <span className="text-sm font-medium" style={{ color: '#f0f0f0' }}>
                   {panelType.name}
                 </span>
                 {isAdding === panelType.id && (
-                  <Loader2 size={12} className="animate-spin text-muted-foreground" />
+                  <Loader2 size={12} className="animate-spin" style={{ color: '#5c6070' }} />
                 )}
               </div>
-              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+              <p className="text-xs mt-0.5 line-clamp-2" style={{ color: '#8b8fa3' }}>
                 {panelType.description}
               </p>
             </div>
 
             {/* Add indicator */}
-            <Plus size={16} className="shrink-0 text-muted-foreground mt-0.5" />
+            <Plus size={16} className="shrink-0 mt-0.5" style={{ color: '#5c6070' }} />
           </button>
         ))}
       </div>
 
       {/* Size hints */}
       {mode !== 'dropdown' && (
-        <div className="px-3 py-2 border-t border-border">
-          <p className="text-xs text-muted-foreground">
+        <div className="px-3 py-2" style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)' }}>
+          <p className="text-xs" style={{ color: '#8b8fa3' }}>
             Panels can be resized and repositioned after adding.
           </p>
         </div>
@@ -185,15 +216,24 @@ export function AddPanelButton({
 
   return (
     <div className={cn('relative', className)}>
-      <Button
-        variant="outline"
-        size="sm"
+      <button
         onClick={() => setIsOpen(!isOpen)}
-        className="gap-1"
+        className="flex items-center gap-1.5"
+        style={{
+          padding: '7px 14px',
+          borderRadius: 8,
+          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+          color: '#fff',
+          border: 'none',
+          fontSize: 13,
+          fontWeight: 500,
+          cursor: 'pointer',
+          boxShadow: isOpen ? '0 0 0 2px rgba(99, 102, 241, 0.3)' : 'none',
+        }}
       >
         <Plus size={14} />
         Add Panel
-      </Button>
+      </button>
 
       {isOpen && (
         <>

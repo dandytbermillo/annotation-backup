@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { Clock, Loader2, RefreshCw } from 'lucide-react'
+import { Clock, RefreshCw } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
@@ -96,8 +96,19 @@ export function RecentPanel({ panel, onClose, onNavigate, isActive }: BasePanelP
     <button
       onClick={() => fetchRecentWorkspaces()}
       disabled={isLoading}
-      className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
       aria-label="Refresh recent workspaces"
+      style={{
+        width: 24,
+        height: 24,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: 4,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        color: '#5c6070',
+      }}
     >
       <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
     </button>
@@ -110,50 +121,87 @@ export function RecentPanel({ panel, onClose, onNavigate, isActive }: BasePanelP
       onClose={onClose}
       isActive={isActive}
       headerActions={headerActions}
-      contentClassName="p-2"
+      contentClassName="p-3"
     >
       {isLoading ? (
         <div className="flex items-center justify-center h-full min-h-[80px]">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          <div
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.1)',
+              borderTopColor: '#6366f1',
+              animation: 'spin 1s linear infinite',
+            }}
+          />
         </div>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center h-full min-h-[80px] text-center p-4">
-          <p className="text-sm text-muted-foreground">{error}</p>
+        <div
+          className="flex flex-col items-center justify-center text-center min-h-[80px]"
+          style={{ color: '#8b8fa3' }}
+        >
+          <p style={{ fontSize: 12 }}>{error}</p>
         </div>
       ) : workspaces.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full min-h-[80px] text-center p-4">
-          <Clock size={24} className="text-muted-foreground/50 mb-2" />
-          <p className="text-sm text-muted-foreground">No recent workspaces</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">
+        <div
+          className="flex flex-col items-center justify-center text-center min-h-[80px]"
+          style={{ color: '#8b8fa3' }}
+        >
+          <Clock size={24} style={{ opacity: 0.5, marginBottom: 8 }} />
+          <p style={{ fontSize: 12 }}>No recent workspaces</p>
+          <p style={{ fontSize: 11, color: '#5c6070', marginTop: 4 }}>
             Workspaces you visit will appear here
           </p>
         </div>
       ) : (
         <div className="space-y-0.5">
           {workspaces.map(workspace => (
-            <button
+            <div
               key={workspace.id}
               onClick={() => handleWorkspaceClick(workspace)}
-              className="w-full flex items-start gap-2 px-2 py-2 text-left rounded hover:bg-muted/50 transition-colors group"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && handleWorkspaceClick(workspace)}
+              className="flex items-center gap-3 cursor-pointer"
+              style={{
+                padding: '8px 10px',
+                borderRadius: 8,
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors">
-                    {workspace.name}
-                  </span>
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div
+                  className="shrink-0 flex items-center justify-center"
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 8,
+                    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                    color: '#fff',
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  {workspace.entryName?.charAt(0).toUpperCase() || 'W'}
                 </div>
-                <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex-1 min-w-0">
+                  <div className="truncate" style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}>
+                    {workspace.name}
+                  </div>
                   {workspace.entryName && (
-                    <span className="text-xs text-muted-foreground truncate">
-                      in {workspace.entryName}
-                    </span>
+                    <div className="truncate" style={{ fontSize: 11, color: '#5c6070' }}>
+                      {workspace.entryName}
+                    </div>
                   )}
                 </div>
               </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
+              <span className="whitespace-nowrap shrink-0" style={{ fontSize: 11, color: '#5c6070' }}>
                 {formatRelativeTime(workspace.lastAccessedAt)}
               </span>
-            </button>
+            </div>
           ))}
         </div>
       )}

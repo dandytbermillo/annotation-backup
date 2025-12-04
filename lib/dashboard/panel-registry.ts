@@ -9,7 +9,7 @@
 import type { ComponentType } from 'react'
 
 // Panel type identifiers matching the database schema
-export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture'
+export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note'
 
 // Panel configuration stored in the database (JSONB column)
 export interface PanelConfig {
@@ -109,6 +109,16 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     minSize: { width: 250, height: 150 },
     maxSize: { width: 400, height: 300 },
     defaultConfig: {},
+  },
+  links_note: {
+    id: 'links_note',
+    name: 'Quick Links',
+    description: 'Note with workspace links',
+    icon: '🔗',
+    defaultSize: { width: 320, height: 320 },
+    minSize: { width: 250, height: 200 },
+    maxSize: { width: 500, height: 600 },
+    defaultConfig: { content: '' },
   },
 }
 

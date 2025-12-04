@@ -2,6 +2,7 @@
 -- Part of Dashboard Implementation Plan - Phase 1.5
 -- Purpose: Create Home entry, Dashboard workspace, Ideas Inbox, and seed default panels
 -- This migration also backfills item_id for existing workspaces
+-- NOTE: Home entries are created UNDER /knowledge-base to comply with root constraint
 
 BEGIN;
 
@@ -13,26 +14,30 @@ ALTER TABLE items ADD COLUMN IF NOT EXISTS user_id UUID;
 CREATE INDEX IF NOT EXISTS idx_items_user_id ON items(user_id) WHERE user_id IS NOT NULL;
 
 -- Step 2: Create Home entries for each user who has workspaces
--- We derive users from existing note_workspaces since there's no users table
-INSERT INTO items (id, user_id, type, path, name, is_system, parent_id, created_at, updated_at)
+-- Home entries are placed UNDER Knowledge Base to comply with the root constraint
+-- Path: /knowledge-base/home-{user_id}
+-- workspace_id uses sentinel value (same as Knowledge Base) for system entries
+INSERT INTO items (id, user_id, type, path, name, is_system, parent_id, workspace_id, created_at, updated_at)
 SELECT
   gen_random_uuid(),
   nw.user_id,
   'folder', -- Using folder type for system entries
-  '/home-' || nw.user_id::text,
+  '/knowledge-base/home-' || nw.user_id::text,
   'Home',
   TRUE,
-  NULL,
+  kb.id, -- Parent is Knowledge Base
+  '99999999-9999-9999-9999-999999999999'::uuid, -- Sentinel workspace_id for system entries
   NOW(),
   NOW()
 FROM (SELECT DISTINCT user_id FROM note_workspaces) nw
+CROSS JOIN (SELECT id FROM items WHERE path = '/knowledge-base' AND deleted_at IS NULL LIMIT 1) kb
 WHERE NOT EXISTS (
   SELECT 1 FROM items i
   WHERE i.user_id = nw.user_id AND i.is_system = TRUE
 );
 
 -- Step 3: Create Ideas Inbox entry under each user's Home
-INSERT INTO items (id, user_id, type, path, name, parent_id, position, created_at, updated_at)
+INSERT INTO items (id, user_id, type, path, name, parent_id, workspace_id, position, created_at, updated_at)
 SELECT
   gen_random_uuid(),
   home.user_id,
@@ -40,6 +45,7 @@ SELECT
   home.path || '/ideas-inbox',
   'Ideas Inbox',
   home.id,
+  '99999999-9999-9999-9999-999999999999'::uuid, -- Sentinel workspace_id for system entries
   0,
   NOW(),
   NOW()
@@ -68,7 +74,7 @@ WHERE home.is_system = TRUE AND home.name = 'Home'
   );
 
 -- Step 5: Create Legacy entry for each user to hold existing workspaces
-INSERT INTO items (id, user_id, type, path, name, parent_id, position, created_at, updated_at)
+INSERT INTO items (id, user_id, type, path, name, parent_id, workspace_id, position, created_at, updated_at)
 SELECT
   gen_random_uuid(),
   home.user_id,
@@ -76,6 +82,7 @@ SELECT
   home.path || '/legacy-workspaces',
   'Legacy Workspaces',
   home.id,
+  '99999999-9999-9999-9999-999999999999'::uuid, -- Sentinel workspace_id for system entries
   1,
   NOW(),
   NOW()

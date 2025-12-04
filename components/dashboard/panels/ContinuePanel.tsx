@@ -9,11 +9,10 @@
  */
 
 import React, { useEffect, useState } from 'react'
-import { Play, Clock, Loader2 } from 'lucide-react'
+import { Play, Clock } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps } from '@/lib/dashboard/panel-registry'
-import { Button } from '@/components/ui/button'
 import { setActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 
 interface LastWorkspaceInfo {
@@ -111,48 +110,87 @@ export function ContinuePanel({ panel, onClose, onNavigate, isActive }: BasePane
     >
       {isLoading ? (
         <div className="flex items-center justify-center h-full min-h-[60px]">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+          <div
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: '50%',
+              border: '2px solid rgba(255,255,255,0.1)',
+              borderTopColor: '#6366f1',
+              animation: 'spin 1s linear infinite',
+            }}
+          />
         </div>
       ) : error ? (
-        <div className="flex flex-col items-center justify-center h-full min-h-[60px] text-center">
-          <p className="text-sm text-muted-foreground">{error}</p>
+        <div
+          className="flex flex-col items-center justify-center text-center min-h-[60px]"
+          style={{ color: '#8b8fa3' }}
+        >
+          <p style={{ fontSize: 12 }}>{error}</p>
         </div>
       ) : preferences?.lastWorkspace ? (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-foreground truncate">
-              {preferences.lastWorkspace.name}
-            </span>
-            {preferences.lastWorkspace.entryName && (
-              <span className="text-xs text-muted-foreground truncate">
-                in {preferences.lastWorkspace.entryName}
-              </span>
-            )}
-            {preferences.lastWorkspace.updatedAt && (
-              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Clock size={12} />
-                <span>{formatRelativeTime(preferences.lastWorkspace.updatedAt)}</span>
-              </div>
-            )}
-          </div>
-
-          <Button
-            onClick={handleContinue}
-            className="w-full"
-            size="sm"
+        <div
+          onClick={handleContinue}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => e.key === 'Enter' && handleContinue()}
+          className="flex items-center gap-4 cursor-pointer"
+          style={{
+            padding: 16,
+            borderRadius: 10,
+            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            transition: 'all 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%)'
+            e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.3)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%)'
+            e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.2)'
+          }}
+        >
+          <div
+            className="shrink-0 flex items-center justify-center"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 10,
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              color: '#fff',
+            }}
           >
-            <Play size={14} className="mr-1" />
-            Continue
-          </Button>
+            <Play size={20} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div style={{ fontSize: 11, color: '#8b8fa3', marginBottom: 4 }}>
+              Continue where you left off
+            </div>
+            <div className="truncate" style={{ fontSize: 14, fontWeight: 600, color: '#f0f0f0' }}>
+              {preferences.lastWorkspace.name}
+            </div>
+            <div className="flex items-center gap-2" style={{ fontSize: 11, color: '#5c6070', marginTop: 4 }}>
+              {preferences.lastWorkspace.entryName && (
+                <span className="truncate">in {preferences.lastWorkspace.entryName}</span>
+              )}
+              {preferences.lastWorkspace.updatedAt && (
+                <span className="flex items-center gap-1">
+                  <Clock size={10} />
+                  {formatRelativeTime(preferences.lastWorkspace.updatedAt)}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center h-full min-h-[60px] text-center gap-2">
-          <p className="text-sm text-muted-foreground">
-            No recent workspace
-          </p>
-          <p className="text-xs text-muted-foreground/70">
-            Visit a workspace to see it here
-          </p>
+        <div
+          className="flex flex-col items-center justify-center text-center min-h-[60px]"
+          style={{ color: '#8b8fa3' }}
+        >
+          <Play size={24} style={{ opacity: 0.5, marginBottom: 8 }} />
+          <p style={{ fontSize: 12 }}>No recent workspace</p>
+          <p style={{ fontSize: 11, color: '#5c6070', marginTop: 4 }}>Visit a workspace to see it here</p>
         </div>
       )}
     </BaseDashboardPanel>

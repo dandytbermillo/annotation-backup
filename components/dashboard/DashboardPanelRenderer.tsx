@@ -15,6 +15,7 @@ import { ContinuePanel } from './panels/ContinuePanel'
 import { EntryNavigatorPanel } from './panels/EntryNavigatorPanel'
 import { RecentPanel } from './panels/RecentPanel'
 import { QuickCapturePanel } from './panels/QuickCapturePanel'
+import { LinksNotePanel } from './panels/LinksNotePanel'
 
 interface DashboardPanelRendererProps {
   panel: WorkspacePanel
@@ -57,6 +58,8 @@ export function DashboardPanelRenderer({
       return <RecentPanel {...props} />
     case 'quick_capture':
       return <QuickCapturePanel {...props} />
+    case 'links_note':
+      return <LinksNotePanel {...props} />
     case 'note':
       // Note panels are handled separately by the existing note panel system
       // This is just a placeholder - actual note panels use the existing canvas note rendering
