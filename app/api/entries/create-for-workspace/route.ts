@@ -101,6 +101,19 @@ export async function POST(request: NextRequest) {
       parentId = kbResult.rows[0].id
     }
 
+    // Get the default workspace from workspaces table (required for items.workspace_id)
+    const defaultWorkspaceResult = await client.query(
+      `SELECT id FROM workspaces WHERE is_default = true LIMIT 1`
+    )
+    if (defaultWorkspaceResult.rows.length === 0) {
+      await client.query('ROLLBACK')
+      return NextResponse.json(
+        { error: 'No default workspace found' },
+        { status: 500 }
+      )
+    }
+    const defaultWorkspaceId = defaultWorkspaceResult.rows[0].id
+
     // Generate unique path for the new entry
     const basePath = parentId ? '/knowledge-base' : ''
     let entryPath = `${basePath}/${workspaceName}`
@@ -124,10 +137,10 @@ export async function POST(request: NextRequest) {
     // Create the entry
     const entryName = counter > 0 ? `${workspaceName} ${counter}` : workspaceName
     const createEntryResult = await client.query(
-      `INSERT INTO items (type, parent_id, path, name, is_system, created_at, updated_at)
-       VALUES ('folder', $1, $2, $3, false, NOW(), NOW())
+      `INSERT INTO items (type, parent_id, path, name, is_system, workspace_id, created_at, updated_at)
+       VALUES ('folder', $1, $2, $3, false, $4, NOW(), NOW())
        RETURNING id, name, path, parent_id, is_system, created_at, updated_at`,
-      [parentId, entryPath, entryName]
+      [parentId, entryPath, entryName, defaultWorkspaceId]
     )
 
     const newEntry = createEntryResult.rows[0]
@@ -148,9 +161,11 @@ export async function POST(request: NextRequest) {
       components: [],
     }
 
+    // Dashboard is a separate view (not in workspace dropdown), so is_default = false
+    // The original workspace (e.g., "test4") keeps is_default = true
     const dashboardResult = await client.query(
       `INSERT INTO note_workspaces (user_id, name, payload, item_id, is_default)
-       VALUES ($1, 'Dashboard', $2::jsonb, $3, true)
+       VALUES ($1, 'Dashboard', $2::jsonb, $3, false)
        RETURNING id`,
       [userId, JSON.stringify(defaultPayload), newEntry.id]
     )
@@ -177,11 +192,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Make original workspace non-default (Dashboard is now default)
-    await client.query(
-      `UPDATE note_workspaces SET is_default = false WHERE id = $1`,
-      [workspaceId]
-    )
+    // Original workspace (e.g., "test4") keeps is_default = true
+    // It's the default workspace in the dropdown (cannot be deleted)
+    // Dashboard is separate from the dropdown
 
     await client.query('COMMIT')
 

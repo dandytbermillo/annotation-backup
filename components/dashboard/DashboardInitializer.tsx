@@ -9,18 +9,26 @@
  * - Keyboard shortcuts (Cmd+Shift+H to go Home)
  * - Initial dashboard loading when feature is enabled
  * - Rendering DashboardView when on dashboard workspace
+ * - Navigating between different entry Dashboards
  */
 
 import { useEffect, useRef, useState, useCallback } from "react"
 import { isHomeDashboardEnabled } from "@/lib/flags/dashboard"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+import { setActiveEntryContext } from "@/lib/entry/entry-context"
 import { DashboardView } from "./DashboardView"
 
 interface DashboardInfo {
   homeEntryId: string
+  homeEntryName?: string
   dashboardWorkspaceId: string
   ideasInboxId: string | null
+}
+
+interface CurrentEntryInfo {
+  entryId: string
+  entryName: string
 }
 
 interface DashboardInitializerProps {
@@ -41,6 +49,10 @@ export function DashboardInitializer({
   const [isLoading, setIsLoading] = useState(true)
   const [dashboardInfo, setDashboardInfo] = useState<DashboardInfo | null>(null)
   const [showDashboard, setShowDashboard] = useState(false)
+  // Current dashboard workspace ID - can be different from Home's dashboard when viewing other entries
+  const [currentDashboardWorkspaceId, setCurrentDashboardWorkspaceId] = useState<string | null>(null)
+  // Current entry info (for breadcrumb display)
+  const [currentEntryInfo, setCurrentEntryInfo] = useState<CurrentEntryInfo | null>(null)
   const fetchedRef = useRef(false)
 
   // Debug: log on mount
@@ -71,6 +83,13 @@ export function DashboardInitializer({
         const data = await response.json()
         console.log("[DashboardInitializer] Dashboard info:", data)
         setDashboardInfo(data)
+        // Initialize current dashboard to Home's dashboard
+        setCurrentDashboardWorkspaceId(data.dashboardWorkspaceId)
+        // Initialize current entry to Home
+        setCurrentEntryInfo({
+          entryId: data.homeEntryId,
+          entryName: data.homeEntryName || "Home",
+        })
 
         // Always show dashboard on app start when feature is enabled
         // The "Continue" panel will show the last workspace for quick access
@@ -97,11 +116,75 @@ export function DashboardInitializer({
   }, [dashboardEnabled])
 
   // Handle navigation from dashboard to a workspace
-  const handleDashboardNavigate = useCallback((entryId: string, workspaceId: string) => {
-    console.log("[DashboardInitializer] Navigating to workspace:", workspaceId)
+  const handleDashboardNavigate = useCallback(async (entryId: string, workspaceId: string) => {
+    console.log("[DashboardInitializer] Navigating to workspace:", workspaceId, "entryId:", entryId)
+
+    // Check if the target workspace is a Dashboard workspace
+    // If so, stay in dashboard mode but switch to that entry's Dashboard
+    try {
+      const response = await fetch(`/api/note-workspaces/${workspaceId}`)
+      if (response.ok) {
+        const data = await response.json()
+        const workspaceName = data.workspace?.name
+
+        void debugLog({
+          component: "DashboardInitializer",
+          action: "navigate_workspace_check",
+          metadata: { workspaceId, workspaceName, entryId, isDashboard: workspaceName === "Dashboard" },
+        })
+
+        if (workspaceName === "Dashboard") {
+          // Navigating to another entry's Dashboard - stay in dashboard mode
+          console.log("[DashboardInitializer] Navigating to Dashboard workspace, staying in dashboard mode")
+          setCurrentDashboardWorkspaceId(workspaceId)
+
+          // Update entry context and fetch entry name
+          if (entryId) {
+            setActiveEntryContext(entryId)
+            // Fetch entry info for breadcrumb
+            try {
+              const entryResponse = await fetch(`/api/entries/${entryId}`)
+              if (entryResponse.ok) {
+                const entryData = await entryResponse.json()
+                setCurrentEntryInfo({
+                  entryId,
+                  entryName: entryData.entry?.name || "Entry",
+                })
+              }
+            } catch (err) {
+              console.error("[DashboardInitializer] Failed to fetch entry info:", err)
+              setCurrentEntryInfo({ entryId, entryName: "Entry" })
+            }
+          }
+
+          // Track the visit
+          fetch("/api/dashboard/preferences", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lastWorkspaceId: workspaceId }),
+          }).catch((err) => {
+            console.error("[DashboardInitializer] Failed to track workspace visit:", err)
+          })
+
+          // Call optional callbacks but DON'T hide dashboard
+          onNavigateToWorkspace?.(entryId, workspaceId)
+          return
+        }
+      }
+    } catch (err) {
+      console.error("[DashboardInitializer] Error checking workspace:", err)
+    }
+
+    // Not a Dashboard workspace - hide dashboard and show regular app
+    console.log("[DashboardInitializer] Navigating to regular workspace, hiding dashboard")
 
     // Set the active workspace context - this triggers the app to load that workspace
     setActiveWorkspaceContext(workspaceId)
+
+    // Update entry context
+    if (entryId) {
+      setActiveEntryContext(entryId)
+    }
 
     // Track the visit in user preferences
     fetch("/api/dashboard/preferences", {
@@ -147,13 +230,17 @@ export function DashboardInitializer({
     )
   }
 
-  // If should show dashboard and we have info, render DashboardView
-  if (showDashboard && dashboardInfo?.dashboardWorkspaceId) {
-    console.log("[DashboardInitializer] Rendering DashboardView")
+  // If should show dashboard and we have a dashboard workspace ID, render DashboardView
+  // Use currentDashboardWorkspaceId which can be updated when navigating to other entries
+  if (showDashboard && currentDashboardWorkspaceId) {
+    console.log("[DashboardInitializer] Rendering DashboardView with workspaceId:", currentDashboardWorkspaceId)
     return (
       <DashboardView
-        workspaceId={dashboardInfo.dashboardWorkspaceId}
+        workspaceId={currentDashboardWorkspaceId}
         onNavigate={handleDashboardNavigate}
+        entryId={currentEntryInfo?.entryId}
+        entryName={currentEntryInfo?.entryName}
+        homeEntryId={dashboardInfo?.homeEntryId}
         className="w-screen h-screen"
       />
     )

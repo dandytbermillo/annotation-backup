@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard v4 - Unified Canvas System</title>
+  <title>Dashboard v4 - Entry-Workspace Hierarchy Demo</title>
   <style>
     :root {
       --bg-dark: #0f1117;
@@ -47,7 +47,7 @@
       height: 100vh;
     }
 
-    /* ========== TOP BAR (Same for Dashboard & Workspace) ========== */
+    /* ========== TOP BAR ========== */
     .topbar {
       height: 52px;
       background: rgba(15,17,23,0.95);
@@ -165,30 +165,11 @@
       color: var(--text-primary);
     }
 
-    .btn-icon {
-      width: 34px;
-      height: 34px;
-      padding: 0;
-      background: var(--bg-hover);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text-secondary);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .btn-icon:hover {
-      background: var(--bg-card);
-      color: var(--text-primary);
-    }
-
-    /* ========== CANVAS (Unified - used by both Dashboard & Workspace) ========== */
+    /* ========== CANVAS ========== */
     .canvas-container {
       flex: 1;
       position: relative;
-      overflow: auto; /* KEY: Can scroll */
+      overflow: auto;
     }
 
     .canvas-surface {
@@ -206,7 +187,7 @@
       background-size: 100% 100%, 100px 100px, 100px 100px, 20px 20px, 20px 20px;
     }
 
-    /* ========== PANELS (Unified - all panel types) ========== */
+    /* ========== PANELS ========== */
     .panel {
       position: absolute;
       background: var(--bg-panel);
@@ -257,17 +238,6 @@
     .panel-title-icon {
       font-size: 14px;
       opacity: 0.8;
-    }
-
-    .panel-type-badge {
-      font-size: 10px;
-      padding: 2px 6px;
-      background: var(--bg-hover);
-      border-radius: 4px;
-      color: var(--text-muted);
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
     }
 
     .panel-actions {
@@ -378,6 +348,18 @@
 
     .entry-header:hover { background: var(--bg-hover); }
 
+    /* Active entry highlighting */
+    .entry-item.active > .entry-header {
+      background: var(--accent-dim);
+      border: 1px solid rgba(99,102,241,0.3);
+      margin: 0 -11px;
+    }
+
+    .entry-item.active > .entry-header .entry-name {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
     .entry-toggle {
       width: 16px;
       height: 16px;
@@ -400,6 +382,11 @@
       align-items: center;
       justify-content: center;
       font-size: 12px;
+    }
+
+    .entry-item.active .entry-icon {
+      background: var(--accent);
+      color: white;
     }
 
     .entry-name {
@@ -543,7 +530,7 @@
 
     .capture-btn:hover { background: var(--accent-hover); }
 
-    /* ========== PANEL TYPE: Note (with highlight-to-link) ========== */
+    /* ========== PANEL TYPE: Quick Links Note ========== */
     .note-content {
       font-size: 14px;
       line-height: 1.7;
@@ -590,6 +577,18 @@
       color: white;
     }
 
+    /* New link being created */
+    .workspace-link.new {
+      background: var(--success-dim);
+      color: var(--success);
+      animation: pulse 1s ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+
     /* Highlight-to-Link Toolbar */
     .link-toolbar {
       position: fixed;
@@ -629,14 +628,51 @@
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 10px;
-      width: 280px;
-      max-height: 320px;
+      width: 300px;
+      max-height: 380px;
       overflow: hidden;
       box-shadow: 0 8px 32px rgba(0,0,0,0.5);
       z-index: 2001;
     }
 
     .workspace-picker.visible { display: block; }
+
+    .picker-header {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .picker-header-icon {
+      color: var(--accent);
+    }
+
+    .picker-header-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .picker-header-close {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .picker-selected-text {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .picker-selected-text span {
+      color: var(--text-primary);
+    }
 
     .picker-search {
       padding: 12px;
@@ -660,8 +696,35 @@
 
     .picker-search input::placeholder { color: var(--text-muted); }
 
+    /* Entry filter toggle */
+    .picker-filter {
+      padding: 8px 12px;
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .filter-btn {
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .filter-btn.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-color: rgba(99,102,241,0.3);
+    }
+
     .picker-list {
-      max-height: 250px;
+      max-height: 220px;
       overflow-y: auto;
       padding: 8px;
     }
@@ -707,6 +770,49 @@
     }
 
     .picker-item-path {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Create new workspace option */
+    .picker-create {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      margin: 4px 8px 8px;
+      background: var(--success-dim);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .picker-create:hover {
+      background: rgba(34,197,94,0.25);
+      border-color: var(--success);
+    }
+
+    .picker-create-icon {
+      width: 24px;
+      height: 24px;
+      background: var(--success);
+      color: white;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .picker-create-text {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--success);
+    }
+
+    .picker-create-desc {
       font-size: 11px;
       color: var(--text-muted);
     }
@@ -757,51 +863,6 @@
       width: 1px;
       background: var(--border);
       margin: 6px 6px;
-    }
-
-    /* Add Panel Dropdown */
-    .add-panel-dropdown {
-      position: absolute;
-      bottom: 52px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px;
-      min-width: 200px;
-      display: none;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    }
-
-    .add-panel-dropdown.visible { display: block; }
-
-    .add-panel-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.15s;
-    }
-
-    .add-panel-item:hover { background: var(--bg-hover); }
-
-    .add-panel-item-icon {
-      font-size: 16px;
-      width: 24px;
-      text-align: center;
-    }
-
-    .add-panel-item-name {
-      font-size: 13px;
-      font-weight: 500;
-    }
-
-    .add-panel-item-desc {
-      font-size: 11px;
-      color: var(--text-muted);
     }
 
     /* ========== KEYBOARD HINTS ========== */
@@ -881,6 +942,11 @@
       opacity: 1;
     }
 
+    .toast.success {
+      border-color: var(--success);
+      box-shadow: 0 4px 24px rgba(34,197,94,0.3);
+    }
+
     /* ========== HOME INDICATOR ========== */
     .home-badge {
       display: inline-flex;
@@ -895,10 +961,112 @@
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
+
+    /* ========== DEMO INSTRUCTIONS ========== */
+    .demo-banner {
+      background: linear-gradient(135deg, var(--accent-dim) 0%, rgba(139,92,246,0.15) 100%);
+      border-bottom: 1px solid var(--accent-dim);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .demo-banner-text {
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .demo-banner-text strong {
+      color: var(--accent);
+    }
+
+    .demo-banner-btn {
+      padding: 6px 14px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .demo-banner-btn:hover {
+      background: var(--accent-hover);
+    }
+
+    /* Demo step indicator */
+    .demo-step {
+      position: fixed;
+      top: 120px;
+      right: 24px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      width: 280px;
+      z-index: 200;
+      box-shadow: var(--panel-shadow);
+    }
+
+    .demo-step-title {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .demo-step-num {
+      width: 22px;
+      height: 22px;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .demo-step-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .demo-step-action {
+      margin-top: 12px;
+      padding: 8px 14px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+    }
+
+    .demo-step-action:hover {
+      background: var(--accent);
+      color: white;
+    }
   </style>
 </head>
 <body>
   <div id="app">
+    <!-- Demo Banner -->
+    <div class="demo-banner" id="demo-banner">
+      <span class="demo-banner-text">
+        <strong>Entry-Workspace Hierarchy Demo:</strong> Click a Quick Link to see the expected flow
+      </span>
+      <button class="demo-banner-btn" onclick="resetDemo()">Reset Demo</button>
+    </div>
+
     <!-- Top Bar -->
     <nav class="topbar">
       <div class="topbar-left">
@@ -915,7 +1083,7 @@
       </div>
     </nav>
 
-    <!-- Canvas (Unified for Dashboard & Workspace) -->
+    <!-- Canvas -->
     <div class="canvas-container" id="canvas-container">
       <div class="canvas-surface" id="canvas-surface">
         <!-- Panels rendered by JS -->
@@ -935,27 +1103,26 @@
         </svg>
       </button>
       <div class="toolbar-divider"></div>
-      <button class="toolbar-btn" id="add-panel-btn" onclick="toggleAddPanel()" title="Add Panel (+)">
+      <button class="toolbar-btn" id="add-panel-btn" title="Add Panel (+)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
           <path d="M12 8v8M8 12h8"/>
         </svg>
       </button>
-      <div class="add-panel-dropdown" id="add-panel-dropdown">
-        <!-- Populated by JS -->
-      </div>
     </div>
 
     <!-- Keyboard Hints -->
     <div class="keyboard-hints">
       <div class="hint"><span class="hint-key">H</span> Home</div>
-      <div class="hint"><span class="hint-key">+</span> Add Panel</div>
       <div class="hint"><span class="hint-key">Cmd+K</span> Link</div>
     </div>
 
     <!-- Minimap -->
-    <div class="minimap" id="minimap">
-      <div class="minimap-viewport" id="minimap-viewport"></div>
+    <div class="minimap" id="minimap"></div>
+
+    <!-- Demo Step Indicator -->
+    <div class="demo-step" id="demo-step">
+      <!-- Populated by JS -->
     </div>
   </div>
 
@@ -970,13 +1137,45 @@
     </button>
   </div>
 
-  <!-- Workspace Picker -->
+  <!-- Workspace Picker with Entry Filter -->
   <div class="workspace-picker" id="workspace-picker">
+    <div class="picker-header">
+      <svg class="picker-header-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+      <span class="picker-header-title">Link to Workspace</span>
+      <button class="picker-header-close" onclick="hidePicker()">x</button>
+    </div>
+    <div class="picker-selected-text" id="picker-selected-text">
+      Link text: <span>"test4"</span>
+    </div>
     <div class="picker-search">
       <input type="text" placeholder="Search workspaces..." id="picker-search-input" oninput="filterPicker(this.value)">
     </div>
+    <div class="picker-filter">
+      <button class="filter-btn active" id="filter-current" onclick="setFilter('current')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+        Home
+      </button>
+      <button class="filter-btn" id="filter-all" onclick="setFilter('all')">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+        All Entries
+      </button>
+    </div>
     <div class="picker-list" id="picker-list">
       <!-- Populated by JS -->
+    </div>
+    <div class="picker-create" id="picker-create" onclick="createNewEntryWorkspace()">
+      <div class="picker-create-icon">+</div>
+      <div>
+        <div class="picker-create-text">+ Create "test4" workspace</div>
+        <div class="picker-create-desc">Creates new entry with Dashboard</div>
+      </div>
     </div>
   </div>
 
@@ -1000,9 +1199,9 @@
         name: "Project Alpha",
         icon: "A",
         workspaces: [
-          { id: "alpha-default", name: "Default", isDefault: true },
-          { id: "alpha-planning", name: "Planning" },
-          { id: "alpha-research", name: "Research" }
+          { id: "alpha-dashboard", name: "Dashboard", isDefault: true },
+          { id: "alpha-default", name: "Default" },
+          { id: "alpha-planning", name: "Planning" }
         ]
       },
       {
@@ -1010,79 +1209,77 @@
         name: "Project Beta",
         icon: "B",
         workspaces: [
-          { id: "beta-default", name: "Default", isDefault: true },
-          { id: "beta-drafts", name: "Drafts" }
-        ]
-      },
-      {
-        id: "ideas",
-        name: "Ideas Inbox",
-        icon: "I",
-        workspaces: [
-          { id: "ideas-default", name: "Default", isDefault: true }
+          { id: "beta-dashboard", name: "Dashboard", isDefault: true },
+          { id: "beta-default", name: "Default" }
         ]
       }
     ];
 
-    // Panel types available
+    // Panel types
     const panelTypes = [
       { id: "note", name: "Note", icon: "📝", desc: "Text note with links" },
       { id: "continue", name: "Continue", icon: "▶", desc: "Resume last workspace" },
-      { id: "navigator", name: "Entry Navigator", icon: "📁", desc: "Browse entries" },
+      { id: "navigator", name: "Navigator", icon: "📁", desc: "Browse entries" },
       { id: "recent", name: "Recent", icon: "🕐", desc: "Recent workspaces" },
-      { id: "capture", name: "Quick Capture", icon: "✏️", desc: "Capture ideas" }
+      { id: "capture", name: "Quick Capture", icon: "✏️", desc: "Capture ideas" },
+      { id: "links", name: "Quick Links", icon: "🔗", desc: "Quick link notes" }
+    ];
+
+    // Default Dashboard panels (what appears when navigating to an entry's Dashboard)
+    const defaultDashboardPanels = [
+      { id: "p1", type: "continue", x: 40, y: 40, width: 320, title: "Continue" },
+      { id: "p2", type: "navigator", x: 40, y: 200, width: 280, title: "Navigator" },
+      { id: "p3", type: "recent", x: 380, y: 40, width: 280, title: "Recent" },
+      { id: "p4", type: "capture", x: 380, y: 280, width: 280, title: "Quick Capture" },
+      { id: "p5", type: "links", x: 700, y: 40, width: 320, title: "Quick Links" }
     ];
 
     // Workspace panel configurations
     const workspacePanels = {
       "home-dashboard": [
-        { id: "p1", type: "continue", x: 40, y: 40, width: 320 },
-        { id: "p2", type: "navigator", x: 40, y: 200, width: 280 },
-        { id: "p3", type: "recent", x: 380, y: 40, width: 280 },
-        { id: "p4", type: "capture", x: 380, y: 260, width: 280 },
-        { id: "p5", type: "note", x: 700, y: 40, width: 300,
-          title: "Quick Links",
-          content: `<h3>Daily Work</h3>
-            <p><span class="workspace-link" data-target="alpha-planning">Planning</span> - main tasks</p>
-            <p><span class="workspace-link" data-target="alpha-research">Research</span> - background</p>
-            <h3>Side Projects</h3>
-            <p><span class="workspace-link" data-target="beta-drafts">Beta Drafts</span> - experiments</p>`
+        { id: "p1", type: "continue", x: 40, y: 40, width: 320, title: "Continue" },
+        { id: "p2", type: "navigator", x: 40, y: 200, width: 280, title: "Navigator" },
+        { id: "p3", type: "recent", x: 380, y: 40, width: 280, title: "Recent" },
+        { id: "p4", type: "capture", x: 380, y: 280, width: 280, title: "Quick Capture" },
+        { id: "p5", type: "links", x: 700, y: 40, width: 320, title: "Quick Links",
+          content: `<h3>Projects</h3>
+            <p><span class="workspace-link" data-entry="alpha" data-workspace="alpha-dashboard">Project Alpha</span></p>
+            <p><span class="workspace-link" data-entry="beta" data-workspace="beta-dashboard">Project Beta</span></p>
+            <h3>Create New</h3>
+            <p><span class="workspace-link demo-create" data-name="test4">test4</span> - click to demo!</p>`
         }
       ],
-      "alpha-planning": [
-        { id: "ap1", type: "note", x: 60, y: 60, width: 340,
-          title: "Project Overview",
-          content: `<p>Main planning document for Project Alpha.</p>
-            <p>See <span class="workspace-link" data-target="alpha-research">Research</span> for background.</p>
-            <p>Check <span class="workspace-link" data-target="beta-drafts">Beta Drafts</span> for related experiments.</p>`
-        },
-        { id: "ap2", type: "note", x: 450, y: 80, width: 300,
-          title: "Timeline",
-          content: `<p>Q1: Research & Discovery</p><p>Q2: Design & Prototype</p><p>Q3: Implementation</p><p>Q4: Launch</p>`
-        }
-      ],
-      "alpha-research": [
-        { id: "ar1", type: "note", x: 80, y: 60, width: 380,
-          title: "Research Notes",
-          content: `<p>User interviews revealed key insights...</p>
-            <p>Back to <span class="workspace-link" data-target="alpha-planning">Planning</span> for next steps.</p>`
-        }
-      ]
+      "alpha-dashboard": [...defaultDashboardPanels].map((p, i) => ({
+        ...p,
+        id: `alpha-${p.id}`,
+        content: p.type === 'links' ? `<h3>Alpha Links</h3>
+          <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>
+          <p><span class="workspace-link" data-entry="alpha" data-workspace="alpha-planning">Planning</span></p>` : undefined
+      })),
+      "beta-dashboard": [...defaultDashboardPanels].map((p, i) => ({
+        ...p,
+        id: `beta-${p.id}`,
+        content: p.type === 'links' ? `<h3>Beta Links</h3>
+          <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>` : undefined
+      }))
     };
 
     // ========== STATE ==========
-    let currentEntry = entries[0]; // Home
-    let currentWorkspace = entries[0].workspaces[0]; // Dashboard
-    let lastNonHomeWorkspace = { entry: entries[1], workspace: entries[1].workspaces[1] }; // Alpha/Planning
+    let currentEntry = entries[0];
+    let currentWorkspace = entries[0].workspaces[0];
+    let lastNonHomeWorkspace = { entry: entries[1], workspace: entries[1].workspaces[1] };
     let panels = [];
     let draggingPanel = null;
     let dragOffset = { x: 0, y: 0 };
-    let selectedRange = null;
-    let addPanelVisible = false;
+    let selectedText = "test4";
+    let demoStep = 1;
+    let filterMode = 'current';
 
     // ========== NAVIGATION ==========
     function goToHome() {
       navigateTo("home", "home-dashboard");
+      demoStep = 1;
+      updateDemoStep();
     }
 
     function navigateTo(entryId, workspaceId) {
@@ -1092,7 +1289,7 @@
       const workspace = entry.workspaces.find(w => w.id === workspaceId);
       if (!workspace) return;
 
-      // Track last non-home workspace for Continue panel
+      // Track last non-home workspace
       if (entryId !== "home") {
         lastNonHomeWorkspace = { entry, workspace };
       }
@@ -1115,13 +1312,54 @@
       }
     }
 
+    // ========== CREATE NEW ENTRY + WORKSPACE (Expected Flow) ==========
+    function createNewEntryWorkspace() {
+      hidePicker();
+
+      // Simulate creating new entry "test4"
+      const newEntry = {
+        id: "test4",
+        name: "test4",
+        icon: "T",
+        workspaces: [
+          { id: "test4-dashboard", name: "Dashboard", isDefault: true },
+          { id: "test4-default", name: "test4" }
+        ]
+      };
+
+      // Add to entries list
+      if (!entries.find(e => e.id === "test4")) {
+        entries.push(newEntry);
+      }
+
+      // Create Dashboard panels for new entry
+      workspacePanels["test4-dashboard"] = [...defaultDashboardPanels].map((p, i) => ({
+        ...p,
+        id: `test4-${p.id}`,
+        content: p.type === 'links' ? `<h3>test4 Links</h3>
+          <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>
+          <p>Add more links here...</p>` : undefined
+      }));
+
+      // Update demo step
+      demoStep = 3;
+      updateDemoStep();
+
+      // Show success toast
+      showToast('Created entry "test4" with Dashboard!', 'success');
+
+      // Navigate to the NEW entry's Dashboard (this is the expected behavior!)
+      setTimeout(() => {
+        navigateTo("test4", "test4-dashboard");
+      }, 500);
+    }
+
     // ========== RENDER ==========
     function render() {
       renderBreadcrumb();
       renderTabs();
       renderPanels();
       renderMinimap();
-      renderAddPanelDropdown();
     }
 
     function renderBreadcrumb() {
@@ -1168,7 +1406,7 @@
                 ${panel.title || type?.name || 'Panel'}
               </span>
               <div class="panel-actions">
-                <button class="panel-action" onclick="removePanel(${idx})" title="Remove">×</button>
+                <button class="panel-action" onclick="removePanel(${idx})" title="Remove">x</button>
               </div>
             </div>
             <div class="panel-content">${renderPanelContent(panel)}</div>
@@ -1178,24 +1416,22 @@
 
       // Add click handlers for workspace links
       document.querySelectorAll('.workspace-link').forEach(link => {
-        link.onclick = () => {
-          const target = link.dataset.target;
-          if (target) {
-            // Find workspace
-            for (const entry of entries) {
-              const ws = entry.workspaces.find(w => w.id === target);
-              if (ws) {
-                navigateTo(entry.id, ws.id);
-                return;
-              }
+        if (link.classList.contains('demo-create')) {
+          link.onclick = (e) => {
+            e.preventDefault();
+            demoStep = 2;
+            updateDemoStep();
+            showWorkspacePicker();
+          };
+        } else {
+          link.onclick = () => {
+            const targetEntry = link.dataset.entry;
+            const targetWorkspace = link.dataset.workspace;
+            if (targetEntry && targetWorkspace) {
+              navigateTo(targetEntry, targetWorkspace);
             }
-          }
-        };
-      });
-
-      // Setup contenteditable for note panels
-      document.querySelectorAll('.note-content[contenteditable]').forEach(el => {
-        el.addEventListener('mouseup', handleTextSelection);
+          };
+        }
       });
     }
 
@@ -1215,7 +1451,7 @@
 
         case 'navigator':
           return entries.filter(e => !e.isSystem).map(entry => `
-            <div class="entry-item expanded">
+            <div class="entry-item expanded ${currentEntry.id === entry.id ? 'active' : ''}">
               <div class="entry-header" onclick="this.parentElement.classList.toggle('expanded')">
                 <span class="entry-toggle">▸</span>
                 <span class="entry-icon">${entry.icon}</span>
@@ -1226,7 +1462,7 @@
                   <div class="workspace-item ${currentEntry.id === entry.id && currentWorkspace.id === ws.id ? 'current' : ''}"
                        onclick="navigateTo('${entry.id}', '${ws.id}')">
                     <span class="workspace-dot"></span>
-                    ${ws.name}
+                    ${ws.name}${ws.isDefault ? ' (default)' : ''}
                   </div>
                 `).join('')}
               </div>
@@ -1235,10 +1471,8 @@
 
         case 'recent':
           const recentItems = [
-            { entry: entries[1], workspace: entries[1].workspaces[1], time: '5m' },
-            { entry: entries[2], workspace: entries[2].workspaces[1], time: '1h' },
-            { entry: entries[3], workspace: entries[3].workspaces[0], time: '2d' },
-            { entry: entries[1], workspace: entries[1].workspaces[2], time: '3d' }
+            { entry: entries[1], workspace: entries[1].workspaces[2], time: '5m' },
+            { entry: entries[2], workspace: entries[2].workspaces[1], time: '1h' }
           ];
           return recentItems.map(item => `
             <div class="recent-item" onclick="navigateTo('${item.entry.id}', '${item.workspace.id}')">
@@ -1257,99 +1491,155 @@
           return `
             <textarea class="capture-input" placeholder="Capture a quick thought..."></textarea>
             <div class="capture-footer">
-              <span class="capture-dest">→ Ideas Inbox</span>
-              <button class="capture-btn" onclick="captureNote()">Send</button>
+              <span class="capture-dest">→ ${currentEntry.name}</span>
+              <button class="capture-btn">Send</button>
             </div>
           `;
+
+        case 'links':
+          return `<div class="note-content" contenteditable="true">${panel.content || '<p>Add quick links here...</p>'}</div>`;
 
         case 'note':
           return `<div class="note-content" contenteditable="true">${panel.content || '<p>Start typing...</p>'}</div>`;
 
         default:
-          return '<p>Unknown panel type</p>';
+          return '<p>Panel content</p>';
       }
     }
 
     function renderMinimap() {
       const minimap = document.getElementById('minimap');
-      const viewport = document.getElementById('minimap-viewport');
       const container = document.getElementById('canvas-container');
-      const surface = document.getElementById('canvas-surface');
-
       const scale = 150 / 3000;
 
-      // Viewport indicator
       const vw = (container.clientWidth / 3000) * 150;
       const vh = (container.clientHeight / 2000) * 100;
-      viewport.style.width = vw + 'px';
-      viewport.style.height = vh + 'px';
-      viewport.style.left = (container.scrollLeft / 3000) * 150 + 'px';
-      viewport.style.top = (container.scrollTop / 2000) * 100 + 'px';
 
-      // Panel indicators
-      let panelIndicators = '';
+      let html = '';
       panels.forEach(panel => {
         const x = panel.x * scale;
         const y = panel.y * (100/2000);
         const w = panel.width * scale;
         const h = 15 * scale;
-        panelIndicators += `<div class="minimap-panel" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>`;
+        html += `<div class="minimap-panel" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>`;
       });
 
-      minimap.innerHTML = panelIndicators + `<div class="minimap-viewport" style="width:${vw}px;height:${vh}px;left:${(container.scrollLeft / 3000) * 150}px;top:${(container.scrollTop / 2000) * 100}px"></div>`;
+      html += `<div class="minimap-viewport" style="width:${vw}px;height:${vh}px;left:${(container.scrollLeft / 3000) * 150}px;top:${(container.scrollTop / 2000) * 100}px"></div>`;
+      minimap.innerHTML = html;
     }
 
-    function renderAddPanelDropdown() {
-      const dropdown = document.getElementById('add-panel-dropdown');
-      dropdown.innerHTML = panelTypes.map(type => `
-        <div class="add-panel-item" onclick="addPanel('${type.id}')">
-          <span class="add-panel-item-icon">${type.icon}</span>
-          <div>
-            <div class="add-panel-item-name">${type.name}</div>
-            <div class="add-panel-item-desc">${type.desc}</div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    // ========== PANEL OPERATIONS ==========
-    function toggleAddPanel() {
-      addPanelVisible = !addPanelVisible;
-      document.getElementById('add-panel-dropdown').classList.toggle('visible', addPanelVisible);
-      document.getElementById('add-panel-btn').classList.toggle('active', addPanelVisible);
-    }
-
-    function addPanel(typeId) {
-      const container = document.getElementById('canvas-container');
-      const newPanel = {
-        id: 'p' + Date.now(),
-        type: typeId,
-        x: container.scrollLeft + 100 + Math.random() * 200,
-        y: container.scrollTop + 100 + Math.random() * 100,
-        width: 280
+    // ========== DEMO STEP UPDATES ==========
+    function updateDemoStep() {
+      const stepEl = document.getElementById('demo-step');
+      const steps = {
+        1: {
+          title: "Click a Quick Link",
+          desc: "In the Quick Links panel, click on <strong>'test4'</strong> to see the workspace picker and create a new entry.",
+          action: null
+        },
+        2: {
+          title: "Create New Entry",
+          desc: "Click <strong>'+ Create test4 workspace'</strong> to create a new entry with its own Dashboard and workspaces.",
+          action: null
+        },
+        3: {
+          title: "New Entry Created!",
+          desc: "Notice: You're now on the <strong>Dashboard</strong> of the new 'test4' entry. The Navigator shows 'test4' as active with purple highlighting.",
+          action: "Go back to Home"
+        }
       };
 
-      if (!workspacePanels[currentWorkspace.id]) {
-        workspacePanels[currentWorkspace.id] = [];
-      }
-      workspacePanels[currentWorkspace.id].push(newPanel);
-
-      toggleAddPanel();
-      render();
-      showToast(`Added ${panelTypes.find(t => t.id === typeId)?.name || 'panel'}`);
+      const step = steps[demoStep];
+      stepEl.innerHTML = `
+        <div class="demo-step-title">
+          <span class="demo-step-num">${demoStep}</span>
+          ${step.title}
+        </div>
+        <div class="demo-step-desc">${step.desc}</div>
+        ${step.action ? `<button class="demo-step-action" onclick="goToHome()">${step.action}</button>` : ''}
+      `;
     }
 
-    function removePanel(index) {
-      workspacePanels[currentWorkspace.id].splice(index, 1);
-      render();
+    // ========== WORKSPACE PICKER ==========
+    function showWorkspacePicker() {
+      const picker = document.getElementById('workspace-picker');
+      picker.style.left = '400px';
+      picker.style.top = '200px';
+      picker.classList.add('visible');
+
+      document.getElementById('picker-selected-text').innerHTML = `Link text: <span>"${selectedText}"</span>`;
+      document.getElementById('picker-create').querySelector('.picker-create-text').textContent = `+ Create "${selectedText}" workspace`;
+
+      renderPickerList('');
+      document.getElementById('picker-search-input').focus();
     }
 
-    function captureNote() {
-      const input = document.querySelector('.capture-input');
-      if (input && input.value.trim()) {
-        showToast(`Captured: "${input.value.slice(0, 30)}..."`);
-        input.value = '';
+    function hidePicker() {
+      document.getElementById('workspace-picker').classList.remove('visible');
+      document.getElementById('link-toolbar').classList.remove('visible');
+    }
+
+    function setFilter(mode) {
+      filterMode = mode;
+      document.getElementById('filter-current').classList.toggle('active', mode === 'current');
+      document.getElementById('filter-all').classList.toggle('active', mode === 'all');
+
+      // Update filter button text based on current entry
+      document.getElementById('filter-current').innerHTML = `
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        </svg>
+        ${currentEntry.name}
+      `;
+
+      renderPickerList(document.getElementById('picker-search-input').value);
+    }
+
+    function renderPickerList(filter) {
+      const list = document.getElementById('picker-list');
+      const lowerFilter = filter.toLowerCase();
+
+      let html = '';
+      const entriesToShow = filterMode === 'current' ? [currentEntry] : entries.filter(e => !e.isSystem);
+
+      entriesToShow.forEach(entry => {
+        const matchingWorkspaces = entry.workspaces.filter(ws =>
+          !filter || ws.name.toLowerCase().includes(lowerFilter) || entry.name.toLowerCase().includes(lowerFilter)
+        );
+
+        if (matchingWorkspaces.length > 0) {
+          html += `<div class="picker-section-label">${entry.name}</div>`;
+          matchingWorkspaces.forEach(ws => {
+            html += `
+              <div class="picker-item" onclick="selectWorkspace('${entry.id}', '${ws.id}', '${ws.name}')">
+                <div class="picker-item-icon">${entry.icon}</div>
+                <div class="picker-item-info">
+                  <div class="picker-item-name">${ws.name}</div>
+                  <div class="picker-item-path">${entry.name} > ${ws.name}</div>
+                </div>
+              </div>
+            `;
+          });
+        }
+      });
+
+      if (!html) {
+        html = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">No matching workspaces</div>';
       }
+
+      list.innerHTML = html;
+    }
+
+    function filterPicker(value) {
+      selectedText = value || "test4";
+      document.getElementById('picker-create').querySelector('.picker-create-text').textContent = `+ Create "${selectedText}" workspace`;
+      renderPickerList(value);
+    }
+
+    function selectWorkspace(entryId, workspaceId, wsName) {
+      hidePicker();
+      showToast(`Linked to ${wsName}`);
+      navigateTo(entryId, workspaceId);
     }
 
     // ========== DRAG & DROP ==========
@@ -1373,7 +1663,6 @@
       if (!draggingPanel) return;
 
       const container = document.getElementById('canvas-container');
-      const surface = document.getElementById('canvas-surface');
       const containerRect = container.getBoundingClientRect();
 
       let x = e.clientX - containerRect.left + container.scrollLeft - dragOffset.x;
@@ -1385,7 +1674,6 @@
       draggingPanel.style.left = x + 'px';
       draggingPanel.style.top = y + 'px';
 
-      // Update data
       const index = parseInt(draggingPanel.dataset.index);
       if (workspacePanels[currentWorkspace.id] && workspacePanels[currentWorkspace.id][index]) {
         workspacePanels[currentWorkspace.id][index].x = x;
@@ -1404,181 +1692,75 @@
       document.removeEventListener('mouseup', stopDrag);
     }
 
-    // ========== HIGHLIGHT-TO-LINK ==========
-    function handleTextSelection(e) {
-      const selection = window.getSelection();
-      const text = selection.toString().trim();
-
-      if (text.length > 0) {
-        selectedRange = selection.getRangeAt(0).cloneRange();
-        showLinkToolbar(e.clientX, e.clientY);
-      } else {
-        hideLinkToolbar();
-      }
-    }
-
-    function showLinkToolbar(x, y) {
-      const toolbar = document.getElementById('link-toolbar');
-      toolbar.style.left = x + 'px';
-      toolbar.style.top = (y - 40) + 'px';
-      toolbar.classList.add('visible');
-    }
-
-    function hideLinkToolbar() {
-      document.getElementById('link-toolbar').classList.remove('visible');
-      document.getElementById('workspace-picker').classList.remove('visible');
-    }
-
-    function showWorkspacePicker() {
-      const toolbar = document.getElementById('link-toolbar');
-      const picker = document.getElementById('workspace-picker');
-
-      const rect = toolbar.getBoundingClientRect();
-      picker.style.left = rect.left + 'px';
-      picker.style.top = (rect.bottom + 8) + 'px';
-      picker.classList.add('visible');
-
-      renderPickerList('');
-      document.getElementById('picker-search-input').focus();
-    }
-
-    function renderPickerList(filter) {
-      const list = document.getElementById('picker-list');
-      const lowerFilter = filter.toLowerCase();
-
-      let html = '<div class="picker-section-label">Recent</div>';
-
-      // Recent workspaces
-      const recent = [
-        { entry: entries[1], workspace: entries[1].workspaces[1] },
-        { entry: entries[1], workspace: entries[1].workspaces[2] },
-        { entry: entries[2], workspace: entries[2].workspaces[1] }
-      ];
-
-      recent.forEach(({ entry, workspace }) => {
-        if (!filter || workspace.name.toLowerCase().includes(lowerFilter) || entry.name.toLowerCase().includes(lowerFilter)) {
-          html += `
-            <div class="picker-item" onclick="createLink('${entry.id}', '${workspace.id}', '${workspace.name}')">
-              <div class="picker-item-icon">${entry.icon}</div>
-              <div class="picker-item-info">
-                <div class="picker-item-name">${workspace.name}</div>
-                <div class="picker-item-path">${entry.name}</div>
-              </div>
-            </div>
-          `;
-        }
-      });
-
-      html += '<div class="picker-section-label">All Workspaces</div>';
-
-      entries.filter(e => !e.isSystem).forEach(entry => {
-        entry.workspaces.forEach(ws => {
-          if (!filter || ws.name.toLowerCase().includes(lowerFilter) || entry.name.toLowerCase().includes(lowerFilter)) {
-            html += `
-              <div class="picker-item" onclick="createLink('${entry.id}', '${ws.id}', '${ws.name}')">
-                <div class="picker-item-icon">${entry.icon}</div>
-                <div class="picker-item-info">
-                  <div class="picker-item-name">${ws.name}</div>
-                  <div class="picker-item-path">${entry.name}</div>
-                </div>
-              </div>
-            `;
-          }
-        });
-      });
-
-      list.innerHTML = html;
-    }
-
-    function filterPicker(value) {
-      renderPickerList(value);
-    }
-
-    function createLink(entryId, workspaceId, displayName) {
-      if (!selectedRange) return;
-
-      const link = document.createElement('span');
-      link.className = 'workspace-link';
-      link.dataset.target = workspaceId;
-      link.textContent = selectedRange.toString();
-      link.onclick = () => navigateTo(entryId, workspaceId);
-
-      selectedRange.deleteContents();
-      selectedRange.insertNode(link);
-
-      hideLinkToolbar();
-      showToast(`Linked to ${displayName}`);
+    function removePanel(index) {
+      workspacePanels[currentWorkspace.id].splice(index, 1);
+      render();
     }
 
     // ========== UTILITIES ==========
-    function showToast(message) {
+    function showToast(message, type = '') {
       const toast = document.getElementById('toast');
       toast.textContent = message;
-      toast.classList.add('visible');
-      setTimeout(() => toast.classList.remove('visible'), 2000);
+      toast.className = 'toast visible' + (type ? ' ' + type : '');
+      setTimeout(() => toast.classList.remove('visible'), 2500);
     }
 
     function showHelp() {
-      alert(`Dashboard v4 - Unified Canvas System
+      alert(`Entry-Workspace Hierarchy Demo
 
-KEY CONCEPT:
-Dashboard is just a workspace in the "Home" entry.
-Same canvas, same panels, same interactions.
+EXPECTED FLOW:
+1. Click a Quick Link (e.g., "test4")
+2. Workspace picker appears with:
+   - Entry filter toggle (Current Entry / All)
+   - "+ Create 'test4' workspace" option
+3. Clicking create:
+   - Creates NEW entry "test4" in /knowledge-base/test4
+   - Creates Dashboard workspace (default, with 5 panels)
+   - Creates "test4" workspace (for notes)
+4. Navigates to the NEW entry's Dashboard
+5. Navigator shows "test4" as ACTIVE (purple highlight)
 
-NAVIGATION:
-• Click logo or press H → Home/Dashboard
-• Click breadcrumb to navigate
-• Use workspace tabs to switch
+KEY UI ELEMENTS:
+- Workspace tabs show: Dashboard | test4
+- Breadcrumb shows: Home / test4 / Dashboard
+- Navigator highlights active entry
+- Dashboard has 5 panels: Continue, Navigator, Recent, Quick Capture, Quick Links`);
+    }
 
-PANELS:
-• Drag headers to move panels
-• Click + to add new panels
-• All panel types work everywhere
+    function resetDemo() {
+      // Remove test4 if it exists
+      const test4Index = entries.findIndex(e => e.id === "test4");
+      if (test4Index > -1) {
+        entries.splice(test4Index, 1);
+        delete workspacePanels["test4-dashboard"];
+      }
 
-HIGHLIGHT-TO-LINK:
-1. Select text in a note panel
-2. Click "Link to Workspace"
-3. Pick a workspace
-4. Text becomes clickable link
-
-KEYBOARD:
-• H - Go to Home/Dashboard
-• + - Add panel menu
-• Cmd+K - Link selected text`);
+      demoStep = 1;
+      goToHome();
+      updateDemoStep();
+      showToast('Demo reset!');
     }
 
     // ========== KEYBOARD ==========
     document.addEventListener('keydown', (e) => {
       if (e.key === 'h' || e.key === 'H') {
-        if (!e.target.closest('[contenteditable]') && !e.target.closest('input') && !e.target.closest('textarea')) {
+        if (!e.target.closest('[contenteditable]') && !e.target.closest('input')) {
           goToHome();
         }
       }
-      if (e.key === '+' || e.key === '=') {
-        if (!e.target.closest('[contenteditable]') && !e.target.closest('input') && !e.target.closest('textarea')) {
-          toggleAddPanel();
-        }
-      }
       if (e.key === 'Escape') {
-        hideLinkToolbar();
-        if (addPanelVisible) toggleAddPanel();
+        hidePicker();
       }
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        const selection = window.getSelection();
-        if (selection.toString().trim()) {
-          showWorkspacePicker();
-        }
+        showWorkspacePicker();
       }
     });
 
     // Close picker when clicking outside
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('.workspace-picker') && !e.target.closest('.link-toolbar')) {
-        hideLinkToolbar();
-      }
-      if (!e.target.closest('.add-panel-dropdown') && !e.target.closest('#add-panel-btn')) {
-        if (addPanelVisible) toggleAddPanel();
+      if (!e.target.closest('.workspace-picker') && !e.target.closest('.link-toolbar') && !e.target.closest('.demo-create')) {
+        hidePicker();
       }
     });
 
@@ -1587,6 +1769,7 @@ KEYBOARD:
 
     // ========== INIT ==========
     render();
+    updateDemoStep();
   </script>
 </body>
 </html>

@@ -12,6 +12,7 @@ import type {
   CreateEntryOptions,
   CreateEntryResult,
 } from './entry-types'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 /**
  * Fetch workspaces for a specific entry
@@ -86,6 +87,12 @@ export async function createEntryForWorkspace(
   workspaceId: string,
   workspaceName: string
 ): Promise<CreateEntryResult> {
+  debugLog({
+    component: 'EntryService',
+    action: 'create_entry_for_workspace_start',
+    metadata: { workspaceId, workspaceName },
+  })
+
   const response = await fetch('/api/entries/create-for-workspace', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -94,10 +101,29 @@ export async function createEntryForWorkspace(
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}))
+    debugLog({
+      component: 'EntryService',
+      action: 'create_entry_for_workspace_error',
+      metadata: { workspaceId, workspaceName, status: response.status, error: errorData.error },
+    })
     throw new Error(errorData.error || `Failed to create entry for workspace: ${response.status}`)
   }
 
-  return response.json()
+  const result = await response.json()
+  debugLog({
+    component: 'EntryService',
+    action: 'create_entry_for_workspace_success',
+    metadata: {
+      workspaceId,
+      workspaceName,
+      entryId: result.entry?.id,
+      entryName: result.entry?.name,
+      alreadyExists: result.alreadyExists,
+      dashboardWorkspaceId: result.dashboardWorkspaceId,
+    },
+  })
+
+  return result
 }
 
 /**

@@ -268,15 +268,27 @@ export function LinksNotePanel({
 
   // Create a new workspace (with entry) and link to it
   const createNewWorkspace = useCallback(async () => {
-    console.log('[LinksNotePanel] createNewWorkspace called', { selectedRange, selectedText, contentRef: !!contentRef.current })
+    debugLog({
+      component: 'LinksNotePanel',
+      action: 'create_workspace_start',
+      metadata: { selectedText, hasSelectedRange: !!selectedRange, hasContentRef: !!contentRef.current },
+    })
 
     if (!contentRef.current) {
-      console.error('[LinksNotePanel] No contentRef')
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'create_workspace_error',
+        metadata: { error: 'No contentRef' },
+      })
       return
     }
 
     const workspaceName = selectedText.trim() || 'New Workspace'
-    console.log('[LinksNotePanel] Creating entry and workspace:', workspaceName)
+    debugLog({
+      component: 'LinksNotePanel',
+      action: 'create_workspace_name',
+      metadata: { workspaceName },
+    })
 
     setIsCreatingWorkspace(true)
     try {
@@ -289,26 +301,57 @@ export function LinksNotePanel({
 
       if (!wsResponse.ok) {
         const errorData = await wsResponse.json().catch(() => ({ error: 'Unknown error' }))
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'create_workspace_api_error',
+          metadata: { error: errorData.details || errorData.error, status: wsResponse.status },
+        })
         throw new Error(errorData.details || errorData.error || 'Failed to create workspace')
       }
 
       const wsData = await wsResponse.json()
       const newWorkspace = wsData.workspace
-      console.log('[LinksNotePanel] Created workspace:', newWorkspace.id)
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'workspace_created',
+        metadata: { workspaceId: newWorkspace.id, workspaceName: newWorkspace.name, itemId: newWorkspace.itemId },
+      })
 
       // Step 2: Create an entry for this workspace (this also seeds a dashboard)
       let entryId = newWorkspace.itemId
       let entryName = workspaceName
+      let dashboardWorkspaceId: string | null = null
+
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'creating_entry_for_workspace',
+        metadata: { workspaceId: newWorkspace.id, workspaceName },
+      })
 
       try {
         const entryResult = await createEntryForWorkspace(newWorkspace.id, workspaceName)
         if (entryResult) {
           entryId = entryResult.entry.id
           entryName = entryResult.entry.name
-          console.log('[LinksNotePanel] Created entry:', entryId)
+          dashboardWorkspaceId = (entryResult as any).dashboardWorkspaceId || null
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'entry_created',
+            metadata: { entryId, entryName, dashboardWorkspaceId },
+          })
+        } else {
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'entry_creation_no_result',
+            metadata: { workspaceId: newWorkspace.id },
+          })
         }
       } catch (entryErr) {
-        console.warn('[LinksNotePanel] Failed to create entry, continuing with workspace only:', entryErr)
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'entry_creation_failed',
+          metadata: { workspaceId: newWorkspace.id, error: String(entryErr) },
+        })
       }
 
       // Create the link element with both entry and workspace IDs
@@ -326,7 +369,11 @@ export function LinksNotePanel({
           selectedRange.deleteContents()
           selectedRange.insertNode(link)
         } catch (rangeErr) {
-          console.warn('[LinksNotePanel] Range invalid, appending link instead:', rangeErr)
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'range_invalid_appending',
+            metadata: { error: String(rangeErr) },
+          })
           contentRef.current.appendChild(document.createTextNode(' '))
           contentRef.current.appendChild(link)
         }
@@ -347,23 +394,42 @@ export function LinksNotePanel({
       onConfigChange?.({ content: contentRef.current.innerHTML })
 
       // Request workspace list refresh
-      console.log('[LinksNotePanel] Requesting workspace list refresh...')
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'requesting_workspace_refresh',
+        metadata: { entryId, workspaceId: newWorkspace.id },
+      })
       requestWorkspaceListRefresh()
 
       // Set entry context and navigate to the entry's dashboard
       if (entryId) {
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'setting_entry_context',
+          metadata: { entryId },
+        })
         setActiveEntryContext(entryId)
       }
 
       // Navigate after a short delay to allow refresh
+      // Navigate to Dashboard workspace if available, otherwise fall back to original workspace
+      const targetWorkspaceId = dashboardWorkspaceId || newWorkspace.id
       setTimeout(() => {
         if (onNavigate) {
-          console.log('[LinksNotePanel] Navigating to entry dashboard:', { entryId, workspaceId: newWorkspace.id })
-          onNavigate(entryId || '', newWorkspace.id)
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'navigating_to_entry',
+            metadata: { entryId, workspaceId: targetWorkspaceId, dashboardWorkspaceId, originalWorkspaceId: newWorkspace.id },
+          })
+          onNavigate(entryId || '', targetWorkspaceId)
         }
       }, 300)
     } catch (err) {
-      console.error('[LinksNotePanel] Failed to create workspace:', err)
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'create_workspace_failed',
+        metadata: { error: String(err) },
+      })
     } finally {
       setIsCreatingWorkspace(false)
     }

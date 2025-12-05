@@ -15,26 +15,51 @@ import { AddPanelButton } from "./PanelCatalog"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { RefreshCw } from "lucide-react"
+import { RefreshCw, ChevronRight, ChevronDown, Home, LayoutDashboard, Plus } from "lucide-react"
+
+interface WorkspaceSummary {
+  id: string
+  name: string
+  isDefault: boolean
+}
 
 interface DashboardViewProps {
   workspaceId: string
   onNavigate?: (entryId: string, workspaceId: string) => void
+  entryId?: string
+  entryName?: string
+  homeEntryId?: string
   className?: string
 }
 
-export function DashboardView({ workspaceId, onNavigate, className }: DashboardViewProps) {
+export function DashboardView({
+  workspaceId,
+  onNavigate,
+  entryId,
+  entryName = "Home",
+  homeEntryId,
+  className
+}: DashboardViewProps) {
   const [panels, setPanels] = useState<WorkspacePanel[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const { hasSeenWelcome, markAsSeen } = useDashboardWelcome()
   const showWelcome = !hasSeenWelcome
 
+  // Workspaces for dropdown
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([])
+  const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(false)
+  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
   // Drag state
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+
+  // Is current entry the Home entry?
+  const isHomeEntry = !entryId || entryId === homeEntryId
 
   // Fetch panels from API
   const fetchPanels = useCallback(async () => {
@@ -66,6 +91,69 @@ export function DashboardView({ workspaceId, onNavigate, className }: DashboardV
   useEffect(() => {
     fetchPanels()
   }, [fetchPanels])
+
+  // Fetch workspaces for the current entry (excluding Dashboard)
+  useEffect(() => {
+    if (!entryId) return
+
+    const fetchWorkspaces = async () => {
+      try {
+        setIsWorkspacesLoading(true)
+        const response = await fetch(`/api/entries/${entryId}/workspaces`)
+        if (response.ok) {
+          const data = await response.json()
+          // Filter out Dashboard workspace from dropdown
+          const nonDashboardWorkspaces = (data.workspaces || []).filter(
+            (ws: WorkspaceSummary & { name: string }) => ws.name !== "Dashboard"
+          )
+          setWorkspaces(nonDashboardWorkspaces)
+        }
+      } catch (err) {
+        console.error("[DashboardView] Failed to fetch workspaces:", err)
+      } finally {
+        setIsWorkspacesLoading(false)
+      }
+    }
+
+    fetchWorkspaces()
+  }, [entryId])
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!workspaceDropdownOpen) return
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setWorkspaceDropdownOpen(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [workspaceDropdownOpen])
+
+  // Handle workspace selection from dropdown
+  const handleWorkspaceSelect = useCallback((ws: WorkspaceSummary) => {
+    setWorkspaceDropdownOpen(false)
+    if (entryId && onNavigate) {
+      onNavigate(entryId, ws.id)
+    }
+  }, [entryId, onNavigate])
+
+  // Handle navigating to Home
+  const handleGoHome = useCallback(() => {
+    if (homeEntryId && onNavigate) {
+      // Navigate to Home's Dashboard - need to fetch it first
+      fetch("/api/dashboard/info")
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data?.dashboardWorkspaceId) {
+            onNavigate(data.homeEntryId, data.dashboardWorkspaceId)
+          }
+        })
+        .catch(err => console.error("[DashboardView] Failed to navigate home:", err))
+    }
+  }, [homeEntryId, onNavigate])
 
   // Handle panel close
   const handlePanelClose = useCallback(
@@ -308,6 +396,7 @@ export function DashboardView({ workspaceId, onNavigate, className }: DashboardV
             borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
           }}
         >
+          {/* Left side: Logo + Breadcrumb */}
           <div className="flex items-center gap-3">
             <div
               className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
@@ -315,11 +404,153 @@ export function DashboardView({ workspaceId, onNavigate, className }: DashboardV
             >
               A
             </div>
-            <h1 className="text-base font-semibold" style={{ color: '#f0f0f0' }}>
-              Dashboard
-            </h1>
+            {/* Breadcrumb */}
+            <div className="flex items-center gap-1.5 text-sm">
+              {/* Home link */}
+              <button
+                onClick={handleGoHome}
+                className="flex items-center gap-1 transition-colors"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: isHomeEntry ? 'default' : 'pointer',
+                  color: isHomeEntry ? '#8b8fa3' : '#f0f0f0',
+                  padding: '2px 4px',
+                  borderRadius: 4,
+                }}
+                disabled={isHomeEntry}
+              >
+                <Home size={14} />
+                <span>Home</span>
+              </button>
+              {/* Show entry name if not Home */}
+              {!isHomeEntry && (
+                <>
+                  <ChevronRight size={14} style={{ color: '#5c6070' }} />
+                  <span style={{ color: '#f0f0f0', fontWeight: 500 }}>{entryName}</span>
+                </>
+              )}
+              <ChevronRight size={14} style={{ color: '#5c6070' }} />
+              <span style={{ color: '#8b8fa3' }}>Dashboard</span>
+            </div>
           </div>
+
+          {/* Right side: Dashboard button + Workspace dropdown + Add Panel + Reset */}
           <div className="flex items-center gap-2">
+            {/* Dashboard button (highlighted/active) */}
+            <button
+              style={{
+                padding: '7px 14px',
+                borderRadius: '8px',
+                background: 'rgba(99, 102, 241, 0.15)',
+                color: '#818cf8',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                cursor: 'default',
+                fontSize: '13px',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <LayoutDashboard size={14} />
+              Dashboard
+            </button>
+
+            {/* Workspace dropdown */}
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  background: 'transparent',
+                  color: '#f0f0f0',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  minWidth: 120,
+                }}
+              >
+                <span className="truncate">
+                  {workspaces.find(ws => ws.isDefault)?.name || entryName || "Workspace"}
+                </span>
+                <ChevronDown size={14} style={{ opacity: 0.6, flexShrink: 0 }} />
+              </button>
+
+              {/* Dropdown menu */}
+              {workspaceDropdownOpen && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    right: 0,
+                    minWidth: 180,
+                    background: '#1e222a',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: 8,
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                    zIndex: 50,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {isWorkspacesLoading ? (
+                    <div className="px-3 py-2 text-sm" style={{ color: '#8b8fa3' }}>
+                      Loading...
+                    </div>
+                  ) : workspaces.length === 0 ? (
+                    <div className="px-3 py-2 text-sm" style={{ color: '#8b8fa3' }}>
+                      No workspaces
+                    </div>
+                  ) : (
+                    <div className="py-1">
+                      {workspaces.map((ws) => (
+                        <button
+                          key={ws.id}
+                          onClick={() => handleWorkspaceSelect(ws)}
+                          className="w-full text-left px-3 py-2 text-sm transition-colors"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            color: '#f0f0f0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent'
+                          }}
+                        >
+                          <span className="truncate">{ws.name}</span>
+                          {ws.isDefault && (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: '#8b8fa3',
+                                background: 'rgba(255, 255, 255, 0.05)',
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                              }}
+                            >
+                              default
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <AddPanelButton
               workspaceId={workspaceId}
               onPanelAdded={() => fetchPanels()}
