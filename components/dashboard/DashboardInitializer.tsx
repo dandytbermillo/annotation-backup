@@ -21,6 +21,7 @@ import {
   initializeWithHome,
   pushNavigationEntry,
   updateCurrentWorkspace,
+  updateViewMode,
 } from "@/lib/navigation/navigation-context"
 import { DashboardView } from "./DashboardView"
 
@@ -71,6 +72,30 @@ export function DashboardInitializer({
   // Current entry info (for breadcrumb display)
   const [currentEntryInfo, setCurrentEntryInfo] = useState<CurrentEntryInfo | null>(null)
   const fetchedRef = useRef(false)
+
+  // Phase 4: Parse URL params for initial view mode state restoration
+  const [initialViewMode, setInitialViewMode] = useState<'dashboard' | 'workspace'>('dashboard')
+  const [initialActiveWorkspaceId, setInitialActiveWorkspaceId] = useState<string | undefined>(undefined)
+
+  // Phase 4: Parse URL params on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const urlParams = new URLSearchParams(window.location.search)
+    const viewParam = urlParams.get('view')
+    const wsParam = urlParams.get('ws')
+
+    if (viewParam === 'workspace' && wsParam) {
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "parse_url_params",
+        metadata: { view: viewParam, ws: wsParam },
+      })
+      console.log("[DashboardInitializer] Parsed URL params - restoring workspace mode:", { view: viewParam, ws: wsParam })
+      setInitialViewMode('workspace')
+      setInitialActiveWorkspaceId(wsParam)
+    }
+  }, [])
 
   // Debug: log on mount
   useEffect(() => {
@@ -313,6 +338,50 @@ export function DashboardInitializer({
     }
   }, [currentEntryInfo, currentDashboardWorkspaceId])
 
+  // Phase 4: Handle view mode changes from DashboardView (for navigation tracking and URL updates)
+  const handleViewModeChange = useCallback((viewMode: 'dashboard' | 'workspace', activeWorkspaceId?: string) => {
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "view_mode_changed",
+      metadata: {
+        viewMode,
+        activeWorkspaceId,
+        entryId: currentEntryInfo?.entryId,
+      },
+    })
+    console.log("[DashboardInitializer] View mode changed:", { viewMode, activeWorkspaceId })
+
+    // Update navigation context
+    updateViewMode(viewMode, activeWorkspaceId)
+
+    // Update URL without page reload
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href)
+
+      if (viewMode === 'workspace' && activeWorkspaceId) {
+        url.searchParams.set('view', 'workspace')
+        url.searchParams.set('ws', activeWorkspaceId)
+      } else {
+        // Dashboard mode - remove view mode params
+        url.searchParams.delete('view')
+        url.searchParams.delete('ws')
+      }
+
+      // Use replaceState to update URL without adding to browser history
+      window.history.replaceState({}, '', url.toString())
+
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "url_updated",
+        metadata: {
+          newUrl: url.toString(),
+          viewMode,
+          activeWorkspaceId,
+        },
+      })
+    }
+  }, [currentEntryInfo])
+
   // Navigation context value
   const navigationContextValue = {
     onNavigate: handleDashboardNavigate,
@@ -358,6 +427,9 @@ export function DashboardInitializer({
         entryName={currentEntryInfo?.entryName}
         homeEntryId={dashboardInfo?.homeEntryId}
         className="w-screen h-screen"
+        onViewModeChange={handleViewModeChange}
+        initialViewMode={initialViewMode}
+        initialActiveWorkspaceId={initialActiveWorkspaceId}
       />
     )
   }

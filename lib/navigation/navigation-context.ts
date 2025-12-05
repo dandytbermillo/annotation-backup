@@ -13,6 +13,10 @@ export interface NavigationEntry {
   workspaceId?: string
   workspaceName?: string
   timestamp: number
+  /** View mode within the entry (dashboard or embedded workspace) - defaults to 'dashboard' */
+  viewMode?: 'dashboard' | 'workspace'
+  /** Active workspace ID when viewMode === 'workspace' (for embedded workspace mode) */
+  activeWorkspaceId?: string
 }
 
 // Navigation stack - bottom of array is most recent (current)
@@ -93,6 +97,51 @@ export function updateCurrentWorkspace(workspaceId: string, workspaceName: strin
   })
 
   notifyListeners()
+}
+
+/**
+ * Update the current entry's view mode (dashboard ↔ embedded workspace)
+ * Used for Phase 3 layered dashboard/workspace switching
+ */
+export function updateViewMode(
+  viewMode: 'dashboard' | 'workspace',
+  activeWorkspaceId?: string
+) {
+  if (navigationStack.length === 0) return
+
+  const current = navigationStack[navigationStack.length - 1]
+  current.viewMode = viewMode
+  current.activeWorkspaceId = viewMode === 'workspace' ? activeWorkspaceId : undefined
+  current.timestamp = Date.now()
+
+  void debugLog({
+    component: "NavigationContext",
+    action: "update_view_mode",
+    metadata: {
+      entryId: current.entryId,
+      viewMode,
+      activeWorkspaceId,
+    },
+  })
+
+  notifyListeners()
+}
+
+/**
+ * Get the current view mode for the active entry
+ * Returns null if no navigation entry exists
+ */
+export function getCurrentViewMode(): {
+  viewMode: 'dashboard' | 'workspace'
+  activeWorkspaceId?: string
+} | null {
+  const current = getCurrentNavigationEntry()
+  if (!current) return null
+
+  return {
+    viewMode: current.viewMode ?? 'dashboard',
+    activeWorkspaceId: current.activeWorkspaceId,
+  }
 }
 
 /**

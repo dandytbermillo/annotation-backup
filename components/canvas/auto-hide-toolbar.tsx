@@ -11,6 +11,8 @@ interface AutoHideToolbarProps {
   /** Show toolbar for initial duration on mount (ms) */
   showOnMount?: boolean
   initialVisibilityDuration?: number
+  /** Top offset in pixels (for embedding below another header) */
+  topOffset?: number
 }
 
 /**
@@ -23,6 +25,7 @@ export function AutoHideToolbar({
   hideDelay = 800,
   showOnMount = true,
   initialVisibilityDuration = 3000,
+  topOffset = 0,
 }: AutoHideToolbarProps) {
   const [isVisible, setIsVisible] = useState(showOnMount)
   const [isHovering, setIsHovering] = useState(false)
@@ -63,17 +66,18 @@ export function AutoHideToolbar({
   }, [showOnMount, initialVisibilityDuration, isHovering])
 
   // Edge detection via mousemove listener
+  // Account for topOffset when detecting edge proximity
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       const mouseY = e.clientY
 
-      // Show toolbar when mouse is near top edge
-      if (mouseY <= edgeThreshold) {
+      // Show toolbar when mouse is near top edge (adjusted for offset)
+      if (mouseY <= topOffset + edgeThreshold && mouseY >= topOffset) {
         clearHideTimeout()
         setIsVisible(true)
       }
-      // Start hide timer when mouse moves away from top
-      else if (mouseY > edgeThreshold + 100 && !isHovering) {
+      // Start hide timer when mouse moves away from toolbar area
+      else if (mouseY > topOffset + edgeThreshold + 100 && !isHovering) {
         scheduleHide()
       }
     }
@@ -84,7 +88,7 @@ export function AutoHideToolbar({
       window.removeEventListener("mousemove", handleMouseMove)
       clearHideTimeout()
     }
-  }, [edgeThreshold, hideDelay, isHovering])
+  }, [edgeThreshold, hideDelay, isHovering, topOffset])
 
   // Handle toolbar hover - keep visible while hovering
   const handleMouseEnter = () => {
@@ -116,8 +120,9 @@ export function AutoHideToolbar({
       style={{
         transform: isVisible ? 'translateY(0)' : 'translateY(-100%)',
         transition: 'transform 300ms ease-in-out',
+        top: topOffset,
       }}
-      className="fixed left-0 right-0 top-0 z-50 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur overflow-visible"
+      className="fixed left-0 right-0 z-50 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur overflow-visible"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onFocus={handleFocus}

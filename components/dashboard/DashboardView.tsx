@@ -38,6 +38,12 @@ interface DashboardViewProps {
   entryName?: string
   homeEntryId?: string
   className?: string
+  /** Callback when view mode changes (for navigation tracking and URL updates) */
+  onViewModeChange?: (viewMode: 'dashboard' | 'workspace', activeWorkspaceId?: string) => void
+  /** Initial view mode from URL params */
+  initialViewMode?: 'dashboard' | 'workspace'
+  /** Initial active workspace ID from URL params */
+  initialActiveWorkspaceId?: string
 }
 
 export function DashboardView({
@@ -46,7 +52,10 @@ export function DashboardView({
   entryId,
   entryName = "Home",
   homeEntryId,
-  className
+  className,
+  onViewModeChange,
+  initialViewMode = 'dashboard',
+  initialActiveWorkspaceId,
 }: DashboardViewProps) {
   const [panels, setPanels] = useState<WorkspacePanel[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -54,11 +63,30 @@ export function DashboardView({
   const { hasSeenWelcome, markAsSeen } = useDashboardWelcome()
   const showWelcome = !hasSeenWelcome
 
-  // View mode state (Phase 2)
-  const [viewMode, setViewMode] = useState<ViewMode>('dashboard')
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
+  // View mode state (Phase 2) - Initialize from URL params if provided
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode)
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(initialActiveWorkspaceId ?? null)
   // Phase 3: Lazy mounting - only mount workspace canvas after first visit
-  const [hasVisitedWorkspace, setHasVisitedWorkspace] = useState(false)
+  // Initialize to true if starting in workspace mode (from URL)
+  const [hasVisitedWorkspace, setHasVisitedWorkspace] = useState(initialViewMode === 'workspace' && !!initialActiveWorkspaceId)
+
+  // Phase 4: Handle initial workspace mode from URL params
+  // Set workspace context if starting in workspace mode
+  useEffect(() => {
+    if (initialViewMode === 'workspace' && initialActiveWorkspaceId) {
+      void debugLog({
+        component: "DashboardView",
+        action: "restore_from_url",
+        metadata: {
+          initialViewMode,
+          initialActiveWorkspaceId,
+          entryId,
+        },
+      })
+      console.log("[DashboardView] Restoring workspace mode from URL:", { initialViewMode, initialActiveWorkspaceId })
+      setActiveWorkspaceContext(initialActiveWorkspaceId)
+    }
+  }, []) // Only run on mount
 
   // Workspaces for dropdown
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([])
@@ -152,6 +180,7 @@ export function DashboardView({
   // Handle workspace selection from dropdown (receives just workspaceId)
   // Phase 2: Sets viewMode to 'workspace' instead of navigating away
   // Phase 3: Also sets active workspace context so AnnotationAppShell loads the correct workspace
+  // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   const handleWorkspaceSelectById = useCallback((selectedWorkspaceId: string) => {
     const ws = workspaces.find(w => w.id === selectedWorkspaceId)
     void debugLog({
@@ -176,7 +205,9 @@ export function DashboardView({
     // Phase 3: Set active workspace context so AnnotationAppShell loads the selected workspace
     // This triggers the subscription in AnnotationAppContent which calls noteWorkspaceState.selectWorkspace()
     setActiveWorkspaceContext(selectedWorkspaceId)
-  }, [entryId, workspaces])
+    // Phase 4: Notify parent for navigation tracking and URL updates
+    onViewModeChange?.('workspace', selectedWorkspaceId)
+  }, [entryId, workspaces, onViewModeChange])
 
   // Handle navigating to Home
   const handleGoHome = useCallback(() => {
@@ -194,6 +225,7 @@ export function DashboardView({
   }, [homeEntryId, onNavigate])
 
   // Handle returning to dashboard mode (Phase 2)
+  // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   const handleReturnToDashboard = useCallback(() => {
     void debugLog({
       component: "DashboardView",
@@ -207,7 +239,9 @@ export function DashboardView({
 
     setViewMode('dashboard')
     // Note: We keep activeWorkspaceId so user can quickly return to the same workspace
-  }, [activeWorkspaceId, entryId])
+    // Phase 4: Notify parent for navigation tracking and URL updates
+    onViewModeChange?.('dashboard')
+  }, [activeWorkspaceId, entryId, onViewModeChange])
 
   // Refetch workspaces helper
   const refetchWorkspaces = useCallback(async () => {
@@ -816,6 +850,7 @@ export function DashboardView({
               isHidden={viewMode !== 'workspace'}
               hideHomeButton
               hideWorkspaceToggle
+              toolbarTopOffset={56}
             />
           </div>
         )}

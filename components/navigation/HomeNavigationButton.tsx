@@ -15,6 +15,7 @@ import {
   getCurrentNavigationEntry,
   subscribeToNavigation,
   navigateToStackEntry,
+  getCurrentViewMode,
   type NavigationEntry,
 } from "@/lib/navigation/navigation-context"
 
@@ -23,21 +24,42 @@ interface HomeNavigationButtonProps {
   onNavigate?: (entryId: string, workspaceId: string) => void
   /** Whether currently on a dashboard (vs workspace) */
   isOnDashboard?: boolean
+  /** Callback when user wants to return to dashboard from embedded workspace mode */
+  onReturnToDashboard?: () => void
+  /** Whether this button is in embedded mode (inside DashboardView's workspace) */
+  isEmbeddedMode?: boolean
 }
 
 export function HomeNavigationButton({
   onNavigate,
   isOnDashboard = false,
+  onReturnToDashboard,
+  isEmbeddedMode = false,
 }: HomeNavigationButtonProps) {
   const [stack, setStack] = useState<NavigationEntry[]>([])
   const [isPopupOpen, setIsPopupOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const popupRef = useRef<HTMLDivElement>(null)
 
+  // Track current view mode for display
+  const [viewMode, setViewMode] = useState<'dashboard' | 'workspace'>('dashboard')
+
   // Subscribe to navigation changes
   useEffect(() => {
     setStack(getNavigationStack())
-    const unsubscribe = subscribeToNavigation(setStack)
+    const unsubscribe = subscribeToNavigation((newStack) => {
+      setStack(newStack)
+      // Update viewMode from navigation context
+      const currentViewMode = getCurrentViewMode()
+      if (currentViewMode) {
+        setViewMode(currentViewMode.viewMode)
+      }
+    })
+    // Initialize viewMode
+    const currentViewMode = getCurrentViewMode()
+    if (currentViewMode) {
+      setViewMode(currentViewMode.viewMode)
+    }
     return unsubscribe
   }, [])
 
@@ -63,7 +85,14 @@ export function HomeNavigationButton({
   const currentEntry = getCurrentNavigationEntry()
 
   // Handle click on home button - go to current entry's dashboard
+  // Phase 4: In embedded mode, return to dashboard view first
   const handleHomeClick = useCallback(() => {
+    // In embedded workspace mode, return to dashboard first
+    if (isEmbeddedMode && viewMode === 'workspace' && onReturnToDashboard) {
+      onReturnToDashboard()
+      return
+    }
+
     if (currentEntry && onNavigate) {
       // If already on dashboard, toggle popup instead
       if (isOnDashboard) {
@@ -75,7 +104,7 @@ export function HomeNavigationButton({
     } else {
       setIsPopupOpen(prev => !prev)
     }
-  }, [currentEntry, onNavigate, isOnDashboard])
+  }, [currentEntry, onNavigate, isOnDashboard, isEmbeddedMode, viewMode, onReturnToDashboard])
 
   // Handle navigation to a stack entry
   const handleStackEntryClick = useCallback((index: number) => {
@@ -250,7 +279,7 @@ export function HomeNavigationButton({
                     >
                       {entry.entryName}
                     </div>
-                    {isLast && entry.workspaceName && (
+                    {isLast && (
                       <div
                         style={{
                           fontSize: 11,
@@ -262,7 +291,12 @@ export function HomeNavigationButton({
                         }}
                       >
                         <LayoutDashboard size={10} />
-                        <span>{entry.workspaceName}</span>
+                        <span>
+                          {/* Show viewMode-aware label for current entry */}
+                          {viewMode === 'workspace' && entry.activeWorkspaceId
+                            ? `Workspace`
+                            : entry.workspaceName || 'Dashboard'}
+                        </span>
                       </div>
                     )}
                   </div>

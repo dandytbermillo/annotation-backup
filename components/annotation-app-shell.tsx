@@ -137,6 +137,8 @@ type AnnotationAppContentProps = {
   hideHomeButton?: boolean
   /** Hide the workspace toggle menu (parent provides workspace switching) */
   hideWorkspaceToggle?: boolean
+  /** Top offset for workspace toolbar (for embedding below another header) */
+  toolbarTopOffset?: number
 }
 
 function AnnotationAppContent({
@@ -144,6 +146,7 @@ function AnnotationAppContent({
   isHidden = false,
   hideHomeButton = false,
   hideWorkspaceToggle = false,
+  toolbarTopOffset = 0,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -1396,10 +1399,13 @@ const initialWorkspaceSyncRef = useRef(false)
 
   const workspaceToolbarStripProps = useMemo(
     () => ({
-      isVisible: !showConstellationPanel && !isPopupLayerActive,
+      // Hide toolbar when in embedded hidden mode (dashboard mode) or when constellation/popup is active
+      isVisible: !isHidden && !showConstellationPanel && !isPopupLayerActive,
+      // Position toolbar below dashboard header when embedded
+      topOffset: toolbarTopOffset,
       ...workspaceToolbarProps,
     }),
-    [workspaceToolbarProps, showConstellationPanel, isPopupLayerActive],
+    [workspaceToolbarProps, showConstellationPanel, isPopupLayerActive, isHidden, toolbarTopOffset],
   )
 
   // Home navigation button - shows when dashboard navigation context is available
@@ -1699,12 +1705,15 @@ export interface AnnotationAppShellProps {
   hideHomeButton?: boolean
   /** Hide the workspace toggle menu (parent provides workspace switching) */
   hideWorkspaceToggle?: boolean
+  /** Top offset for workspace toolbar (for embedding below another header) */
+  toolbarTopOffset?: number
 }
 
 export function AnnotationAppShell({
   isHidden = false,
   hideHomeButton = false,
   hideWorkspaceToggle = false,
+  toolbarTopOffset = 0,
 }: AnnotationAppShellProps = {}) {
   return (
     <LayerProvider initialPopupCount={0}>
@@ -1714,6 +1723,7 @@ export function AnnotationAppShell({
           isHidden={isHidden}
           hideHomeButton={hideHomeButton}
           hideWorkspaceToggle={hideWorkspaceToggle}
+          toolbarTopOffset={toolbarTopOffset}
         />
       </CanvasWorkspaceProvider>
     </LayerProvider>
