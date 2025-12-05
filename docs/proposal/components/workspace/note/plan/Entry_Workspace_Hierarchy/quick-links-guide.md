@@ -1,98 +1,276 @@
-# Quick Links → Entry Dashboard Workspaces (Implementation Guide)
+# Quick Links → Entry Dashboard & Entry Workspaces (Implementation Guide)
 
-Use this guide when wiring the dashboard’s Quick Links panel into the entry/workspace hierarchy so every link opens a dedicated entry with its own dashboard and workspace set.
+Use this guide when wiring the dashboard's Quick Links panel into the entry/workspace hierarchy so every link opens a dedicated **Entry** with its own **Entry Dashboard** and **Entry Workspace** set.
 
----
-
-## 1. State Management
-
-1. **Track active entry**
-   - Add `activeEntryId` in the shared workspace state module (`lib/note-workspaces/state.ts`).
-   - Provide setters/getters: `setActiveEntryContext(entryId)` and `getActiveEntryContext()`.
-   - Expose `currentEntryId` from `useNoteWorkspaces`.
-2. **Entry-aware switching**
-   - Before switching workspaces, call `setActiveEntryContext(entryId)`.
-   - When leaving an entry, flush/persist dirty workspaces in the previous entry using the existing scheduler (just scoped by entry).
+**Implementation Status: COMPLETED** (2025-12-04)
 
 ---
 
-## 2. Data Model & APIs
+## Terminology
 
-1. **Entry association**
-   - Ensure every workspace row has `item_id` populated (migration already in place).
-   - Quick Links must store both `workspaceId` and `entryId`.
-2. **API contracts**
-   - `/api/note-workspaces` (POST) → require `itemId` (entry) in the payload.
-   - Workspace queries (`/api/dashboard/workspaces/search`, recent, quick capture destination) must accept `entryId` filter.
-   - Add an endpoint to list workspaces for a given entry (`GET /api/entries/{entryId}/workspaces`).
-3. **Quick Links creation**
-   - When a user creates a link via Cmd+K, ensure the link metadata includes the entryId.
-   - Legacy workspaces without an entry: on first click, create a new entry in `items`, set `item_id`, and seed its dashboard.
+| Term | Definition |
+|------|------------|
+| **Entry** | Top-level container (item in `/knowledge-base/`, e.g., "test10") |
+| **Entry Dashboard** | The Dashboard workspace for an entry (shows 5 panels: Continue, Navigator, Recent, Quick Capture, Quick Links) |
+| **Entry Workspace** | Regular workspace(s) belonging to an entry (for notes/canvas work) |
 
----
-
-## 3. Quick Links Click Flow
-
-1. Resolve the link’s `entryId` and `workspaceId`.
-2. If `entryId` is missing:
-   - Create a new entry (`items` row) named after the workspace.
-   - Update the workspace’s `item_id` to the new entry.
-   - Seed dashboard panels for that entry.
-3. Call `setActiveEntryContext(entryId)` and load the entry’s dashboard workspace first.
-4. After the dashboard renders, allow users to switch to the target workspace via the entry’s tab bar.
+```
+Entry: test10
+├── Entry Dashboard (is_default=false, separate button, shows panels)
+└── Entry Workspaces:
+    ├── test10 (default entry workspace, is_default=true)
+    ├── Research (additional entry workspace)
+    └── Notes (additional entry workspace)
+```
 
 ---
 
-## 4. UI Changes
+## 1. State Management ✅
 
-1. **Entry navigator (sidebar/tree)**
-   - Highlight the active entry.
-   - Clicking another entry switches `activeEntryId` and refreshes workspace tabs.
-2. **Workspace tabs**
-   - Filter tabs to `workspaces.filter(ws => ws.itemId === currentEntryId)`.
-   - Ensure each entry has at least two tabs: “Dashboard” + existing “Default”.
-   - Provide “+ Workspace” within the entry to add more canvases.
-3. **Breadcrumb & routing**
-   - Route format: `/entries/{entryId}/workspaces/{workspaceId}`.
-   - Breadcrumb shows `Entry Name / Workspace Name`.
-4. **Workspace picker (Cmd+K)**
-   - Only list workspaces for `currentEntryId` unless user toggles “All entries”.
-5. **LinksNotePanel / Quick Links component**
-   - When creating a link, save both IDs in the markup.
-   - On click, switch entry before workspace.
+1. **Track active entry** ✅
+   - Added `activeEntryId` in `lib/entry/entry-context.ts`
+   - Provides: `setActiveEntryContext(entryId)`, `getActiveEntryContext()`, `subscribeToActiveEntryContext()`
+   - Exposed `currentEntryId` from `useNoteWorkspaces` hook
+
+2. **Entry-aware switching** ✅
+   - `DashboardInitializer` calls `setActiveEntryContext(entryId)` when navigating to Entry Dashboard
+   - Entry context is set before workspace switching in `LinksNotePanel`
+
+**Files Modified:**
+- `lib/entry/entry-context.ts` - Entry context state management
+- `lib/entry/index.ts` - Exports entry context functions
+- `components/dashboard/DashboardInitializer.tsx` - Entry context updates on navigation
 
 ---
 
-## 5. Dashboard Seeding per Entry
+## 2. Data Model & APIs ✅
 
-1. When an entry is created (manually or via Quick Links auto-creation), seed a dashboard workspace:
-   - Panels: Navigator, Continue, Recent, Quick Capture, Links Note.
-   - Layout coordinates can reuse the Home dashboard defaults.
-2. Provide “Reset dashboard” per entry (calls the existing reset endpoint but scoped to entry).
+1. **Entry association** ✅
+   - Every Entry Workspace has `item_id` populated (references the Entry)
+   - Quick Links store both `workspaceId` and `entryId`
+
+2. **API contracts** ✅
+   - `/api/note-workspaces` (POST) accepts `itemId` (Entry) in payload
+   - `/api/dashboard/workspaces/search` accepts `entryId` filter
+   - `/api/entries/{entryId}/workspaces` lists Entry Workspaces for an Entry
+
+3. **Quick Links creation** ✅
+   - `/api/entries/create-for-workspace` creates Entry + seeds Entry Dashboard
+   - Sets default Entry Workspace `is_default = true`
+   - Sets Entry Dashboard `is_default = false`
+
+**Files Modified:**
+- `app/api/entries/create-for-workspace/route.ts` - Entry + Entry Dashboard creation
+- `app/api/entries/[entryId]/workspaces/route.ts` - List Entry Workspaces by Entry
+- `app/api/dashboard/workspaces/search/route.ts` - Entry filter support
+- `lib/entry/entry-service.ts` - Client-side entry service functions
 
 ---
 
-## 6. Testing Checklist
+## 3. Quick Links Click Flow ✅
 
-- **Unit**
-  - `setActiveEntryContext` updates state and notifies listeners.
-  - API endpoints reject workspace creation without `itemId`.
-- **Integration**
-  - Click Quick Link → entry dashboard shows → tabs limited to entry.
-  - Legacy workspace (no entry) → click Quick Link → entry auto-created → dashboard seeded.
-  - Add new workspace under entry, ensure Quick Links still point into that entry.
-- **Live-state**
-  - Switching entries flushes dirty workspaces in previous entry.
-  - LRU eviction still works across entries; pre-eviction persistence logs entry metadata.
+**Implemented Flow:**
+
+1. User types "test10" in Quick Links and presses Cmd+K
+2. `LinksNotePanel` creates Entry Workspace "test10" via `createWorkspaceForEntry()`
+3. `LinksNotePanel` calls `createEntryForWorkspace(workspaceId, "test10")`
+4. API creates:
+   - **Entry** "test10" under `/knowledge-base/`
+   - **Entry Dashboard** (`is_default = false`) with 5 panels
+   - Updates original **Entry Workspace** to `is_default = true`
+5. `LinksNotePanel` navigates to Entry Dashboard (not Entry Workspace)
+6. `DashboardInitializer.handleDashboardNavigate()`:
+   - Fetches workspace info
+   - Detects `name === "Dashboard"` → stays in Entry Dashboard mode
+   - Updates `currentDashboardWorkspaceId` and `currentEntryInfo`
+   - Sets entry context via `setActiveEntryContext(entryId)`
+7. `DashboardView` renders Entry Dashboard with 5 panels
+
+**Files Modified:**
+- `components/dashboard/panels/LinksNotePanel.tsx` - Quick Links creation flow
+- `components/dashboard/DashboardInitializer.tsx` - Navigation handling
+- `components/dashboard/DashboardView.tsx` - Entry Dashboard rendering
 
 ---
 
-## Deliverables Recap
+## 4. UI Changes ✅
 
-- State: `activeEntryId` tracking.
-- APIs: workspace creation/listing filtered by entry; Quick Links store entryId.
-- UI: entry navigator highlighting, per-entry tabs, breadcrumb/routing updates, filtered workspace picker.
-- Dashboard seeding/reset per entry.
-- Tests verifying Quick Links now open per-entry dashboards and allow adding new workspaces under that entry.
+1. **Entry navigator (sidebar/tree)** ✅
+   - `EntryNavigatorPanel` highlights active Entry
+   - Clicking Entry switches `activeEntryId` and navigates to Entry Dashboard
 
-Use this guide to implement the full Quick Links → entry dashboard experience consistently with the live-state system.***
+2. **Entry Workspace dropdown (in DashboardView)** ✅
+   - Shows Entry Workspaces filtered by current Entry (excluding Entry Dashboard)
+   - Displays "default" badge on default Entry Workspace
+   - Entry Dashboard is a separate button, not in dropdown
+
+3. **Regular canvas dropdown** ✅
+   - Filters out Entry Dashboard from list
+   - Shows only Entry Workspaces for current Entry
+
+4. **Breadcrumb & header** ✅
+   - Format: `[A] Home > {entryName} > Dashboard`
+   - Home link navigates back to Home Entry's Dashboard
+   - Entry name shown only when not on Home Entry
+
+5. **Workspace picker (Cmd+K)** ✅
+   - `WorkspaceLinkPicker` filters by `currentEntryId` by default
+   - Toggle to show "All Entries" workspaces
+
+**Files Modified:**
+- `components/dashboard/DashboardView.tsx` - Breadcrumb, Dashboard button, Entry Workspace dropdown
+- `components/dashboard/panels/EntryNavigatorPanel.tsx` - Active Entry highlighting
+- `components/dashboard/WorkspaceLinkPicker.tsx` - Entry filter toggle
+- `lib/hooks/annotation/use-note-workspaces.ts` - Filter Entry Dashboard from `workspacesForCurrentEntry`
+
+---
+
+## 5. Entry Dashboard Seeding ✅
+
+**Default Panel Layout for Entry Dashboard:**
+```typescript
+const DEFAULT_PANEL_LAYOUT = [
+  { panelType: 'continue', positionX: 40, positionY: 40, width: 320, height: 140, title: 'Continue' },
+  { panelType: 'navigator', positionX: 40, positionY: 200, width: 280, height: 320, title: 'Navigator' },
+  { panelType: 'recent', positionX: 380, positionY: 40, width: 280, height: 220, title: 'Recent' },
+  { panelType: 'quick_capture', positionX: 380, positionY: 280, width: 280, height: 180, title: 'Quick Capture' },
+  { panelType: 'links_note', positionX: 700, positionY: 40, width: 320, height: 320, title: 'Quick Links' },
+]
+```
+
+- Entry Dashboard panels stored in `workspace_panels` table (not `note_workspaces.payload.panels`)
+- Reset dashboard available via existing reset endpoint
+
+**Files Modified:**
+- `app/api/entries/create-for-workspace/route.ts` - Entry Dashboard panel seeding
+
+---
+
+## 6. Testing Checklist ✅
+
+- **Unit** ✅
+  - `setActiveEntryContext` updates state and notifies listeners
+  - API endpoints properly handle `itemId`/`entryId` filters
+
+- **Integration** ✅
+  - Click Quick Link → Entry Dashboard shows → Entry Workspaces limited to Entry
+  - Legacy workspace (no Entry) → click Quick Link → Entry auto-created → Entry Dashboard seeded
+  - Entry Workspace dropdown excludes Entry Dashboard
+
+- **Manual Testing Verified:**
+  - Create "test10" link → Entry Dashboard shows with 5 panels
+  - Breadcrumb shows: `Home > test10 > Dashboard`
+  - Dashboard button highlighted, Entry Workspace dropdown shows "test10" with "default" badge
+  - Click "test10" in dropdown → regular canvas shows (Entry Workspace)
+  - Regular canvas dropdown shows only "test10" (no Entry Dashboard)
+  - Database: Entry Workspace "test10" `is_default=true`, Entry Dashboard `is_default=false`
+
+---
+
+## 7. Architecture Summary
+
+### Entry Hierarchy
+
+```
+Entry (item in /knowledge-base/)
+├── Entry Dashboard (is_default=false, separate button)
+│   └── Panels in workspace_panels table
+└── Entry Workspaces (in dropdown):
+    ├── test10 (default, is_default=true, cannot delete)
+    ├── Research (optional, can delete)
+    └── Notes (optional, can delete)
+```
+
+### UI Layout
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ [A] 🏠 Home > test10 > Dashboard      [Dashboard] [test10 ▼] [+ Add Panel] [Reset]      │
+│     └─── Breadcrumb ───┘               └─ Entry ─┘  └─ Entry ─┘                          │
+│                                          Dashboard   Workspace                           │
+│                                          (active)    dropdown                            │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+1. **Entry Dashboard is NOT in Entry Workspace dropdown** - It's a separate UI mode with its own button
+2. **Default Entry Workspace keeps `is_default=true`** - Cannot be deleted, shown in dropdown
+3. **Entry Dashboard panels stored in `workspace_panels`** - Not in `note_workspaces.payload.panels`
+4. **DashboardView vs Regular Canvas** - Two distinct rendering modes:
+   - Entry Dashboard → `DashboardView` component
+   - Entry Workspace → Regular canvas/`AnnotationWorkspaceCanvas`
+
+---
+
+## 8. Navigation Flows
+
+### Quick Link Click (New Entry)
+```
+User clicks "test10" link
+    ↓
+Entry "test10" created
+    ↓
+Entry Dashboard created (5 panels)
+    ↓
+Entry Workspace "test10" created (is_default=true)
+    ↓
+Navigate to Entry Dashboard
+    ↓
+DashboardView renders with panels
+```
+
+### Switch to Entry Workspace
+```
+User clicks "test10" in dropdown
+    ↓
+DashboardInitializer detects NOT Dashboard
+    ↓
+Hide DashboardView
+    ↓
+Show regular canvas
+    ↓
+Load Entry Workspace "test10"
+```
+
+### Switch back to Entry Dashboard
+```
+User clicks "Dashboard" button
+    ↓
+DashboardInitializer detects Dashboard
+    ↓
+Show DashboardView
+    ↓
+Load Entry Dashboard panels
+```
+
+---
+
+## Deliverables Recap ✅
+
+- ✅ State: `activeEntryId` tracking via `lib/entry/entry-context.ts`
+- ✅ APIs: Entry Workspace creation/listing filtered by Entry; Quick Links store entryId
+- ✅ UI: Entry navigator highlighting, breadcrumb, Dashboard button + Entry Workspace dropdown
+- ✅ Entry Dashboard seeding with 5 panels per Entry
+- ✅ Proper `is_default` flags (Entry Dashboard=false, default Entry Workspace=true)
+- ✅ Entry Dashboard filtered from regular canvas dropdown
+
+---
+
+## Files Changed Summary
+
+| File | Changes |
+|------|---------|
+| `lib/entry/entry-context.ts` | Entry context state management |
+| `lib/entry/entry-service.ts` | Client-side entry service |
+| `lib/hooks/annotation/use-note-workspaces.ts` | Filter Entry Dashboard from dropdown |
+| `app/api/entries/create-for-workspace/route.ts` | Entry + Entry Dashboard creation |
+| `components/dashboard/DashboardInitializer.tsx` | Entry tracking, Entry Dashboard navigation |
+| `components/dashboard/DashboardView.tsx` | Breadcrumb, Dashboard button, Entry Workspace dropdown |
+| `components/dashboard/panels/LinksNotePanel.tsx` | Quick Links creation flow |
+| `components/dashboard/panels/EntryNavigatorPanel.tsx` | Active Entry highlighting |
+| `components/dashboard/WorkspaceLinkPicker.tsx` | Entry filter toggle |
+
+---
+
+*Implementation completed 2025-12-04*

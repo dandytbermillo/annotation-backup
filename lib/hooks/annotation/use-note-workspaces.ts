@@ -408,14 +408,19 @@ export function useNoteWorkspaces({
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
 
   // Filter workspaces by current entry context
+  // Also exclude "Dashboard" workspaces - they are shown via DashboardView, not in dropdown
   const workspacesForCurrentEntry = useMemo(() => {
+    // Filter out Dashboard workspaces from the dropdown
+    const excludeDashboard = (list: typeof workspaces) =>
+      list.filter((ws) => ws.name !== "Dashboard")
+
     if (!currentEntryId) {
-      // No entry selected - return all workspaces
-      return workspaces
+      // No entry selected - return all workspaces (except Dashboard)
+      return excludeDashboard(workspaces)
     }
-    const filtered = workspaces.filter((ws) => ws.itemId === currentEntryId)
+    const filtered = workspaces.filter((ws) => ws.itemId === currentEntryId && ws.name !== "Dashboard")
     // If no workspaces match, fall back to all (better UX than empty list)
-    return filtered.length > 0 ? filtered : workspaces
+    return filtered.length > 0 ? filtered : excludeDashboard(workspaces)
   }, [workspaces, currentEntryId])
 
   const setWorkspaceNoteMembership = useCallback(

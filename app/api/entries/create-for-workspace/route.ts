@@ -192,9 +192,13 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Original workspace (e.g., "test4") keeps is_default = true
+    // Set original workspace (e.g., "test4") as is_default = true
     // It's the default workspace in the dropdown (cannot be deleted)
     // Dashboard is separate from the dropdown
+    await client.query(
+      `UPDATE note_workspaces SET is_default = true WHERE id = $1`,
+      [workspaceId]
+    )
 
     await client.query('COMMIT')
 
