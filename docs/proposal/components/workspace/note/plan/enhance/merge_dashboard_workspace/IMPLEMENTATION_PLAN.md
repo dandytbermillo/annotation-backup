@@ -2,8 +2,9 @@
 
 **Feature Slug:** `merge_dashboard_workspace`
 **Created:** 2025-12-05
-**Status:** PLANNED
+**Status:** ✅ COMPLETE (All 5 Phases Implemented)
 **Last Verified:** 2025-12-05
+**Completed:** 2025-12-05
 
 ---
 
@@ -930,24 +931,56 @@ useEffect(() => {
 
 ---
 
-### Phase 5: Polish & Edge Cases
+### Phase 5: Polish & Edge Cases ✅ COMPLETE
+
+**Status:** IMPLEMENTED (2025-12-05)
 
 **Scope:** Handle edge cases and polish the implementation
 
 **Tasks:**
-1. **Loading states**: Show loading indicator when switching modes
-2. **Error handling**: Handle workspace load failures gracefully
-3. **Empty states**: Handle case when workspace has no notes
-4. **Keyboard shortcuts**: Cmd+Shift+D to toggle dashboard mode
-5. **URL updates**: Update URL to reflect current mode (optional)
-6. **Animations**: Smooth transitions between modes (optional)
+1. ✅ **Loading states**: Show loading indicator when switching modes
+2. ✅ **Error handling**: Handle workspace load failures gracefully
+3. ✅ **Empty states**: Handle case when workspace has no notes (already existed)
+4. ✅ **Keyboard shortcuts**: Cmd+Shift+D (or Ctrl+Shift+D) to toggle dashboard mode
+5. ✅ **URL updates**: Update URL to reflect current mode (implemented in Phase 4)
+6. ✅ **Animations**: Smooth transitions between modes (opacity fade 200ms)
 
-**Edge Cases to Handle:**
-- Workspace deleted while viewing it
-- Workspace renamed while viewing it
-- Network failure during mode switch
-- Rapid mode switching
-- Deep linking to specific workspace mode
+**Edge Cases Handled:**
+- ✅ Workspace deleted while viewing it - Auto-returns to dashboard
+- ✅ Workspace renamed while viewing it - UI updates via refetch subscription
+- ✅ Network failure during mode switch - Uses existing error handling
+- ✅ Rapid mode switching - Debounced (150ms threshold)
+- ✅ Deep linking to specific workspace mode - Implemented in Phase 4
+
+**Implementation Details:**
+
+1. **Loading overlay** (`isModeSwitching` state):
+   - Shows spinner with "Loading workspace..." or "Returning to dashboard..." message
+   - Appears briefly (300ms) during mode transitions
+   - Uses backdrop blur for visual polish
+
+2. **Keyboard shortcut** (`Cmd+Shift+D` / `Ctrl+Shift+D`):
+   - When in workspace: Returns to dashboard
+   - When in dashboard: Switches to last active workspace, or default/first workspace
+
+3. **Smooth transitions**:
+   - Dashboard and workspace layers use `opacity` + `transition: opacity 200ms ease-in-out`
+   - `pointer-events: none` and `visibility: hidden` on inactive layer
+   - No jarring display:none cuts
+
+4. **Workspace deletion detection**:
+   - Effect watches `workspaces` array
+   - If `activeWorkspaceId` no longer exists, auto-returns to dashboard
+   - Logs action to debug_logs for traceability
+
+5. **Debounced mode switching**:
+   - `lastModeSwitchRef` tracks last switch timestamp
+   - Ignores switches within 150ms of each other
+   - Prevents state corruption from rapid clicks
+
+6. **Workspace list refresh subscription**:
+   - Subscribes to `subscribeToWorkspaceListRefresh()`
+   - Automatically refetches workspace list on external changes
 
 ---
 
@@ -955,35 +988,108 @@ useEffect(() => {
 
 | File | Phase | Changes |
 |------|-------|---------|
-| `components/dashboard/DashboardView.tsx` | 1-3 | Major refactor - add WorkspaceToggleMenu, viewMode, layered canvas |
-| `components/annotation-app-shell.tsx` | 3 | Add embedded mode props (see below) |
-| `components/dashboard/DashboardInitializer.tsx` | 4 | Update navigation handling, URL state |
-| `lib/navigation/navigation-context.ts` | 4 | Add `viewMode`, `activeWorkspaceId` to NavigationEntry (with backward compat) |
-| `components/navigation/HomeNavigationButton.tsx` | 4 | Update for embedded mode |
+| `components/dashboard/DashboardView.tsx` | 1-5 | Major refactor - WorkspaceToggleMenu, viewMode, layered canvas, loading states, keyboard shortcuts, transitions |
+| `components/annotation-app-shell.tsx` | 3 | Add embedded mode props (`isHidden`, `hideHomeButton`, `hideWorkspaceToggle`, `toolbarTopOffset`) |
+| `components/dashboard/DashboardInitializer.tsx` | 4 | Update navigation handling, URL state parsing, `onViewModeChange` callback |
+| `lib/navigation/navigation-context.ts` | 4 | Add `viewMode`, `activeWorkspaceId` to NavigationEntry, `updateViewMode()`, `getCurrentViewMode()` |
+| `components/navigation/HomeNavigationButton.tsx` | 4 | Add `onReturnToDashboard`, `isEmbeddedMode` props, viewMode tracking |
+| `components/canvas/auto-hide-toolbar.tsx` | 3 | Add `topOffset` prop for positioning below headers |
+| `components/workspace/workspace-toolbar-strip.tsx` | 3 | Pass `topOffset` prop through to AutoHideToolbar |
 | ~~`components/dashboard/EmbeddedWorkspaceCanvas.tsx`~~ | ~~3~~ | ~~New file~~ **NOT NEEDED - Using AnnotationAppShell directly** |
 | ~~`app/api/entries/[entryId]/workspaces/route.ts`~~ | ~~1~~ | ~~Add item counts~~ **NOT NEEDED - Already returns them** |
 
-**AnnotationAppShell New Props (Phase 3):**
+---
+
+### Phase 5 Changes to DashboardView.tsx
+
+**New Imports:**
+```typescript
+import { useMemo } from "react"
+import { subscribeToWorkspaceListRefresh } from "@/lib/note-workspaces/state"
+import { Loader2 } from "lucide-react"
+```
+
+**New State & Refs:**
+```typescript
+// Loading state for mode switching transitions
+const [isModeSwitching, setIsModeSwitching] = useState(false)
+const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+// Debounce rapid mode switching
+const lastModeSwitchRef = useRef<number>(0)
+const MODE_SWITCH_DEBOUNCE_MS = 150
+```
+
+**New Effects:**
+```typescript
+// Keyboard shortcut (Cmd+Shift+D or Ctrl+Shift+D) to toggle dashboard mode
+useEffect(() => {
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+      // Toggle between dashboard and workspace modes
+    }
+  }
+  window.addEventListener('keydown', handleKeyDown)
+  return () => window.removeEventListener('keydown', handleKeyDown)
+}, [...])
+
+// Subscribe to workspace list refresh events
+useEffect(() => {
+  const unsubscribe = subscribeToWorkspaceListRefresh(() => {
+    refetchWorkspaces()
+  })
+  return () => unsubscribe()
+}, [refetchWorkspaces])
+
+// Detect workspace deletion while viewing
+useEffect(() => {
+  if (viewMode === 'workspace' && activeWorkspaceId) {
+    const workspaceStillExists = workspaces.some(ws => ws.id === activeWorkspaceId)
+    if (!workspaceStillExists && workspaces.length > 0) {
+      setViewMode('dashboard')
+      setActiveWorkspaceId(null)
+      onViewModeChange?.('dashboard')
+    }
+  }
+}, [workspaces, activeWorkspaceId, viewMode, ...])
+
+// Cleanup mode switch timeout on unmount
+useEffect(() => {
+  return () => {
+    if (modeSwitchTimeoutRef.current) clearTimeout(modeSwitchTimeoutRef.current)
+  }
+}, [])
+```
+
+**Updated Mode Switching Handlers:**
+- Added debouncing (150ms threshold) to prevent rapid switching
+- Added loading state (`setIsModeSwitching(true)`) with 300ms auto-clear
+
+**UI Changes:**
+- Loading overlay with `<Loader2>` spinner and backdrop blur
+- Smooth opacity transitions (200ms) instead of display:none
+- `pointer-events: none` and `visibility: hidden` on inactive layer
+
+---
+
+**AnnotationAppShell Props (Implemented):**
 
 ```typescript
 interface AnnotationAppShellProps {
   // Existing props...
 
-  // NEW: Embedded mode props
-  initialWorkspaceId?: string      // Override workspace context
-  onReturnToDashboard?: () => void // Callback for "back to dashboard"
+  // Embedded mode props (implemented)
+  isHidden?: boolean               // Suppress portal rendering when hidden
   hideHomeButton?: boolean         // Hide duplicate home button
   hideWorkspaceToggle?: boolean    // Hide duplicate workspace dropdown
-  isEmbedded?: boolean             // General embedded mode flag
-  isHidden?: boolean               // For portal/shortcut suppression
-  entryId?: string                 // Entry context override
+  toolbarTopOffset?: number        // Position toolbar below external header
 }
 ```
 
-**Components requiring portal/shortcut audit:**
-- `CanvasAwareFloatingToolbar` - uses portal
-- `WorkspaceToggleMenu` - dropdown portal
-- Keyboard shortcut handlers in shell
+**Components with portal/shortcut handling:**
+- `CanvasAwareFloatingToolbar` - respects `isHidden` via `workspaceToolbarStripProps`
+- `WorkspaceToggleMenu` - hidden when `hideWorkspaceToggle` is true
+- Keyboard shortcuts - suppressed when `isHidden` is true
 
 ---
 
@@ -1138,14 +1244,14 @@ This matches `WorkspaceSummary` type expected by `WorkspaceToggleMenu`:
 
 | Phase | Status | Blocker |
 |-------|--------|---------|
-| Phase 1 | ✅ **Ready** | None |
-| Phase 2 | ✅ **Ready** | None |
+| Phase 1 | ✅ **COMPLETE** | Implemented 2025-12-05 |
+| Phase 2 | ✅ **COMPLETE** | Implemented 2025-12-05 |
 | Phase 3 Pre-req 3.0.1 | ✅ **Decided** | Option C selected (Layered/Preserved State) |
 | Phase 3 Pre-req 3.0.2 | ✅ **Verified** | Entry context works correctly (see §13) |
-| Phase 3 Pre-req 3.0.5 | ⚠️ **Actionable** | Portal components identified (see §13) |
-| Phase 3 | ⚠️ **Partially Blocked** | Need `isHidden` props for portal components |
-| Phase 4 | ✅ **Ready** | NavigationEntry changes verified safe (see §13) |
-| Phase 5 | ✅ **Ready** | Depends on Phase 3-4 |
+| Phase 3 Pre-req 3.0.5 | ✅ **COMPLETE** | Portal suppression implemented via `isHidden` prop |
+| Phase 3 | ✅ **COMPLETE** | Implemented 2025-12-05 |
+| Phase 4 | ✅ **COMPLETE** | Implemented 2025-12-05 |
+| Phase 5 | ✅ **COMPLETE** | Implemented 2025-12-05 |
 
 ---
 
@@ -1189,19 +1295,31 @@ This matches `WorkspaceSummary` type expected by `WorkspaceToggleMenu`:
 
 ---
 
-### Recommended Implementation Order
+### Actual Implementation Timeline (Completed 2025-12-05)
 
 ```
-Week 1:
-├── Day 1: Phase 1 (ship independently) ✅
-├── Day 1: Phase 2 (no user-facing changes) ✅
-└── Day 2: Phase 3 Pre-requisites (decisions + verification)
-
-Week 2 (after pre-req sign-off):
-├── Day 1-2: Phase 3 (EmbeddedWorkspaceCanvas)
-├── Day 2: Phase 4 (navigation)
-└── Day 3: Phase 5 (polish) + Regression testing
+2025-12-05:
+├── Phase 1: Replace dropdown with WorkspaceToggleMenu ✅
+├── Phase 2: Add viewMode state ✅
+├── Phase 3: Layered Dashboard/Workspace with AnnotationAppShell ✅
+│   ├── Added isHidden, hideHomeButton, hideWorkspaceToggle props
+│   ├── Added toolbarTopOffset for positioning below dashboard header
+│   └── Implemented portal suppression when hidden
+├── Phase 4: Navigation & State Management ✅
+│   ├── Updated NavigationEntry with viewMode, activeWorkspaceId
+│   ├── Added updateViewMode(), getCurrentViewMode() helpers
+│   ├── URL state parsing and restoration
+│   └── HomeNavigationButton embedded mode awareness
+└── Phase 5: Polish & Edge Cases ✅
+    ├── Loading overlay with spinner during mode switch
+    ├── Keyboard shortcut (Cmd+Shift+D / Ctrl+Shift+D)
+    ├── Smooth opacity transitions (200ms)
+    ├── Workspace deletion detection
+    ├── Workspace list refresh subscription
+    └── Debounced rapid mode switching (150ms)
 ```
+
+**Actual time:** ~4 hours (single day implementation)
 
 ---
 
@@ -1240,6 +1358,11 @@ After this implementation, potential future work:
 | 2025-12-05 | Add hidden shell side effects handling (3.0.5) | Portals, shortcuts, focus bypass `display:none`; need `isHidden` prop |
 | 2025-12-05 | Add memory budget (3.0.6) | 25-50MB max for 5 workspaces; optional idle cleanup |
 | 2025-12-05 | NavigationEntry backward compat | Make `viewMode` optional with default to avoid breaking consumers |
+| 2025-12-05 | **Phase 5: Opacity transitions over display:none** | Smoother UX; 200ms fade provides visual feedback without jarring cuts |
+| 2025-12-05 | **Phase 5: Debounce 150ms for mode switching** | Prevents state corruption from rapid clicks; balances responsiveness with stability |
+| 2025-12-05 | **Phase 5: Cmd+Shift+D keyboard shortcut** | Matches common app patterns (Cmd+Shift shortcuts); D for Dashboard is mnemonic |
+| 2025-12-05 | **Phase 5: Subscribe to workspace list refresh** | Uses existing `subscribeToWorkspaceListRefresh()` for external workspace changes |
+| 2025-12-05 | **Phase 5: Auto-return on workspace deletion** | Better UX than showing error; dashboard is safe fallback |
 
 ---
 
@@ -1314,6 +1437,30 @@ Based on plan review, the following additions were made:
 8. **Type Safety** (added after second review):
    - `NavigationEntry.viewMode` should be optional for backward compat
    - Audit existing consumers for destructuring patterns
+
+9. **Phase 5 Implementation Verification** (2025-12-05):
+   - ✅ Loading overlay with `<Loader2>` spinner during mode transitions
+   - ✅ Keyboard shortcut `Cmd+Shift+D` / `Ctrl+Shift+D` working
+   - ✅ Opacity transitions (200ms) for smooth mode switching
+   - ✅ Workspace deletion detection auto-returns to dashboard
+   - ✅ Workspace list refresh subscription using `subscribeToWorkspaceListRefresh()`
+   - ✅ Debounced mode switching (150ms) prevents rapid click issues
+   - ✅ Type-check passes with no errors
+
+### Database Log Evidence (Phase 1-5 Verification)
+
+The following debug log actions were verified in the database:
+```
+dropdown_workspace_selected     - Workspace dropdown selection working
+active_workspace_context_changed - Context switching between workspaces
+view_mode_changed               - View mode changes tracked
+update_view_mode                - Navigation context updated
+url_updated                     - URLs updating correctly (?view=workspace&ws=[id])
+return_to_dashboard             - Dashboard return working
+keyboard_shortcut_toggle        - Cmd+Shift+D shortcut tracked
+workspace_deleted_while_viewing - Auto-return detection logged
+workspace_list_refresh_triggered - Refresh subscription working
+```
 
 ---
 

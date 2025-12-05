@@ -8,17 +8,17 @@
  * This is shown when the user is on the dashboard workspace.
  */
 
-import React, { useEffect, useState, useCallback, useRef } from "react"
+import React, { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton } from "./PanelCatalog"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
-import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh } from "@/lib/note-workspaces/state"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { RefreshCw, ChevronRight, Home, LayoutDashboard } from "lucide-react"
+import { RefreshCw, ChevronRight, Home, LayoutDashboard, Loader2 } from "lucide-react"
 
 interface WorkspaceSummary {
   id: string
@@ -69,6 +69,14 @@ export function DashboardView({
   // Phase 3: Lazy mounting - only mount workspace canvas after first visit
   // Initialize to true if starting in workspace mode (from URL)
   const [hasVisitedWorkspace, setHasVisitedWorkspace] = useState(initialViewMode === 'workspace' && !!initialActiveWorkspaceId)
+
+  // Phase 5: Loading state for mode switching transitions
+  const [isModeSwitching, setIsModeSwitching] = useState(false)
+  const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Phase 5: Debounce rapid mode switching
+  const lastModeSwitchRef = useRef<number>(0)
+  const MODE_SWITCH_DEBOUNCE_MS = 150
 
   // Phase 4: Handle initial workspace mode from URL params
   // Set workspace context if starting in workspace mode
@@ -181,7 +189,16 @@ export function DashboardView({
   // Phase 2: Sets viewMode to 'workspace' instead of navigating away
   // Phase 3: Also sets active workspace context so AnnotationAppShell loads the correct workspace
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
+  // Phase 5: Adds debouncing for rapid mode switching and loading state
   const handleWorkspaceSelectById = useCallback((selectedWorkspaceId: string) => {
+    // Phase 5: Debounce rapid mode switching
+    const now = Date.now()
+    if (now - lastModeSwitchRef.current < MODE_SWITCH_DEBOUNCE_MS) {
+      console.log("[DashboardView] Mode switch debounced")
+      return
+    }
+    lastModeSwitchRef.current = now
+
     const ws = workspaces.find(w => w.id === selectedWorkspaceId)
     void debugLog({
       component: "DashboardView",
@@ -198,6 +215,16 @@ export function DashboardView({
     console.log("[DashboardView] Workspace selected - switching to workspace mode:", { selectedWorkspaceId, ws, entryId })
 
     setWorkspaceMenuOpen(false)
+
+    // Phase 5: Show loading state briefly during mode switch
+    setIsModeSwitching(true)
+    if (modeSwitchTimeoutRef.current) {
+      clearTimeout(modeSwitchTimeoutRef.current)
+    }
+    modeSwitchTimeoutRef.current = setTimeout(() => {
+      setIsModeSwitching(false)
+    }, 300)
+
     setActiveWorkspaceId(selectedWorkspaceId)
     setViewMode('workspace')
     // Phase 3: Mark that workspace has been visited for lazy mounting
@@ -226,7 +253,16 @@ export function DashboardView({
 
   // Handle returning to dashboard mode (Phase 2)
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
+  // Phase 5: Adds debouncing for rapid mode switching and loading state
   const handleReturnToDashboard = useCallback(() => {
+    // Phase 5: Debounce rapid mode switching
+    const now = Date.now()
+    if (now - lastModeSwitchRef.current < MODE_SWITCH_DEBOUNCE_MS) {
+      console.log("[DashboardView] Mode switch debounced")
+      return
+    }
+    lastModeSwitchRef.current = now
+
     void debugLog({
       component: "DashboardView",
       action: "return_to_dashboard",
@@ -236,6 +272,15 @@ export function DashboardView({
       },
     })
     console.log("[DashboardView] Returning to dashboard mode from workspace:", activeWorkspaceId)
+
+    // Phase 5: Show loading state briefly during mode switch
+    setIsModeSwitching(true)
+    if (modeSwitchTimeoutRef.current) {
+      clearTimeout(modeSwitchTimeoutRef.current)
+    }
+    modeSwitchTimeoutRef.current = setTimeout(() => {
+      setIsModeSwitching(false)
+    }, 300)
 
     setViewMode('dashboard')
     // Note: We keep activeWorkspaceId so user can quickly return to the same workspace
@@ -521,6 +566,80 @@ export function DashboardView({
     }
   }, [draggingPanelId, handleDragMove, handleDragEnd])
 
+  // Phase 5: Keyboard shortcut (Cmd+Shift+D or Ctrl+Shift+D) to toggle dashboard mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+Shift+D (Mac) or Ctrl+Shift+D (Windows/Linux)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        e.stopPropagation()
+
+        void debugLog({
+          component: "DashboardView",
+          action: "keyboard_shortcut_toggle",
+          metadata: { currentViewMode: viewMode, entryId },
+        })
+
+        if (viewMode === 'workspace') {
+          handleReturnToDashboard()
+        } else if (activeWorkspaceId) {
+          // Only switch to workspace if one was previously selected
+          handleWorkspaceSelectById(activeWorkspaceId)
+        } else if (workspaces.length > 0) {
+          // Otherwise switch to the default workspace
+          const defaultWs = workspaces.find(ws => ws.isDefault) || workspaces[0]
+          handleWorkspaceSelectById(defaultWs.id)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [viewMode, activeWorkspaceId, workspaces, entryId, handleReturnToDashboard, handleWorkspaceSelectById])
+
+  // Phase 5: Subscribe to workspace list refresh events
+  // This handles external workspace creation/deletion/rename
+  useEffect(() => {
+    const unsubscribe = subscribeToWorkspaceListRefresh(() => {
+      void debugLog({
+        component: "DashboardView",
+        action: "workspace_list_refresh_triggered",
+        metadata: { entryId },
+      })
+      refetchWorkspaces()
+    })
+    return () => unsubscribe()
+  }, [entryId, refetchWorkspaces])
+
+  // Phase 5: Detect workspace deletion while viewing
+  // If activeWorkspaceId is no longer in the workspaces list, return to dashboard
+  useEffect(() => {
+    if (viewMode === 'workspace' && activeWorkspaceId) {
+      const workspaceStillExists = workspaces.some(ws => ws.id === activeWorkspaceId)
+      if (!workspaceStillExists && workspaces.length > 0) {
+        // Workspace was deleted while viewing - return to dashboard
+        void debugLog({
+          component: "DashboardView",
+          action: "workspace_deleted_while_viewing",
+          metadata: { deletedWorkspaceId: activeWorkspaceId, entryId },
+        })
+        console.log("[DashboardView] Workspace deleted while viewing, returning to dashboard:", activeWorkspaceId)
+        setViewMode('dashboard')
+        setActiveWorkspaceId(null)
+        onViewModeChange?.('dashboard')
+      }
+    }
+  }, [workspaces, activeWorkspaceId, viewMode, entryId, onViewModeChange])
+
+  // Phase 5: Cleanup mode switch timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (modeSwitchTimeoutRef.current) {
+        clearTimeout(modeSwitchTimeoutRef.current)
+      }
+    }
+  }, [])
+
   if (isLoading) {
     return (
       <div
@@ -758,16 +877,59 @@ export function DashboardView({
           Content area - Option C: Layered/Preserved State
           Both dashboard and workspace are rendered, but only one is visible.
           This preserves workspace state when switching back to dashboard.
+          Phase 5: Added smooth transitions and loading overlay.
         */}
 
+        {/* Phase 5: Mode switching loading overlay */}
+        {isModeSwitching && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 100,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(10, 12, 16, 0.5)',
+              backdropFilter: 'blur(4px)',
+              animation: 'fadeIn 150ms ease-out',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 12,
+              }}
+            >
+              <Loader2
+                size={24}
+                style={{
+                  color: '#818cf8',
+                  animation: 'spin 1s linear infinite',
+                }}
+              />
+              <span style={{ color: '#8b8fa3', fontSize: 13 }}>
+                {viewMode === 'workspace' ? 'Loading workspace...' : 'Returning to dashboard...'}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Dashboard panels canvas - hidden when in workspace mode */}
+        {/* Phase 5: Using opacity + pointer-events for smoother transition */}
         <div
           ref={canvasRef}
           className="relative"
           style={{
             minHeight: 'calc(100vh - 56px)',
             padding: 24,
-            display: viewMode === 'dashboard' ? 'block' : 'none',
+            opacity: viewMode === 'dashboard' ? 1 : 0,
+            pointerEvents: viewMode === 'dashboard' ? 'auto' : 'none',
+            transition: 'opacity 200ms ease-in-out',
+            position: viewMode === 'dashboard' ? 'relative' : 'absolute',
+            visibility: viewMode === 'dashboard' ? 'visible' : 'hidden',
           }}
         >
           {panels.length === 0 ? (
@@ -834,6 +996,7 @@ export function DashboardView({
           Workspace canvas - Lazy mounted after first visit, hidden when in dashboard mode.
           Uses isHidden prop to suppress portal rendering when hidden (prevents portal bypass).
           hideHomeButton and hideWorkspaceToggle since DashboardView provides those.
+          Phase 5: Added smooth transitions.
         */}
         {hasVisitedWorkspace && (
           <div
@@ -843,7 +1006,10 @@ export function DashboardView({
               left: 0,
               right: 0,
               bottom: 0,
-              display: viewMode === 'workspace' ? 'block' : 'none',
+              opacity: viewMode === 'workspace' ? 1 : 0,
+              pointerEvents: viewMode === 'workspace' ? 'auto' : 'none',
+              transition: 'opacity 200ms ease-in-out',
+              visibility: viewMode === 'workspace' ? 'visible' : 'hidden',
             }}
           >
             <AnnotationAppShell
