@@ -250,10 +250,10 @@ import { setActiveEntryContext, getActiveEntryContext } from "@/lib/entry"
 ```
 
 **Pre-implementation verification:**
-- [ ] `setActiveEntryContext(entryId)` is called before rendering EmbeddedWorkspaceCanvas
+- [x] `setActiveEntryContext(entryId)` is called before rendering EmbeddedWorkspaceCanvas *(Verified: DashboardInitializer.tsx:169, 258)*
 - [ ] `useNoteWorkspaces` hook filters workspaces by `activeEntryContext`
 - [ ] Runtime manager (`lib/workspace/runtime-manager.ts`) respects entry boundaries
-- [ ] Workspace list API (`/api/entries/[entryId]/workspaces`) only returns workspaces for specified entry
+- [x] Workspace list API (`/api/entries/[entryId]/workspaces`) only returns workspaces for specified entry *(Verified: route.ts:47-50 filters by item_id)*
 - [ ] Test: Create workspace in Entry A, switch to Entry B → workspace NOT visible
 
 **Entry context flow:**
@@ -1140,9 +1140,11 @@ This matches `WorkspaceSummary` type expected by `WorkspaceToggleMenu`:
 |-------|--------|---------|
 | Phase 1 | ✅ **Ready** | None |
 | Phase 2 | ✅ **Ready** | None |
-| Phase 3 Pre-req | ⛔ **Blocked** | Requires decisions on 3.0.1-3.0.4 |
-| Phase 3 | ⛔ **Blocked** | Depends on pre-requisites |
-| Phase 4 | ⚠️ **Partially Ready** | Spec complete, depends on Phase 3 |
+| Phase 3 Pre-req 3.0.1 | ✅ **Decided** | Option C selected (Layered/Preserved State) |
+| Phase 3 Pre-req 3.0.2 | ✅ **Verified** | Entry context works correctly (see §13) |
+| Phase 3 Pre-req 3.0.5 | ⚠️ **Actionable** | Portal components identified (see §13) |
+| Phase 3 | ⚠️ **Partially Blocked** | Need `isHidden` props for portal components |
+| Phase 4 | ✅ **Ready** | NavigationEntry changes verified safe (see §13) |
 | Phase 5 | ✅ **Ready** | Depends on Phase 3-4 |
 
 ---
@@ -1315,7 +1317,156 @@ Based on plan review, the following additions were made:
 
 ---
 
+## 13. Blocker Verification Results (2025-12-05)
+
+> **Pre-implementation investigation completed.** Results documented below.
+
+### Blocker 1: Entry Context Verification ✅ CLEARED
+
+**Question:** Does the entry context module exist and work correctly?
+
+**Investigation:**
+```bash
+# 1. Verify entry context module exists
+test -f lib/entry/entry-context.ts && echo "EXISTS"
+# Result: EXISTS ✅
+
+# 2. Check if setActiveEntryContext is called before workspace operations
+grep -n "setActiveEntryContext" components/dashboard/DashboardInitializer.tsx
+# Result: Lines 169, 258 - setActiveEntryContext(entryId) is called ✅
+
+# 3. Verify API filters workspaces by entry
+# app/api/entries/[entryId]/workspaces/route.ts lines 47-50:
+# WHERE nw.user_id = $1 AND nw.item_id = $2  -- item_id = entryId ✅
+```
+
+**Findings:**
+- Entry context module exists at `lib/entry/entry-context.ts`
+- `setActiveEntryContext(entryId)` is called in `DashboardInitializer.tsx` before workspace operations
+- API correctly filters workspaces by `item_id = entryId`
+- **No changes required** - entry context already works correctly
+
+**Files verified:**
+- `lib/entry/entry-context.ts` - Core state management
+- `lib/entry/index.ts` - Exports `setActiveEntryContext`, `getActiveEntryContext`
+- `components/dashboard/DashboardInitializer.tsx:169, 258` - Calls `setActiveEntryContext`
+- `app/api/entries/[entryId]/workspaces/route.ts:47-50` - Filters by entry
+
+---
+
+### Blocker 2: NavigationEntry Consumer Audit ✅ CLEARED
+
+**Question:** Will adding `viewMode` field break existing consumers?
+
+**Investigation:**
+```bash
+grep -rn "NavigationEntry" --include="*.ts" --include="*.tsx" lib/ components/
+```
+
+**Consumer Files Found:**
+1. `lib/navigation/navigation-context.ts` - Definition + internal usage
+2. `components/navigation/HomeNavigationButton.tsx` - UI consumer
+
+**Pattern Analysis:**
+
+`HomeNavigationButton.tsx` (primary consumer):
+- Line 189: `key={entry.entryId}` - dot notation ✅
+- Line 251: `{entry.entryName}` - dot notation ✅
+- Lines 253-265: `entry.workspaceName` - dot notation ✅
+- **No destructuring patterns found** that would break with new optional field
+
+`navigation-context.ts` (internal):
+- Uses spread operator: `{ ...entry, timestamp: Date.now() }` - safe ✅
+- Direct property access throughout - safe ✅
+
+**Conclusion:**
+- All consumers use dot notation (`entry.fieldName`)
+- No destructuring that requires `viewMode` to exist
+- Safe to add `viewMode?: 'dashboard' | 'workspace'` as optional with default
+- Recommended: Add helper function `getViewMode(entry)` for convenience
+
+**No breaking changes expected.**
+
+---
+
+### Blocker 3: AnnotationAppShell Embedded Behavior ⚠️ NEEDS WORK
+
+**Question:** What props/changes are needed for embedded mode?
+
+**Investigation - Portal Components:**
+```bash
+grep -rn "createPortal" --include="*.tsx" components/
+```
+
+**Portal Components Identified (bypass `display: none`):**
+
+| Component | File | Line | Notes |
+|-----------|------|------|-------|
+| `CanvasAwareFloatingToolbar` | `canvas-aware-floating-toolbar.tsx` | 57 | `createPortal(..., document.body)` |
+| `FloatingToolbar` | `floating-toolbar.tsx` | 2889, 2910, 2969 | Multiple portals to `document.body` |
+| `WorkspacePreviewPortal` | `workspace/workspace-preview-portal.tsx` | 34 | Preview portal |
+
+**Required Props for AnnotationAppShell:**
+
+```typescript
+interface AnnotationAppShellProps {
+  // Existing props...
+
+  // NEW: Embedded mode props
+  isHidden?: boolean           // Suppress portal rendering when hidden
+  hideHomeButton?: boolean     // Hide duplicate home button
+  hideWorkspaceToggle?: boolean // Hide duplicate workspace dropdown
+  isEmbedded?: boolean         // General embedded mode flag
+}
+```
+
+**Implementation Required:**
+
+1. **Portal suppression** - Each portal component must check `isHidden`:
+   ```typescript
+   // In FloatingToolbar, CanvasAwareFloatingToolbar, etc.
+   if (isHidden) return null  // Don't render portal content
+   ```
+
+2. **Keyboard shortcut suppression** - Shell must not register shortcuts when hidden
+
+3. **Focus management** - Add `inert` attribute to hidden container
+
+**Files to Modify:**
+- `components/annotation-app-shell.tsx` - Add props interface
+- `components/canvas-aware-floating-toolbar.tsx` - Add `isHidden` check
+- `components/floating-toolbar.tsx` - Add `isHidden` check
+- `components/workspace/workspace-preview-portal.tsx` - Add `isHidden` check
+
+---
+
+### Updated Phase Readiness
+
+| Phase | Previous Status | Updated Status | Notes |
+|-------|-----------------|----------------|-------|
+| Phase 1 | ✅ Ready | ✅ Ready | No blockers |
+| Phase 2 | ✅ Ready | ✅ Ready | No blockers |
+| Phase 3 Pre-req 3.0.2 | ⛔ Blocked | ✅ Cleared | Entry context verified |
+| Phase 3 Pre-req 3.0.5 | ⛔ Blocked | ⚠️ Actionable | Portal components identified |
+| Phase 3 | ⛔ Blocked | ⚠️ Partially Blocked | Need to implement `isHidden` props |
+| Phase 4 | ⚠️ Partial | ✅ Ready | NavigationEntry changes safe |
+
+---
+
+### Next Steps
+
+1. **Implement Blocker 3 fixes** (required before Phase 3):
+   - Add `isHidden`, `hideHomeButton`, `hideWorkspaceToggle` props to `AnnotationAppShell`
+   - Update `FloatingToolbar`, `CanvasAwareFloatingToolbar`, `WorkspacePreviewPortal` to respect `isHidden`
+
+2. **Phase 1-2 can proceed in parallel** - no blockers
+
+3. **Phase 3 implementation** after Blocker 3 props are added
+
+---
+
 *Document created: 2025-12-05*
 *Last updated: 2025-12-05*
 *Last verified: 2025-12-05*
 *Review feedback incorporated: 2025-12-05*
+*Blocker verification completed: 2025-12-05*

@@ -12,16 +12,24 @@ import React, { useEffect, useState, useCallback, useRef } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton } from "./PanelCatalog"
+import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
+import { AnnotationAppShell } from "@/components/annotation-app-shell"
+import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { RefreshCw, ChevronRight, ChevronDown, Home, LayoutDashboard, Plus } from "lucide-react"
+import { RefreshCw, ChevronRight, Home, LayoutDashboard } from "lucide-react"
 
 interface WorkspaceSummary {
   id: string
   name: string
   isDefault: boolean
+  noteCount?: number
+  updatedAt?: string | null
 }
+
+/** View mode for the unified dashboard/workspace view */
+type ViewMode = 'dashboard' | 'workspace'
 
 interface DashboardViewProps {
   workspaceId: string
@@ -46,11 +54,17 @@ export function DashboardView({
   const { hasSeenWelcome, markAsSeen } = useDashboardWelcome()
   const showWelcome = !hasSeenWelcome
 
+  // View mode state (Phase 2)
+  const [viewMode, setViewMode] = useState<ViewMode>('dashboard')
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null)
+  // Phase 3: Lazy mounting - only mount workspace canvas after first visit
+  const [hasVisitedWorkspace, setHasVisitedWorkspace] = useState(false)
+
   // Workspaces for dropdown
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([])
   const [isWorkspacesLoading, setIsWorkspacesLoading] = useState(false)
-  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null)
 
   // Drag state
   const [draggingPanelId, setDraggingPanelId] = useState<string | null>(null)
@@ -118,40 +132,51 @@ export function DashboardView({
     fetchWorkspaces()
   }, [entryId])
 
-  // Close dropdown when clicking outside
+  // Ref for outside click handling
+  const workspaceMenuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu when clicking outside
   useEffect(() => {
-    if (!workspaceDropdownOpen) return
+    if (!workspaceMenuOpen) return
 
     const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setWorkspaceDropdownOpen(false)
+      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
+        setWorkspaceMenuOpen(false)
       }
     }
 
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [workspaceDropdownOpen])
+  }, [workspaceMenuOpen])
 
-  // Handle workspace selection from dropdown
-  const handleWorkspaceSelect = useCallback((ws: WorkspaceSummary) => {
+  // Handle workspace selection from dropdown (receives just workspaceId)
+  // Phase 2: Sets viewMode to 'workspace' instead of navigating away
+  // Phase 3: Also sets active workspace context so AnnotationAppShell loads the correct workspace
+  const handleWorkspaceSelectById = useCallback((selectedWorkspaceId: string) => {
+    const ws = workspaces.find(w => w.id === selectedWorkspaceId)
     void debugLog({
       component: "DashboardView",
       action: "dropdown_workspace_selected",
       metadata: {
-        selectedWorkspaceId: ws.id,
-        selectedWorkspaceName: ws.name,
-        selectedIsDefault: ws.isDefault,
+        selectedWorkspaceId,
+        selectedWorkspaceName: ws?.name,
+        selectedIsDefault: ws?.isDefault,
         currentEntryId: entryId,
+        viewMode: 'workspace',
         allWorkspacesInDropdown: workspaces.map(w => ({ id: w.id, name: w.name, isDefault: w.isDefault })),
       },
     })
-    console.log("[DashboardView] Dropdown selection:", { ws, entryId })
+    console.log("[DashboardView] Workspace selected - switching to workspace mode:", { selectedWorkspaceId, ws, entryId })
 
-    setWorkspaceDropdownOpen(false)
-    if (entryId && onNavigate) {
-      onNavigate(entryId, ws.id)
-    }
-  }, [entryId, onNavigate, workspaces])
+    setWorkspaceMenuOpen(false)
+    setActiveWorkspaceId(selectedWorkspaceId)
+    setViewMode('workspace')
+    // Phase 3: Mark that workspace has been visited for lazy mounting
+    setHasVisitedWorkspace(true)
+    // Phase 3: Set active workspace context so AnnotationAppShell loads the selected workspace
+    // This triggers the subscription in AnnotationAppContent which calls noteWorkspaceState.selectWorkspace()
+    setActiveWorkspaceContext(selectedWorkspaceId)
+  }, [entryId, workspaces])
 
   // Handle navigating to Home
   const handleGoHome = useCallback(() => {
@@ -167,6 +192,141 @@ export function DashboardView({
         .catch(err => console.error("[DashboardView] Failed to navigate home:", err))
     }
   }, [homeEntryId, onNavigate])
+
+  // Handle returning to dashboard mode (Phase 2)
+  const handleReturnToDashboard = useCallback(() => {
+    void debugLog({
+      component: "DashboardView",
+      action: "return_to_dashboard",
+      metadata: {
+        previousWorkspaceId: activeWorkspaceId,
+        entryId,
+      },
+    })
+    console.log("[DashboardView] Returning to dashboard mode from workspace:", activeWorkspaceId)
+
+    setViewMode('dashboard')
+    // Note: We keep activeWorkspaceId so user can quickly return to the same workspace
+  }, [activeWorkspaceId, entryId])
+
+  // Refetch workspaces helper
+  const refetchWorkspaces = useCallback(async () => {
+    if (!entryId) return
+    try {
+      const response = await fetch(`/api/entries/${entryId}/workspaces`)
+      if (response.ok) {
+        const data = await response.json()
+        const nonDashboardWorkspaces = (data.workspaces || []).filter(
+          (ws: WorkspaceSummary & { name: string }) => ws.name !== "Dashboard"
+        )
+        setWorkspaces(nonDashboardWorkspaces)
+      }
+    } catch (err) {
+      console.error("[DashboardView] Failed to refetch workspaces:", err)
+    }
+  }, [entryId])
+
+  // Handle create workspace
+  const handleCreateWorkspace = useCallback(async () => {
+    if (!entryId) return
+
+    try {
+      const response = await fetch("/api/note-workspaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `Workspace ${workspaces.length + 1}`,
+          itemId: entryId,
+          payload: { openNotes: [] },
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to create workspace")
+      }
+
+      const data = await response.json()
+      void debugLog({
+        component: "DashboardView",
+        action: "workspace_created",
+        metadata: { workspaceId: data.workspace?.id, entryId },
+      })
+
+      // Refetch workspaces to update the list
+      await refetchWorkspaces()
+    } catch (err) {
+      console.error("[DashboardView] Failed to create workspace:", err)
+    }
+  }, [entryId, workspaces.length, refetchWorkspaces])
+
+  // Handle delete workspace
+  const handleDeleteWorkspace = useCallback(async (workspaceId: string) => {
+    try {
+      setDeletingWorkspaceId(workspaceId)
+
+      const response = await fetch(`/api/note-workspaces/${workspaceId}`, {
+        method: "DELETE",
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || "Failed to delete workspace")
+      }
+
+      void debugLog({
+        component: "DashboardView",
+        action: "workspace_deleted",
+        metadata: { workspaceId, entryId },
+      })
+
+      // Remove from local state
+      setWorkspaces(prev => prev.filter(ws => ws.id !== workspaceId))
+    } catch (err) {
+      console.error("[DashboardView] Failed to delete workspace:", err)
+    } finally {
+      setDeletingWorkspaceId(null)
+    }
+  }, [entryId])
+
+  // Handle rename workspace
+  const handleRenameWorkspace = useCallback(async (workspaceId: string, newName: string) => {
+    try {
+      // First, get the workspace to retrieve its current revision
+      const getResponse = await fetch(`/api/note-workspaces/${workspaceId}`)
+      if (!getResponse.ok) {
+        throw new Error("Failed to fetch workspace for rename")
+      }
+      const { workspace } = await getResponse.json()
+
+      // Now rename with the revision
+      const patchResponse = await fetch(`/api/note-workspaces/${workspaceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newName,
+          revision: workspace.revision,
+          payload: workspace.payload || { openNotes: [] },
+        }),
+      })
+
+      if (!patchResponse.ok) {
+        throw new Error("Failed to rename workspace")
+      }
+
+      void debugLog({
+        component: "DashboardView",
+        action: "workspace_renamed",
+        metadata: { workspaceId, newName, entryId },
+      })
+
+      // Update local state
+      setWorkspaces(prev =>
+        prev.map(ws => ws.id === workspaceId ? { ...ws, name: newName } : ws)
+      )
+    } catch (err) {
+      console.error("[DashboardView] Failed to rename workspace:", err)
+    }
+  }, [entryId])
 
   // Handle panel close
   const handlePanelClose = useCallback(
@@ -444,125 +604,95 @@ export function DashboardView({
                 </>
               )}
               <ChevronRight size={14} style={{ color: '#5c6070' }} />
-              <span style={{ color: '#8b8fa3' }}>Dashboard</span>
+              {/* Show Dashboard or Workspace name based on viewMode */}
+              {viewMode === 'dashboard' ? (
+                <span style={{ color: '#8b8fa3' }}>Dashboard</span>
+              ) : (
+                <>
+                  <button
+                    onClick={handleReturnToDashboard}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: '#f0f0f0',
+                      padding: '2px 4px',
+                      borderRadius: 4,
+                    }}
+                  >
+                    Dashboard
+                  </button>
+                  <ChevronRight size={14} style={{ color: '#5c6070' }} />
+                  <span style={{ color: '#8b8fa3' }}>
+                    {workspaces.find(ws => ws.id === activeWorkspaceId)?.name || "Workspace"}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
           {/* Right side: Dashboard button + Workspace dropdown + Add Panel + Reset */}
           <div className="flex items-center gap-2">
-            {/* Dashboard button (highlighted/active) */}
+            {/* Dashboard button - highlighted when in dashboard mode, clickable when in workspace mode */}
             <button
+              onClick={viewMode === 'workspace' ? handleReturnToDashboard : undefined}
               style={{
                 padding: '7px 14px',
                 borderRadius: '8px',
-                background: 'rgba(99, 102, 241, 0.15)',
-                color: '#818cf8',
-                border: '1px solid rgba(99, 102, 241, 0.3)',
-                cursor: 'default',
+                background: viewMode === 'dashboard'
+                  ? 'rgba(99, 102, 241, 0.15)'
+                  : 'transparent',
+                color: viewMode === 'dashboard'
+                  ? '#818cf8'
+                  : '#f0f0f0',
+                border: viewMode === 'dashboard'
+                  ? '1px solid rgba(99, 102, 241, 0.3)'
+                  : '1px solid rgba(255, 255, 255, 0.08)',
+                cursor: viewMode === 'workspace' ? 'pointer' : 'default',
                 fontSize: '13px',
                 fontWeight: 500,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (viewMode === 'workspace') {
+                  e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)'
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (viewMode === 'workspace') {
+                  e.currentTarget.style.background = 'transparent'
+                }
               }}
             >
               <LayoutDashboard size={14} />
               Dashboard
             </button>
 
-            {/* Workspace dropdown */}
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => setWorkspaceDropdownOpen(!workspaceDropdownOpen)}
-                style={{
-                  padding: '7px 14px',
-                  borderRadius: '8px',
-                  background: 'transparent',
-                  color: '#f0f0f0',
-                  border: '1px solid rgba(255, 255, 255, 0.08)',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  minWidth: 120,
-                }}
-              >
-                <span className="truncate">
-                  {workspaces.find(ws => ws.isDefault)?.name || entryName || "Workspace"}
-                </span>
-                <ChevronDown size={14} style={{ opacity: 0.6, flexShrink: 0 }} />
-              </button>
-
-              {/* Dropdown menu */}
-              {workspaceDropdownOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 4px)',
-                    right: 0,
-                    minWidth: 180,
-                    background: '#1e222a',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: 8,
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
-                    zIndex: 50,
-                    overflow: 'hidden',
-                  }}
-                >
-                  {isWorkspacesLoading ? (
-                    <div className="px-3 py-2 text-sm" style={{ color: '#8b8fa3' }}>
-                      Loading...
-                    </div>
-                  ) : workspaces.length === 0 ? (
-                    <div className="px-3 py-2 text-sm" style={{ color: '#8b8fa3' }}>
-                      No workspaces
-                    </div>
-                  ) : (
-                    <div className="py-1">
-                      {workspaces.map((ws) => (
-                        <button
-                          key={ws.id}
-                          onClick={() => handleWorkspaceSelect(ws)}
-                          className="w-full text-left px-3 py-2 text-sm transition-colors"
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            color: '#f0f0f0',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = 'transparent'
-                          }}
-                        >
-                          <span className="truncate">{ws.name}</span>
-                          {ws.isDefault && (
-                            <span
-                              style={{
-                                fontSize: 10,
-                                color: '#8b8fa3',
-                                background: 'rgba(255, 255, 255, 0.05)',
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                              }}
-                            >
-                              default
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Workspace dropdown - using WorkspaceToggleMenu */}
+            <WorkspaceToggleMenu
+              ref={workspaceMenuRef}
+              className="pointer-events-auto"
+              labelTitle="NOTE WORKSPACE"
+              statusLabel={
+                viewMode === 'workspace' && activeWorkspaceId
+                  ? workspaces.find(ws => ws.id === activeWorkspaceId)?.name || "Workspace"
+                  : workspaces.find(ws => ws.isDefault)?.name || "Workspace"
+              }
+              isOpen={workspaceMenuOpen}
+              onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
+              onCreateWorkspace={handleCreateWorkspace}
+              disableCreate={isWorkspacesLoading}
+              isListLoading={isWorkspacesLoading}
+              workspaces={workspaces}
+              currentWorkspaceId={viewMode === 'workspace' ? activeWorkspaceId : null}
+              deletingWorkspaceId={deletingWorkspaceId}
+              onSelectWorkspace={handleWorkspaceSelectById}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onRenameWorkspace={handleRenameWorkspace}
+            />
 
             <AddPanelButton
               workspaceId={workspaceId}
@@ -590,13 +720,20 @@ export function DashboardView({
           </div>
         </div>
 
-        {/* Panels canvas */}
+        {/*
+          Content area - Option C: Layered/Preserved State
+          Both dashboard and workspace are rendered, but only one is visible.
+          This preserves workspace state when switching back to dashboard.
+        */}
+
+        {/* Dashboard panels canvas - hidden when in workspace mode */}
         <div
           ref={canvasRef}
           className="relative"
           style={{
             minHeight: 'calc(100vh - 56px)',
             padding: 24,
+            display: viewMode === 'dashboard' ? 'block' : 'none',
           }}
         >
           {panels.length === 0 ? (
@@ -658,6 +795,30 @@ export function DashboardView({
             </>
           )}
         </div>
+
+        {/*
+          Workspace canvas - Lazy mounted after first visit, hidden when in dashboard mode.
+          Uses isHidden prop to suppress portal rendering when hidden (prevents portal bypass).
+          hideHomeButton and hideWorkspaceToggle since DashboardView provides those.
+        */}
+        {hasVisitedWorkspace && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 56, // Below the header
+              left: 0,
+              right: 0,
+              bottom: 0,
+              display: viewMode === 'workspace' ? 'block' : 'none',
+            }}
+          >
+            <AnnotationAppShell
+              isHidden={viewMode !== 'workspace'}
+              hideHomeButton
+              hideWorkspaceToggle
+            />
+          </div>
+        )}
       </div>
     </div>
   )

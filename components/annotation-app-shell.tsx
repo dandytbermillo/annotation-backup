@@ -131,9 +131,20 @@ const readWorkspaceDebugPreference = (): boolean | null => {
 
 type AnnotationAppContentProps = {
   useShellView?: boolean
+  /** When true, suppress portal rendering (for embedded mode when hidden) */
+  isHidden?: boolean
+  /** Hide the home navigation button (parent provides navigation) */
+  hideHomeButton?: boolean
+  /** Hide the workspace toggle menu (parent provides workspace switching) */
+  hideWorkspaceToggle?: boolean
 }
 
-function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProps) {
+function AnnotationAppContent({
+  useShellView = false,
+  isHidden = false,
+  hideHomeButton = false,
+  hideWorkspaceToggle = false,
+}: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
   const {
@@ -1392,7 +1403,8 @@ const initialWorkspaceSyncRef = useRef(false)
   )
 
   // Home navigation button - shows when dashboard navigation context is available
-  const homeNavigationNode = dashboardNavigation ? (
+  // Hidden when hideHomeButton is true (parent provides navigation)
+  const homeNavigationNode = dashboardNavigation && !hideHomeButton ? (
     <div
       className="absolute left-4 top-4 flex items-center gap-3"
       style={{ zIndex: Z_INDEX.DROPDOWN + 12, pointerEvents: 'none' }}
@@ -1406,10 +1418,11 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled ? (
+  // Note workspace toggle - hidden when hideWorkspaceToggle is true (parent provides workspace switching)
+  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled && !hideWorkspaceToggle ? (
     <div
       className="absolute left-4 top-4 flex justify-start"
-      style={{ zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'none', marginLeft: dashboardNavigation ? 48 : 0 }}
+      style={{ zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'none', marginLeft: dashboardNavigation && !hideHomeButton ? 48 : 0 }}
     >
       <WorkspaceToggleMenu
         className="pointer-events-auto"
@@ -1438,7 +1451,8 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  const workspaceToggleNode = shouldShowWorkspaceToggle ? (
+  // Overlay workspace toggle - hidden when hideWorkspaceToggle is true (parent provides workspace switching)
+  const workspaceToggleNode = shouldShowWorkspaceToggle && !hideWorkspaceToggle ? (
     <div
       className="absolute inset-x-0 top-4 flex justify-center"
       style={{ zIndex: Z_INDEX.DROPDOWN + 10, pointerEvents: 'none' }}
@@ -1487,6 +1501,7 @@ const initialWorkspaceSyncRef = useRef(false)
           (entry) => entry.id === noteWorkspaceState.currentWorkspaceId,
         )?.name ?? null
       }
+      isHidden={isHidden}
     />
   ) : null
 
@@ -1625,6 +1640,7 @@ const initialWorkspaceSyncRef = useRef(false)
     onDismiss: cancelNotePreview,
     onMouseEnter: handleSidebarPreviewTooltipEnter,
     onMouseLeave: handleSidebarPreviewTooltipLeave,
+    isHidden,
   })
 
   const sidebarPreviewPopupsProps = shouldLoadOverlay ? sidebarPreviewProps : undefined
@@ -1676,11 +1692,29 @@ const initialWorkspaceSyncRef = useRef(false)
   )
 }
 
-export function AnnotationAppShell() {
+export interface AnnotationAppShellProps {
+  /** When true, suppress portal rendering (for embedded mode when hidden) */
+  isHidden?: boolean
+  /** Hide the home navigation button (parent provides navigation) */
+  hideHomeButton?: boolean
+  /** Hide the workspace toggle menu (parent provides workspace switching) */
+  hideWorkspaceToggle?: boolean
+}
+
+export function AnnotationAppShell({
+  isHidden = false,
+  hideHomeButton = false,
+  hideWorkspaceToggle = false,
+}: AnnotationAppShellProps = {}) {
   return (
     <LayerProvider initialPopupCount={0}>
       <CanvasWorkspaceProvider>
-        <AnnotationAppContent useShellView />
+        <AnnotationAppContent
+          useShellView
+          isHidden={isHidden}
+          hideHomeButton={hideHomeButton}
+          hideWorkspaceToggle={hideWorkspaceToggle}
+        />
       </CanvasWorkspaceProvider>
     </LayerProvider>
   )

@@ -12,6 +12,8 @@ export type WorkspacePreviewPortalProps<TContext = unknown> = {
   onDismiss?: () => void
   onMouseEnter?: () => void
   onMouseLeave?: () => void
+  /** When true, don't render the portal (for embedded mode when parent is hidden) */
+  isHidden?: boolean
 }
 
 export function WorkspacePreviewPortal<TContext = unknown>({
@@ -21,8 +23,10 @@ export function WorkspacePreviewPortal<TContext = unknown>({
   onDismiss,
   onMouseEnter,
   onMouseLeave,
+  isHidden = false,
 }: WorkspacePreviewPortalProps<TContext>) {
-  if (!preview || typeof document === "undefined") {
+  // Don't render portal when hidden (prevents portal from bypassing display:none)
+  if (!preview || typeof document === "undefined" || isHidden) {
     return null
   }
 

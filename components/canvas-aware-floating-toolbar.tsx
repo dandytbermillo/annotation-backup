@@ -36,9 +36,15 @@ import { createPortal } from "react-dom"
 type CanvasAwareFloatingToolbarProps = Omit<
   ComponentProps<typeof FloatingToolbar>,
   "canvasState" | "canvasDispatch" | "canvasDataStore"
->
+> & {
+  /** When true, don't render the portal (for embedded mode when parent is hidden) */
+  isHidden?: boolean
+}
 
-export function CanvasAwareFloatingToolbar(props: CanvasAwareFloatingToolbarProps) {
+export function CanvasAwareFloatingToolbar({
+  isHidden = false,
+  ...props
+}: CanvasAwareFloatingToolbarProps) {
   // Access canvas context - this hook call is safe because CanvasAwareFloatingToolbar
   // is rendered as a child of ModernAnnotationCanvas, inside <CanvasProvider>
   const { state, dispatch, dataStore, noteId } = useCanvas()
@@ -49,7 +55,8 @@ export function CanvasAwareFloatingToolbar(props: CanvasAwareFloatingToolbarProp
     setMounted(true)
   }, [])
 
-  if (!mounted) return null
+  // Don't render portal when hidden (prevents portal from bypassing display:none)
+  if (!mounted || isHidden) return null
 
   // Pass context values as props to FloatingToolbar
   // When state.lastUpdate changes, this component re-renders with fresh values

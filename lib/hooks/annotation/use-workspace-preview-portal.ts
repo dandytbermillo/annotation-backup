@@ -10,6 +10,8 @@ type UseWorkspacePreviewPortalOptions = {
   onDismiss: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
+  /** When true, suppress portal rendering (for embedded mode when hidden) */
+  isHidden?: boolean
 }
 
 export function useWorkspacePreviewPortal({
@@ -19,6 +21,7 @@ export function useWorkspacePreviewPortal({
   onDismiss,
   onMouseEnter,
   onMouseLeave,
+  isHidden = false,
 }: UseWorkspacePreviewPortalOptions) {
   return useMemo(
     () => ({
@@ -28,7 +31,8 @@ export function useWorkspacePreviewPortal({
       onDismiss,
       onMouseEnter,
       onMouseLeave,
+      isHidden,
     }),
-    [preview, isLoading, onOpenNote, onDismiss, onMouseEnter, onMouseLeave],
+    [preview, isLoading, onOpenNote, onDismiss, onMouseEnter, onMouseLeave, isHidden],
   )
 }
