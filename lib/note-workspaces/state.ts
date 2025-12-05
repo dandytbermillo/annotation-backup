@@ -162,8 +162,21 @@ export function clearNoteWorkspaceOwner(noteId: string) {
 }
 
 export function setActiveWorkspaceContext(workspaceId: string | null) {
-  if (activeWorkspaceContext === workspaceId) return
+  const prevValue = activeWorkspaceContext
+  if (prevValue === workspaceId) return
   activeWorkspaceContext = workspaceId
+
+  // Debug log state changes
+  void debugLog({
+    component: "WorkspaceState",
+    action: "active_workspace_context_changed",
+    metadata: {
+      from: prevValue,
+      to: workspaceId,
+      stack: new Error().stack?.split('\n').slice(1, 5).join(' | '),
+    },
+  })
+
   workspaceContextListeners.forEach((listener) => {
     try {
       listener(activeWorkspaceContext)
@@ -174,6 +187,14 @@ export function setActiveWorkspaceContext(workspaceId: string | null) {
 }
 
 export function getActiveWorkspaceContext(): string | null {
+  void debugLog({
+    component: "WorkspaceState",
+    action: "get_active_workspace_context",
+    metadata: {
+      value: activeWorkspaceContext,
+      stack: new Error().stack?.split('\n').slice(1, 4).join(' | '),
+    },
+  })
   return activeWorkspaceContext
 }
 

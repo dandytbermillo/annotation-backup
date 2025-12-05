@@ -58,6 +58,8 @@ import { useWorkspaceToolbarProps } from "@/lib/hooks/annotation/use-workspace-t
 import { useNoteWorkspaces } from "@/lib/hooks/annotation/use-note-workspaces"
 import { isNoteWorkspaceV2Enabled, isNoteWorkspaceLiveStateEnabled } from "@/lib/flags/note"
 import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
+import { HomeNavigationButton } from "@/components/navigation/HomeNavigationButton"
+import { useDashboardNavigation } from "@/components/dashboard/DashboardInitializer"
 // Entry context is now managed inside useNoteWorkspaces hook
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -438,6 +440,9 @@ function AnnotationAppContent({ useShellView = false }: AnnotationAppContentProp
   }, [])
 
   const noteWorkspaceDebugLogger = noteWorkspaceDebugEnabled ? debugLog : undefined
+
+  // Get dashboard navigation context for home button
+  const dashboardNavigation = useDashboardNavigation()
 
   const noteWorkspaceState = useNoteWorkspaces({
     openNotes,
@@ -1386,10 +1391,25 @@ const initialWorkspaceSyncRef = useRef(false)
     [workspaceToolbarProps, showConstellationPanel, isPopupLayerActive],
   )
 
+  // Home navigation button - shows when dashboard navigation context is available
+  const homeNavigationNode = dashboardNavigation ? (
+    <div
+      className="absolute left-4 top-4 flex items-center gap-3"
+      style={{ zIndex: Z_INDEX.DROPDOWN + 12, pointerEvents: 'none' }}
+    >
+      <div className="pointer-events-auto">
+        <HomeNavigationButton
+          onNavigate={dashboardNavigation.onNavigate}
+          isOnDashboard={false}
+        />
+      </div>
+    </div>
+  ) : null
+
   const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled ? (
     <div
       className="absolute left-4 top-4 flex justify-start"
-      style={{ zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'none' }}
+      style={{ zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'none', marginLeft: dashboardNavigation ? 48 : 0 }}
     >
       <WorkspaceToggleMenu
         className="pointer-events-auto"
@@ -1621,6 +1641,7 @@ const initialWorkspaceSyncRef = useRef(false)
     toolbarProps: workspaceToolbarStripProps,
     workspaceToggle: (
       <>
+        {homeNavigationNode}
         {noteWorkspaceToggleNode}
         {workspaceToggleNode}
       </>

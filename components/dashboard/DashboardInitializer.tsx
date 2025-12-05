@@ -12,12 +12,29 @@
  * - Navigating between different entry Dashboards
  */
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, createContext, useContext } from "react"
 import { isHomeDashboardEnabled } from "@/lib/flags/dashboard"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import { setActiveEntryContext } from "@/lib/entry/entry-context"
+import {
+  initializeWithHome,
+  pushNavigationEntry,
+  updateCurrentWorkspace,
+} from "@/lib/navigation/navigation-context"
 import { DashboardView } from "./DashboardView"
+
+// Context for navigation handler
+interface DashboardNavigationContextType {
+  onNavigate: (entryId: string, workspaceId: string) => void
+  showDashboard: () => void
+}
+
+const DashboardNavigationContext = createContext<DashboardNavigationContextType | null>(null)
+
+export function useDashboardNavigation() {
+  return useContext(DashboardNavigationContext)
+}
 
 interface DashboardInfo {
   homeEntryId: string
@@ -97,6 +114,14 @@ export function DashboardInitializer({
         console.log("[DashboardInitializer] Dashboard enabled, showing dashboard on startup")
         setShowDashboard(true)
 
+        // Initialize navigation stack with Home
+        initializeWithHome({
+          entryId: data.homeEntryId,
+          entryName: data.homeEntryName || "Home",
+          dashboardWorkspaceId: data.dashboardWorkspaceId,
+          workspaceName: "Dashboard",
+        })
+
         void debugLog({
           component: "DashboardInitializer",
           action: "init_complete",
@@ -134,27 +159,38 @@ export function DashboardInitializer({
         })
 
         if (workspaceName === "Dashboard") {
-          // Navigating to another entry's Dashboard - stay in dashboard mode
-          console.log("[DashboardInitializer] Navigating to Dashboard workspace, staying in dashboard mode")
+          // Navigating to Dashboard workspace - ensure dashboard mode is shown
+          console.log("[DashboardInitializer] Navigating to Dashboard workspace, showing dashboard mode")
           setCurrentDashboardWorkspaceId(workspaceId)
+          setShowDashboard(true)  // Ensure dashboard view is shown (handles coming from Entry Workspace)
 
           // Update entry context and fetch entry name
           if (entryId) {
             setActiveEntryContext(entryId)
-            // Fetch entry info for breadcrumb
+            // Fetch entry info for breadcrumb and navigation
+            let entryName = "Entry"
             try {
               const entryResponse = await fetch(`/api/entries/${entryId}`)
               if (entryResponse.ok) {
                 const entryData = await entryResponse.json()
+                entryName = entryData.entry?.name || "Entry"
                 setCurrentEntryInfo({
                   entryId,
-                  entryName: entryData.entry?.name || "Entry",
+                  entryName,
                 })
               }
             } catch (err) {
               console.error("[DashboardInitializer] Failed to fetch entry info:", err)
-              setCurrentEntryInfo({ entryId, entryName: "Entry" })
+              setCurrentEntryInfo({ entryId, entryName })
             }
+
+            // Push to navigation stack
+            pushNavigationEntry({
+              entryId,
+              entryName,
+              dashboardWorkspaceId: workspaceId,
+              workspaceName: "Dashboard",
+            })
           }
 
           // Track the visit
@@ -178,8 +214,44 @@ export function DashboardInitializer({
     // Not a Dashboard workspace - hide dashboard and show regular app
     console.log("[DashboardInitializer] Navigating to regular workspace, hiding dashboard")
 
+    // Get workspace name for navigation tracking
+    let regularWorkspaceName = "Workspace"
+    try {
+      const wsResponse = await fetch(`/api/note-workspaces/${workspaceId}`)
+      if (wsResponse.ok) {
+        const wsData = await wsResponse.json()
+        regularWorkspaceName = wsData.workspace?.name || "Workspace"
+      }
+    } catch {
+      // Ignore error, use default name
+    }
+
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "navigate_to_regular_workspace",
+      metadata: {
+        workspaceId,
+        entryId,
+        workspaceName: regularWorkspaceName,
+        step: "before_setActiveWorkspaceContext",
+      },
+    })
+
     // Set the active workspace context - this triggers the app to load that workspace
     setActiveWorkspaceContext(workspaceId)
+
+    // Update navigation stack with workspace info
+    updateCurrentWorkspace(workspaceId, regularWorkspaceName)
+
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "navigate_to_regular_workspace",
+      metadata: {
+        workspaceId,
+        entryId,
+        step: "after_setActiveWorkspaceContext",
+      },
+    })
 
     // Update entry context
     if (entryId) {
@@ -195,13 +267,57 @@ export function DashboardInitializer({
       console.error("[DashboardInitializer] Failed to track workspace visit:", err)
     })
 
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "navigate_to_regular_workspace",
+      metadata: {
+        workspaceId,
+        entryId,
+        step: "before_setShowDashboard_false",
+      },
+    })
+
     // Hide dashboard and show the main app
     setShowDashboard(false)
+
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "navigate_to_regular_workspace",
+      metadata: {
+        workspaceId,
+        entryId,
+        step: "after_setShowDashboard_false",
+      },
+    })
 
     // Call optional callbacks
     onNavigateToWorkspace?.(entryId, workspaceId)
     onWorkspaceActivate?.(workspaceId)
   }, [onNavigateToWorkspace, onWorkspaceActivate])
+
+  // Show dashboard for current entry (go back to dashboard from workspace)
+  const handleShowDashboard = useCallback(() => {
+    if (currentEntryInfo && currentDashboardWorkspaceId) {
+      // Update navigation to show we're back on dashboard
+      updateCurrentWorkspace(currentDashboardWorkspaceId, "Dashboard")
+      setShowDashboard(true)
+
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "show_dashboard",
+        metadata: {
+          entryId: currentEntryInfo.entryId,
+          dashboardWorkspaceId: currentDashboardWorkspaceId,
+        },
+      })
+    }
+  }, [currentEntryInfo, currentDashboardWorkspaceId])
+
+  // Navigation context value
+  const navigationContextValue = {
+    onNavigate: handleDashboardNavigate,
+    showDashboard: handleShowDashboard,
+  }
 
   // If dashboard is not enabled, just render children
   if (!dashboardEnabled) {
@@ -246,9 +362,13 @@ export function DashboardInitializer({
     )
   }
 
-  // Otherwise render children (the regular app)
+  // Otherwise render children (the regular app) with navigation context
   console.log("[DashboardInitializer] Rendering children (regular app)")
-  return <>{children}</>
+  return (
+    <DashboardNavigationContext.Provider value={navigationContextValue}>
+      {children}
+    </DashboardNavigationContext.Provider>
+  )
 }
 
 /**

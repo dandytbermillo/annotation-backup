@@ -153,53 +153,118 @@ export function LinksNotePanel({
     setShowLinkToolbar(true)
   }, [])
 
-  // Handle workspace link click - navigate with entry context
+  // Handle workspace link click - navigate to Entry Dashboard
   const handleLinkClick = useCallback(async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement
     if (target.classList.contains('workspace-link')) {
       e.preventDefault()
 
-      // Get IDs from link attributes (preferred) or fallback to search
+      // Get IDs from link attributes
       let entryId = target.getAttribute('data-entry-id')
-      let workspaceId = target.getAttribute('data-workspace-id')
+      const workspaceId = target.getAttribute('data-workspace-id')
+      let dashboardId = target.getAttribute('data-dashboard-id')
       const workspaceName = target.getAttribute('data-workspace') || target.textContent
 
-      // If we have both IDs, navigate directly
-      if (entryId && workspaceId) {
-        console.log('[LinksNotePanel] Navigating with stored IDs:', { entryId, workspaceId })
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'link_clicked',
+        metadata: { entryId, workspaceId, dashboardId, workspaceName },
+      })
 
-        // Handle legacy workspace (no entry) - create entry for it
-        if (!entryId && workspaceId && workspaceName) {
-          console.log('[LinksNotePanel] Legacy workspace detected, creating entry...')
+      // If we have entryId, look up or use the Dashboard workspace
+      if (entryId) {
+        // If no dashboard ID stored, look it up from the entry's workspaces
+        if (!dashboardId) {
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'looking_up_dashboard',
+            metadata: { entryId },
+          })
+
           try {
-            const result = await createEntryForWorkspace(workspaceId, workspaceName)
-            if (result) {
-              entryId = result.entry.id
-              // Update the link element with the new entry ID
-              target.setAttribute('data-entry-id', entryId)
-              target.setAttribute('data-entry-name', result.entry.name)
-              // Save updated content
-              if (contentRef.current) {
-                onConfigChange?.({ content: contentRef.current.innerHTML })
+            const response = await fetch(`/api/entries/${entryId}/workspaces`)
+            if (response.ok) {
+              const data = await response.json()
+              const dashboardWorkspace = data.workspaces?.find(
+                (ws: { name: string; id: string }) => ws.name === 'Dashboard'
+              )
+
+              if (dashboardWorkspace) {
+                dashboardId = dashboardWorkspace.id
+                // Update link with dashboard ID for future clicks
+                target.setAttribute('data-dashboard-id', dashboardWorkspace.id)
+                if (contentRef.current) {
+                  onConfigChange?.({ content: contentRef.current.innerHTML })
+                }
+                debugLog({
+                  component: 'LinksNotePanel',
+                  action: 'dashboard_found_and_cached',
+                  metadata: { entryId, dashboardId: dashboardWorkspace.id },
+                })
               }
             }
           } catch (err) {
-            console.error('[LinksNotePanel] Failed to create entry for workspace:', err)
+            console.error('[LinksNotePanel] Failed to lookup dashboard:', err)
+            debugLog({
+              component: 'LinksNotePanel',
+              action: 'dashboard_lookup_failed',
+              metadata: { entryId, error: String(err) },
+            })
           }
         }
 
-        // Set entry context before navigating
-        if (entryId) {
-          setActiveEntryContext(entryId)
-        }
+        // Navigate to Dashboard (or fallback to stored workspace)
+        const targetId = dashboardId || workspaceId
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'navigating_to_dashboard',
+          metadata: { entryId, targetId, dashboardId, workspaceId },
+        })
 
-        if (onNavigate) {
-          onNavigate(entryId || '', workspaceId)
+        setActiveEntryContext(entryId)
+        if (onNavigate && targetId) {
+          onNavigate(entryId, targetId)
         }
         return
       }
 
-      // Fallback: search for workspace by name
+      // Handle legacy links without entryId - try to find/create entry
+      if (workspaceId && workspaceName) {
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'legacy_link_detected',
+          metadata: { workspaceId, workspaceName },
+        })
+
+        try {
+          const result = await createEntryForWorkspace(workspaceId, workspaceName)
+          if (result) {
+            entryId = result.entry.id
+            dashboardId = (result as any).dashboardWorkspaceId || null
+
+            // Update link with entry and dashboard IDs
+            target.setAttribute('data-entry-id', entryId)
+            target.setAttribute('data-entry-name', result.entry.name)
+            if (dashboardId) {
+              target.setAttribute('data-dashboard-id', dashboardId)
+            }
+            if (contentRef.current) {
+              onConfigChange?.({ content: contentRef.current.innerHTML })
+            }
+
+            // Navigate to Dashboard
+            setActiveEntryContext(entryId)
+            if (onNavigate) {
+              onNavigate(entryId, dashboardId || workspaceId)
+            }
+            return
+          }
+        } catch (err) {
+          console.error('[LinksNotePanel] Failed to create entry for legacy link:', err)
+        }
+      }
+
+      // Final fallback: search for workspace by name
       if (!workspaceName) return
 
       try {
@@ -354,13 +419,14 @@ export function LinksNotePanel({
         })
       }
 
-      // Create the link element with both entry and workspace IDs
+      // Create the link element with entry, workspace, and dashboard IDs
       const link = document.createElement('span')
       link.className = 'workspace-link'
       link.setAttribute('data-workspace', newWorkspace.name)
       link.setAttribute('data-workspace-id', newWorkspace.id)
       link.setAttribute('data-entry-id', entryId || '')
       link.setAttribute('data-entry-name', entryName || '')
+      link.setAttribute('data-dashboard-id', dashboardWorkspaceId || '')
       link.textContent = selectedText.trim() || newWorkspace.name
 
       // Try to replace selection with link if range is still valid

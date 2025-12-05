@@ -134,11 +134,24 @@ export function DashboardView({
 
   // Handle workspace selection from dropdown
   const handleWorkspaceSelect = useCallback((ws: WorkspaceSummary) => {
+    void debugLog({
+      component: "DashboardView",
+      action: "dropdown_workspace_selected",
+      metadata: {
+        selectedWorkspaceId: ws.id,
+        selectedWorkspaceName: ws.name,
+        selectedIsDefault: ws.isDefault,
+        currentEntryId: entryId,
+        allWorkspacesInDropdown: workspaces.map(w => ({ id: w.id, name: w.name, isDefault: w.isDefault })),
+      },
+    })
+    console.log("[DashboardView] Dropdown selection:", { ws, entryId })
+
     setWorkspaceDropdownOpen(false)
     if (entryId && onNavigate) {
       onNavigate(entryId, ws.id)
     }
-  }, [entryId, onNavigate])
+  }, [entryId, onNavigate, workspaces])
 
   // Handle navigating to Home
   const handleGoHome = useCallback(() => {

@@ -64,6 +64,7 @@ import {
   waitForWorkspaceSnapshotReady,
   subscribeToWorkspaceSnapshotState,
   setActiveWorkspaceContext,
+  getActiveWorkspaceContext,
   subscribeToWorkspaceListRefresh,
   type NoteWorkspaceSnapshot,
 } from "@/lib/note-workspaces/state"
@@ -2517,8 +2518,10 @@ export function useNoteWorkspaces({
       return
     }
     currentWorkspaceIdRef.current = currentWorkspaceId
-    setActiveWorkspaceContext(currentWorkspaceId ?? null)
+    // Only set context when we have a valid workspaceId
+    // This preserves pending context (e.g., from Dashboard navigation) when mounting with null
     if (currentWorkspaceId) {
+      setActiveWorkspaceContext(currentWorkspaceId)
       emitDebugLog({
         component: "NoteWorkspace",
         action: "workspace_active_set",
@@ -2528,8 +2531,32 @@ export function useNoteWorkspaces({
   }, [featureEnabled, v2Enabled, currentWorkspaceId])
 
   useEffect(() => {
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "cleanup_effect_mount",
+      metadata: { note: "Cleanup effect mounted" },
+    })
     return () => {
-      setActiveWorkspaceContext(null)
+      // Only clear the context if this instance "owns" it
+      // This prevents clearing context set by DashboardInitializer during navigation
+      const currentContext = getActiveWorkspaceContext()
+      const ownedWorkspaceId = currentWorkspaceIdRef.current
+
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "cleanup_effect_unmount",
+        metadata: {
+          currentContext,
+          ownedWorkspaceId,
+          willClear: currentContext === ownedWorkspaceId,
+        },
+      })
+
+      // Only clear if this instance owns the current context
+      // If context was changed by navigation (DashboardInitializer), don't clear it
+      if (currentContext === ownedWorkspaceId) {
+        setActiveWorkspaceContext(null)
+      }
     }
   }, [])
 
@@ -3761,10 +3788,30 @@ export function useNoteWorkspaces({
           metadata: { count: list.length },
         })
         if (!currentWorkspaceId) {
-          const defaultWorkspace = list.find((workspace) => workspace.isDefault) ?? list[0]
-          if (defaultWorkspace) {
-            snapshotOwnerWorkspaceIdRef.current = defaultWorkspace.id
-            setCurrentWorkspaceId(defaultWorkspace.id)
+          // Check for pending workspace context first (e.g., from Dashboard navigation)
+          const pendingWorkspaceId = getActiveWorkspaceContext()
+          const pendingWorkspace = pendingWorkspaceId
+            ? list.find((ws) => ws.id === pendingWorkspaceId)
+            : null
+
+          // Use pending workspace if valid, otherwise fall back to default
+          const targetWorkspace = pendingWorkspace
+            ?? list.find((workspace) => workspace.isDefault)
+            ?? list[0]
+
+          if (targetWorkspace) {
+            snapshotOwnerWorkspaceIdRef.current = targetWorkspace.id
+            setCurrentWorkspaceId(targetWorkspace.id)
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "initial_workspace_selected",
+              metadata: {
+                targetWorkspaceId: targetWorkspace.id,
+                targetWorkspaceName: targetWorkspace.name,
+                usedPendingContext: !!pendingWorkspace,
+                pendingWorkspaceId,
+              },
+            })
           }
         }
       } catch (error) {
