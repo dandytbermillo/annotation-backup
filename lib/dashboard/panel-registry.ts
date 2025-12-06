@@ -9,7 +9,7 @@
 import type { ComponentType } from 'react'
 
 // Panel type identifiers matching the database schema
-export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note'
+export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'category' | 'category_navigator'
 
 // Panel configuration stored in the database (JSONB column)
 export interface PanelConfig {
@@ -17,7 +17,37 @@ export interface PanelConfig {
   expandedEntries?: string[] // For navigator panels
   limit?: number // For recent panels
   destinationEntryId?: string // For quick capture panels
+  // Category panel config
+  categoryIcon?: string // Emoji icon for category
+  entryIds?: string[] // Ordered list of entry IDs in this category
+  categoryVisible?: boolean // Whether category panel is visible on canvas
+  // Category navigator config
+  expandedCategories?: string[] // Expanded category panel IDs in navigator
   [key: string]: unknown // Allow additional config
+}
+
+// Category panel data structure (for category navigator to read all categories)
+export interface CategoryPanelData {
+  panelId: string
+  title: string
+  icon: string
+  entryIds: string[]
+  visible: boolean
+  position: { x: number; y: number }
+}
+
+// Entry reference for category navigation
+export interface CategoryEntryReference {
+  entryId: string
+  entryName: string
+  workspaces: CategoryWorkspaceReference[]
+  categoryPanelId: string | null
+}
+
+export interface CategoryWorkspaceReference {
+  workspaceId: string
+  workspaceName: string
+  isDefault: boolean
 }
 
 // Panel data structure from the database
