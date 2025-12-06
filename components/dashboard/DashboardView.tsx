@@ -14,7 +14,7 @@ import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcome
 import { AddPanelButton } from "./PanelCatalog"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
-import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh } from "@/lib/note-workspaces/state"
+import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh } from "@/lib/note-workspaces/state"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
@@ -73,6 +73,32 @@ export function DashboardView({
   // Phase 5: Loading state for mode switching transitions
   const [isModeSwitching, setIsModeSwitching] = useState(false)
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Debug: Track mount/unmount and initial state
+  useEffect(() => {
+    void debugLog({
+      component: "DashboardView",
+      action: "mounted",
+      metadata: {
+        entryId,
+        entryName,
+        workspaceId,
+        initialViewMode,
+        initialActiveWorkspaceId,
+        hasVisitedWorkspace,
+      },
+    })
+    console.log("[DashboardView] Mounted:", { entryId, entryName, viewMode, hasVisitedWorkspace })
+
+    return () => {
+      void debugLog({
+        component: "DashboardView",
+        action: "unmounted",
+        metadata: { entryId, entryName },
+      })
+      console.log("[DashboardView] Unmounted:", { entryId, entryName })
+    }
+  }, []) // Only run on mount/unmount
 
   // Phase 5: Debounce rapid mode switching
   const lastModeSwitchRef = useRef<number>(0)
@@ -217,11 +243,21 @@ export function DashboardView({
     setWorkspaceMenuOpen(false)
 
     // Phase 5: Show loading state briefly during mode switch
+    void debugLog({
+      component: "DashboardView",
+      action: "is_mode_switching_set",
+      metadata: { value: true, entryId },
+    })
     setIsModeSwitching(true)
     if (modeSwitchTimeoutRef.current) {
       clearTimeout(modeSwitchTimeoutRef.current)
     }
     modeSwitchTimeoutRef.current = setTimeout(() => {
+      void debugLog({
+        component: "DashboardView",
+        action: "is_mode_switching_set",
+        metadata: { value: false, entryId, source: "timeout" },
+      })
       setIsModeSwitching(false)
     }, 300)
 
@@ -274,11 +310,21 @@ export function DashboardView({
     console.log("[DashboardView] Returning to dashboard mode from workspace:", activeWorkspaceId)
 
     // Phase 5: Show loading state briefly during mode switch
+    void debugLog({
+      component: "DashboardView",
+      action: "is_mode_switching_set",
+      metadata: { value: true, entryId },
+    })
     setIsModeSwitching(true)
     if (modeSwitchTimeoutRef.current) {
       clearTimeout(modeSwitchTimeoutRef.current)
     }
     modeSwitchTimeoutRef.current = setTimeout(() => {
+      void debugLog({
+        component: "DashboardView",
+        action: "is_mode_switching_set",
+        metadata: { value: false, entryId, source: "timeout" },
+      })
       setIsModeSwitching(false)
     }, 300)
 
@@ -309,6 +355,12 @@ export function DashboardView({
   const handleCreateWorkspace = useCallback(async () => {
     if (!entryId) return
 
+    void debugLog({
+      component: "DashboardView",
+      action: "create_workspace_start",
+      metadata: { entryId, currentWorkspacesCount: workspaces.length },
+    })
+
     try {
       const response = await fetch("/api/note-workspaces", {
         method: "POST",
@@ -325,18 +377,88 @@ export function DashboardView({
       }
 
       const data = await response.json()
+      const newWorkspaceId = data.workspace?.id
+
       void debugLog({
         component: "DashboardView",
         action: "workspace_created",
-        metadata: { workspaceId: data.workspace?.id, entryId },
+        metadata: { workspaceId: newWorkspaceId, entryId },
       })
 
-      // Refetch workspaces to update the list
+      // Request global workspace list refresh so AnnotationAppShell's noteWorkspaceState gets updated
+      void debugLog({
+        component: "DashboardView",
+        action: "requesting_global_workspace_refresh",
+        metadata: { workspaceId: newWorkspaceId },
+      })
+      requestWorkspaceListRefresh()
+
+      // Refetch workspaces to update the local list
       await refetchWorkspaces()
+
+      void debugLog({
+        component: "DashboardView",
+        action: "local_workspaces_refetched",
+        metadata: { workspaceId: newWorkspaceId, newWorkspacesCount: workspaces.length + 1 },
+      })
+
+      // Switch to the newly created workspace
+      if (newWorkspaceId) {
+        void debugLog({
+          component: "DashboardView",
+          action: "switching_to_new_workspace",
+          metadata: {
+            workspaceId: newWorkspaceId,
+            entryId,
+            step: "before_state_updates",
+          },
+        })
+        setWorkspaceMenuOpen(false)
+        setActiveWorkspaceId(newWorkspaceId)
+        setViewMode('workspace')
+        setHasVisitedWorkspace(true)
+
+        void debugLog({
+          component: "DashboardView",
+          action: "switching_to_new_workspace",
+          metadata: {
+            workspaceId: newWorkspaceId,
+            entryId,
+            step: "before_setActiveWorkspaceContext",
+          },
+        })
+        setActiveWorkspaceContext(newWorkspaceId)
+
+        void debugLog({
+          component: "DashboardView",
+          action: "switching_to_new_workspace",
+          metadata: {
+            workspaceId: newWorkspaceId,
+            entryId,
+            step: "after_setActiveWorkspaceContext",
+          },
+        })
+        onViewModeChange?.('workspace', newWorkspaceId)
+
+        void debugLog({
+          component: "DashboardView",
+          action: "switching_to_new_workspace",
+          metadata: {
+            workspaceId: newWorkspaceId,
+            entryId,
+            step: "complete",
+          },
+        })
+      }
     } catch (err) {
       console.error("[DashboardView] Failed to create workspace:", err)
+      void debugLog({
+        component: "DashboardView",
+        action: "create_workspace_error",
+        metadata: { entryId, error: err instanceof Error ? err.message : String(err) },
+      })
     }
-  }, [entryId, workspaces.length, refetchWorkspaces])
+  }, [entryId, workspaces.length, refetchWorkspaces, onViewModeChange])
 
   // Handle delete workspace
   const handleDeleteWorkspace = useCallback(async (workspaceId: string) => {
@@ -640,6 +762,23 @@ export function DashboardView({
     }
   }, [])
 
+  // Safety mechanism: Reset isModeSwitching if it's stuck for too long (1 second max)
+  useEffect(() => {
+    if (!isModeSwitching) return
+
+    const safetyTimeout = setTimeout(() => {
+      console.log("[DashboardView] Safety timeout: resetting isModeSwitching")
+      void debugLog({
+        component: "DashboardView",
+        action: "is_mode_switching_set",
+        metadata: { value: false, entryId, source: "safety_timeout" },
+      })
+      setIsModeSwitching(false)
+    }, 1000)
+
+    return () => clearTimeout(safetyTimeout)
+  }, [isModeSwitching, entryId])
+
   if (isLoading) {
     return (
       <div
@@ -881,6 +1020,7 @@ export function DashboardView({
         */}
 
         {/* Phase 5: Mode switching loading overlay */}
+        {/* Note: pointer-events: none prevents this overlay from blocking interactions if it gets stuck */}
         {isModeSwitching && (
           <div
             style={{
@@ -893,6 +1033,7 @@ export function DashboardView({
               background: 'rgba(10, 12, 16, 0.5)',
               backdropFilter: 'blur(4px)',
               animation: 'fadeIn 150ms ease-out',
+              pointerEvents: 'none',
             }}
           >
             <div
@@ -1010,13 +1151,23 @@ export function DashboardView({
               pointerEvents: viewMode === 'workspace' ? 'auto' : 'none',
               transition: 'opacity 200ms ease-in-out',
               visibility: viewMode === 'workspace' ? 'visible' : 'hidden',
+              // Also use display:none when hidden to completely remove from layout
+              // and prevent any potential CSS stacking issues
+              display: viewMode === 'workspace' ? 'block' : 'none',
             }}
           >
+            {/* DEBUG: trace activeWorkspaceId prop */}
+            {void debugLog({
+              component: "DashboardView",
+              action: "render_annotation_app_shell",
+              metadata: { activeWorkspaceId, viewMode },
+            })}
             <AnnotationAppShell
               isHidden={viewMode !== 'workspace'}
               hideHomeButton
               hideWorkspaceToggle
               toolbarTopOffset={56}
+              controlledWorkspaceId={activeWorkspaceId ?? undefined}
             />
           </div>
         )}

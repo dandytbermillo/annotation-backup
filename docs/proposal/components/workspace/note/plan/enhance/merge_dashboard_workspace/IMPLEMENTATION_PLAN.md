@@ -1612,8 +1612,164 @@ interface AnnotationAppShellProps {
 
 ---
 
+## 14. Post-Implementation Fixes
+
+> **Critical fixes applied after initial implementation to address cross-workspace/cross-entry contamination issues.**
+
+### FIX 20: Make Runtime Authoritative for Open Notes (2025-12-06)
+
+**Problem:** Cross-workspace contamination where default workspaces display notes from other workspaces. The provider → runtime sync effect was pushing shared provider state into per-workspace runtime, causing notes to leak between workspaces.
+
+**Root Cause:** The sync effect in `use-note-workspaces.ts` (lines 2571-2622) was synchronizing provider state to runtime even when `liveStateEnabled` was true, overwriting per-workspace runtime data with potentially-polluted shared provider state.
+
+**Files Modified:**
+- `lib/hooks/annotation/use-note-workspaces.ts` (lines 2577-2602)
+- `components/canvas/canvas-workspace-context.tsx` (lines 185-243, 324-343, 387-398, 420-435)
+
+**Changes:**
+
+1. **Disabled provider → runtime sync when live-state is enabled:**
+```typescript
+// use-note-workspaces.ts - provider → runtime sync effect
+useEffect(() => {
+  // ... validation checks ...
+
+  // FIX 20: DISABLE provider → runtime sync when live-state is enabled.
+  if (liveStateEnabled) {
+    emitDebugLog({
+      component: "NoteWorkspace",
+      action: "openNotesSync_skipped_live_state",
+      metadata: {
+        workspaceId: currentWorkspaceId,
+        reason: "live_state_enabled_runtime_is_authoritative",
+      },
+    })
+    return
+  }
+  // ... rest of effect
+}, [/* deps including liveStateEnabled */])
+```
+
+2. **Removed refCache fallback in workspace_switch_effect:**
+```typescript
+// canvas-workspace-context.tsx - workspace_switch_effect
+const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+const useRuntime = runtimeNotes.length > 0
+
+// Only use runtime data - don't fall back to potentially-polluted refCache
+const nextSlots: OpenWorkspaceNote[] = useRuntime
+  ? runtimeNotes.map(n => ({ noteId: n.noteId, mainPosition: n.mainPosition ?? null, ... }))
+  : [] // Empty - will be populated by hydrateWorkspace
+```
+
+3. **Updated openNote/closeNote/updateMainPosition to read from runtime instead of refCache:**
+```typescript
+// FIX 20: Read from runtime (authoritative) instead of potentially-polluted ref cache.
+const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+const current: OpenWorkspaceNote[] = runtimeNotes.length > 0
+  ? runtimeNotes.map(n => ({ noteId: n.noteId, mainPosition: n.mainPosition ?? null, ... }))
+  : openNotesByWorkspaceRef.current.get(workspaceId) ?? [] // Fallback for non-live-state mode
+```
+
+**Verification:** Type-check passes, no runtime errors.
+
+---
+
+### FIX 21: Clear activeNoteId on Entry Change (2025-12-06)
+
+**Problem:** Cross-entry note contamination where switching entries via Quick Link caused notes from the previous entry to appear in the new entry's workspace.
+
+**Root Cause:** When user switches entries via Quick Link:
+1. `activeNoteId` persists from the previous entry (either in React state or localStorage)
+2. The initial sync effect runs with the stale `activeNoteId` from the old entry
+3. It calls `openWorkspaceNote(staleNoteId, {persist: true, workspaceId: newWorkspace})`
+4. The old entry's note gets persisted to the new entry's workspace = CONTAMINATION
+
+**Files Modified:**
+- `components/annotation-app-shell.tsx` (lines 1285-1360)
+
+**Changes:**
+
+Added entry change detection effect that clears `activeNoteId` when switching entries:
+
+```typescript
+// FIX 21: Clear activeNoteId when ENTRY changes to prevent cross-entry note contamination
+const previousEntryIdRef = useRef<string | null>(noteWorkspaceState.currentEntryId)
+useEffect(() => {
+  const prevEntryId = previousEntryIdRef.current
+  const currentEntryId = noteWorkspaceState.currentEntryId
+
+  // Track the current entry for next comparison
+  previousEntryIdRef.current = currentEntryId
+
+  // Skip on initial mount (both null or first value)
+  if (prevEntryId === null && currentEntryId !== null) {
+    debugLog({ component: "AnnotationAppShell", action: "entry_initial_load", ... })
+    return
+  }
+
+  // Skip if entry hasn't actually changed
+  if (prevEntryId === currentEntryId) {
+    return
+  }
+
+  // Entry changed - clear activeNoteId to prevent cross-entry contamination
+  debugLog({
+    component: "AnnotationAppShell",
+    action: "clearing_active_note_on_entry_change",
+    metadata: { prevEntryId, currentEntryId, previousActiveNoteId: activeNoteId, ... },
+  })
+
+  // Clear React state
+  setActiveNoteId(null)
+
+  // Clear from localStorage to prevent stale notes on page reload
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.removeItem('annotation_activeNoteId')
+      localStorage.removeItem('annotation_focusedNoteId')
+      localStorage.removeItem('annotation_selectedNoteId')
+    } catch (err) { /* ignore */ }
+  }
+
+  // Reset the initialWorkspaceSyncRef so the new entry's workspace can properly hydrate
+  initialWorkspaceSyncRef.current = false
+
+  debugLog({
+    component: "AnnotationAppShell",
+    action: "entry_change_cleanup_complete",
+    metadata: { prevEntryId, currentEntryId, activeNoteIdCleared: true, ... },
+  })
+}, [noteWorkspaceState.currentEntryId, activeNoteId])
+```
+
+**Verification:**
+- Type-check passes
+- Debug logs confirm `clearing_active_note_on_entry_change` and `entry_change_cleanup_complete` are emitted on entry switch
+- Database shows workspaces contain only their own notes after Quick Link navigation between entries
+
+---
+
+### Summary of Contamination Fixes
+
+| Fix | Issue | Solution | Status |
+|-----|-------|----------|--------|
+| FIX 20 | Cross-workspace contamination (notes from other workspaces in same entry) | Make runtime authoritative, disable provider → runtime sync when live-state enabled | ✅ Verified |
+| FIX 21 | Cross-entry contamination (notes from other entries) | Clear activeNoteId when entry changes, reset initialWorkspaceSyncRef | ✅ Verified |
+
+**Testing Procedure:**
+1. Create entry with default workspace and custom workspaces
+2. Add unique notes to each workspace
+3. Switch between workspaces within same entry - verify no cross-workspace contamination
+4. Navigate to different entry via Quick Link
+5. Return to original entry - verify no cross-entry contamination
+6. Check database: each workspace's `openNotes` contains only its own notes
+
+---
+
 *Document created: 2025-12-05*
-*Last updated: 2025-12-05*
-*Last verified: 2025-12-05*
+*Last updated: 2025-12-06*
+*Last verified: 2025-12-06*
 *Review feedback incorporated: 2025-12-05*
 *Blocker verification completed: 2025-12-05*
+*Post-implementation fixes: 2025-12-06*

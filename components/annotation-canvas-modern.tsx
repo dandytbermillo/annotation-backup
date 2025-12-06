@@ -513,7 +513,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     userId: cameraUserId ?? undefined
   })
 
-  const { handleNoteHydration } = useCanvasHydrationSync({
+  const { handleNoteHydration, clearHydratedNotes } = useCanvasHydrationSync({
     noteId,
     hydrationStatus: primaryHydrationStatus,
     canvasItems,
@@ -528,6 +528,23 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     freshNoteSet,
     onFreshNoteHydrated,
   })
+
+  // Clear hydrated notes when workspace changes to allow re-hydration with new workspace positions
+  const prevWorkspaceIdRef = useRef<string | null | undefined>(workspaceId)
+  useEffect(() => {
+    if (prevWorkspaceIdRef.current !== workspaceId && prevWorkspaceIdRef.current !== undefined) {
+      debugLog({
+        component: "AnnotationCanvas",
+        action: "workspace_changed_clearing_hydration",
+        metadata: {
+          previousWorkspaceId: prevWorkspaceIdRef.current,
+          newWorkspaceId: workspaceId,
+        },
+      })
+      clearHydratedNotes()
+    }
+    prevWorkspaceIdRef.current = workspaceId
+  }, [workspaceId, clearHydratedNotes])
 
   useEffect(() => {
     if (!noteId) return

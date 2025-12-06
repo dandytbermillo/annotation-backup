@@ -387,10 +387,25 @@ export function useHydrationNoteTracker() {
     }
   }, [])
 
+  // Clear hydrated notes when workspace changes - allows re-hydration with new workspace positions
+  const clearHydratedNotes = useCallback(() => {
+    debugLog({
+      component: "AnnotationCanvas",
+      action: "clearing_hydrated_notes",
+      metadata: {
+        previousCount: hydratedNotesRef.current.size,
+        previousNotes: Array.from(hydratedNotesRef.current),
+      },
+    })
+    hydratedNotesRef.current.clear()
+    lastHydratedNoteRef.current = null
+  }, [])
+
   return {
     evaluateHydration,
     markHydrated,
     markNoPanels,
+    clearHydratedNotes,
   }
 }
 

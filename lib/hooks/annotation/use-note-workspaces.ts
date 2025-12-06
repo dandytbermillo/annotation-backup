@@ -836,44 +836,47 @@ export function useNoteWorkspaces({
   const pruneWorkspaceEntries = useCallback(
     (workspaceId: string | null | undefined, observedNoteIds: Set<string>, reason: string) => {
       if (!v2Enabled || !workspaceId) return false
-      const membership = workspaceNoteMembershipRef.current.get(workspaceId)
-      const storedSlots = workspaceOpenNotesRef.current.get(workspaceId) ?? []
-      const providerNoteIds = getProviderOpenNoteIds(workspaceId)
-      const providerMatches = openNotesWorkspaceId === workspaceId
+      // FIX: Use runtime membership as the SOLE source of truth.
+      // Previously, this code checked providerMatches and providerNoteIds which could be pointing
+      // at a different workspace during transitions. Now we use only the per-workspace runtime ledger.
+      const runtimeMembership = getRuntimeMembership(workspaceId)
+      const runtimeOpenNotes = getRuntimeOpenNotes(workspaceId)
+      const runtimeNoteIds = new Set(runtimeOpenNotes.map(n => n.noteId).filter(Boolean))
       const lastPendingAt = lastPendingTimestampRef.current.get(workspaceId) ?? 0
       if (lastPendingAt > 0 && now() - lastPendingAt < 1500) {
         return false
       }
-      if (!providerMatches && providerNoteIds.size === 0) {
+      // If runtime has no data for this workspace, skip pruning (workspace not hydrated yet)
+      if (runtimeNoteIds.size === 0 && (!runtimeMembership || runtimeMembership.size === 0)) {
         emitDebugLog({
           component: "NoteWorkspace",
-          action: "workspace_prune_skipped_offscreen",
+          action: "workspace_prune_skipped_no_runtime",
           metadata: {
             workspaceId,
             reason,
-            openNotesWorkspaceId,
             observedNoteCount: observedNoteIds.size,
+            source: "runtime_only",
           },
         })
         return false
       }
       const staleNoteIds = new Set<string>()
-      if (membership) {
-        membership.forEach((noteId) => {
-          if (!observedNoteIds.has(noteId) && !providerNoteIds.has(noteId)) {
+      if (runtimeMembership) {
+        runtimeMembership.forEach((noteId) => {
+          if (!observedNoteIds.has(noteId) && !runtimeNoteIds.has(noteId)) {
             staleNoteIds.add(noteId)
           }
         })
       }
-      storedSlots.forEach((slot) => {
-        if (slot.noteId && !observedNoteIds.has(slot.noteId) && !providerNoteIds.has(slot.noteId)) {
+      runtimeOpenNotes.forEach((slot) => {
+        if (slot.noteId && !observedNoteIds.has(slot.noteId)) {
           staleNoteIds.add(slot.noteId)
         }
       })
       if (staleNoteIds.size === 0) {
         return false
       }
-      const filteredSlots = storedSlots.filter((slot) => !staleNoteIds.has(slot.noteId))
+      const filteredSlots = runtimeOpenNotes.filter((slot) => !staleNoteIds.has(slot.noteId))
       commitWorkspaceOpenNotes(workspaceId, filteredSlots, { updateCache: true, callSite: "evictStaleNotes" })
       const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
       if (cache.panels.length > 0) {
@@ -896,12 +899,12 @@ export function useNoteWorkspaces({
           reason,
           staleNoteIds: Array.from(staleNoteIds),
           observedNoteCount: observedNoteIds.size,
-          providerOpenCount: providerNoteIds.size,
+          runtimeOpenCount: runtimeNoteIds.size,
         },
       })
       return true
     },
-    [commitWorkspaceOpenNotes, emitDebugLog, getProviderOpenNoteIds, openNotesWorkspaceId, v2Enabled],
+    [commitWorkspaceOpenNotes, emitDebugLog, getRuntimeMembership, getRuntimeOpenNotes, v2Enabled],
   )
 
   // FIX 9: Accept optional targetWorkspaceId parameter to prevent workspace ID mismatch.
@@ -1729,42 +1732,21 @@ export function useNoteWorkspaces({
           return
         }
       }
+      // FIX: Use runtime as the SOLE source of truth for open notes.
+      // Previously, this code merged provider openNotes with runtime, which caused cross-workspace
+      // contamination when the provider hadn't switched yet during workspace transitions.
+      // Now we read ONLY from the per-workspace runtime ledger (like components do).
       let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
-      const providerOpenSlots = openNotesWorkspaceId === workspaceId ? openNotes : []
-      const runtimeOpenSlots = getWorkspaceOpenNotes(workspaceId)
       emitDebugLog({
         component: "NoteWorkspace",
         action: "snapshot_open_notes_source",
         metadata: {
           workspaceId,
-          providerCount: providerOpenSlots.length,
-          providerWorkspaceId: openNotesWorkspaceId,
-          runtimeCount: runtimeOpenSlots.length,
+          runtimeCount: workspaceOpenNotes.length,
+          noteIds: workspaceOpenNotes.map(n => n.noteId),
+          source: "runtime_only",
         },
       })
-      const existingIds = new Set(
-        workspaceOpenNotes
-          .map((entry) => entry.noteId)
-          .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
-      )
-      const mergeSlots = [...providerOpenSlots, ...runtimeOpenSlots]
-        .map((entry) =>
-          entry?.noteId ? { noteId: entry.noteId, mainPosition: entry.mainPosition ?? null } : null,
-        )
-        .filter((entry): entry is { noteId: string; mainPosition: { x: number; y: number } | null } => Boolean(entry))
-      const missingSlots = mergeSlots.filter((slot) => !existingIds.has(slot.noteId))
-      if (missingSlots.length > 0) {
-        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceId, [...workspaceOpenNotes, ...missingSlots], { callSite: "snapshotRuntimeSync" })
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "snapshot_open_notes_runtime_sync",
-          metadata: {
-            workspaceId,
-            addedNoteIds: missingSlots.map((slot) => slot.noteId),
-            mergedSourceCount: mergeSlots.length,
-          },
-        })
-      }
       let openNoteIds = new Set(
         workspaceOpenNotes
           .map((entry) => entry.noteId)
@@ -2592,6 +2574,33 @@ export function useNoteWorkspaces({
     if (openNotesWorkspaceId !== currentWorkspaceId) return
     if (replayingWorkspaceRef.current > 0 || isHydratingRef.current) return
 
+    // FIX 20: DISABLE provider → runtime sync when live-state is enabled.
+    // When live-state mode is active, the per-workspace runtime is the authoritative source of truth.
+    // The runtime is populated correctly via:
+    //   - hydrateWorkspace() calls commitWorkspaceOpenNotes() from DB data
+    //   - openNote() / closeNote() call syncRuntimeOpenState()
+    //
+    // This provider → runtime sync was causing cross-workspace contamination because:
+    // 1. Provider openNotes can be transiently empty or stale during workspace switches
+    // 2. When guards fail, wrong/empty data gets committed to the runtime
+    // 3. With runtime empty/wrong, canvas falls back to cache which may have other workspace's notes
+    //
+    // By disabling this sync, the runtime remains uncontaminated by provider state mismatches.
+    // The provider (openNotes) is now for UI rendering only; runtime is authoritative for persistence.
+    if (liveStateEnabled) {
+      // Log that we're skipping this sync (helps with debugging)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "openNotesSync_skipped_live_state",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          openNotesCount: openNotes.length,
+          reason: "live_state_enabled_runtime_is_authoritative",
+        },
+      })
+      return
+    }
+
     // FIX 18: Guard against committing empty openNotes to a hot runtime during workspace switch.
     // When switching workspaces, the provider's openNotes is transiently empty while the runtime
     // still has notes from the previous session. Committing empty here would wipe the runtime's
@@ -2633,6 +2642,7 @@ export function useNoteWorkspaces({
     commitWorkspaceOpenNotes,
     emitDebugLog,
     featureEnabled,
+    liveStateEnabled,
     v2Enabled,
     currentWorkspaceId,
     openNotes,
@@ -2679,7 +2689,9 @@ export function useNoteWorkspaces({
       }
     }
     const workspaceMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
-    const storedOpenNotesForWorkspace = workspaceOpenNotesRef.current.get(workspaceIdForComponents) ?? []
+    // FIX: Use getWorkspaceOpenNotes which reads from runtime in live-state mode.
+    // Previously used workspaceOpenNotesRef.current which is a legacy ref that could be stale.
+    const storedOpenNotesForWorkspace = getWorkspaceOpenNotes(workspaceIdForComponents)
     let hasKnownNotes = Boolean(
       (workspaceMembership && workspaceMembership.size > 0) || storedOpenNotesForWorkspace.length > 0,
     )
@@ -2700,7 +2712,8 @@ export function useNoteWorkspaces({
       setWorkspaceNoteMembership(workspaceIdForComponents, observedNoteIds)
     }
     if (workspacePruned) {
-      const refreshedSlots = workspaceOpenNotesRef.current.get(workspaceIdForComponents) ?? []
+      // FIX: Use getWorkspaceOpenNotes which reads from runtime
+      const refreshedSlots = getWorkspaceOpenNotes(workspaceIdForComponents)
       const refreshedMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
       hasKnownNotes =
         refreshedSlots.length > 0 ||

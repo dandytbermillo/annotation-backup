@@ -66,7 +66,7 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
     const cancelRename = () => setRenameState({ id: null, value: "" })
 
     return (
-      <div ref={ref} className={["flex flex-col items-center gap-2 pointer-events-auto", className].filter(Boolean).join(" ")}>
+      <div ref={ref} className={["relative flex flex-col items-center gap-2 pointer-events-auto", className].filter(Boolean).join(" ")}>
         <div className="flex items-center gap-2 rounded-full bg-slate-950/85 px-2 py-1.5 shadow-lg ring-1 ring-white/15 backdrop-blur-xl">
           <button
             type="button"
@@ -103,7 +103,7 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
         ) : null}
 
         {isOpen && (
-          <div className="mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl">
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-72 rounded-2xl border border-white/10 bg-slate-950/95 p-2 shadow-2xl backdrop-blur-xl z-[100]">
             {isListLoading ? (
               <div className="py-6 text-center text-sm text-white/60">Loading workspaces...</div>
             ) : workspaces.length === 0 ? (

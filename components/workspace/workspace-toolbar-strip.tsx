@@ -11,11 +11,14 @@ export type WorkspaceToolbarStripProps = {
   isVisible: boolean
   /** Top offset in pixels (for embedding below another header) */
   topOffset?: number
+  /** Disable edge detection (for embedded mode) - toolbar stays visible */
+  disableEdgeDetection?: boolean
 } & WorkspaceToolbarProps
 
 export function WorkspaceToolbarStrip({
   isVisible,
   topOffset = 0,
+  disableEdgeDetection = false,
   ...toolbarProps
 }: WorkspaceToolbarStripProps) {
   if (!isVisible) {
@@ -23,7 +26,12 @@ export function WorkspaceToolbarStrip({
   }
 
   return (
-    <AutoHideToolbar edgeThreshold={50} hideDelay={800} topOffset={topOffset}>
+    <AutoHideToolbar
+      edgeThreshold={50}
+      hideDelay={800}
+      topOffset={topOffset}
+      disableEdgeDetection={disableEdgeDetection}
+    >
       <div className="flex flex-wrap items-center gap-2 px-4 py-2 overflow-visible">
         <WorkspaceToolbar {...toolbarProps} />
       </div>

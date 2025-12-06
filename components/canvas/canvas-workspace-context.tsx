@@ -42,6 +42,7 @@ import { useWorkspaceVersionTracker } from "@/lib/hooks/annotation/use-workspace
 import { isNoteWorkspaceEnabled, isNoteWorkspaceV2Enabled } from "@/lib/flags/note"
 import {
   getWorkspaceRuntime,
+  getRuntimeOpenNotes,
   markRuntimeActive,
   markRuntimePaused,
   removeWorkspaceRuntime,
@@ -152,7 +153,13 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     const currentActiveFromModule = getActiveWorkspaceContext()
     const selectedRef = selectedWorkspaceIdRef.current
     const closureActive = activeWorkspaceId
-    const resolved = selectedRef ?? closureActive ?? requestedId ?? SHARED_WORKSPACE_ID
+    // FIX: Prioritize MODULE-LEVEL state (currentActiveFromModule) over closure state (closureActive).
+    // When workspace switches, setActiveWorkspaceContext updates the module-level state SYNCHRONOUSLY,
+    // but useSyncExternalStore schedules a re-render that updates closureActive ASYNCHRONOUSLY.
+    // If openNote() is called between these two moments, closureActive is STALE but
+    // currentActiveFromModule is FRESH. Using the stale value causes notes to be added to the
+    // wrong workspace's runtime, polluting the database when the snapshot is persisted.
+    const resolved = currentActiveFromModule ?? closureActive ?? selectedRef ?? requestedId ?? SHARED_WORKSPACE_ID
 
     // DEBUG: Log when resolution falls back to requestedId (potential bug indicator)
     const usedFallback = resolved === requestedId && requestedId !== selectedRef && requestedId !== closureActive
@@ -179,7 +186,32 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     const workspaceId = activeWorkspaceId ?? selectedWorkspaceIdRef.current ?? SHARED_WORKSPACE_ID
     const prevSelectedRef = selectedWorkspaceIdRef.current
     selectedWorkspaceIdRef.current = workspaceId
-    const nextSlots = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+
+    // FIX 20: Runtime is the AUTHORITATIVE source of truth for open notes.
+    // - When runtime has data: use it for UI, update ref cache to self-heal
+    // - When runtime is empty: show empty UI, wait for hydrateWorkspace to populate runtime
+    //
+    // CRITICAL: Do NOT write refCache data back to runtime when runtime is empty.
+    // The refCache can be polluted with other workspace's notes. Writing it to runtime
+    // would contaminate the authoritative source. Let hydrateWorkspace populate the
+    // runtime with correct data from the database.
+    const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+    const useRuntime = runtimeNotes.length > 0
+
+    // Only use runtime data - don't fall back to potentially-polluted refCache
+    const nextSlots: OpenWorkspaceNote[] = useRuntime
+      ? runtimeNotes.map(n => ({
+          noteId: n.noteId,
+          mainPosition: n.mainPosition ?? null,
+          updatedAt: null,
+          version: 0,
+        }))
+      : [] // Empty - will be populated by hydrateWorkspace
+
+    // If runtime has data, update ref cache to self-heal any past pollution
+    if (useRuntime) {
+      openNotesByWorkspaceRef.current.set(workspaceId, nextSlots)
+    }
 
     // DEBUG: Log workspace switch state transition
     void debugLog({
@@ -192,11 +224,17 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
         newSelectedRefCurrent: workspaceId,
         nextSlotsCount: nextSlots.length,
         nextSlotNoteIds: nextSlots.map(s => s.noteId),
+        source: useRuntime ? "runtime" : "waiting_for_hydration",
+        runtimeNoteCount: runtimeNotes.length,
       },
     })
 
     setCurrentOpenNotes(nextSlots)
-    syncRuntimeOpenState(workspaceId, nextSlots)
+    // FIX 20: Only sync to runtime if we read FROM runtime (authoritative source).
+    // If runtime was empty, don't write empty/stale data to it - let hydrateWorkspace populate it.
+    if (useRuntime) {
+      syncRuntimeOpenState(workspaceId, nextSlots)
+    }
     setCurrentOpenNotesWorkspaceId(workspaceId)
     markRuntimeActive(workspaceId)
     return () => {
@@ -283,7 +321,17 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       if (position) {
         positionCache.set(noteId, position)
       }
-      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      // FIX 20: Read from runtime (authoritative) instead of potentially-polluted ref cache.
+      // Runtime is populated via hydrateWorkspace() with correct DB data.
+      const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+      const current: OpenWorkspaceNote[] = runtimeNotes.length > 0
+        ? runtimeNotes.map(n => ({
+            noteId: n.noteId,
+            mainPosition: n.mainPosition ?? null,
+            updatedAt: null,
+            version: 0,
+          }))
+        : openNotesByWorkspaceRef.current.get(workspaceId) ?? [] // Fallback for non-live-state mode
       const exists = current.some(note => note.noteId === noteId)
       const next = exists
         ? current.map(note =>
@@ -336,7 +384,16 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
     async (noteId: string, options?: CloseNoteOptions) => {
       if (!noteId) return
       const workspaceId = resolveWorkspaceId(noteId)
-      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      // FIX 20: Read from runtime (authoritative) instead of potentially-polluted ref cache.
+      const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+      const current: OpenWorkspaceNote[] = runtimeNotes.length > 0
+        ? runtimeNotes.map(n => ({
+            noteId: n.noteId,
+            mainPosition: n.mainPosition ?? null,
+            updatedAt: null,
+            version: 0,
+          }))
+        : openNotesByWorkspaceRef.current.get(workspaceId) ?? []
       const next = current.filter(note => note.noteId !== noteId)
       openNotesByWorkspaceRef.current.set(workspaceId, next)
       // FIX 11: Use getActiveWorkspaceContext() instead of closure (see openNote comment)
@@ -360,7 +417,16 @@ export function CanvasWorkspaceProviderV2({ children }: { children: ReactNode })
       const workspaceId = resolveWorkspaceId(noteId)
       const positionCache = getPositionCache(workspaceId)
       positionCache.set(noteId, position)
-      const current = openNotesByWorkspaceRef.current.get(workspaceId) ?? []
+      // FIX 20: Read from runtime (authoritative) instead of potentially-polluted ref cache.
+      const runtimeNotes = getRuntimeOpenNotes(workspaceId)
+      const current: OpenWorkspaceNote[] = runtimeNotes.length > 0
+        ? runtimeNotes.map(n => ({
+            noteId: n.noteId,
+            mainPosition: n.mainPosition ?? null,
+            updatedAt: null,
+            version: 0,
+          }))
+        : openNotesByWorkspaceRef.current.get(workspaceId) ?? []
       const next = current.map(note =>
         note.noteId === noteId
           ? { ...note, mainPosition: position }

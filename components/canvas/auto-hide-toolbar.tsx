@@ -13,6 +13,8 @@ interface AutoHideToolbarProps {
   initialVisibilityDuration?: number
   /** Top offset in pixels (for embedding below another header) */
   topOffset?: number
+  /** Disable edge detection (for embedded mode) - toolbar stays visible */
+  disableEdgeDetection?: boolean
 }
 
 /**
@@ -26,8 +28,10 @@ export function AutoHideToolbar({
   showOnMount = true,
   initialVisibilityDuration = 3000,
   topOffset = 0,
+  disableEdgeDetection = false,
 }: AutoHideToolbarProps) {
-  const [isVisible, setIsVisible] = useState(showOnMount)
+  // When edge detection disabled, always show the toolbar
+  const [isVisible, setIsVisible] = useState(showOnMount || disableEdgeDetection)
   const [isHovering, setIsHovering] = useState(false)
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -52,7 +56,12 @@ export function AutoHideToolbar({
   }
 
   // Show toolbar for initial duration on mount
+  // Skip auto-hide when edge detection is disabled (toolbar stays visible)
   useEffect(() => {
+    if (disableEdgeDetection) {
+      setIsVisible(true)
+      return // Keep visible, don't auto-hide
+    }
     if (showOnMount) {
       setIsVisible(true)
       const timeout = setTimeout(() => {
@@ -63,11 +72,14 @@ export function AutoHideToolbar({
 
       return () => clearTimeout(timeout)
     }
-  }, [showOnMount, initialVisibilityDuration, isHovering])
+  }, [showOnMount, initialVisibilityDuration, isHovering, disableEdgeDetection])
 
   // Edge detection via mousemove listener
   // Account for topOffset when detecting edge proximity
+  // Skip when edge detection is disabled (embedded mode)
   useEffect(() => {
+    if (disableEdgeDetection) return // Skip adding mousemove listener
+
     const handleMouseMove = (e: MouseEvent) => {
       const mouseY = e.clientY
 
@@ -88,7 +100,7 @@ export function AutoHideToolbar({
       window.removeEventListener("mousemove", handleMouseMove)
       clearHideTimeout()
     }
-  }, [edgeThreshold, hideDelay, isHovering, topOffset])
+  }, [edgeThreshold, hideDelay, isHovering, topOffset, disableEdgeDetection])
 
   // Handle toolbar hover - keep visible while hovering
   const handleMouseEnter = () => {
@@ -114,6 +126,9 @@ export function AutoHideToolbar({
     }
   }
 
+  // Use lower z-index in embedded mode so dashboard dropdown can appear above
+  const zIndexClass = disableEdgeDetection ? 'z-[5]' : 'z-50'
+
   return (
     <div
       ref={toolbarRef}
@@ -122,7 +137,7 @@ export function AutoHideToolbar({
         transition: 'transform 300ms ease-in-out',
         top: topOffset,
       }}
-      className="fixed left-0 right-0 z-50 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur overflow-visible"
+      className={`fixed left-0 right-0 ${zIndexClass} border-b border-neutral-800 bg-neutral-950/80 backdrop-blur overflow-visible`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onFocus={handleFocus}

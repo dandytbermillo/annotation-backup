@@ -25,6 +25,8 @@ type UseWorkspaceFloatingToolbarOptions = {
   recentNotesRefreshTrigger: number
   toggleConstellationView: FloatingToolbarProps["onToggleConstellationPanel"]
   knowledgeBaseWorkspace: KnowledgeBaseWorkspaceApi
+  /** When true, suppress floating toolbar portal (for embedded mode when parent is hidden) */
+  isHidden?: boolean
 }
 
 export function useWorkspaceFloatingToolbar({
@@ -45,6 +47,7 @@ export function useWorkspaceFloatingToolbar({
   recentNotesRefreshTrigger,
   toggleConstellationView,
   knowledgeBaseWorkspace,
+  isHidden = false,
 }: UseWorkspaceFloatingToolbarOptions) {
   const floatingToolbarProps = useMemo<FloatingToolbarProps>(
     () => ({
@@ -86,7 +89,7 @@ export function useWorkspaceFloatingToolbar({
   )
 
   const floatingToolbarVisible =
-    showNotesWidget && !activeNoteId && !showConstellationPanel
+    showNotesWidget && !activeNoteId && !showConstellationPanel && !isHidden
 
   return {
     floatingToolbarProps,

@@ -48,7 +48,7 @@ import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-works
 import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
 import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
-import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext, setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import type { AnnotationWorkspaceViewProps } from "@/components/annotation-workspace-view/types"
 import { useOverlayPersistenceRefs } from "@/lib/hooks/annotation/use-overlay-persistence-refs"
 import { useWorkspacePreviewPortal } from "@/lib/hooks/annotation/use-workspace-preview-portal"
@@ -139,6 +139,8 @@ type AnnotationAppContentProps = {
   hideWorkspaceToggle?: boolean
   /** Top offset for workspace toolbar (for embedding below another header) */
   toolbarTopOffset?: number
+  /** When provided, directly control which workspace is displayed (bypasses global context subscription) */
+  controlledWorkspaceId?: string
 }
 
 function AnnotationAppContent({
@@ -147,6 +149,7 @@ function AnnotationAppContent({
   hideHomeButton = false,
   hideWorkspaceToggle = false,
   toolbarTopOffset = 0,
+  controlledWorkspaceId,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -482,29 +485,139 @@ function AnnotationAppContent({
     setWorkspaceStoreId(noteWorkspaceState.currentWorkspaceId ?? SHARED_WORKSPACE_ID)
   }, [noteWorkspaceState.currentWorkspaceId, noteWorkspaceV2Enabled])
 
+  // Controlled mode: When controlledWorkspaceId is provided, switch directly to that workspace
+  // This bypasses the global context subscription and prevents race conditions
+  useEffect(() => {
+    void debugLog({
+      component: "AnnotationAppShell",
+      action: "controlled_mode_effect_run",
+      metadata: {
+        controlledWorkspaceId,
+        currentWorkspaceId: noteWorkspaceState.currentWorkspaceId,
+        isLoading: noteWorkspaceState.isLoading,
+        workspacesCount: noteWorkspaceState.workspaces.length,
+      },
+    })
+    if (!controlledWorkspaceId) return
+    if (noteWorkspaceState.isLoading) return
+    if (noteWorkspaceState.workspaces.length === 0) return
+
+    // Skip if already on the controlled workspace
+    if (controlledWorkspaceId === noteWorkspaceState.currentWorkspaceId) {
+      // Even if already active, ensure global context matches (may have stale value)
+      const currentGlobalContext = getActiveWorkspaceContext()
+      if (currentGlobalContext !== controlledWorkspaceId) {
+        setActiveWorkspaceContext(controlledWorkspaceId)
+      }
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "controlled_workspace_already_active",
+        metadata: { controlledWorkspaceId, globalContextUpdated: currentGlobalContext !== controlledWorkspaceId },
+      })
+      return
+    }
+
+    // Check if the controlled workspace exists in our list
+    const exists = noteWorkspaceState.workspaces.some(ws => ws.id === controlledWorkspaceId)
+    if (exists) {
+      console.log("[AnnotationAppShell] Switching to controlled workspace:", controlledWorkspaceId)
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "controlled_workspace_switch",
+        metadata: {
+          controlledWorkspaceId,
+          currentWorkspaceId: noteWorkspaceState.currentWorkspaceId,
+        },
+      })
+      // Update global context so CanvasWorkspaceProviderV2 and other subscribers see the change
+      setActiveWorkspaceContext(controlledWorkspaceId)
+      noteWorkspaceState.selectWorkspace(controlledWorkspaceId)
+    } else {
+      console.log("[AnnotationAppShell] Controlled workspace not in list:", controlledWorkspaceId)
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "controlled_workspace_not_found",
+        metadata: {
+          controlledWorkspaceId,
+          availableWorkspaces: noteWorkspaceState.workspaces.map(ws => ({ id: ws.id, name: ws.name })),
+        },
+      })
+    }
+  }, [controlledWorkspaceId, noteWorkspaceState.isLoading, noteWorkspaceState.workspaces, noteWorkspaceState.currentWorkspaceId, noteWorkspaceState.selectWorkspace])
+
   // Subscribe to workspace context changes from dashboard navigation
   // This handles the case where user clicks a workspace link in dashboard (including newly created workspaces)
+  // SKIP subscription when in controlled mode (controlledWorkspaceId is provided)
   useEffect(() => {
+    // Skip global context subscription when in controlled mode
+    if (controlledWorkspaceId) {
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "context_subscription_skipped",
+        metadata: { reason: "controlled_mode", controlledWorkspaceId },
+      })
+      return
+    }
+
     if (noteWorkspaceState.isLoading) return
     if (noteWorkspaceState.workspaces.length === 0) return
 
     // Handler for context changes
     const handleContextChange = (workspaceId: string | null) => {
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "context_change_received",
+        metadata: {
+          workspaceId,
+          currentWorkspaceId: noteWorkspaceState.currentWorkspaceId,
+          workspacesCount: noteWorkspaceState.workspaces.length,
+          workspaceIds: noteWorkspaceState.workspaces.map(ws => ws.id),
+        },
+      })
+
       if (!workspaceId) return
-      if (workspaceId === noteWorkspaceState.currentWorkspaceId) return
+      if (workspaceId === noteWorkspaceState.currentWorkspaceId) {
+        void debugLog({
+          component: "AnnotationAppShell",
+          action: "context_change_skipped",
+          metadata: { reason: "same_as_current", workspaceId },
+        })
+        return
+      }
 
       // Check if this workspace exists in our list
       const exists = noteWorkspaceState.workspaces.some(ws => ws.id === workspaceId)
       if (exists) {
         console.log("[AnnotationAppShell] Activating workspace from context change:", workspaceId)
+        void debugLog({
+          component: "AnnotationAppShell",
+          action: "activating_workspace",
+          metadata: { workspaceId, source: "context_change" },
+        })
         noteWorkspaceState.selectWorkspace(workspaceId)
       } else {
         console.log("[AnnotationAppShell] Workspace not in list yet:", workspaceId, "waiting for refresh...")
+        void debugLog({
+          component: "AnnotationAppShell",
+          action: "workspace_not_found",
+          metadata: {
+            workspaceId,
+            availableWorkspaces: noteWorkspaceState.workspaces.map(ws => ({ id: ws.id, name: ws.name })),
+          },
+        })
       }
     }
 
     // Check for pending context on mount
     const pendingWorkspaceId = getActiveWorkspaceContext()
+    void debugLog({
+      component: "AnnotationAppShell",
+      action: "checking_pending_context",
+      metadata: {
+        pendingWorkspaceId,
+        currentWorkspaceId: noteWorkspaceState.currentWorkspaceId,
+      },
+    })
     if (pendingWorkspaceId && pendingWorkspaceId !== noteWorkspaceState.currentWorkspaceId) {
       handleContextChange(pendingWorkspaceId)
     }
@@ -514,7 +627,7 @@ function AnnotationAppContent({
     return () => {
       unsubscribe()
     }
-  }, [noteWorkspaceState.isLoading, noteWorkspaceState.workspaces, noteWorkspaceState.currentWorkspaceId, noteWorkspaceState.selectWorkspace])
+  }, [controlledWorkspaceId, noteWorkspaceState.isLoading, noteWorkspaceState.workspaces, noteWorkspaceState.currentWorkspaceId, noteWorkspaceState.selectWorkspace])
 
   const currentNoteWorkspace = useMemo(
     () => noteWorkspaceState.workspaces.find((workspace) => workspace.id === noteWorkspaceState.currentWorkspaceId) ?? null,
@@ -655,6 +768,7 @@ function AnnotationAppContent({
   const canRenderOverlay =
     shouldLoadOverlay &&
     !showConstellationPanel &&
+    !isHidden &&
     (!multiLayerEnabled || !layerContext || layerContext.activeLayer === 'popups')
   const shouldShowSidebar = showConstellationPanel || isPopupLayerActive
 
@@ -1168,6 +1282,83 @@ const initialWorkspaceSyncRef = useRef(false)
     setSkipSnapshotForNote(null)
   }, [noteWorkspaceState.currentWorkspaceId])
 
+  // FIX 21: Clear activeNoteId when ENTRY changes to prevent cross-entry note contamination
+  //
+  // Problem: When user switches entries via Quick Link (e.g., from sample6 to sample5):
+  // 1. activeNoteId persists from the previous entry (either in React state or localStorage)
+  // 2. The initial sync effect runs with the stale activeNoteId from the old entry
+  // 3. It calls openWorkspaceNote(staleNoteId, {persist: true, workspaceId: newWorkspace})
+  // 4. The old entry's note gets persisted to the new entry's workspace = CONTAMINATION
+  //
+  // Solution: Clear activeNoteId when entry changes. The new entry's workspace will
+  // set activeNoteId from its own open notes during hydration.
+  const previousEntryIdRef = useRef<string | null>(noteWorkspaceState.currentEntryId)
+  useEffect(() => {
+    const prevEntryId = previousEntryIdRef.current
+    const currentEntryId = noteWorkspaceState.currentEntryId
+
+    // Track the current entry for next comparison
+    previousEntryIdRef.current = currentEntryId
+
+    // Skip on initial mount (both null or first value)
+    if (prevEntryId === null && currentEntryId !== null) {
+      // First entry load - don't clear, let normal hydration work
+      debugLog({
+        component: "AnnotationAppShell",
+        action: "entry_initial_load",
+        metadata: { currentEntryId },
+      })
+      return
+    }
+
+    // Skip if entry hasn't actually changed
+    if (prevEntryId === currentEntryId) {
+      return
+    }
+
+    // Entry changed - clear activeNoteId to prevent cross-entry contamination
+    debugLog({
+      component: "AnnotationAppShell",
+      action: "clearing_active_note_on_entry_change",
+      metadata: {
+        prevEntryId,
+        currentEntryId,
+        previousActiveNoteId: activeNoteId,
+        reason: "prevent_cross_entry_contamination",
+      },
+    })
+
+    // Clear React state
+    setActiveNoteId(null)
+
+    // Clear from localStorage to prevent stale notes on page reload
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('annotation_activeNoteId')
+        localStorage.removeItem('annotation_focusedNoteId')
+        localStorage.removeItem('annotation_selectedNoteId')
+      } catch (err) {
+        // Ignore localStorage errors
+      }
+    }
+
+    // Reset the initialWorkspaceSyncRef so the new entry's workspace can properly hydrate
+    // This ensures the initial sync effect runs fresh for the new entry
+    initialWorkspaceSyncRef.current = false
+
+    debugLog({
+      component: "AnnotationAppShell",
+      action: "entry_change_cleanup_complete",
+      metadata: {
+        prevEntryId,
+        currentEntryId,
+        activeNoteIdCleared: true,
+        localStorageCleared: true,
+        initialSyncRefReset: true,
+      },
+    })
+  }, [noteWorkspaceState.currentEntryId, activeNoteId])
+
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget
@@ -1403,6 +1594,8 @@ const initialWorkspaceSyncRef = useRef(false)
       isVisible: !isHidden && !showConstellationPanel && !isPopupLayerActive,
       // Position toolbar below dashboard header when embedded
       topOffset: toolbarTopOffset,
+      // Disable edge detection when embedded (topOffset > 0) - toolbar stays visible
+      disableEdgeDetection: toolbarTopOffset > 0,
       ...workspaceToolbarProps,
     }),
     [workspaceToolbarProps, showConstellationPanel, isPopupLayerActive, isHidden, toolbarTopOffset],
@@ -1629,6 +1822,7 @@ const initialWorkspaceSyncRef = useRef(false)
     recentNotesRefreshTrigger,
     toggleConstellationView,
     knowledgeBaseWorkspace,
+    isHidden,
   })
 
   const workspaceFloatingToolbarProps = useMemo(
@@ -1707,6 +1901,8 @@ export interface AnnotationAppShellProps {
   hideWorkspaceToggle?: boolean
   /** Top offset for workspace toolbar (for embedding below another header) */
   toolbarTopOffset?: number
+  /** When provided, directly control which workspace is displayed (bypasses global context subscription) */
+  controlledWorkspaceId?: string
 }
 
 export function AnnotationAppShell({
@@ -1714,6 +1910,7 @@ export function AnnotationAppShell({
   hideHomeButton = false,
   hideWorkspaceToggle = false,
   toolbarTopOffset = 0,
+  controlledWorkspaceId,
 }: AnnotationAppShellProps = {}) {
   return (
     <LayerProvider initialPopupCount={0}>
@@ -1724,6 +1921,7 @@ export function AnnotationAppShell({
           hideHomeButton={hideHomeButton}
           hideWorkspaceToggle={hideWorkspaceToggle}
           toolbarTopOffset={toolbarTopOffset}
+          controlledWorkspaceId={controlledWorkspaceId}
         />
       </CanvasWorkspaceProvider>
     </LayerProvider>

@@ -59,7 +59,7 @@ export function useCanvasHydrationSync({
     workspaceSeededNotesRef,
     getItemNoteId,
   })
-  const { evaluateHydration, markHydrated, markNoPanels } = useHydrationNoteTracker()
+  const { evaluateHydration, markHydrated, markNoPanels, clearHydratedNotes } = useHydrationNoteTracker()
   const notifyFreshNoteHydrated = useFreshNoteNotifier({
     freshNoteSet,
     onFreshNoteHydrated,
@@ -141,5 +141,5 @@ export function useCanvasHydrationSync({
     ],
   )
 
-  return { handleNoteHydration }
+  return { handleNoteHydration, clearHydratedNotes }
 }

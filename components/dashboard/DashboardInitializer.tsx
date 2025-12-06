@@ -421,6 +421,7 @@ export function DashboardInitializer({
     console.log("[DashboardInitializer] Rendering DashboardView with workspaceId:", currentDashboardWorkspaceId)
     return (
       <DashboardView
+        key={currentEntryInfo?.entryId}  // Force remount on entry change to reset viewMode state
         workspaceId={currentDashboardWorkspaceId}
         onNavigate={handleDashboardNavigate}
         entryId={currentEntryInfo?.entryId}
