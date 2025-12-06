@@ -6,10 +6,11 @@
  *
  * Provides a consistent wrapper for all dashboard panel types.
  * Handles common functionality: header, close button, drag handle area.
+ * Supports editable title feature for panels that enable it.
  */
 
-import React from 'react'
-import { X } from 'lucide-react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { X, Pencil, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BasePanelProps, PanelTypeDefinition } from '@/lib/dashboard/panel-registry'
 
@@ -21,6 +22,12 @@ export interface BaseDashboardPanelProps extends BasePanelProps {
   contentClassName?: string
   showCloseButton?: boolean
   headerActions?: React.ReactNode
+  /** Callback when title is changed */
+  onTitleChange?: (newTitle: string) => void
+  /** Whether title is editable (default: false) */
+  titleEditable?: boolean
+  /** Optional badge to display before the title (e.g., "A", "B") */
+  badge?: string | null
 }
 
 export function BaseDashboardPanel({
@@ -34,7 +41,92 @@ export function BaseDashboardPanel({
   contentClassName,
   showCloseButton = true,
   headerActions,
+  onTitleChange,
+  titleEditable = false,
+  badge,
 }: BaseDashboardPanelProps) {
+  const [isEditingTitle, setIsEditingTitle] = useState(false)
+  const [editedTitle, setEditedTitle] = useState(panel.title || panelDef.name)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Update local state when panel title changes externally
+  useEffect(() => {
+    setEditedTitle(panel.title || panelDef.name)
+  }, [panel.title, panelDef.name])
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditingTitle && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [isEditingTitle])
+
+  const handleStartEdit = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent drag
+    if (titleEditable && onTitleChange) {
+      setIsEditingTitle(true)
+    }
+  }, [titleEditable, onTitleChange])
+
+  const handleSaveTitle = useCallback(() => {
+    const trimmedTitle = editedTitle.trim()
+    if (trimmedTitle && trimmedTitle !== (panel.title || panelDef.name)) {
+      onTitleChange?.(trimmedTitle)
+    } else {
+      // Reset to original if empty or unchanged
+      setEditedTitle(panel.title || panelDef.name)
+    }
+    setIsEditingTitle(false)
+  }, [editedTitle, panel.title, panelDef.name, onTitleChange])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSaveTitle()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setEditedTitle(panel.title || panelDef.name)
+      setIsEditingTitle(false)
+    }
+  }, [handleSaveTitle, panel.title, panelDef.name])
+
+  const handleInputMouseDown = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent drag while editing
+  }, [])
+
+  // Edit button for header actions (shown when titleEditable is true)
+  const editButton = titleEditable && onTitleChange && !isEditingTitle ? (
+    <button
+      onClick={handleStartEdit}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        width: 24,
+        height: 24,
+        background: 'transparent',
+        border: 'none',
+        borderRadius: 4,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        color: '#5c6070',
+        transition: 'all 0.15s ease',
+      }}
+      title="Edit title"
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)'
+        e.currentTarget.style.color = '#818cf8'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent'
+        e.currentTarget.style.color = '#5c6070'
+      }}
+    >
+      <Pencil size={12} />
+    </button>
+  ) : null
+
   return (
     <div
       className={cn('flex flex-col overflow-hidden h-full', className)}
@@ -55,15 +147,89 @@ export function BaseDashboardPanel({
           borderRadius: '12px 12px 0 0',
         }}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {/* Badge (e.g., "A", "B") for links_note panels */}
+          {badge && (
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 20,
+                height: 20,
+                background: 'rgba(99, 102, 241, 0.2)',
+                color: '#818cf8',
+                fontSize: 11,
+                fontWeight: 700,
+                borderRadius: 4,
+                flexShrink: 0,
+              }}
+              title={`Panel ${badge}`}
+            >
+              {badge}
+            </span>
+          )}
           <span style={{ fontSize: 14, opacity: 0.8 }} aria-hidden="true">
             {panelDef.icon}
           </span>
-          <span className="truncate" style={{ fontSize: 13, fontWeight: 600, color: '#f0f0f0' }}>
-            {panel.title || panelDef.name}
-          </span>
+
+          {isEditingTitle ? (
+            // Edit mode - input field
+            <div className="flex items-center gap-1 flex-1 min-w-0">
+              <input
+                ref={inputRef}
+                type="text"
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                onBlur={handleSaveTitle}
+                onKeyDown={handleKeyDown}
+                onMouseDown={handleInputMouseDown}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: '#f0f0f0',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  border: '1px solid rgba(99, 102, 241, 0.5)',
+                  borderRadius: 4,
+                  padding: '2px 6px',
+                  outline: 'none',
+                }}
+              />
+              <button
+                onClick={handleSaveTitle}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  width: 20,
+                  height: 20,
+                  background: 'rgba(99, 102, 241, 0.2)',
+                  border: 'none',
+                  borderRadius: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: '#818cf8',
+                  flexShrink: 0,
+                }}
+                title="Save"
+              >
+                <Check size={12} />
+              </button>
+            </div>
+          ) : (
+            // Display mode - just the title
+            <span
+              className="truncate"
+              style={{ fontSize: 13, fontWeight: 600, color: '#f0f0f0' }}
+            >
+              {panel.title || panelDef.name}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
+          {editButton}
           {headerActions}
           {showCloseButton && onClose && (
             <button

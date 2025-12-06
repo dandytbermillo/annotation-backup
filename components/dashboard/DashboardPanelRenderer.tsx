@@ -16,11 +16,14 @@ import { EntryNavigatorPanel } from './panels/EntryNavigatorPanel'
 import { RecentPanel } from './panels/RecentPanel'
 import { QuickCapturePanel } from './panels/QuickCapturePanel'
 import { LinksNotePanel } from './panels/LinksNotePanel'
+import { CategoryPanel } from './panels/CategoryPanel'
+import { CategoryNavigatorPanel } from './panels/CategoryNavigatorPanel'
 
 interface DashboardPanelRendererProps {
   panel: WorkspacePanel
   onClose?: () => void
   onConfigChange?: (config: Partial<PanelConfig>) => void
+  onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
   isActive?: boolean
 }
@@ -29,6 +32,7 @@ export function DashboardPanelRenderer({
   panel,
   onClose,
   onConfigChange,
+  onTitleChange,
   onNavigate,
   isActive,
 }: DashboardPanelRendererProps) {
@@ -45,6 +49,7 @@ export function DashboardPanelRenderer({
     panel,
     onClose,
     onConfigChange,
+    onTitleChange,
     onNavigate,
     isActive,
   }
@@ -60,6 +65,10 @@ export function DashboardPanelRenderer({
       return <QuickCapturePanel {...props} />
     case 'links_note':
       return <LinksNotePanel {...props} />
+    case 'category':
+      return <CategoryPanel {...props} />
+    case 'category_navigator':
+      return <CategoryNavigatorPanel {...props} />
     case 'note':
       // Note panels are handled separately by the existing note panel system
       // This is just a placeholder - actual note panels use the existing canvas note rendering

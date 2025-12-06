@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
         height,
         z_index,
         config,
+        badge,
         created_at,
         updated_at
       FROM workspace_panels
@@ -63,6 +64,7 @@ export async function GET(request: NextRequest) {
       height: row.height,
       zIndex: row.z_index,
       config: row.config || {},
+      badge: row.badge || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }))
@@ -124,14 +126,36 @@ export async function POST(request: NextRequest) {
     )
     const nextZIndex = zIndexResult.rows[0].next_z
 
+    // Auto-assign badge for links_note panels
+    let badge: string | null = null
+    if (panelType === 'links_note') {
+      // Get existing badges for links_note panels in this workspace
+      const badgeResult = await serverPool.query(
+        `SELECT badge FROM workspace_panels
+         WHERE workspace_id = $1 AND panel_type = 'links_note' AND badge IS NOT NULL
+         ORDER BY badge ASC`,
+        [workspaceId]
+      )
+      const usedBadges = new Set(badgeResult.rows.map(r => r.badge))
+
+      // Find the next available letter (A-Z)
+      for (let i = 0; i < 26; i++) {
+        const letter = String.fromCharCode(65 + i) // A=65, B=66, etc.
+        if (!usedBadges.has(letter)) {
+          badge = letter
+          break
+        }
+      }
+    }
+
     // Create the panel
     const query = `
       INSERT INTO workspace_panels (
         workspace_id, panel_type, title,
         position_x, position_y, width, height,
-        z_index, config, created_at, updated_at
+        z_index, config, badge, created_at, updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
       )
       RETURNING *
     `
@@ -146,6 +170,7 @@ export async function POST(request: NextRequest) {
       height ?? defaultPanel.height,
       nextZIndex,
       JSON.stringify(config ?? defaultPanel.config),
+      badge,
     ])
 
     const row = result.rows[0]
@@ -160,6 +185,7 @@ export async function POST(request: NextRequest) {
       height: row.height,
       zIndex: row.z_index,
       config: row.config || {},
+      badge: row.badge || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

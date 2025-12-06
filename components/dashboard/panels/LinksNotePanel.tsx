@@ -40,6 +40,7 @@ export function LinksNotePanel({
   panel,
   onClose,
   onConfigChange,
+  onTitleChange,
   onNavigate,
   isActive,
 }: BasePanelProps) {
@@ -394,7 +395,21 @@ export function LinksNotePanel({
       })
 
       try {
-        const entryResult = await createEntryForWorkspace(newWorkspace.id, workspaceName)
+        // Pass current entry context as parent so new entries are created as children
+        // Also pass panel badge for entry naming (e.g., "test5 A" instead of "test5 1")
+        const currentEntryId = getActiveEntryContext()
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'creating_entry_with_parent',
+          metadata: { workspaceId: newWorkspace.id, workspaceName, parentEntryId: currentEntryId, badge: panel.badge },
+        })
+
+        const entryResult = await createEntryForWorkspace(
+          newWorkspace.id,
+          workspaceName,
+          currentEntryId || undefined,
+          panel.badge || undefined
+        )
         if (entryResult) {
           entryId = entryResult.entry.id
           entryName = entryResult.entry.name
@@ -402,7 +417,7 @@ export function LinksNotePanel({
           debugLog({
             component: 'LinksNotePanel',
             action: 'entry_created',
-            metadata: { entryId, entryName, dashboardWorkspaceId },
+            metadata: { entryId, entryName, dashboardWorkspaceId, parentEntryId: currentEntryId },
           })
         } else {
           debugLog({
@@ -524,6 +539,146 @@ export function LinksNotePanel({
     setSelectedRange(null)
   }, [])
 
+  // Handle keyboard events inside workspace links (make them behave as atomic units)
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const selection = window.getSelection()
+    if (!selection || !contentRef.current) return
+
+    const node = selection.anchorNode
+    if (!node) return
+
+    // Find if cursor is inside a workspace-link
+    const linkElement = (node.nodeType === Node.TEXT_NODE ? node.parentElement : node as Element)?.closest('.workspace-link') as HTMLElement | null
+    if (!linkElement) return
+
+    // Handle Enter key - create new line AFTER the link, not inside
+    if (e.key === 'Enter') {
+      e.preventDefault()
+
+      // Create a line break and text node after the link
+      const br = document.createElement('br')
+      const textNode = document.createTextNode('\u200B') // Zero-width space to position cursor
+
+      // Insert after the link
+      if (linkElement.nextSibling) {
+        linkElement.parentNode?.insertBefore(br, linkElement.nextSibling)
+        linkElement.parentNode?.insertBefore(textNode, br.nextSibling)
+      } else {
+        linkElement.parentNode?.appendChild(br)
+        linkElement.parentNode?.appendChild(textNode)
+      }
+
+      // Move cursor to the new text node
+      const range = document.createRange()
+      range.setStart(textNode, 1)
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+
+      // Save content
+      onConfigChange?.({ content: contentRef.current.innerHTML })
+      return
+    }
+
+    // Handle Backspace at the start of the link - delete the whole link
+    if (e.key === 'Backspace') {
+      const offset = selection.anchorOffset
+      // Check if at the very start of the link
+      if (offset === 0 || (node.nodeType === Node.TEXT_NODE && offset === 0)) {
+        e.preventDefault()
+
+        // Insert a text node before removing the link to maintain cursor position
+        const textNode = document.createTextNode('\u200B')
+        linkElement.parentNode?.insertBefore(textNode, linkElement)
+        linkElement.remove()
+
+        // Position cursor
+        const range = document.createRange()
+        range.setStart(textNode, 0)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+
+        // Save content
+        onConfigChange?.({ content: contentRef.current.innerHTML })
+        return
+      }
+    }
+
+    // Handle Delete at the end of the link - delete the whole link
+    if (e.key === 'Delete') {
+      const linkText = linkElement.textContent || ''
+      const offset = selection.anchorOffset
+      // Check if at the very end of the link
+      if (offset >= linkText.length) {
+        e.preventDefault()
+
+        // Insert a text node before removing the link
+        const textNode = document.createTextNode('\u200B')
+        linkElement.parentNode?.insertBefore(textNode, linkElement.nextSibling)
+        linkElement.remove()
+
+        // Position cursor
+        const range = document.createRange()
+        range.setStart(textNode, 0)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+
+        // Save content
+        onConfigChange?.({ content: contentRef.current.innerHTML })
+        return
+      }
+    }
+
+    // Handle ArrowLeft at start of link - move cursor before the link
+    if (e.key === 'ArrowLeft' && !e.shiftKey) {
+      const offset = selection.anchorOffset
+      if (offset === 0 || (node === linkElement.firstChild && offset === 0)) {
+        e.preventDefault()
+
+        // Find or create a text node before the link
+        let prevNode = linkElement.previousSibling
+        if (!prevNode || prevNode.nodeType !== Node.TEXT_NODE) {
+          prevNode = document.createTextNode('\u200B')
+          linkElement.parentNode?.insertBefore(prevNode, linkElement)
+        }
+
+        // Move cursor to end of previous node
+        const range = document.createRange()
+        range.setStart(prevNode, (prevNode as Text).length)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+      }
+    }
+
+    // Handle ArrowRight at end of link - move cursor after the link
+    if (e.key === 'ArrowRight' && !e.shiftKey) {
+      const linkText = linkElement.textContent || ''
+      const offset = selection.anchorOffset
+      if (offset >= linkText.length) {
+        e.preventDefault()
+
+        // Find or create a text node after the link
+        let nextNode = linkElement.nextSibling
+        if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) {
+          nextNode = document.createTextNode('\u200B')
+          linkElement.parentNode?.insertBefore(nextNode, linkElement.nextSibling)
+        }
+
+        // Move cursor to start of next node
+        const range = document.createRange()
+        range.setStart(nextNode, 0)
+        range.collapse(true)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        return
+      }
+    }
+  }, [onConfigChange])
+
   // Keyboard shortcut: Cmd+K
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -549,7 +704,10 @@ export function LinksNotePanel({
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onTitleChange={onTitleChange}
+      titleEditable={true}
       isActive={isActive}
+      badge={panel.badge}
     >
       <style>{`
         .links-note-container {
@@ -772,6 +930,7 @@ export function LinksNotePanel({
           suppressContentEditableWarning
           onMouseUp={handleMouseUp}
           onClick={handleLinkClick}
+          onKeyDown={handleEditorKeyDown}
           onBlur={handleBlur}
         />
 

@@ -82,21 +82,25 @@ export async function createEntry(
 /**
  * Create an entry for a workspace that doesn't have one (legacy workspace migration)
  * This is used when clicking a Quick Link that points to a workspace without an entry
+ * @param parentEntryId - Optional parent entry ID for hierarchical entries
+ * @param badge - Optional badge letter (A-Z) to use as suffix for entry name
  */
 export async function createEntryForWorkspace(
   workspaceId: string,
-  workspaceName: string
+  workspaceName: string,
+  parentEntryId?: string,
+  badge?: string
 ): Promise<CreateEntryResult> {
   debugLog({
     component: 'EntryService',
     action: 'create_entry_for_workspace_start',
-    metadata: { workspaceId, workspaceName },
+    metadata: { workspaceId, workspaceName, parentEntryId, badge },
   })
 
   const response = await fetch('/api/entries/create-for-workspace', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspaceId, workspaceName }),
+    body: JSON.stringify({ workspaceId, workspaceName, parentEntryId, badge }),
   })
 
   if (!response.ok) {

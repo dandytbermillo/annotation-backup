@@ -62,6 +62,7 @@ export interface WorkspacePanel {
   height: number
   zIndex: number
   config: PanelConfig
+  badge: string | null // Single-letter badge (A-Z) for links_note panels
   createdAt: Date
   updatedAt: Date
 }
@@ -71,6 +72,7 @@ export interface BasePanelProps {
   panel: WorkspacePanel
   onClose?: () => void
   onConfigChange?: (config: Partial<PanelConfig>) => void
+  onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
   isActive?: boolean
 }
@@ -150,6 +152,26 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     maxSize: { width: 500, height: 600 },
     defaultConfig: { content: '' },
   },
+  category: {
+    id: 'category',
+    name: 'Category',
+    description: 'Organize entries by category',
+    icon: '📂',
+    defaultSize: { width: 280, height: 280 },
+    minSize: { width: 220, height: 180 },
+    maxSize: { width: 400, height: 500 },
+    defaultConfig: { categoryIcon: '📂', entryIds: [], categoryVisible: true },
+  },
+  category_navigator: {
+    id: 'category_navigator',
+    name: 'Links Overview',
+    description: 'View all links from Quick Links panels',
+    icon: '🔗',
+    defaultSize: { width: 300, height: 400 },
+    minSize: { width: 250, height: 300 },
+    maxSize: { width: 450, height: 600 },
+    defaultConfig: { expandedPanels: [] },
+  },
 }
 
 // Get panel type definition
@@ -163,10 +185,23 @@ export function getAllPanelTypes(): PanelTypeDefinition[] {
 }
 
 // Get dashboard-specific panel types (excludes 'note' which is available everywhere)
+// Also respects the NEXT_PUBLIC_CATEGORY_PANELS feature flag
 export function getDashboardPanelTypes(): PanelTypeDefinition[] {
-  return Object.values(panelTypeRegistry).filter(
-    type => type.id !== 'note'
-  )
+  const categoryPanelsEnabled = typeof window !== 'undefined'
+    ? process.env.NEXT_PUBLIC_CATEGORY_PANELS === '1'
+    : true // Enable by default on server
+
+  return Object.values(panelTypeRegistry).filter(type => {
+    // Exclude 'note' type (uses existing note panel system)
+    if (type.id === 'note') return false
+
+    // Filter category panels based on feature flag
+    if ((type.id === 'category' || type.id === 'category_navigator') && !categoryPanelsEnabled) {
+      return false
+    }
+
+    return true
+  })
 }
 
 // Check if a panel type is valid
@@ -196,5 +231,6 @@ export function createDefaultPanel(
     height: typeDef.defaultSize.height,
     zIndex: 0,
     config: { ...typeDef.defaultConfig },
+    badge: null, // Badge is auto-assigned by the API for links_note panels
   }
 }

@@ -27,7 +27,7 @@ interface UserPreferences {
   lastWorkspace: LastWorkspaceInfo | null
 }
 
-export function ContinuePanel({ panel, onClose, onNavigate, isActive }: BasePanelProps) {
+export function ContinuePanel({ panel, onClose, onTitleChange, onNavigate, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.continue
   const [preferences, setPreferences] = useState<UserPreferences | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -105,6 +105,7 @@ export function ContinuePanel({ panel, onClose, onNavigate, isActive }: BasePane
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onTitleChange={onTitleChange}
       isActive={isActive}
       contentClassName="p-4"
     >

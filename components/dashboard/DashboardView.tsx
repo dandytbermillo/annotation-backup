@@ -12,13 +12,15 @@ import React, { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton } from "./PanelCatalog"
+import { DashboardBreadcrumb } from "./DashboardBreadcrumb"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
 import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh } from "@/lib/note-workspaces/state"
+import { requestDashboardPanelRefresh } from "@/lib/dashboard/category-store"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
-import { RefreshCw, ChevronRight, Home, LayoutDashboard, Loader2 } from "lucide-react"
+import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
 
 interface WorkspaceSummary {
   id: string
@@ -133,9 +135,6 @@ export function DashboardView({
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
-
-  // Is current entry the Home entry?
-  const isHomeEntry = !entryId || entryId === homeEntryId
 
   // Fetch panels from API
   const fetchPanels = useCallback(async () => {
@@ -581,6 +580,41 @@ export function DashboardView({
     []
   )
 
+  // Handle panel title change
+  const handleTitleChange = useCallback(
+    async (panelId: string, newTitle: string) => {
+      try {
+        const response = await fetch(`/api/dashboard/panels/${panelId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: newTitle }),
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to update panel title")
+        }
+
+        setPanels((prev) =>
+          prev.map((p) =>
+            p.id === panelId ? { ...p, title: newTitle } : p
+          )
+        )
+
+        // Notify Links Overview and other panels that panel data changed
+        requestDashboardPanelRefresh()
+
+        void debugLog({
+          component: "DashboardView",
+          action: "panel_title_updated",
+          metadata: { panelId, newTitle, workspaceId },
+        })
+      } catch (err) {
+        console.error("[DashboardView] Failed to update panel title:", err)
+      }
+    },
+    [workspaceId]
+  )
+
   // Handle reset layout
   const handleResetLayout = useCallback(async () => {
     try {
@@ -869,51 +903,33 @@ export function DashboardView({
             >
               A
             </div>
-            {/* Breadcrumb */}
+            {/* Breadcrumb - shows full ancestor hierarchy */}
             <div className="flex items-center gap-1.5 text-sm">
-              {/* Home link */}
-              <button
-                onClick={handleGoHome}
-                className="flex items-center gap-1 transition-colors"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  cursor: isHomeEntry ? 'default' : 'pointer',
-                  color: isHomeEntry ? '#8b8fa3' : '#f0f0f0',
-                  padding: '2px 4px',
-                  borderRadius: 4,
+              <DashboardBreadcrumb
+                workspaceId={workspaceId}
+                onHomeClick={handleGoHome}
+                onEntryClick={(clickedEntryId) => {
+                  // Navigate to clicked entry's dashboard
+                  if (onNavigate) {
+                    onNavigate(clickedEntryId, '')
+                  }
                 }}
-                disabled={isHomeEntry}
-              >
-                <Home size={14} />
-                <span>Home</span>
-              </button>
-              {/* Show entry name if not Home */}
-              {!isHomeEntry && (
+                onWorkspaceClick={(wsId) => {
+                  // If clicking on Dashboard, return to dashboard mode
+                  if (wsId === workspaceId) {
+                    handleReturnToDashboard()
+                  } else {
+                    // Navigate to the clicked workspace
+                    setActiveWorkspaceId(wsId)
+                    setViewMode('workspace')
+                  }
+                }}
+                showHomeIcon={true}
+                showLoading={false}
+              />
+              {/* Show workspace name when in workspace mode */}
+              {viewMode === 'workspace' && activeWorkspaceId && (
                 <>
-                  <ChevronRight size={14} style={{ color: '#5c6070' }} />
-                  <span style={{ color: '#f0f0f0', fontWeight: 500 }}>{entryName}</span>
-                </>
-              )}
-              <ChevronRight size={14} style={{ color: '#5c6070' }} />
-              {/* Show Dashboard or Workspace name based on viewMode */}
-              {viewMode === 'dashboard' ? (
-                <span style={{ color: '#8b8fa3' }}>Dashboard</span>
-              ) : (
-                <>
-                  <button
-                    onClick={handleReturnToDashboard}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      cursor: 'pointer',
-                      color: '#f0f0f0',
-                      padding: '2px 4px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Dashboard
-                  </button>
                   <ChevronRight size={14} style={{ color: '#5c6070' }} />
                   <span style={{ color: '#8b8fa3' }}>
                     {workspaces.find(ws => ws.id === activeWorkspaceId)?.name || "Workspace"}
@@ -1107,14 +1123,14 @@ export function DashboardView({
                   }}
                   onClick={() => setActivePanelId(panel.id)}
                 >
-                  {/* Drag handle - the panel header */}
+                  {/* Drag handle - the panel header (excluding buttons on right) */}
                   <div
                     onMouseDown={(e) => handleDragStart(e, panel)}
                     style={{
                       position: 'absolute',
                       top: 0,
                       left: 0,
-                      right: 0,
+                      right: 60, // Leave space for header action buttons (close, etc.)
                       height: 40,
                       cursor: draggingPanelId === panel.id ? 'grabbing' : 'grab',
                       zIndex: 1,
@@ -1124,6 +1140,7 @@ export function DashboardView({
                     panel={panel}
                     onClose={() => handlePanelClose(panel.id)}
                     onConfigChange={(config) => handleConfigChange(panel.id, config)}
+                    onTitleChange={(newTitle) => handleTitleChange(panel.id, newTitle)}
                     onNavigate={onNavigate}
                     isActive={activePanelId === panel.id}
                   />

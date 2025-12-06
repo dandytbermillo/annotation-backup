@@ -66,7 +66,7 @@ interface FlatTreeItem {
 const entryTreeCache = new Map<string, { entries: EntryItem[]; timestamp: number }>()
 const CACHE_TTL = 60000 // 1 minute cache TTL
 
-export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate, isActive }: BasePanelProps) {
+export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.navigator
   const config = panel.config as NavigatorConfig
 
@@ -738,6 +738,7 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onNavigate
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onTitleChange={onTitleChange}
       isActive={isActive}
       contentClassName="p-2"
       headerActions={headerActions}

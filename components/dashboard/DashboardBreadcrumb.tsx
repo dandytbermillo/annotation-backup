@@ -17,7 +17,16 @@ import {
   subscribeToActiveWorkspaceContext,
 } from '@/lib/note-workspaces/state'
 
+interface AncestorEntry {
+  entryId: string
+  entryName: string
+  entryIcon?: string | null
+  isSystemEntry: boolean
+  dashboardWorkspaceId?: string | null
+}
+
 interface BreadcrumbInfo {
+  ancestors: AncestorEntry[]
   entryId: string
   entryName: string
   entryIcon?: string | null
@@ -116,6 +125,41 @@ export function DashboardBreadcrumb({
     return breadcrumbInfo?.isSystemEntry && breadcrumbInfo?.workspaceName === 'Dashboard'
   }, [breadcrumbInfo])
 
+  // Get ancestors excluding the current entry (which we'll show separately with workspace)
+  // Also skip the root folder (Knowledge Base / Home) since we show Home icon separately
+  // NOTE: This hook MUST be called before any conditional returns to maintain hook order
+  const ancestorsToShow = useMemo(() => {
+    if (!breadcrumbInfo?.ancestors) return []
+    // All ancestors except the last one (which is the current entry)
+    const withoutCurrent = breadcrumbInfo.ancestors.slice(0, -1)
+    // Skip the first entry if it's the root folder (we show Home icon instead)
+    // Root folder is either a system entry OR named "Knowledge Base"
+    if (withoutCurrent.length > 0 && showHomeIcon) {
+      const firstAncestor = withoutCurrent[0]
+      if (firstAncestor.isSystemEntry || firstAncestor.entryName === 'Knowledge Base') {
+        return withoutCurrent.slice(1)
+      }
+    }
+    return withoutCurrent
+  }, [breadcrumbInfo?.ancestors, showHomeIcon])
+
+  // Get the current entry (last in ancestors array)
+  // NOTE: This hook MUST be called before any conditional returns to maintain hook order
+  const currentEntry = useMemo(() => {
+    if (!breadcrumbInfo?.ancestors || breadcrumbInfo.ancestors.length === 0) {
+      // Fallback to direct entry info for backward compatibility
+      return {
+        entryId: breadcrumbInfo?.entryId || '',
+        entryName: breadcrumbInfo?.entryName || 'Unknown',
+        entryIcon: breadcrumbInfo?.entryIcon,
+        isSystemEntry: breadcrumbInfo?.isSystemEntry || false,
+        dashboardWorkspaceId: null,
+      }
+    }
+    return breadcrumbInfo.ancestors[breadcrumbInfo.ancestors.length - 1]
+  }, [breadcrumbInfo])
+
+  // Conditional returns AFTER all hooks
   if (!activeWorkspaceId) {
     return null
   }
@@ -131,6 +175,15 @@ export function DashboardBreadcrumb({
 
   if (error || !breadcrumbInfo) {
     return null
+  }
+
+  // Handler for ancestor click - navigate to that entry's dashboard
+  const handleAncestorClick = (ancestor: AncestorEntry) => {
+    if (ancestor.dashboardWorkspaceId && onWorkspaceClick) {
+      onWorkspaceClick(ancestor.dashboardWorkspaceId)
+    } else if (onEntryClick) {
+      onEntryClick(ancestor.entryId)
+    }
   }
 
   return (
@@ -153,9 +206,31 @@ export function DashboardBreadcrumb({
         </>
       )}
 
-      {/* Entry segment */}
+      {/* Ancestor entries (parents of current entry) */}
+      {ancestorsToShow.map((ancestor) => (
+        <React.Fragment key={ancestor.entryId}>
+          <button
+            onClick={() => handleAncestorClick(ancestor)}
+            className={cn(
+              'flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors',
+              'text-muted-foreground hover:text-foreground hover:bg-muted',
+              'cursor-pointer'
+            )}
+          >
+            {ancestor.entryIcon ? (
+              <span className="text-sm">{ancestor.entryIcon}</span>
+            ) : ancestor.isSystemEntry ? (
+              <Home size={12} className="text-muted-foreground" />
+            ) : null}
+            <span className="font-medium">{ancestor.entryName}</span>
+          </button>
+          <ChevronRight size={14} className="text-muted-foreground/50" />
+        </React.Fragment>
+      ))}
+
+      {/* Current entry segment */}
       <button
-        onClick={() => onEntryClick?.(breadcrumbInfo.entryId)}
+        onClick={() => onEntryClick?.(currentEntry.entryId)}
         className={cn(
           'flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors',
           'text-muted-foreground hover:text-foreground hover:bg-muted',
@@ -163,12 +238,12 @@ export function DashboardBreadcrumb({
         )}
         disabled={!onEntryClick}
       >
-        {breadcrumbInfo.entryIcon ? (
-          <span className="text-sm">{breadcrumbInfo.entryIcon}</span>
-        ) : breadcrumbInfo.isSystemEntry ? (
+        {currentEntry.entryIcon ? (
+          <span className="text-sm">{currentEntry.entryIcon}</span>
+        ) : currentEntry.isSystemEntry ? (
           <Home size={12} className="text-muted-foreground" />
         ) : null}
-        <span className="font-medium">{breadcrumbInfo.entryName}</span>
+        <span className="font-medium">{currentEntry.entryName}</span>
       </button>
 
       {/* Separator */}

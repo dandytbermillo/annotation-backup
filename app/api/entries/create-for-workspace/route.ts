@@ -11,6 +11,7 @@ import { panelTypeRegistry, type PanelTypeId } from '@/lib/dashboard/panel-regis
  * Body:
  * - workspaceId: string - The workspace to create an entry for
  * - workspaceName: string - The name to use for the entry
+ * - parentEntryId?: string - Optional parent entry ID (for hierarchical entries)
  */
 
 // Default panel layout for new entry dashboards
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { workspaceId, workspaceName } = body
+    const { workspaceId, workspaceName, parentEntryId, badge } = body
 
     if (!workspaceId || !workspaceName) {
       return NextResponse.json(
@@ -92,13 +93,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Find or create the Knowledge Base folder as parent
+    // Determine parent entry
+    // If parentEntryId is provided, use that entry as the parent
+    // Otherwise, fall back to Knowledge Base folder
     let parentId: string | null = null
-    const kbResult = await client.query(
-      `SELECT id FROM items WHERE path = '/knowledge-base' AND deleted_at IS NULL LIMIT 1`
-    )
-    if (kbResult.rows.length > 0) {
-      parentId = kbResult.rows[0].id
+    let parentPath = ''
+
+    if (parentEntryId) {
+      // Use the provided parent entry
+      const parentResult = await client.query(
+        `SELECT id, path FROM items WHERE id = $1 AND deleted_at IS NULL`,
+        [parentEntryId]
+      )
+      if (parentResult.rows.length > 0) {
+        parentId = parentResult.rows[0].id
+        parentPath = parentResult.rows[0].path
+      }
+    }
+
+    // Fall back to Knowledge Base if no parent specified or not found
+    if (!parentId) {
+      const kbResult = await client.query(
+        `SELECT id, path FROM items WHERE path = '/knowledge-base' AND deleted_at IS NULL LIMIT 1`
+      )
+      if (kbResult.rows.length > 0) {
+        parentId = kbResult.rows[0].id
+        parentPath = kbResult.rows[0].path
+      }
     }
 
     // Get the default workspace from workspaces table (required for items.workspace_id)
@@ -115,8 +136,16 @@ export async function POST(request: NextRequest) {
     const defaultWorkspaceId = defaultWorkspaceResult.rows[0].id
 
     // Generate unique path for the new entry
-    const basePath = parentId ? '/knowledge-base' : ''
-    let entryPath = `${basePath}/${workspaceName}`
+    const basePath = parentPath || ''
+
+    // If badge is provided, use it as suffix (e.g., "test5 A")
+    // Otherwise fall back to numeric suffix for conflicts
+    let entryPath = badge
+      ? `${basePath}/${workspaceName} ${badge}`
+      : `${basePath}/${workspaceName}`
+    let entryName = badge
+      ? `${workspaceName} ${badge}`
+      : workspaceName
     let counter = 0
 
     // Check for path conflicts
@@ -127,15 +156,21 @@ export async function POST(request: NextRequest) {
       )
       if (pathCheck.rows.length === 0) break
       counter++
-      entryPath = `${basePath}/${workspaceName} ${counter}`
+      // If badge is provided, append number after badge (e.g., "test5 A2")
+      // Otherwise use plain number suffix (e.g., "test5 1")
+      if (badge) {
+        entryPath = `${basePath}/${workspaceName} ${badge}${counter}`
+        entryName = `${workspaceName} ${badge}${counter}`
+      } else {
+        entryPath = `${basePath}/${workspaceName} ${counter}`
+        entryName = `${workspaceName} ${counter}`
+      }
       if (counter > 100) {
         entryPath = `${basePath}/${workspaceName}-${Date.now()}`
+        entryName = `${workspaceName}-${Date.now()}`
         break
       }
     }
-
-    // Create the entry
-    const entryName = counter > 0 ? `${workspaceName} ${counter}` : workspaceName
     const createEntryResult = await client.query(
       `INSERT INTO items (type, parent_id, path, name, is_system, workspace_id, created_at, updated_at)
        VALUES ('folder', $1, $2, $3, false, $4, NOW(), NOW())
@@ -173,12 +208,22 @@ export async function POST(request: NextRequest) {
     const dashboardWorkspaceId = dashboardResult.rows[0].id
 
     // Seed dashboard panels
+    // Track badge assignment for links_note panels (A, B, C...)
+    let linksNoteBadgeIndex = 0
     for (const panel of DEFAULT_PANEL_LAYOUT) {
       const panelDef = panelTypeRegistry[panel.panelType]
+
+      // Assign badge for links_note panels
+      let badge: string | null = null
+      if (panel.panelType === 'links_note') {
+        badge = String.fromCharCode(65 + linksNoteBadgeIndex) // A=65, B=66, etc.
+        linksNoteBadgeIndex++
+      }
+
       await client.query(
         `INSERT INTO workspace_panels (
-          workspace_id, panel_type, position_x, position_y, width, height, title, config
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          workspace_id, panel_type, position_x, position_y, width, height, title, config, badge
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           dashboardWorkspaceId,
           panel.panelType,
@@ -188,6 +233,7 @@ export async function POST(request: NextRequest) {
           panel.height,
           panel.title,
           JSON.stringify(panelDef?.defaultConfig || {}),
+          badge,
         ]
       )
     }

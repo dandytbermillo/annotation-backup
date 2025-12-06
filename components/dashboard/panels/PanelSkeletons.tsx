@@ -117,6 +117,58 @@ export function QuickCapturePanelSkeleton({ className }: PanelSkeletonProps) {
 }
 
 /**
+ * Skeleton for CategoryPanel content
+ */
+export function CategoryPanelSkeleton({ className }: PanelSkeletonProps) {
+  return (
+    <div className={cn('flex flex-col gap-1 p-2', className)}>
+      {[...Array(4)].map((_, i) => (
+        <div key={i} className="flex items-center gap-2 py-1.5 px-2">
+          <SkeletonBar style={{ height: 12, width: 12 }} className="shrink-0" />
+          <SkeletonBar style={{ height: 14, width: `${60 + i * 10}%` }} />
+          <SkeletonBar style={{ height: 12, width: 20 }} className="shrink-0" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Skeleton for CategoryNavigatorPanel content
+ */
+export function CategoryNavigatorPanelSkeleton({ className }: PanelSkeletonProps) {
+  return (
+    <div className={cn('flex flex-col gap-1 p-2', className)}>
+      {/* Category header */}
+      <div className="flex items-center gap-2 py-1.5 px-2">
+        <SkeletonBar style={{ height: 14, width: 14 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 14, width: 14 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 14, width: 100 }} />
+      </div>
+      {/* Category entries */}
+      <div className="flex items-center gap-2 py-1 px-2 ml-4">
+        <SkeletonBar style={{ height: 12, width: 12 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 12, width: 80 }} />
+      </div>
+      <div className="flex items-center gap-2 py-1 px-2 ml-4">
+        <SkeletonBar style={{ height: 12, width: 12 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 12, width: 64 }} />
+      </div>
+      {/* Another category header */}
+      <div className="flex items-center gap-2 py-1.5 px-2 mt-1">
+        <SkeletonBar style={{ height: 14, width: 14 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 14, width: 14 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 14, width: 120 }} />
+      </div>
+      <div className="flex items-center gap-2 py-1 px-2 ml-4">
+        <SkeletonBar style={{ height: 12, width: 12 }} className="shrink-0" />
+        <SkeletonBar style={{ height: 12, width: 96 }} />
+      </div>
+    </div>
+  )
+}
+
+/**
  * Generic panel skeleton with customizable line count
  */
 export function GenericPanelSkeleton({
