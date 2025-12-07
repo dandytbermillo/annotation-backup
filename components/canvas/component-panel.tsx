@@ -145,7 +145,8 @@ export function ComponentPanel({ id, type, position, workspaceId, onClose, onPos
     enabled: true,
     threshold: 80,
     speedPxPerSec: 480,
-    onScroll: handleAutoScroll
+    onScroll: handleAutoScroll,
+    containerId: 'canvas-container' // Use container-relative edge detection for embedded canvas
   })
   
   

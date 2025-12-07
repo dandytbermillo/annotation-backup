@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { ChevronRight, Link2, RefreshCw, Search } from 'lucide-react'
+import { ChevronRight, Link2, RefreshCw, Search, Eye, ExternalLink } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
@@ -37,6 +37,24 @@ interface QuickLinksPanel {
   title: string
   links: ExtractedLink[]
   badge: string | null
+  htmlContent: string // Raw HTML content for preview
+  isVisible: boolean // Whether the panel is visible on dashboard (false = hidden/closed)
+}
+
+interface PreviewPopup {
+  panelId: string
+  panelTitle: string
+  htmlContent: string
+  position: { x: number; y: number }
+}
+
+interface LinkTooltip {
+  element: HTMLElement
+  rect: DOMRect
+  entryId: string | null
+  workspaceId: string | null
+  dashboardId: string | null
+  workspaceName: string | null
 }
 
 export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, isActive }: BasePanelProps) {
@@ -51,6 +69,15 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
   )
   const [searchQuery, setSearchQuery] = useState('')
   const loadDataCallCountRef = useRef(0)
+
+  // Preview popup state
+  const [previewPopup, setPreviewPopup] = useState<PreviewPopup | null>(null)
+  const previewTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Link tooltip state (for links inside preview popup)
+  const [linkTooltip, setLinkTooltip] = useState<LinkTooltip | null>(null)
+  const linkTooltipTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const previewContentRef = useRef<HTMLDivElement>(null)
 
   // Log component mount
   useEffect(() => {
@@ -139,14 +166,15 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
       // Get the workspace ID from the current panel's workspace
       const workspaceId = panel.workspaceId
 
-      // Fetch all panels for this workspace
+      // Fetch all panels for this workspace (including hidden ones)
+      // We need hidden panels to show them in the list and allow users to re-open them
       debugLog({
         component: 'CategoryNavigatorPanel',
         action: 'fetching_panels',
         metadata: { workspaceId, callCount },
       })
 
-      const response = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}`)
+      const response = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}&includeHidden=true`)
       if (!response.ok) {
         throw new Error('Failed to fetch panels')
       }
@@ -172,6 +200,8 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
           title: p.title || 'Quick Links',
           links: parseLinksFromContent(p.config?.content || ''),
           badge: p.badge || null,
+          htmlContent: p.config?.content || '', // Store raw HTML for preview
+          isVisible: p.isVisible !== false, // Default to true if not specified
         }))
         .filter((p: QuickLinksPanel) => p.links.length > 0) // Only show panels with links
 
@@ -286,59 +316,267 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
     onNavigate?.(link.entryId || '', targetWorkspaceId || '')
   }, [onNavigate])
 
+  // Preview popup handlers
+  const handlePreviewEyeEnter = useCallback((
+    quickLinksPanel: QuickLinksPanel,
+    event: React.MouseEvent<HTMLElement>
+  ) => {
+    // Clear any pending hide timeout
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current)
+      previewTimeoutRef.current = null
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    // Position to the right of the eye icon, or below if not enough space
+    const spaceRight = window.innerWidth - rect.right
+    const position = spaceRight > 300
+      ? { x: rect.right + 8, y: rect.top - 10 }
+      : { x: rect.left - 280, y: rect.top - 10 }
+
+    setPreviewPopup({
+      panelId: quickLinksPanel.id,
+      panelTitle: quickLinksPanel.title,
+      htmlContent: quickLinksPanel.htmlContent,
+      position,
+    })
+  }, [])
+
+  const handlePreviewEyeLeave = useCallback(() => {
+    // Delay hiding to allow moving to popup
+    previewTimeoutRef.current = setTimeout(() => {
+      setPreviewPopup(null)
+    }, 150)
+  }, [])
+
+  const handlePreviewPopupEnter = useCallback(() => {
+    // Cancel hide timeout when entering popup
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current)
+      previewTimeoutRef.current = null
+    }
+  }, [])
+
+  const handlePreviewPopupLeave = useCallback(() => {
+    setPreviewPopup(null)
+    setLinkTooltip(null) // Also clear link tooltip when leaving popup
+  }, [])
+
+  // Link tooltip handlers for links inside preview popup
+  const handlePreviewLinkMouseEnter = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (!target.classList.contains('workspace-link')) return
+
+    // Clear any pending hide timeout
+    if (linkTooltipTimeoutRef.current) {
+      clearTimeout(linkTooltipTimeoutRef.current)
+      linkTooltipTimeoutRef.current = null
+    }
+
+    const rect = target.getBoundingClientRect()
+    setLinkTooltip({
+      element: target,
+      rect,
+      entryId: target.getAttribute('data-entry-id'),
+      workspaceId: target.getAttribute('data-workspace-id'),
+      dashboardId: target.getAttribute('data-dashboard-id'),
+      workspaceName: target.getAttribute('data-workspace') || target.textContent,
+    })
+  }, [])
+
+  const handlePreviewLinkMouseLeave = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (!target.classList.contains('workspace-link')) return
+
+    // Check if mouse is moving to the tooltip
+    const relatedTarget = e.relatedTarget as HTMLElement | null
+    if (relatedTarget?.closest('.link-navigate-tooltip')) {
+      return // Don't hide if moving to tooltip
+    }
+
+    // Delay hiding to allow moving to tooltip
+    linkTooltipTimeoutRef.current = setTimeout(() => {
+      setLinkTooltip(null)
+    }, 200) // Increased delay
+  }, [])
+
+  const handleLinkTooltipEnter = useCallback(() => {
+    if (linkTooltipTimeoutRef.current) {
+      clearTimeout(linkTooltipTimeoutRef.current)
+      linkTooltipTimeoutRef.current = null
+    }
+  }, [])
+
+  const handleLinkTooltipLeave = useCallback(() => {
+    setLinkTooltip(null)
+  }, [])
+
+  // Navigate from link tooltip
+  const handleNavigateFromLinkTooltip = useCallback(() => {
+    if (!linkTooltip) return
+
+    const { entryId, workspaceId, dashboardId } = linkTooltip
+    const targetWorkspaceId = dashboardId || workspaceId
+
+    debugLog({
+      component: 'CategoryNavigatorPanel',
+      action: 'link_tooltip_navigate',
+      metadata: { entryId, workspaceId, dashboardId, targetWorkspaceId },
+    })
+
+    // Close tooltips and popup
+    setLinkTooltip(null)
+    setPreviewPopup(null)
+
+    if (entryId) {
+      setActiveEntryContext(entryId)
+    }
+    if (targetWorkspaceId) {
+      setActiveWorkspaceContext(targetWorkspaceId)
+    }
+
+    onNavigate?.(entryId || '', targetWorkspaceId || '')
+  }, [linkTooltip, onNavigate])
+
+  // Handle Eye icon click - show hidden panel if needed, then highlight and scroll to it
+  const handleEyeClick = useCallback(async (panelId: string, isVisible: boolean) => {
+    // Close the preview popup first
+    setPreviewPopup(null)
+
+    // If the panel is hidden, make it visible first
+    if (!isVisible) {
+      try {
+        const response = await fetch(`/api/dashboard/panels/${panelId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isVisible: true }),
+        })
+
+        if (!response.ok) {
+          console.error('[CategoryNavigatorPanel] Failed to show hidden panel')
+          return
+        }
+
+        debugLog({
+          component: 'CategoryNavigatorPanel',
+          action: 'panel_made_visible',
+          metadata: { panelId },
+        })
+
+        // Update local state to reflect visibility change
+        setQuickLinksPanels(prev =>
+          prev.map(p => p.id === panelId ? { ...p, isVisible: true } : p)
+        )
+
+        // Dispatch event to tell DashboardView to refresh its panels
+        window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+
+        // Small delay to allow dashboard to refetch panels
+        await new Promise(resolve => setTimeout(resolve, 100))
+      } catch (error) {
+        console.error('[CategoryNavigatorPanel] Failed to show hidden panel:', error)
+        return
+      }
+    }
+
+    // Dispatch custom event to highlight the Quick Links panel on the dashboard
+    const event = new CustomEvent('highlight-dashboard-panel', {
+      detail: { panelId }
+    })
+    window.dispatchEvent(event)
+  }, [])
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current)
+      }
+      if (linkTooltipTimeoutRef.current) {
+        clearTimeout(linkTooltipTimeoutRef.current)
+      }
+    }
+  }, [])
+
   // Render a Quick Links panel section
   const renderPanel = (quickLinksPanel: QuickLinksPanel) => {
     const isExpanded = expandedIds.has(quickLinksPanel.id)
+    const isHidden = !quickLinksPanel.isVisible
 
     return (
-      <div key={quickLinksPanel.id}>
+      <div key={quickLinksPanel.id} className="group">
         {/* Panel header */}
-        <button
-          onClick={() => toggleExpand(quickLinksPanel.id)}
+        <div
           className="w-full flex items-center gap-2"
           style={{
             padding: '6px 8px',
             background: 'transparent',
-            border: 'none',
             borderRadius: 6,
-            cursor: 'pointer',
             transition: 'background 0.15s ease',
+            opacity: isHidden ? 0.5 : 1, // Fade hidden panels
           }}
           onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'}
           onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
         >
-          <ChevronRight
-            size={14}
-            className={cn('shrink-0 transition-transform', isExpanded && 'rotate-90')}
-            style={{ color: '#5c6070' }}
-          />
-          {/* Badge */}
-          {quickLinksPanel.badge && (
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 18,
-                height: 18,
-                background: 'rgba(99, 102, 241, 0.2)',
-                color: '#818cf8',
-                fontSize: 10,
-                fontWeight: 700,
-                borderRadius: 4,
-                flexShrink: 0,
-              }}
-            >
-              {quickLinksPanel.badge}
-            </span>
-          )}
-          <Link2 size={14} style={{ color: '#818cf8' }} />
-          <span
-            className="flex-1 text-left truncate"
-            style={{ fontSize: 13, fontWeight: 500, color: '#f0f0f0' }}
+          <button
+            onClick={() => toggleExpand(quickLinksPanel.id)}
+            className="flex items-center gap-2 flex-1 min-w-0"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+            }}
           >
-            {quickLinksPanel.title}
-          </span>
+            <ChevronRight
+              size={14}
+              className={cn('shrink-0 transition-transform', isExpanded && 'rotate-90')}
+              style={{ color: '#5c6070' }}
+            />
+            {/* Badge */}
+            {quickLinksPanel.badge && (
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 18,
+                  height: 18,
+                  background: 'rgba(99, 102, 241, 0.2)',
+                  color: '#818cf8',
+                  fontSize: 10,
+                  fontWeight: 700,
+                  borderRadius: 4,
+                  flexShrink: 0,
+                }}
+              >
+                {quickLinksPanel.badge}
+              </span>
+            )}
+            <Link2 size={14} style={{ color: '#818cf8', flexShrink: 0 }} />
+            <span
+              className="flex-1 text-left truncate"
+              style={{ fontSize: 13, fontWeight: 500, color: isHidden ? '#8b8fa3' : '#f0f0f0' }}
+            >
+              {quickLinksPanel.title}
+            </span>
+            {/* Hidden indicator */}
+            {isHidden && (
+              <span
+                style={{
+                  fontSize: 9,
+                  color: '#5c6070',
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  padding: '1px 5px',
+                  borderRadius: 3,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}
+              >
+                Hidden
+              </span>
+            )}
+          </button>
           <span
             style={{
               fontSize: 10,
@@ -350,7 +588,28 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
           >
             {quickLinksPanel.links.length}
           </span>
-        </button>
+          {/* Eye icon for preview - appears on hover, click to highlight panel */}
+          <div
+            className="opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{
+              padding: 4,
+              borderRadius: 4,
+              cursor: 'pointer',
+              marginLeft: 4,
+            }}
+            onClick={() => handleEyeClick(quickLinksPanel.id, quickLinksPanel.isVisible)}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)'
+              handlePreviewEyeEnter(quickLinksPanel, e)
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              handlePreviewEyeLeave()
+            }}
+          >
+            <Eye size={14} style={{ color: '#818cf8' }} />
+          </div>
+        </div>
 
         {/* Links in this panel */}
         {isExpanded && (
@@ -528,6 +787,138 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
           </div>
         )}
       </div>
+
+      {/* Preview popup - renders the Quick Links panel content */}
+      {previewPopup && (
+        <div
+          className="fixed rounded-xl border shadow-2xl"
+          style={{
+            left: previewPopup.position.x,
+            top: previewPopup.position.y,
+            width: 280,
+            maxHeight: 320,
+            background: 'rgba(17, 24, 39, 0.98)',
+            borderColor: 'rgba(255, 255, 255, 0.15)',
+            zIndex: 1000,
+            animation: 'fadeIn 0.15s ease-out',
+          }}
+          onMouseEnter={handlePreviewPopupEnter}
+          onMouseLeave={handlePreviewPopupLeave}
+        >
+          {/* Popup header */}
+          <div
+            className="flex items-center gap-2 px-3 py-2 border-b"
+            style={{ borderBottomColor: 'rgba(255, 255, 255, 0.1)' }}
+          >
+            <Link2 size={14} style={{ color: '#818cf8' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: '#f0f0f0' }}>
+              {previewPopup.panelTitle}
+            </span>
+          </div>
+          {/* Popup content - rendered HTML with link hover handlers */}
+          <div
+            ref={previewContentRef}
+            className="p-3 overflow-y-auto preview-content"
+            style={{
+              maxHeight: 260,
+              fontSize: 14,
+              lineHeight: 1.7,
+              color: '#e0e0e0',
+            }}
+            onMouseOver={handlePreviewLinkMouseEnter}
+            onMouseOut={handlePreviewLinkMouseLeave}
+            dangerouslySetInnerHTML={{ __html: previewPopup.htmlContent }}
+          />
+
+          {/* Link tooltip - appears when hovering workspace links */}
+          {linkTooltip && (
+            <div
+              className="link-navigate-tooltip"
+              style={{
+                position: 'fixed',
+                left: linkTooltip.rect.left + linkTooltip.rect.width / 2,
+                top: linkTooltip.rect.bottom + 2, // Reduced gap from 8 to 2
+                transform: 'translateX(-50%)',
+                // Extra padding at top creates invisible "bridge" to link
+                padding: '10px 4px 4px 4px',
+                marginTop: -6, // Pull up to overlap with link area
+                background: 'transparent', // Outer area transparent
+                zIndex: 1001,
+              }}
+              onMouseEnter={handleLinkTooltipEnter}
+              onMouseLeave={handleLinkTooltipLeave}
+            >
+              {/* Inner visible tooltip */}
+              <div
+                style={{
+                  padding: 4,
+                  background: '#252830',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: 6,
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
+                  animation: 'tooltipFadeIn 0.15s ease-out',
+                }}
+              >
+              <button
+                onClick={handleNavigateFromLinkTooltip}
+                title="Go to Dashboard"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 26,
+                  height: 26,
+                  padding: 0,
+                  background: '#6366f1',
+                  border: 'none',
+                  borderRadius: 4,
+                  color: 'white',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#4f46e5'
+                  e.currentTarget.style.transform = 'scale(1.05)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = '#6366f1'
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+              >
+                <ExternalLink size={14} />
+              </button>
+              </div>
+            </div>
+          )}
+
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(4px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+            @keyframes tooltipFadeIn {
+              from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+              to { opacity: 1; transform: translateX(-50%) translateY(0); }
+            }
+            /* Style workspace links in preview */
+            .preview-content .workspace-link {
+              display: inline;
+              padding: 2px 8px;
+              background: rgba(99, 102, 241, 0.15);
+              color: #818cf8;
+              border-radius: 4px;
+              font-size: 13px;
+              font-weight: 500;
+              text-decoration: none;
+              cursor: default;
+              transition: background 0.15s;
+            }
+            .preview-content .workspace-link:hover {
+              background: rgba(99, 102, 241, 0.25);
+            }
+          `}</style>
+        </div>
+      )}
     </BaseDashboardPanel>
   )
 }

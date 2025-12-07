@@ -966,7 +966,8 @@ export function CanvasPanel({
     speedPxPerSec: 500, // 500 screen px/s (industry standard, frame-rate independent)
     activationDelay: 800, // Increased to 800ms - gives user time to position panel
     onScroll: handleAutoScroll,
-    onActivationPending: setIsAutoScrollPending // Visual affordance callback
+    onActivationPending: setIsAutoScrollPending, // Visual affordance callback
+    containerId: 'canvas-container' // Use container-relative edge detection for embedded canvas
   })
 
   // Sync pendingEdges to local state (only when edges actually change, not on velocity updates)

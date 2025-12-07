@@ -63,6 +63,7 @@ export interface WorkspacePanel {
   zIndex: number
   config: PanelConfig
   badge: string | null // Single-letter badge (A-Z) for links_note panels
+  isVisible: boolean // Whether the panel is visible on dashboard (false = hidden by user)
   createdAt: Date
   updatedAt: Date
 }
@@ -232,5 +233,6 @@ export function createDefaultPanel(
     zIndex: 0,
     config: { ...typeDef.defaultConfig },
     badge: null, // Badge is auto-assigned by the API for links_note panels
+    isVisible: true, // New panels are always visible
   }
 }

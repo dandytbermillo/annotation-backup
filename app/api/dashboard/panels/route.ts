@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'workspaceId is required' }, { status: 400 })
     }
 
+    // Optional: include hidden panels (for Links Overview which needs to show hidden Quick Links)
+    const includeHidden = request.nextUrl.searchParams.get('includeHidden') === 'true'
+
     // Verify workspace belongs to user
     const workspaceCheck = await serverPool.query(
       'SELECT id FROM note_workspaces WHERE id = $1 AND user_id = $2',
@@ -30,7 +33,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
     }
 
-    // Get all panels for the workspace
+    // Get panels for the workspace
+    // By default, only visible panels (is_visible = true) are returned
+    // With includeHidden=true, all panels are returned (for Links Overview panel)
+    const visibilityFilter = includeHidden ? '' : 'AND is_visible = true'
     const query = `
       SELECT
         id,
@@ -44,10 +50,11 @@ export async function GET(request: NextRequest) {
         z_index,
         config,
         badge,
+        is_visible,
         created_at,
         updated_at
       FROM workspace_panels
-      WHERE workspace_id = $1
+      WHERE workspace_id = $1 ${visibilityFilter}
       ORDER BY z_index ASC, created_at ASC
     `
 
@@ -65,6 +72,7 @@ export async function GET(request: NextRequest) {
       zIndex: row.z_index,
       config: row.config || {},
       badge: row.badge || null,
+      isVisible: row.is_visible,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }))

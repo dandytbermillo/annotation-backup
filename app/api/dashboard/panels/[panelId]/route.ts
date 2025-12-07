@@ -31,6 +31,8 @@ export async function GET(
         wp.height,
         wp.z_index,
         wp.config,
+        wp.badge,
+        wp.is_visible,
         wp.created_at,
         wp.updated_at
       FROM workspace_panels wp
@@ -56,6 +58,8 @@ export async function GET(
       height: row.height,
       zIndex: row.z_index,
       config: row.config || {},
+      badge: row.badge || null,
+      isVisible: row.is_visible,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
@@ -111,6 +115,7 @@ export async function PATCH(
       { key: 'width', column: 'width' },
       { key: 'height', column: 'height' },
       { key: 'zIndex', column: 'z_index' },
+      { key: 'isVisible', column: 'is_visible' },
     ]
 
     for (const field of allowedFields) {
@@ -156,6 +161,8 @@ export async function PATCH(
       height: row.height,
       zIndex: row.z_index,
       config: row.config || {},
+      badge: row.badge || null,
+      isVisible: row.is_visible,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }

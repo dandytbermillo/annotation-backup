@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, RefObject } from 'react'
 import { debugLog } from '@/lib/utils/debug-logger'
 
 interface AutoScrollState {
@@ -30,6 +30,18 @@ interface UseAutoScrollProps {
   activationDelay?: number
   onScroll?: (deltaX: number, deltaY: number) => void
   onActivationPending?: (isPending: boolean) => void // Callback for visual affordance
+  /**
+   * Optional container element reference for edge detection.
+   * If provided, auto-scroll triggers when cursor is near the container's edges.
+   * If not provided, uses the global window edges (legacy behavior).
+   */
+  containerRef?: RefObject<HTMLElement | null>
+  /**
+   * Optional container element ID for edge detection.
+   * Alternative to containerRef - looks up element by ID.
+   * If both containerRef and containerId are provided, containerRef takes precedence.
+   */
+  containerId?: string
 }
 
 export const useAutoScroll = ({
@@ -38,7 +50,9 @@ export const useAutoScroll = ({
   speedPxPerSec = 500, // Default: 500 screen px/s (industry standard)
   activationDelay = 800, // Increased to 800ms - users need time to position panels
   onScroll,
-  onActivationPending
+  onActivationPending,
+  containerRef,
+  containerId
 }: UseAutoScrollProps = {}) => {
   const [autoScroll, setAutoScroll] = useState<AutoScrollState>({
     isActive: false,
@@ -67,50 +81,64 @@ export const useAutoScroll = ({
     let directionX = 0
     let directionY = 0
 
-    // Calculate distances to all edges
-    const distanceFromLeft = clientX
-    const distanceFromRight = window.innerWidth - clientX
-    const distanceFromTop = clientY
-    const distanceFromBottom = window.innerHeight - clientY
+    // Get bounds - use container if provided, otherwise use window
+    let boundsLeft = 0
+    let boundsTop = 0
+    let boundsRight = window.innerWidth
+    let boundsBottom = window.innerHeight
+
+    // Try containerRef first, then containerId, then fall back to window
+    const containerElement = containerRef?.current || (containerId ? document.getElementById(containerId) : null)
+    if (containerElement) {
+      const rect = containerElement.getBoundingClientRect()
+      boundsLeft = rect.left
+      boundsTop = rect.top
+      boundsRight = rect.right
+      boundsBottom = rect.bottom
+    }
+
+    // Calculate distances to container/window edges
+    const distanceFromLeft = clientX - boundsLeft
+    const distanceFromRight = boundsRight - clientX
+    const distanceFromTop = clientY - boundsTop
+    const distanceFromBottom = boundsBottom - clientY
 
     // Check horizontal edges - calculate normalized direction (0 to 1)
-    if (clientX < threshold) {
+    if (distanceFromLeft < threshold && distanceFromLeft >= 0) {
       // Near left edge - scroll right (positive direction)
       // Apply 1.3x multiplier to compensate for perceptual asymmetry
-      const baseDirection = 1 - (clientX / threshold)
+      const baseDirection = 1 - (distanceFromLeft / threshold)
       directionX = baseDirection * 1.3 // 30% faster to feel more responsive
-    } else if (clientX > window.innerWidth - threshold) {
+    } else if (distanceFromRight < threshold && distanceFromRight >= 0) {
       // Near right edge - scroll left (negative direction)
       // Apply 1.3x multiplier to compensate for perceptual asymmetry
-      const distFromEdge = window.innerWidth - clientX
-      const baseDirection = -(1 - (distFromEdge / threshold))
+      const baseDirection = -(1 - (distanceFromRight / threshold))
       directionX = baseDirection * 1.3 // 30% faster to feel more responsive
     }
 
     // Check vertical edges - calculate normalized direction (0 to 1)
-    if (clientY < threshold) {
+    if (distanceFromTop < threshold && distanceFromTop >= 0) {
       // Near top edge - scroll down (positive direction)
-      directionY = 1 - (clientY / threshold) // Direction increases as we get closer to edge (0 to 1)
-    } else if (clientY > window.innerHeight - threshold) {
+      directionY = 1 - (distanceFromTop / threshold) // Direction increases as we get closer to edge (0 to 1)
+    } else if (distanceFromBottom < threshold && distanceFromBottom >= 0) {
       // Near bottom edge - scroll up (negative direction)
       // Apply 1.3x multiplier to compensate for perceptual asymmetry:
       // When user drags UP toward bottom edge, their hand motion masks the scroll speed,
       // making it feel slower than top edge. This boost makes it feel balanced.
-      const distFromEdge = window.innerHeight - clientY
-      const baseDirection = -(1 - (distFromEdge / threshold))
+      const baseDirection = -(1 - (distanceFromBottom / threshold))
       directionY = baseDirection * 1.3 // 30% faster to feel symmetric
     }
 
     const nearEdge = directionX !== 0 || directionY !== 0
 
-    // NEW: Activation delay logic
+    // Activation delay logic
     if (nearEdge) {
       // Determine which edges are active
       const edges: string[] = []
-      if (clientX < threshold) edges.push('LEFT')
-      if (clientX > window.innerWidth - threshold) edges.push('RIGHT')
-      if (clientY < threshold) edges.push('TOP')
-      if (clientY > window.innerHeight - threshold) edges.push('BOTTOM')
+      if (distanceFromLeft < threshold && distanceFromLeft >= 0) edges.push('LEFT')
+      if (distanceFromRight < threshold && distanceFromRight >= 0) edges.push('RIGHT')
+      if (distanceFromTop < threshold && distanceFromTop >= 0) edges.push('TOP')
+      if (distanceFromBottom < threshold && distanceFromBottom >= 0) edges.push('BOTTOM')
 
       // Only update pendingEdges if they actually changed (avoid unnecessary re-renders that restart animations)
       const currentEdges = autoScrollRef.current.pendingEdges
@@ -252,7 +280,7 @@ export const useAutoScroll = ({
         })
       }
     }
-  }, [enabled, threshold, speedPxPerSec, activationDelay, onActivationPending])
+  }, [enabled, threshold, speedPxPerSec, activationDelay, onActivationPending, containerRef, containerId])
 
   const stopAutoScroll = useCallback(() => {
     // Clear activation timer if pending

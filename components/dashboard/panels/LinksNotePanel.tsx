@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { Link2, Search, X, Plus, Loader2 } from 'lucide-react'
+import { Link2, Search, X, Plus, Loader2, ExternalLink } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { getPanelType, type BasePanelProps } from '@/lib/dashboard/panel-registry'
 import { requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
@@ -58,6 +58,17 @@ export function LinksNotePanel({
   const [selectedText, setSelectedText] = useState('') // Store text as string to preserve it
   const [filterByEntry, setFilterByEntry] = useState(true) // Default to filtering by current entry
   const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Hover tooltip state for workspace links
+  const [hoveredLink, setHoveredLink] = useState<{
+    element: HTMLElement
+    rect: DOMRect
+    entryId: string | null
+    workspaceId: string | null
+    dashboardId: string | null
+    workspaceName: string | null
+  } | null>(null)
+  const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Load initial content
   useEffect(() => {
@@ -154,152 +165,210 @@ export function LinksNotePanel({
     setShowLinkToolbar(true)
   }, [])
 
-  // Handle workspace link click - navigate to Entry Dashboard
-  const handleLinkClick = useCallback(async (e: React.MouseEvent) => {
+  // Handle workspace link hover - show navigation tooltip
+  const handleLinkMouseEnter = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement
-    if (target.classList.contains('workspace-link')) {
-      e.preventDefault()
+    if (!target.classList.contains('workspace-link')) return
 
-      // Get IDs from link attributes
-      let entryId = target.getAttribute('data-entry-id')
-      const workspaceId = target.getAttribute('data-workspace-id')
-      let dashboardId = target.getAttribute('data-dashboard-id')
-      const workspaceName = target.getAttribute('data-workspace') || target.textContent
+    // Clear any pending timeout
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
 
-      debugLog({
-        component: 'LinksNotePanel',
-        action: 'link_clicked',
-        metadata: { entryId, workspaceId, dashboardId, workspaceName },
+    // Small delay before showing tooltip to avoid flickering
+    hoverTimeoutRef.current = setTimeout(() => {
+      const rect = target.getBoundingClientRect()
+      setHoveredLink({
+        element: target,
+        rect,
+        entryId: target.getAttribute('data-entry-id'),
+        workspaceId: target.getAttribute('data-workspace-id'),
+        dashboardId: target.getAttribute('data-dashboard-id'),
+        workspaceName: target.getAttribute('data-workspace') || target.textContent,
       })
+    }, 200)
+  }, [])
 
-      // If we have entryId, look up or use the Dashboard workspace
-      if (entryId) {
-        // If no dashboard ID stored, look it up from the entry's workspaces
-        if (!dashboardId) {
-          debugLog({
-            component: 'LinksNotePanel',
-            action: 'looking_up_dashboard',
-            metadata: { entryId },
-          })
+  const handleLinkMouseLeave = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+    // Small delay before hiding to allow moving to tooltip
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredLink(null)
+    }, 150)
+  }, [])
 
-          try {
-            const response = await fetch(`/api/entries/${entryId}/workspaces`)
-            if (response.ok) {
-              const data = await response.json()
-              const dashboardWorkspace = data.workspaces?.find(
-                (ws: { name: string; id: string }) => ws.name === 'Dashboard'
-              )
+  // Keep tooltip visible when hovering over it
+  const handleTooltipMouseEnter = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current)
+    }
+  }, [])
 
-              if (dashboardWorkspace) {
-                dashboardId = dashboardWorkspace.id
-                // Update link with dashboard ID for future clicks
-                target.setAttribute('data-dashboard-id', dashboardWorkspace.id)
-                if (contentRef.current) {
-                  onConfigChange?.({ content: contentRef.current.innerHTML })
-                }
-                debugLog({
-                  component: 'LinksNotePanel',
-                  action: 'dashboard_found_and_cached',
-                  metadata: { entryId, dashboardId: dashboardWorkspace.id },
-                })
-              }
-            }
-          } catch (err) {
-            console.error('[LinksNotePanel] Failed to lookup dashboard:', err)
-            debugLog({
-              component: 'LinksNotePanel',
-              action: 'dashboard_lookup_failed',
-              metadata: { entryId, error: String(err) },
-            })
-          }
-        }
+  const handleTooltipMouseLeave = useCallback(() => {
+    setHoveredLink(null)
+  }, [])
 
-        // Navigate to Dashboard (or fallback to stored workspace)
-        const targetId = dashboardId || workspaceId
+  // Navigate to Entry Dashboard from tooltip
+  const handleNavigateFromTooltip = useCallback(async () => {
+    if (!hoveredLink) return
+
+    const { entryId: initialEntryId, workspaceId, dashboardId: initialDashboardId, workspaceName } = hoveredLink
+    let entryId = initialEntryId
+    let dashboardId = initialDashboardId
+
+    debugLog({
+      component: 'LinksNotePanel',
+      action: 'tooltip_navigate_clicked',
+      metadata: { entryId, workspaceId, dashboardId, workspaceName },
+    })
+
+    // Close tooltip immediately
+    setHoveredLink(null)
+
+    // If we have entryId, look up or use the Dashboard workspace
+    if (entryId) {
+      // If no dashboard ID stored, look it up from the entry's workspaces
+      if (!dashboardId) {
         debugLog({
           component: 'LinksNotePanel',
-          action: 'navigating_to_dashboard',
-          metadata: { entryId, targetId, dashboardId, workspaceId },
-        })
-
-        setActiveEntryContext(entryId)
-        if (onNavigate && targetId) {
-          onNavigate(entryId, targetId)
-        }
-        return
-      }
-
-      // Handle legacy links without entryId - try to find/create entry
-      if (workspaceId && workspaceName) {
-        debugLog({
-          component: 'LinksNotePanel',
-          action: 'legacy_link_detected',
-          metadata: { workspaceId, workspaceName },
+          action: 'looking_up_dashboard',
+          metadata: { entryId },
         })
 
         try {
-          const result = await createEntryForWorkspace(workspaceId, workspaceName)
-          if (result) {
-            entryId = result.entry.id
-            dashboardId = (result as any).dashboardWorkspaceId || null
+          const response = await fetch(`/api/entries/${entryId}/workspaces`)
+          if (response.ok) {
+            const data = await response.json()
+            const dashboardWorkspace = data.workspaces?.find(
+              (ws: { name: string; id: string }) => ws.name === 'Dashboard'
+            )
 
-            // Update link with entry and dashboard IDs
-            target.setAttribute('data-entry-id', entryId)
-            target.setAttribute('data-entry-name', result.entry.name)
-            if (dashboardId) {
-              target.setAttribute('data-dashboard-id', dashboardId)
+            if (dashboardWorkspace) {
+              dashboardId = dashboardWorkspace.id
+              // Update link with dashboard ID for future use
+              if (hoveredLink.element) {
+                hoveredLink.element.setAttribute('data-dashboard-id', dashboardWorkspace.id)
+                if (contentRef.current) {
+                  onConfigChange?.({ content: contentRef.current.innerHTML })
+                }
+              }
+              debugLog({
+                component: 'LinksNotePanel',
+                action: 'dashboard_found_and_cached',
+                metadata: { entryId, dashboardId: dashboardWorkspace.id },
+              })
             }
-            if (contentRef.current) {
-              onConfigChange?.({ content: contentRef.current.innerHTML })
-            }
-
-            // Navigate to Dashboard
-            setActiveEntryContext(entryId)
-            if (onNavigate) {
-              onNavigate(entryId, dashboardId || workspaceId)
-            }
-            return
           }
         } catch (err) {
-          console.error('[LinksNotePanel] Failed to create entry for legacy link:', err)
+          console.error('[LinksNotePanel] Failed to lookup dashboard:', err)
+          debugLog({
+            component: 'LinksNotePanel',
+            action: 'dashboard_lookup_failed',
+            metadata: { entryId, error: String(err) },
+          })
         }
       }
 
-      // Final fallback: search for workspace by name
-      if (!workspaceName) return
+      // Navigate to Dashboard (or fallback to stored workspace)
+      const targetId = dashboardId || workspaceId
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'navigating_to_dashboard',
+        metadata: { entryId, targetId, dashboardId, workspaceId },
+      })
+
+      setActiveEntryContext(entryId)
+      if (onNavigate && targetId) {
+        onNavigate(entryId, targetId)
+      }
+      return
+    }
+
+    // Handle legacy links without entryId - try to find/create entry
+    if (workspaceId && workspaceName) {
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'legacy_link_detected',
+        metadata: { workspaceId, workspaceName },
+      })
 
       try {
-        const response = await fetch(`/api/dashboard/workspaces/search?q=${encodeURIComponent(workspaceName)}`)
-        if (response.ok) {
-          const data = await response.json()
-          const workspace = data.workspaces?.find(
-            (ws: WorkspaceOption) => ws.name.toLowerCase() === workspaceName.toLowerCase()
-          ) || data.workspaces?.[0]
+        const result = await createEntryForWorkspace(workspaceId, workspaceName)
+        if (result) {
+          entryId = result.entry.id
+          dashboardId = (result as any).dashboardWorkspaceId || null
 
-          if (workspace) {
-            // Update link with found IDs for future clicks
-            target.setAttribute('data-workspace-id', workspace.id)
-            target.setAttribute('data-entry-id', workspace.entryId || '')
-            target.setAttribute('data-entry-name', workspace.entryName || '')
+          // Update link with entry and dashboard IDs
+          if (hoveredLink.element) {
+            hoveredLink.element.setAttribute('data-entry-id', entryId)
+            hoveredLink.element.setAttribute('data-entry-name', result.entry.name)
+            if (dashboardId) {
+              hoveredLink.element.setAttribute('data-dashboard-id', dashboardId)
+            }
             if (contentRef.current) {
               onConfigChange?.({ content: contentRef.current.innerHTML })
             }
-
-            // Set entry context and navigate
-            if (workspace.entryId) {
-              setActiveEntryContext(workspace.entryId)
-            }
-
-            if (onNavigate) {
-              onNavigate(workspace.entryId || '', workspace.id)
-            }
           }
+
+          // Navigate to Dashboard
+          setActiveEntryContext(entryId)
+          if (onNavigate) {
+            onNavigate(entryId, dashboardId || workspaceId)
+          }
+          return
         }
       } catch (err) {
-        console.error('[LinksNotePanel] Navigation error:', err)
+        console.error('[LinksNotePanel] Failed to create entry for legacy link:', err)
       }
     }
-  }, [onNavigate, onConfigChange])
+
+    // Final fallback: search for workspace by name
+    if (!workspaceName) return
+
+    try {
+      const response = await fetch(`/api/dashboard/workspaces/search?q=${encodeURIComponent(workspaceName)}`)
+      if (response.ok) {
+        const data = await response.json()
+        const workspace = data.workspaces?.find(
+          (ws: WorkspaceOption) => ws.name.toLowerCase() === workspaceName.toLowerCase()
+        ) || data.workspaces?.[0]
+
+        if (workspace) {
+          // Update link with found IDs for future use
+          if (hoveredLink.element) {
+            hoveredLink.element.setAttribute('data-workspace-id', workspace.id)
+            hoveredLink.element.setAttribute('data-entry-id', workspace.entryId || '')
+            hoveredLink.element.setAttribute('data-entry-name', workspace.entryName || '')
+            if (contentRef.current) {
+              onConfigChange?.({ content: contentRef.current.innerHTML })
+            }
+          }
+
+          // Set entry context and navigate
+          if (workspace.entryId) {
+            setActiveEntryContext(workspace.entryId)
+          }
+
+          if (onNavigate) {
+            onNavigate(workspace.entryId || '', workspace.id)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[LinksNotePanel] Navigation error:', err)
+    }
+  }, [hoveredLink, onNavigate, onConfigChange])
+
+  // Cleanup hover timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) {
+        clearTimeout(hoverTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Create workspace link from selection
   const createLink = useCallback((workspace: WorkspaceOption) => {
@@ -735,13 +804,53 @@ export function LinksNotePanel({
           border-radius: 4px;
           font-size: 13px;
           font-weight: 500;
-          cursor: pointer;
+          cursor: text;
           text-decoration: none;
           transition: all 0.15s;
         }
         .links-note-editor .workspace-link:hover {
+          background: rgba(99, 102, 241, 0.25);
+        }
+        /* Navigation tooltip that appears on hover */
+        .link-navigate-tooltip {
+          position: fixed;
+          display: flex;
+          align-items: center;
+          padding: 4px;
+          background: #252830;
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          z-index: 1000;
+          animation: tooltipFadeIn 0.15s ease-out;
+        }
+        @keyframes tooltipFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(4px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .link-navigate-tooltip button {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 26px;
+          height: 26px;
+          padding: 0;
           background: #6366f1;
+          border: none;
+          border-radius: 4px;
           color: white;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .link-navigate-tooltip button:hover {
+          background: #4f46e5;
+          transform: scale(1.05);
         }
         .link-toolbar {
           position: absolute;
@@ -929,10 +1038,29 @@ export function LinksNotePanel({
           contentEditable
           suppressContentEditableWarning
           onMouseUp={handleMouseUp}
-          onClick={handleLinkClick}
+          onMouseOver={handleLinkMouseEnter}
+          onMouseOut={handleLinkMouseLeave}
           onKeyDown={handleEditorKeyDown}
           onBlur={handleBlur}
         />
+
+        {/* Navigation tooltip - appears when hovering a workspace link */}
+        {hoveredLink && (
+          <div
+            className="link-navigate-tooltip"
+            style={{
+              left: hoveredLink.rect.left + hoveredLink.rect.width / 2,
+              top: hoveredLink.rect.bottom + 8,
+              transform: 'translateX(-50%)',
+            }}
+            onMouseEnter={handleTooltipMouseEnter}
+            onMouseLeave={handleTooltipMouseLeave}
+          >
+            <button onClick={handleNavigateFromTooltip} title="Go to Dashboard">
+              <ExternalLink size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Link toolbar - appears on text selection */}
         {showLinkToolbar && !showPicker && (

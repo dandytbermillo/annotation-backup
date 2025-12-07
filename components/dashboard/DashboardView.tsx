@@ -21,6 +21,7 @@ import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry
 import { cn } from "@/lib/utils"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { RefreshCw, ChevronRight, LayoutDashboard, Loader2 } from "lucide-react"
+import { useAutoScroll } from "@/components/canvas/use-auto-scroll"
 
 interface WorkspaceSummary {
   id: string
@@ -75,6 +76,10 @@ export function DashboardView({
   // Phase 5: Loading state for mode switching transitions
   const [isModeSwitching, setIsModeSwitching] = useState(false)
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Highlighted panel state (for glow effect when clicking Eye icon in Links Overview)
+  const [highlightedPanelId, setHighlightedPanelId] = useState<string | null>(null)
+  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   // Debug: Track mount/unmount and initial state
   useEffect(() => {
@@ -135,6 +140,150 @@ export function DashboardView({
   const [activePanelId, setActivePanelId] = useState<string | null>(null)
   const dragStartRef = useRef<{ x: number; y: number; panelX: number; panelY: number } | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const dashboardContainerRef = useRef<HTMLDivElement>(null)
+
+  // Dynamic canvas size calculation
+  // Canvas MUST be larger than viewport to provide scroll room for auto-scroll
+  const canvasDimensions = useMemo(() => {
+    const BUFFER = 500 // Extra space beyond panels for scrolling
+    const SCROLL_ROOM = 200 // Extra space beyond viewport to enable initial scrolling
+    const viewportWidth = window?.innerWidth || 1200
+    // Header is now outside the scrollable container, so use full remaining height
+    // The scrollable container is flex-1 which is (100vh - header height ~56px)
+    const viewportHeight = (window?.innerHeight || 800) - 56
+
+    // Canvas must be larger than viewport + some room for scroll to work
+    const MIN_WIDTH = viewportWidth + SCROLL_ROOM
+    const MIN_HEIGHT = viewportHeight + SCROLL_ROOM
+
+    if (panels.length === 0) {
+      return { width: MIN_WIDTH, height: MIN_HEIGHT }
+    }
+
+    // Find the rightmost and bottommost panel edges
+    let maxRight = 0
+    let maxBottom = 0
+
+    for (const panel of panels) {
+      const right = panel.positionX + panel.width
+      const bottom = panel.positionY + panel.height
+      if (right > maxRight) maxRight = right
+      if (bottom > maxBottom) maxBottom = bottom
+    }
+
+    // Add buffer for scrollable space, ensuring always larger than viewport
+    return {
+      width: Math.max(MIN_WIDTH, maxRight + BUFFER),
+      height: Math.max(MIN_HEIGHT, maxBottom + BUFFER),
+    }
+  }, [panels])
+
+  // When dragging, temporarily expand canvas to allow more scroll room
+  const [dragExpandBuffer, setDragExpandBuffer] = useState({ x: 0, y: 0 })
+
+  // Auto-scroll handler for dashboard panel dragging
+  const handleDashboardAutoScroll = useCallback((deltaX: number, deltaY: number) => {
+    if (!dashboardContainerRef.current || !draggingPanelId) return
+
+    const container = dashboardContainerRef.current
+
+    // INVERT the deltas: the hook's direction is for "view follows content"
+    // but we need "reveal more canvas in the direction of drag"
+    // Near bottom edge: hook gives negative deltaY (scroll up), but we want scroll DOWN
+    // Near right edge: hook gives negative deltaX (scroll left), but we want scroll RIGHT
+    // Near left edge: hook gives positive deltaX (scroll right), but we want scroll LEFT
+    // Near top edge: hook gives positive deltaY (scroll down), but we want scroll UP
+    const scrollDeltaX = -deltaX
+    const scrollDeltaY = -deltaY
+
+    console.log("[DashboardView] Auto-scroll triggered:", {
+      originalDelta: { deltaX, deltaY },
+      adjustedDelta: { scrollDeltaX, scrollDeltaY },
+      currentScroll: { scrollLeft: container.scrollLeft, scrollTop: container.scrollTop },
+      leftEdgeCheck: {
+        scrollDeltaXIsNegative: scrollDeltaX < 0,
+        scrollLeftIsZero: container.scrollLeft <= 0,
+        conditionMet: scrollDeltaX < 0 && container.scrollLeft <= 0
+      }
+    })
+
+    // Handle horizontal scrolling
+    if (scrollDeltaX !== 0) {
+      if (scrollDeltaX < 0 && container.scrollLeft < 1) {
+        // LEFT EDGE: Already at left, can't scroll left further
+        // No expansion needed leftward - just block (same as top edge)
+        console.log("[DashboardView] At left edge (scrollLeft=0), can't scroll left further")
+      } else {
+        // Normal horizontal scroll (right edge only, since left is blocked)
+        container.scrollLeft += scrollDeltaX
+
+        // Expand buffer for right edge only
+        if (scrollDeltaX > 0) {
+          setDragExpandBuffer(prev => ({
+            ...prev,
+            x: prev.x + Math.abs(scrollDeltaX) * 2,
+          }))
+        }
+
+        // Update dragging panel position
+        if (dragStartRef.current) {
+          dragStartRef.current.panelX += scrollDeltaX
+          setPanels((prev) =>
+            prev.map((p) =>
+              p.id === draggingPanelId
+                ? { ...p, positionX: Math.max(0, Math.round(p.positionX + scrollDeltaX)) }
+                : p
+            )
+          )
+        }
+      }
+    }
+
+    // Handle vertical scrolling
+    if (scrollDeltaY !== 0) {
+      if (scrollDeltaY < 0 && container.scrollTop < 1) {
+        // TOP EDGE: Already at top, can't scroll up further
+        // No expansion needed upward - just block
+        console.log("[DashboardView] At top edge (scrollTop=0), can't scroll up further")
+      } else {
+        // Normal vertical scroll (up or down)
+        container.scrollTop += scrollDeltaY
+
+        // Expand buffer for bottom edge only (no top edge expansion)
+        if (scrollDeltaY > 0) {
+          setDragExpandBuffer(prev => ({
+            ...prev,
+            y: prev.y + Math.abs(scrollDeltaY) * 2,
+          }))
+        }
+
+        // Update dragging panel position to follow scroll
+        if (dragStartRef.current) {
+          dragStartRef.current.panelY += scrollDeltaY
+          setPanels((prev) =>
+            prev.map((p) =>
+              p.id === draggingPanelId
+                ? {
+                    ...p,
+                    // Clamp to >= 0 to prevent negative positions
+                    positionY: Math.max(0, Math.round(p.positionY + scrollDeltaY))
+                  }
+                : p
+            )
+          )
+        }
+      }
+    }
+  }, [draggingPanelId])
+
+  const { checkAutoScroll, stopAutoScroll } = useAutoScroll({
+    enabled: !!draggingPanelId,
+    threshold: 50,
+    speedPxPerSec: 400,
+    activationDelay: 300, // Faster activation for dashboard panels
+    onScroll: handleDashboardAutoScroll,
+    containerRef: dashboardContainerRef,
+  })
 
   // Fetch panels from API
   const fetchPanels = useCallback(async () => {
@@ -166,6 +315,57 @@ export function DashboardView({
   useEffect(() => {
     fetchPanels()
   }, [fetchPanels])
+
+  // Listen for highlight-dashboard-panel events (from Links Overview Eye icon click)
+  useEffect(() => {
+    const handleHighlightPanel = (e: Event) => {
+      const customEvent = e as CustomEvent<{ panelId: string }>
+      const panelId = customEvent.detail?.panelId
+      if (!panelId) return
+
+      // Find the panel element and scroll it into view
+      const panelElement = document.querySelector(`[data-panel-id="${panelId}"]`)
+      if (panelElement) {
+        panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+
+      // Set highlighted state for glow effect
+      setHighlightedPanelId(panelId)
+
+      // Clear highlight after animation duration
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+      highlightTimeoutRef.current = setTimeout(() => {
+        setHighlightedPanelId(null)
+      }, 2000) // Glow for 2 seconds
+    }
+
+    window.addEventListener('highlight-dashboard-panel', handleHighlightPanel)
+    return () => {
+      window.removeEventListener('highlight-dashboard-panel', handleHighlightPanel)
+      if (highlightTimeoutRef.current) {
+        clearTimeout(highlightTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  // Listen for refresh-dashboard-panels events (when a hidden panel is made visible)
+  useEffect(() => {
+    const handleRefreshPanels = () => {
+      void debugLog({
+        component: "DashboardView",
+        action: "refresh_panels_event_received",
+        metadata: { workspaceId },
+      })
+      fetchPanels()
+    }
+
+    window.addEventListener('refresh-dashboard-panels', handleRefreshPanels)
+    return () => {
+      window.removeEventListener('refresh-dashboard-panels', handleRefreshPanels)
+    }
+  }, [fetchPanels, workspaceId])
 
   // Fetch workspaces for the current entry (excluding Dashboard)
   useEffect(() => {
@@ -528,27 +728,34 @@ export function DashboardView({
     }
   }, [entryId])
 
-  // Handle panel close
+  // Handle panel close - hides panel instead of deleting it
+  // Panel can be re-opened from Links Overview panel's Eye icon
   const handlePanelClose = useCallback(
     async (panelId: string) => {
       try {
         const response = await fetch(`/api/dashboard/panels/${panelId}`, {
-          method: "DELETE",
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isVisible: false }),
         })
 
         if (!response.ok) {
-          throw new Error("Failed to delete panel")
+          throw new Error("Failed to hide panel")
         }
 
+        // Remove from local state (panel is hidden, not deleted)
         setPanels((prev) => prev.filter((p) => p.id !== panelId))
+
+        // Notify Links Overview panel to refresh so it shows the hidden panel
+        requestDashboardPanelRefresh()
 
         void debugLog({
           component: "DashboardView",
-          action: "panel_deleted",
+          action: "panel_hidden",
           metadata: { panelId, workspaceId },
         })
       } catch (err) {
-        console.error("[DashboardView] Failed to delete panel:", err)
+        console.error("[DashboardView] Failed to hide panel:", err)
       }
     },
     [workspaceId]
@@ -645,10 +852,11 @@ export function DashboardView({
   const handlePositionChange = useCallback(
     async (panelId: string, x: number, y: number) => {
       try {
+        // Round to integers - database expects integer type
         await fetch(`/api/dashboard/panels/${panelId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ positionX: x, positionY: y }),
+          body: JSON.stringify({ positionX: Math.round(x), positionY: Math.round(y) }),
         })
       } catch (err) {
         console.error("[DashboardView] Failed to update panel position:", err)
@@ -687,16 +895,58 @@ export function DashboardView({
 
       const deltaX = e.clientX - dragStartRef.current.x
       const deltaY = e.clientY - dragStartRef.current.y
-      const newX = Math.max(0, dragStartRef.current.panelX + deltaX)
-      const newY = Math.max(0, dragStartRef.current.panelY + deltaY)
+      const newX = Math.max(0, Math.round(dragStartRef.current.panelX + deltaX))
+      const newY = Math.max(0, Math.round(dragStartRef.current.panelY + deltaY))
 
       setPanels((prev) =>
         prev.map((p) =>
           p.id === draggingPanelId ? { ...p, positionX: newX, positionY: newY } : p
         )
       )
+
+      // Check for auto-scroll at container edges
+      // For TOP edge: use PANEL position, not cursor, since cursor is offset from panel's edge
+      if (dashboardContainerRef.current) {
+        const rect = dashboardContainerRef.current.getBoundingClientRect()
+        const scrollTop = dashboardContainerRef.current.scrollTop
+        const distFromRight = rect.right - e.clientX
+        const distFromBottom = rect.bottom - e.clientY
+        const distFromTop = e.clientY - rect.top
+
+        // Check if PANEL is near the visible top edge
+        // Panel's visual Y position relative to scroll = newY - scrollTop
+        // If this is small AND there's scroll room above (scrollTop > 0), we're near visible top
+        const panelVisualY = newY - scrollTop
+        const panelNearVisibleTop = scrollTop > 0 && panelVisualY < 50
+
+        if (distFromRight < 60 || distFromBottom < 60 || panelNearVisibleTop) {
+          console.log("[DashboardView] Near edge:", {
+            clientX: e.clientX,
+            clientY: e.clientY,
+            panelPosition: { x: newX, y: newY },
+            scrollTop,
+            panelVisualY,
+            containerRect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+            distFromRight,
+            distFromBottom,
+            distFromTop,
+            panelNearVisibleTop,
+          })
+        }
+
+        // TOP edge: synthesize cursor position if panel is near visible top
+        let syntheticY = e.clientY
+        if (panelNearVisibleTop && distFromTop > 50) {
+          syntheticY = rect.top + 25 // 25px from top edge
+          console.log("[DashboardView] Synthesizing top edge position:", { originalY: e.clientY, syntheticY, scrollTop })
+        }
+
+        checkAutoScroll(e.clientX, syntheticY)
+      } else {
+        checkAutoScroll(e.clientX, e.clientY)
+      }
     },
-    [draggingPanelId]
+    [draggingPanelId, checkAutoScroll]
   )
 
   const handleDragEnd = useCallback(() => {
@@ -708,7 +958,10 @@ export function DashboardView({
     }
     setDraggingPanelId(null)
     dragStartRef.current = null
-  }, [draggingPanelId, panels, handlePositionChange])
+    stopAutoScroll()
+    // Reset drag expand buffer after drag ends
+    setDragExpandBuffer({ x: 0, y: 0 })
+  }, [draggingPanelId, panels, handlePositionChange, stopAutoScroll])
 
   // Attach global mouse listeners for dragging
   useEffect(() => {
@@ -861,40 +1114,50 @@ export function DashboardView({
   }
 
   return (
-    <div
-      className={cn("relative w-full h-full overflow-auto", className)}
-      style={{
-        background: '#0a0c10',
-        color: '#f0f0f0',
-      }}
-    >
-      {/* Canvas surface with grid pattern */}
+    <>
+      {/* Glow animation styles for highlighted panels */}
+      <style>{`
+        @keyframes panelGlow {
+          0%, 100% {
+            box-shadow: 0 0 20px 4px rgba(99, 102, 241, 0.6),
+                        0 0 40px 8px rgba(139, 92, 246, 0.4),
+                        inset 0 0 10px 2px rgba(99, 102, 241, 0.1);
+          }
+          50% {
+            box-shadow: 0 0 30px 8px rgba(99, 102, 241, 0.8),
+                        0 0 60px 16px rgba(139, 92, 246, 0.5),
+                        inset 0 0 15px 4px rgba(99, 102, 241, 0.15);
+          }
+        }
+        .panel-highlight-glow {
+          animation: panelGlow 0.8s ease-in-out infinite;
+          border-radius: 12px;
+        }
+      `}</style>
       <div
-        className="min-h-full"
+        className={cn("relative flex flex-col", className)}
         style={{
-          background: `
-            radial-gradient(circle at 400px 300px, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
-            linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
-            #0a0c10
-          `,
-          backgroundSize: '100% 100%, 20px 20px, 20px 20px, 100% 100%',
+          // Fixed dimensions for the entire view
+          width: '100vw',
+          height: '100vh',
+          background: '#0a0c10',
+          color: '#f0f0f0',
         }}
       >
-        {/* Welcome tooltip */}
-        {showWelcome && (
-          <DashboardWelcomeTooltip onDismiss={markAsSeen} />
-        )}
+      {/* Welcome tooltip */}
+      {showWelcome && (
+        <DashboardWelcomeTooltip onDismiss={markAsSeen} />
+      )}
 
-        {/* Dashboard header */}
-        <div
-          className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
-          style={{
-            background: 'rgba(15, 17, 23, 0.95)',
-            backdropFilter: 'blur(12px)',
-            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          }}
-        >
+      {/* Dashboard header - OUTSIDE scrollable container so it doesn't scroll horizontally */}
+      <div
+        className="flex-shrink-0 z-10 px-4 py-3 flex items-center justify-between"
+        style={{
+          background: 'rgba(15, 17, 23, 0.95)',
+          backdropFilter: 'blur(12px)',
+          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
+      >
           {/* Left side: Logo + Breadcrumb */}
           <div className="flex items-center gap-3">
             <div
@@ -1028,6 +1291,30 @@ export function DashboardView({
           </div>
         </div>
 
+      {/* Scrollable container - BELOW the fixed header */}
+      <div
+        ref={dashboardContainerRef}
+        className="flex-1 relative overflow-auto"
+        style={{
+          background: '#0a0c10',
+        }}
+      >
+        {/* Canvas surface with grid pattern - dynamically sized based on panel positions */}
+        <div
+          style={{
+            // Dynamic sizing: expands to fit panels + buffer, plus extra when dragging
+            minWidth: canvasDimensions.width + dragExpandBuffer.x,
+            minHeight: canvasDimensions.height + dragExpandBuffer.y,
+            background: `
+              radial-gradient(circle at 400px 300px, rgba(99, 102, 241, 0.04) 0%, transparent 50%),
+              linear-gradient(rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+              #0a0c10
+            `,
+            backgroundSize: '100% 100%, 20px 20px, 20px 20px, 100% 100%',
+          }}
+        >
+
         {/*
           Content area - Option C: Layered/Preserved State
           Both dashboard and workspace are rendered, but only one is visible.
@@ -1076,11 +1363,14 @@ export function DashboardView({
 
         {/* Dashboard panels canvas - hidden when in workspace mode */}
         {/* Phase 5: Using opacity + pointer-events for smoother transition */}
+        {/* Canvas grows dynamically based on panel positions for unlimited scrolling */}
         <div
           ref={canvasRef}
           className="relative"
           style={{
-            minHeight: 'calc(100vh - 56px)',
+            // Use calculated dimensions instead of fixed height
+            minWidth: canvasDimensions.width + dragExpandBuffer.x,
+            minHeight: canvasDimensions.height + dragExpandBuffer.y,
             padding: 24,
             opacity: viewMode === 'dashboard' ? 1 : 0,
             pointerEvents: viewMode === 'dashboard' ? 'auto' : 'none',
@@ -1112,13 +1402,15 @@ export function DashboardView({
               {panels.map((panel) => (
                 <div
                   key={panel.id}
+                  data-panel-id={panel.id}
+                  className={highlightedPanelId === panel.id ? 'panel-highlight-glow' : ''}
                   style={{
                     position: 'absolute',
                     left: panel.positionX,
                     top: panel.positionY,
                     width: panel.width,
                     height: panel.height,
-                    zIndex: panel.zIndex,
+                    zIndex: highlightedPanelId === panel.id ? 9999 : panel.zIndex, // Bring to front when highlighted
                     cursor: draggingPanelId === panel.id ? 'grabbing' : 'default',
                   }}
                   onClick={() => setActivePanelId(panel.id)}
@@ -1160,7 +1452,7 @@ export function DashboardView({
           <div
             style={{
               position: 'absolute',
-              top: 56, // Below the header
+              top: 0, // Header is now outside the scrollable container
               left: 0,
               right: 0,
               bottom: 0,
@@ -1188,7 +1480,11 @@ export function DashboardView({
             />
           </div>
         )}
+        </div>
+        {/* End of canvas surface */}
       </div>
+      {/* End of scrollable container */}
     </div>
+    </>
   )
 }
