@@ -22,6 +22,10 @@ export async function GET(request: NextRequest) {
 
     // Optional: include hidden panels (for Links Overview which needs to show hidden Quick Links)
     const includeHidden = request.nextUrl.searchParams.get('includeHidden') === 'true'
+    // Optional: include deleted panels (for Trash view in Links Overview)
+    const includeDeleted = request.nextUrl.searchParams.get('includeDeleted') === 'true'
+    // Optional: get ONLY deleted panels (for Trash section)
+    const onlyDeleted = request.nextUrl.searchParams.get('onlyDeleted') === 'true'
 
     // Verify workspace belongs to user
     const workspaceCheck = await serverPool.query(
@@ -33,10 +37,27 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
     }
 
-    // Get panels for the workspace
-    // By default, only visible panels (is_visible = true) are returned
-    // With includeHidden=true, all panels are returned (for Links Overview panel)
-    const visibilityFilter = includeHidden ? '' : 'AND is_visible = true'
+    // Build filters based on params
+    // By default: only visible (is_visible = true) AND not deleted (deleted_at IS NULL)
+    // includeHidden=true: include hidden panels (still excludes deleted)
+    // includeDeleted=true: include deleted panels too
+    // onlyDeleted=true: ONLY deleted panels (for Trash section)
+    let visibilityFilter = ''
+    let deletedFilter = ''
+
+    if (onlyDeleted) {
+      // Only get deleted panels
+      deletedFilter = 'AND deleted_at IS NOT NULL'
+    } else {
+      // Normal filtering
+      if (!includeHidden) {
+        visibilityFilter = 'AND is_visible = true'
+      }
+      if (!includeDeleted) {
+        deletedFilter = 'AND deleted_at IS NULL'
+      }
+    }
+
     const query = `
       SELECT
         id,
@@ -51,11 +72,12 @@ export async function GET(request: NextRequest) {
         config,
         badge,
         is_visible,
+        deleted_at,
         created_at,
         updated_at
       FROM workspace_panels
-      WHERE workspace_id = $1 ${visibilityFilter}
-      ORDER BY z_index ASC, created_at ASC
+      WHERE workspace_id = $1 ${visibilityFilter} ${deletedFilter}
+      ORDER BY ${onlyDeleted ? 'deleted_at DESC' : 'z_index ASC'}, created_at ASC
     `
 
     const result = await serverPool.query(query, [workspaceId])
@@ -73,6 +95,7 @@ export async function GET(request: NextRequest) {
       config: row.config || {},
       badge: row.badge || null,
       isVisible: row.is_visible,
+      deletedAt: row.deleted_at || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }))

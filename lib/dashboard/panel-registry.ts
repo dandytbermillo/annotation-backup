@@ -11,6 +11,17 @@ import type { ComponentType } from 'react'
 // Panel type identifiers matching the database schema
 export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'category' | 'category_navigator'
 
+// Deleted link stored in Quick Links panel trash
+export interface DeletedLink {
+  text: string
+  workspaceId: string
+  workspaceName: string
+  entryId: string
+  entryName: string
+  dashboardId?: string
+  deletedAt: string // ISO timestamp
+}
+
 // Panel configuration stored in the database (JSONB column)
 export interface PanelConfig {
   content?: string // For note panels
@@ -23,6 +34,8 @@ export interface PanelConfig {
   categoryVisible?: boolean // Whether category panel is visible on canvas
   // Category navigator config
   expandedCategories?: string[] // Expanded category panel IDs in navigator
+  // Quick Links panel config
+  deletedLinks?: DeletedLink[] // Soft-deleted links (trash)
   [key: string]: unknown // Allow additional config
 }
 
@@ -64,6 +77,7 @@ export interface WorkspacePanel {
   config: PanelConfig
   badge: string | null // Single-letter badge (A-Z) for links_note panels
   isVisible: boolean // Whether the panel is visible on dashboard (false = hidden by user)
+  deletedAt: Date | null // Timestamp when moved to trash (null = not deleted)
   createdAt: Date
   updatedAt: Date
 }
@@ -75,6 +89,7 @@ export interface BasePanelProps {
   onConfigChange?: (config: Partial<PanelConfig>) => void
   onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
+  onDelete?: () => void // Soft delete - moves to trash
   isActive?: boolean
 }
 
@@ -234,5 +249,6 @@ export function createDefaultPanel(
     config: { ...typeDef.defaultConfig },
     badge: null, // Badge is auto-assigned by the API for links_note panels
     isVisible: true, // New panels are always visible
+    deletedAt: null, // New panels are not in trash
   }
 }

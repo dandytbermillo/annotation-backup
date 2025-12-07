@@ -27,7 +27,7 @@ interface RecentWorkspace {
   lastAccessedAt: string
 }
 
-export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, isActive }: BasePanelProps) {
+export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, onDelete, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.recent
   const config = panel.config as RecentConfig
   const limit = config.limit || 10
@@ -119,6 +119,7 @@ export function RecentPanel({ panel, onClose, onTitleChange, onNavigate, isActiv
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onDelete={onDelete}
       onTitleChange={onTitleChange}
       isActive={isActive}
       headerActions={headerActions}

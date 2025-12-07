@@ -761,6 +761,38 @@ export function DashboardView({
     [workspaceId]
   )
 
+  // Handle panel delete - soft delete (move to trash)
+  // Panel can be restored from Links Overview's Trash section within 30 days
+  const handlePanelDelete = useCallback(
+    async (panelId: string) => {
+      try {
+        // DELETE without ?permanent=true does soft delete
+        const response = await fetch(`/api/dashboard/panels/${panelId}`, {
+          method: "DELETE",
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to delete panel")
+        }
+
+        // Remove from local state (panel is soft deleted)
+        setPanels((prev) => prev.filter((p) => p.id !== panelId))
+
+        // Notify Links Overview panel to refresh so it shows in Trash section
+        requestDashboardPanelRefresh()
+
+        void debugLog({
+          component: "DashboardView",
+          action: "panel_deleted",
+          metadata: { panelId, workspaceId },
+        })
+      } catch (err) {
+        console.error("[DashboardView] Failed to delete panel:", err)
+      }
+    },
+    [workspaceId]
+  )
+
   // Handle panel config change
   const handleConfigChange = useCallback(
     async (panelId: string, config: Partial<PanelConfig>) => {
@@ -1431,6 +1463,7 @@ export function DashboardView({
                   <DashboardPanelRenderer
                     panel={panel}
                     onClose={() => handlePanelClose(panel.id)}
+                    onDelete={() => handlePanelDelete(panel.id)}
                     onConfigChange={(config) => handleConfigChange(panel.id, config)}
                     onTitleChange={(newTitle) => handleTitleChange(panel.id, newTitle)}
                     onNavigate={onNavigate}

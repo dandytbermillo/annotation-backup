@@ -21,7 +21,7 @@ interface QuickCaptureConfig extends PanelConfig {
 
 type CaptureStatus = 'idle' | 'saving' | 'success' | 'error'
 
-export function QuickCapturePanel({ panel, onClose, onTitleChange, onNavigate, isActive }: BasePanelProps) {
+export function QuickCapturePanel({ panel, onClose, onTitleChange, onNavigate, onDelete, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.quick_capture
   const config = panel.config as QuickCaptureConfig
 
@@ -110,6 +110,7 @@ export function QuickCapturePanel({ panel, onClose, onTitleChange, onNavigate, i
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onDelete={onDelete}
       onTitleChange={onTitleChange}
       isActive={isActive}
       contentClassName="p-3 flex flex-col"

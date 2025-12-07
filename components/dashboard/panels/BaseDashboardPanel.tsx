@@ -10,9 +10,19 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { X, Pencil, Check } from 'lucide-react'
+import { X, Pencil, Check, MoreVertical, Trash2, EyeOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BasePanelProps, PanelTypeDefinition } from '@/lib/dashboard/panel-registry'
+
+// Custom menu item for the dropdown
+export interface CustomMenuItem {
+  id: string
+  label: string
+  icon: React.ReactNode
+  onClick: () => void
+  color?: string // Optional custom text color
+  badge?: number | string // Optional badge (e.g., count)
+}
 
 export interface BaseDashboardPanelProps extends BasePanelProps {
   panelDef: PanelTypeDefinition
@@ -28,6 +38,10 @@ export interface BaseDashboardPanelProps extends BasePanelProps {
   titleEditable?: boolean
   /** Optional badge to display before the title (e.g., "A", "B") */
   badge?: string | null
+  /** Callback when panel is deleted (moved to trash) */
+  onDelete?: () => void
+  /** Custom menu items to add to the dropdown */
+  customMenuItems?: CustomMenuItem[]
 }
 
 export function BaseDashboardPanel({
@@ -44,10 +58,14 @@ export function BaseDashboardPanel({
   onTitleChange,
   titleEditable = false,
   badge,
+  onDelete,
+  customMenuItems,
 }: BaseDashboardPanelProps) {
   const [isEditingTitle, setIsEditingTitle] = useState(false)
   const [editedTitle, setEditedTitle] = useState(panel.title || panelDef.name)
+  const [showMenu, setShowMenu] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   // Update local state when panel title changes externally
   useEffect(() => {
@@ -61,6 +79,20 @@ export function BaseDashboardPanel({
       inputRef.current.select()
     }
   }, [isEditingTitle])
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!showMenu) return
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setShowMenu(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showMenu])
 
   const handleStartEdit = useCallback((e: React.MouseEvent) => {
     e.stopPropagation() // Prevent drag
@@ -231,25 +263,157 @@ export function BaseDashboardPanel({
         <div className="flex items-center gap-1">
           {editButton}
           {headerActions}
-          {showCloseButton && onClose && (
-            <button
-              onClick={onClose}
-              aria-label={`Close ${panelDef.name} panel`}
-              style={{
-                width: 24,
-                height: 24,
-                background: 'transparent',
-                border: 'none',
-                borderRadius: 4,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                color: '#5c6070',
-              }}
-            >
-              <X size={14} />
-            </button>
+          {/* Menu button with dropdown */}
+          {(onClose || onDelete || (customMenuItems && customMenuItems.length > 0)) && (
+            <div ref={menuRef} className="relative">
+              <button
+                onClick={() => setShowMenu(prev => !prev)}
+                onMouseDown={(e) => e.stopPropagation()}
+                aria-label="Panel options"
+                style={{
+                  width: 24,
+                  height: 24,
+                  background: showMenu ? 'rgba(255, 255, 255, 0.1)' : 'transparent',
+                  border: 'none',
+                  borderRadius: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  color: showMenu ? '#f0f0f0' : '#5c6070',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <MoreVertical size={14} />
+              </button>
+
+              {/* Dropdown menu */}
+              {showMenu && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 4,
+                    background: '#252830',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                    minWidth: 140,
+                    zIndex: 100,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Custom menu items */}
+                  {customMenuItems?.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setShowMenu(false)
+                        item.onClick()
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: 'transparent',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        cursor: 'pointer',
+                        color: item.color || '#e0e0e0',
+                        fontSize: 13,
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      {item.icon}
+                      {item.label}
+                      {item.badge !== undefined && (
+                        <span
+                          style={{
+                            marginLeft: 'auto',
+                            fontSize: 10,
+                            fontWeight: 600,
+                            background: item.color ? `${item.color}20` : 'rgba(255, 255, 255, 0.1)',
+                            color: item.color || '#8b8fa3',
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                          }}
+                        >
+                          {item.badge}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+
+                  {/* Divider if there are custom items and also hide/delete */}
+                  {customMenuItems && customMenuItems.length > 0 && (onClose || onDelete) && (
+                    <div style={{ height: 1, background: 'rgba(255, 255, 255, 0.08)', margin: '4px 0' }} />
+                  )}
+
+                  {/* Hide option (current close behavior) */}
+                  {showCloseButton && onClose && (
+                    <button
+                      onClick={() => {
+                        setShowMenu(false)
+                        onClose()
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: 'transparent',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        cursor: 'pointer',
+                        color: '#e0e0e0',
+                        fontSize: 13,
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <EyeOff size={14} style={{ color: '#8b8fa3' }} />
+                      Hide
+                    </button>
+                  )}
+
+                  {/* Delete option (move to trash) */}
+                  {onDelete && (
+                    <button
+                      onClick={() => {
+                        setShowMenu(false)
+                        onDelete()
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        background: 'transparent',
+                        border: 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        cursor: 'pointer',
+                        color: '#ef4444',
+                        fontSize: 13,
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

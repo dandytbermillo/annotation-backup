@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { ChevronRight, Link2, RefreshCw, Search, Eye, ExternalLink } from 'lucide-react'
+import { ChevronRight, Link2, RefreshCw, Search, Eye, ExternalLink, Trash2, RotateCcw } from 'lucide-react'
 import { BaseDashboardPanel } from './BaseDashboardPanel'
 import { panelTypeRegistry } from '@/lib/dashboard/panel-registry'
 import type { BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
@@ -41,6 +41,14 @@ interface QuickLinksPanel {
   isVisible: boolean // Whether the panel is visible on dashboard (false = hidden/closed)
 }
 
+interface TrashedQuickLinksPanel {
+  id: string
+  title: string
+  badge: string | null
+  deletedAt: string // ISO date string
+  linkCount: number
+}
+
 interface PreviewPopup {
   panelId: string
   panelTitle: string
@@ -57,7 +65,7 @@ interface LinkTooltip {
   workspaceName: string | null
 }
 
-export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, isActive }: BasePanelProps) {
+export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, onDelete, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.category_navigator
   const config = panel.config as CategoryNavigatorConfig
 
@@ -69,6 +77,11 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
   )
   const [searchQuery, setSearchQuery] = useState('')
   const loadDataCallCountRef = useRef(0)
+
+  // Trash section state
+  const [trashedPanels, setTrashedPanels] = useState<TrashedQuickLinksPanel[]>([])
+  const [isTrashExpanded, setIsTrashExpanded] = useState(false)
+  const [restoringPanelId, setRestoringPanelId] = useState<string | null>(null)
 
   // Preview popup state
   const [previewPopup, setPreviewPopup] = useState<PreviewPopup | null>(null)
@@ -216,6 +229,37 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
       })
 
       setQuickLinksPanels(linksNotePanels)
+
+      // Also fetch deleted panels for the Trash section
+      try {
+        const deletedResponse = await fetch(`/api/dashboard/panels?workspaceId=${workspaceId}&onlyDeleted=true`)
+        if (deletedResponse.ok) {
+          const deletedData = await deletedResponse.json()
+          const deletedPanels = deletedData.panels || []
+
+          // Filter to only links_note panels and map to trash panel format
+          const trashedLinksPanels: TrashedQuickLinksPanel[] = deletedPanels
+            .filter((p: any) => p.panelType === 'links_note')
+            .map((p: any) => ({
+              id: p.id,
+              title: p.title || 'Quick Links',
+              badge: p.badge || null,
+              deletedAt: p.deletedAt,
+              linkCount: parseLinksFromContent(p.config?.content || '').length,
+            }))
+
+          debugLog({
+            component: 'CategoryNavigatorPanel',
+            action: 'trash_panels_loaded',
+            metadata: { trashedCount: trashedLinksPanels.length, callCount },
+          })
+
+          setTrashedPanels(trashedLinksPanels)
+        }
+      } catch (trashErr) {
+        console.error('[CategoryNavigatorPanel] Failed to load trashed panels:', trashErr)
+        // Don't set error - just continue without trash section
+      }
     } catch (err) {
       console.error('[CategoryNavigatorPanel] Failed to load data:', err)
       debugLog({
@@ -486,6 +530,59 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
     window.dispatchEvent(event)
   }, [])
 
+  // Restore a trashed panel
+  const handleRestorePanel = useCallback(async (panelId: string) => {
+    setRestoringPanelId(panelId)
+    try {
+      const response = await fetch(`/api/dashboard/panels/${panelId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restore: true }),
+      })
+
+      if (!response.ok) {
+        console.error('[CategoryNavigatorPanel] Failed to restore panel')
+        return
+      }
+
+      debugLog({
+        component: 'CategoryNavigatorPanel',
+        action: 'panel_restored',
+        metadata: { panelId },
+      })
+
+      // Remove from trash list
+      setTrashedPanels(prev => prev.filter(p => p.id !== panelId))
+
+      // Refresh the main panel list and dashboard
+      loadData(true)
+      window.dispatchEvent(new CustomEvent('refresh-dashboard-panels'))
+    } catch (error) {
+      console.error('[CategoryNavigatorPanel] Failed to restore panel:', error)
+    } finally {
+      setRestoringPanelId(null)
+    }
+  }, [loadData])
+
+  // Format relative time for trash (e.g., "2 days ago")
+  const formatDeletedTime = useCallback((dateString: string): string => {
+    try {
+      const date = new Date(dateString)
+      const now = new Date()
+      const diffMs = now.getTime() - date.getTime()
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+      if (diffDays === 0) return 'Today'
+      if (diffDays === 1) return 'Yesterday'
+      if (diffDays < 7) return `${diffDays} days ago`
+      if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+
+      return date.toLocaleDateString()
+    } catch {
+      return ''
+    }
+  }, [])
+
   // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
@@ -690,6 +787,7 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onDelete={onDelete}
       onTitleChange={onTitleChange}
       isActive={isActive}
       contentClassName="p-0"
@@ -755,7 +853,7 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
               Try again
             </button>
           </div>
-        ) : filteredPanels.length === 0 ? (
+        ) : filteredPanels.length === 0 && trashedPanels.length === 0 ? (
           <div
             className="flex flex-col items-center justify-center text-center min-h-[100px]"
             style={{ color: '#8b8fa3' }}
@@ -770,20 +868,146 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
           </div>
         ) : (
           <div className="space-y-1">
-            {/* Summary */}
-            <div
-              style={{
-                padding: '4px 8px',
-                fontSize: 11,
-                color: '#5c6070',
-                marginBottom: 4,
-              }}
-            >
-              {totalLinks} link{totalLinks !== 1 ? 's' : ''} in {filteredPanels.length} panel{filteredPanels.length !== 1 ? 's' : ''}
-            </div>
+            {/* Summary - only show when there are active panels */}
+            {filteredPanels.length > 0 && (
+              <div
+                style={{
+                  padding: '4px 8px',
+                  fontSize: 11,
+                  color: '#5c6070',
+                  marginBottom: 4,
+                }}
+              >
+                {totalLinks} link{totalLinks !== 1 ? 's' : ''} in {filteredPanels.length} panel{filteredPanels.length !== 1 ? 's' : ''}
+              </div>
+            )}
 
             {/* Render Quick Links panels */}
             {filteredPanels.map(panel => renderPanel(panel))}
+
+            {/* Trash section - collapsible */}
+            {trashedPanels.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <button
+                  onClick={() => setIsTrashExpanded(!isTrashExpanded)}
+                  className="flex items-center gap-2 w-full"
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '8px',
+                    borderRadius: 6,
+                  }}
+                >
+                  <ChevronRight
+                    size={14}
+                    className={cn('shrink-0 transition-transform', isTrashExpanded && 'rotate-90')}
+                    style={{ color: '#5c6070' }}
+                  />
+                  <Trash2 size={14} style={{ color: '#ef4444', opacity: 0.7 }} />
+                  <span style={{ fontSize: 12, fontWeight: 500, color: '#8b8fa3' }}>
+                    Trash
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: '#5c6070',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      marginLeft: 'auto',
+                    }}
+                  >
+                    {trashedPanels.length}
+                  </span>
+                </button>
+
+                {isTrashExpanded && (
+                  <div style={{ marginLeft: 8 }}>
+                    {trashedPanels.map((trashedPanel) => (
+                      <div
+                        key={trashedPanel.id}
+                        className="flex items-center gap-2 group"
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          marginBottom: 2,
+                          background: 'rgba(239, 68, 68, 0.05)',
+                        }}
+                      >
+                        {/* Badge */}
+                        {trashedPanel.badge && (
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: 16,
+                              height: 16,
+                              background: 'rgba(239, 68, 68, 0.2)',
+                              color: '#f87171',
+                              fontSize: 9,
+                              fontWeight: 700,
+                              borderRadius: 3,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {trashedPanel.badge}
+                          </span>
+                        )}
+                        <Link2 size={12} style={{ color: '#f87171', opacity: 0.7, flexShrink: 0 }} />
+                        <div className="flex-1 min-w-0">
+                          <span
+                            className="truncate block"
+                            style={{ fontSize: 12, color: '#8b8fa3' }}
+                          >
+                            {trashedPanel.title}
+                          </span>
+                          <span style={{ fontSize: 10, color: '#5c6070' }}>
+                            {trashedPanel.linkCount} link{trashedPanel.linkCount !== 1 ? 's' : ''} • {formatDeletedTime(trashedPanel.deletedAt)}
+                          </span>
+                        </div>
+                        {/* Restore button */}
+                        <button
+                          onClick={() => handleRestorePanel(trashedPanel.id)}
+                          disabled={restoringPanelId === trashedPanel.id}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity"
+                          style={{
+                            background: 'rgba(34, 197, 94, 0.15)',
+                            border: 'none',
+                            borderRadius: 4,
+                            padding: 4,
+                            cursor: restoringPanelId === trashedPanel.id ? 'wait' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                          title="Restore panel"
+                        >
+                          <RotateCcw
+                            size={12}
+                            style={{
+                              color: '#22c55e',
+                              animation: restoringPanelId === trashedPanel.id ? 'spin 1s linear infinite' : 'none',
+                            }}
+                          />
+                        </button>
+                      </div>
+                    ))}
+                    <p
+                      style={{
+                        fontSize: 10,
+                        color: '#5c6070',
+                        padding: '8px 8px 4px',
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      Items auto-delete after 30 days
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

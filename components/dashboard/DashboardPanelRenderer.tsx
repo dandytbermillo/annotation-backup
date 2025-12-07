@@ -25,6 +25,7 @@ interface DashboardPanelRendererProps {
   onConfigChange?: (config: Partial<PanelConfig>) => void
   onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
+  onDelete?: () => void
   isActive?: boolean
 }
 
@@ -34,6 +35,7 @@ export function DashboardPanelRenderer({
   onConfigChange,
   onTitleChange,
   onNavigate,
+  onDelete,
   isActive,
 }: DashboardPanelRendererProps) {
   if (!isValidPanelType(panel.panelType)) {
@@ -51,6 +53,7 @@ export function DashboardPanelRenderer({
     onConfigChange,
     onTitleChange,
     onNavigate,
+    onDelete,
     isActive,
   }
 

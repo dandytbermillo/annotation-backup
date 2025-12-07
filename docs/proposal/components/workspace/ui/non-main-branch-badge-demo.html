@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Branch Badge Demo</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #090b10;
+      color: white;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #canvas {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px),
+        linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 80px 80px;
+    }
+    .panel {
+      width: 320px;
+      min-height: 180px;
+      background: #131823;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 16px;
+      position: absolute;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+      padding: 16px;
+      cursor: grab;
+      transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+    }
+    .panel:active { cursor: grabbing; }
+    .panel.dragging {
+      box-shadow: 0 18px 40px rgba(99,102,241,0.35);
+      border-color: rgba(99,102,241,0.8);
+      transform: scale(1.01);
+    }
+    .panel.resizing {
+      box-shadow: 0 18px 40px rgba(99,102,241,0.35);
+      border-color: rgba(99,102,241,0.8);
+      cursor: nwse-resize;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: -10px -10px 12px;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.02);
+      border-radius: 12px;
+    }
+
+    .panel-title {
+      font-size: 15px;
+      color: rgba(255,255,255,0.85);
+      transition: color 0.15s;
+    }
+    .panel:hover .panel-title {
+      color: rgba(255,255,255,1);
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .panel:hover .panel-actions { opacity: 1; }
+
+    .panel-action {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: transparent;
+      color: rgba(255,255,255,0.6);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .panel-action:hover {
+      color: white;
+      border-color: rgba(255,255,255,0.4);
+    }
+
+    .panel p {
+      margin: 0 0 6px 0;
+      color: rgba(255,255,255,0.75);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .branch-badge-container {
+      position: absolute;
+      top: -26px;
+      left: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .branch-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(99,102,241,0.9);
+      padding: 2px 0;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+    }
+    .branch-badge:hover {
+      color: #ffffff;
+    }
+    .branch-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      position: relative;
+    }
+    .branch-dot::after {
+      content: "";
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid rgba(99,102,241,0.4);
+      top: -3px;
+      left: -3px;
+      animation: pulse 2s infinite;
+    }
+    .branch-badge.selected {
+      color: white;
+      text-shadow: 0 0 10px rgba(99,102,241,0.4);
+    }
+
+    .branch-badge.highlighted {
+      color: #fdfdfd;
+}
+
+.panel.ancestor-highlight {
+  border-color: rgba(255,255,255,0.7);
+  box-shadow: 0 12px 36px rgba(255,255,255,0.15);
+}
+    .branch-badge.selected .branch-dot::after {
+      border-color: rgba(255,255,255,0.6);
+    }
+    .branch-meta {
+      font-size: 11px;
+      color: rgba(255,255,255,0.6);
+      margin-top: 4px;
+    }
+
+    .panel-content {
+      padding: 12px 0 4px;
+      flex: 1;
+      overflow-y: auto;
+      max-height: 380px;
+    }
+
+    .resize-handle {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      bottom: 4px;
+      right: 4px;
+      border-radius: 4px;
+      background: rgba(99,102,241,0.25);
+      border: 1px solid rgba(99,102,241,0.5);
+      cursor: nwse-resize;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .resize-handle:hover {
+      background: rgba(99,102,241,0.45);
+      border-color: rgba(99,102,241,0.8);
+    }
+
+    .connection {
+      position: absolute;
+      pointer-events: none;
+      stroke: rgba(255,255,255,0.25);
+      stroke-width: 2;
+      fill: none;
+      transition: stroke 0.2s, stroke-width 0.2s;
+    }
+    .connection.active {
+      stroke: rgba(99,102,241,0.9);
+      stroke-width: 3;
+      filter: drop-shadow(0 0 6px rgba(99,102,241,0.6));
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.9); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 1; }
+      100% { transform: scale(0.9); opacity: 0.8; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas">
+    <svg id="connection-layer" width="100%" height="100%"></svg>
+    <!-- Panels will be inserted via script -->
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const connectionLayer = document.getElementById("connection-layer");
+
+    const panels = [
+      {
+        id: "main",
+        title: "Main Note",
+        x: 320,
+        y: 190,
+        content: `
+          <p>This is the primary note. Non-main panels reference this note as their parent.</p>
+          <p>When the connection line is hidden, the badge on each branch makes the relationship obvious.</p>
+        `
+      },
+      {
+        id: "branch-1",
+        title: "Research Summary (Branch)",
+        branchOf: "Main Note",
+        branchMeta: "Linked field notes",
+        x: 760,
+        y: 80,
+        content: `
+          <p>Key insights from the interviews.</p>
+          <ul style="line-height:1.6;color:rgba(255,255,255,0.75);font-size:14px;padding-left:18px;margin:6px 0 0;">
+            <li>People struggle to track context across workspaces.</li>
+            <li>They want a consistent way to jump back to the overview.</li>
+          </ul>
+        `
+      },
+      {
+        id: "branch-2",
+        title: "Dashboard TODOs (Branch)",
+        branchOf: "Main Note",
+        branchMeta: "Planning list",
+        x: 760,
+        y: 320,
+        content: `
+          <p>- Add branch badges to non-main panels</p>
+          <p>- Keep connection lines visible when possible</p>
+          <p>- Consider breadcrumb or hover highlight</p>
+        `
+      },
+      {
+        id: "branch-2-child",
+        title: "Checklist Details",
+        branchOf: "Dashboard TODOs (Branch)",
+        branchMeta: "Child of Dashboard TODOs",
+        ancestors: ["Main Note", "Dashboard TODOs (Branch)"],
+        x: 1120,
+        y: 360,
+        content: `
+          <p>Nested child branch example</p>
+          <p>- Item 1</p>
+          <p>- Item 2</p>
+        `
+      }
+    ];
+
+    let activeBranch = null;
+    const MIN_PANEL_WIDTH = 220;
+    const MIN_PANEL_HEIGHT = 140;
+
+    // Render panels
+    panels.forEach(panel => {
+      const el = document.createElement("div");
+      el.className = "panel";
+      el.style.left = panel.x + "px";
+      el.style.top = panel.y + "px";
+      el.dataset.id = panel.id;
+      el.dataset.title = panel.title;
+      const lineageNames = panel.ancestors
+        ? [...panel.ancestors]
+        : panel.branchOf
+        ? [panel.branchOf]
+        : [];
+      el.dataset.lineage = lineageNames.join("|");
+      panel.width = panel.width || 320;
+      panel.height = panel.height || 220;
+      el.style.width = panel.width + "px";
+      el.style.height = panel.height + "px";
+
+      const directParent = panel.ancestors
+        ? panel.ancestors[panel.ancestors.length - 1]
+        : panel.branchOf || "";
+
+      const fullLineage = panel.ancestors
+        ? panel.ancestors.join(" › ")
+        : panel.branchOf || "";
+
+      const badgeMarkup = directParent
+        ? `
+          <div class="branch-badge" data-parent="${directParent}" title="Branch of ${fullLineage}">
+            <span class="branch-dot"></span>
+            Branch of <strong>${directParent}</strong>
+          </div>
+        `
+        : "";
+
+      el.innerHTML = `
+        ${badgeMarkup ? `
+          <div class="branch-badge-container">${badgeMarkup}</div>
+        ` : ""}
+        ${panel.branchMeta ? `<div class="branch-meta">${panel.branchMeta}</div>` : ""}
+        <div class="panel-header">
+          <div class="panel-title">${panel.title}</div>
+          <div class="panel-actions">
+            <button class="panel-action" title="More">⋯</button>
+          </div>
+        </div>
+        <div class="panel-content">
+          ${panel.content}
+        </div>
+        <div class="resize-handle"></div>
+      `;
+
+      // Add drag behavior
+      let isDragging = false;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      const onMouseDown = e => {
+        if (e.target.closest('.branch-badge')) {
+          e.preventDefault();
+          return;
+        }
+        isDragging = true;
+        offsetX = e.clientX - el.offsetLeft;
+        offsetY = e.clientY - el.offsetTop;
+        el.classList.add("dragging");
+      };
+      const onMouseMove = e => {
+        if (!isDragging || isResizing) return;
+        const x = e.clientX - offsetX;
+        const y = e.clientY - offsetY;
+        el.style.left = x + "px";
+        el.style.top = y + "px";
+        panel.x = x;
+        panel.y = y;
+        drawConnections();
+      };
+      const onMouseUp = () => {
+        if (!isDragging) return;
+        isDragging = false;
+        el.classList.remove("dragging");
+      };
+
+      el.addEventListener("mousedown", onMouseDown);
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+
+      // Resize behavior
+      const resizeHandle = el.querySelector(".resize-handle");
+      let isResizing = false;
+      let resizeStartX = 0;
+      let resizeStartY = 0;
+      let startWidth = panel.width;
+      let startHeight = panel.height;
+
+      const onResizeMouseDown = e => {
+        e.stopPropagation();
+        isResizing = true;
+        resizeStartX = e.clientX;
+        resizeStartY = e.clientY;
+        startWidth = panel.width;
+        startHeight = panel.height;
+        el.classList.add("resizing");
+        document.addEventListener("mousemove", onResizeMouseMove);
+        document.addEventListener("mouseup", onResizeMouseUp);
+      };
+
+      const onResizeMouseMove = e => {
+        if (!isResizing) return;
+        const deltaX = e.clientX - resizeStartX;
+        const deltaY = e.clientY - resizeStartY;
+        const newWidth = Math.max(MIN_PANEL_WIDTH, startWidth + deltaX);
+        const newHeight = Math.max(MIN_PANEL_HEIGHT, startHeight + deltaY);
+        panel.width = newWidth;
+        panel.height = newHeight;
+        el.style.width = newWidth + "px";
+        el.style.height = newHeight + "px";
+        drawConnections();
+      };
+
+      const onResizeMouseUp = () => {
+        if (!isResizing) return;
+        isResizing = false;
+        el.classList.remove("resizing");
+        document.removeEventListener("mousemove", onResizeMouseMove);
+        document.removeEventListener("mouseup", onResizeMouseUp);
+      };
+
+      resizeHandle.addEventListener("mousedown", onResizeMouseDown);
+
+      // Badge click
+      el.querySelectorAll(".branch-badge").forEach(badge => {
+        badge.addEventListener("click", () => {
+          activeBranch = activeBranch === panel.id ? null : panel.id;
+          document.querySelectorAll(".branch-badge").forEach(b => b.classList.remove("selected"));
+          if (activeBranch === panel.id) {
+            badge.classList.add("selected");
+          }
+          drawConnections();
+        });
+
+        badge.addEventListener("mouseenter", () => {
+          highlightAncestorBadges(lineageNames);
+        });
+
+        badge.addEventListener("mouseleave", () => {
+          clearAncestorHighlights();
+        });
+      });
+
+      canvas.appendChild(el);
+    });
+
+    function drawConnections() {
+      connectionLayer.innerHTML = "";
+      const main = panels.find(p => p.id === "main");
+      if (!main) return;
+
+      panels
+        .filter(p => p.branchOf)
+        .forEach(branch => {
+          const isActive = activeBranch === branch.id;
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("class", "connection" + (isActive ? " active" : ""));
+
+          const getPanelByTitle = title => panels.find(p => p.title === title);
+          const parent = branch.ancestors
+            ? getPanelByTitle(branch.ancestors[branch.ancestors.length - 1])
+            : branch.branchOf === "Main Note"
+            ? main
+            : panels.find(p => p.title === branch.branchOf);
+
+          const source = parent || main;
+
+          const sourcePos = {
+            x: source.x + (source.width || 320) - 20,
+            y: source.y + (source.height || 220) / 2
+          };
+          const branchPos = {
+            x: branch.x,
+            y: branch.y + (branch.height || 220) / 2
+          };
+
+          const controlOffset = 120;
+          const d = `M ${sourcePos.x} ${sourcePos.y}
+                     C ${sourcePos.x + controlOffset} ${sourcePos.y},
+                       ${branchPos.x - controlOffset} ${branchPos.y},
+                       ${branchPos.x} ${branchPos.y}`;
+
+          path.setAttribute("d", d);
+          connectionLayer.appendChild(path);
+        });
+    }
+
+    drawConnections();
+
+    function highlightAncestorBadges(names) {
+      clearAncestorHighlights();
+      if (!names || names.length === 0) return;
+      const relevant = names.slice(-2); // direct parent + grandparent
+      relevant.forEach(name => {
+        const panelEl = document.querySelector(`.panel[data-title="${name}"]`);
+        if (!panelEl) return;
+        panelEl.classList.add("ancestor-highlight");
+        const badge = panelEl.querySelector(".branch-badge");
+        if (badge) {
+          badge.classList.add("highlighted");
+        }
+      });
+    }
+
+    function clearAncestorHighlights() {
+      document.querySelectorAll(".branch-badge.highlighted").forEach(badge => {
+        badge.classList.remove("highlighted");
+      });
+      document.querySelectorAll(".panel.ancestor-highlight").forEach(panel => {
+        panel.classList.remove("ancestor-highlight");
+      });
+    }
+  </script>
+</body>
+</html>

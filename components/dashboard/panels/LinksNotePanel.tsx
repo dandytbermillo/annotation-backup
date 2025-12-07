@@ -16,9 +16,9 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import { Link2, Search, X, Plus, Loader2, ExternalLink } from 'lucide-react'
-import { BaseDashboardPanel } from './BaseDashboardPanel'
-import { getPanelType, type BasePanelProps } from '@/lib/dashboard/panel-registry'
+import { Link2, Search, X, Plus, Loader2, ExternalLink, Trash2, RotateCcw } from 'lucide-react'
+import { BaseDashboardPanel, type CustomMenuItem } from './BaseDashboardPanel'
+import { getPanelType, type BasePanelProps, type DeletedLink, type PanelConfig } from '@/lib/dashboard/panel-registry'
 import { requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
 import {
   setActiveEntryContext,
@@ -36,12 +36,53 @@ interface WorkspaceOption {
   isDefault?: boolean
 }
 
+// Interface for parsed link data from content
+interface ParsedLink {
+  text: string
+  workspaceId: string
+  workspaceName: string
+  entryId: string
+  entryName: string
+  dashboardId?: string
+}
+
+// Parse links from HTML content
+function parseLinksFromContent(html: string): ParsedLink[] {
+  if (!html) return []
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const links = doc.querySelectorAll('.workspace-link')
+
+  return Array.from(links).map(link => ({
+    text: link.textContent || '',
+    workspaceId: link.getAttribute('data-workspace-id') || '',
+    workspaceName: link.getAttribute('data-workspace') || '',
+    entryId: link.getAttribute('data-entry-id') || '',
+    entryName: link.getAttribute('data-entry-name') || '',
+    dashboardId: link.getAttribute('data-dashboard-id') || undefined,
+  }))
+}
+
+// Auto-purge links older than 30 days
+const PURGE_DAYS = 30
+function purgeOldDeletedLinks(deletedLinks: DeletedLink[]): DeletedLink[] {
+  const cutoffDate = new Date()
+  cutoffDate.setDate(cutoffDate.getDate() - PURGE_DAYS)
+
+  return deletedLinks.filter(link => {
+    const deletedAt = new Date(link.deletedAt)
+    return deletedAt > cutoffDate
+  })
+}
+
 export function LinksNotePanel({
   panel,
   onClose,
   onConfigChange,
   onTitleChange,
   onNavigate,
+  onDelete,
   isActive,
 }: BasePanelProps) {
   const panelDef = getPanelType('links_note')
@@ -59,6 +100,14 @@ export function LinksNotePanel({
   const [filterByEntry, setFilterByEntry] = useState(true) // Default to filtering by current entry
   const searchInputRef = useRef<HTMLInputElement>(null)
 
+  // Trash section state
+  const [showTrashPopover, setShowTrashPopover] = useState(false)
+  const previousLinksRef = useRef<ParsedLink[]>([])
+
+  // Get deleted links from config (with auto-purge)
+  const config = panel.config as PanelConfig & { deletedLinks?: DeletedLink[] }
+  const deletedLinks = config.deletedLinks || []
+
   // Hover tooltip state for workspace links
   const [hoveredLink, setHoveredLink] = useState<{
     element: HTMLElement
@@ -70,10 +119,20 @@ export function LinksNotePanel({
   } | null>(null)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Load initial content
+  // Load initial content and initialize link tracking
   useEffect(() => {
     if (contentRef.current && panel.config.content) {
       contentRef.current.innerHTML = panel.config.content
+      // Initialize previous links for deletion tracking
+      previousLinksRef.current = parseLinksFromContent(panel.config.content)
+    }
+
+    // Auto-purge old deleted links on load
+    if (deletedLinks.length > 0) {
+      const purged = purgeOldDeletedLinks(deletedLinks)
+      if (purged.length !== deletedLinks.length) {
+        onConfigChange?.({ deletedLinks: purged })
+      }
     }
   }, [])
 
@@ -585,7 +644,7 @@ export function LinksNotePanel({
     }
   }, [selectedRange, selectedText, onConfigChange, onNavigate])
 
-  // Save content on blur
+  // Save content on blur and track deleted links
   const handleBlur = useCallback((e: React.FocusEvent) => {
     // Don't save if focus moved to picker
     if (e.relatedTarget && (e.relatedTarget as HTMLElement).closest('.workspace-picker')) {
@@ -594,10 +653,50 @@ export function LinksNotePanel({
     if (contentRef.current) {
       const newContent = contentRef.current.innerHTML
       if (newContent !== panel.config.content) {
-        onConfigChange?.({ content: newContent })
+        // Parse current links to detect deletions
+        const currentLinks = parseLinksFromContent(newContent)
+        const previousLinks = previousLinksRef.current
+
+        // Find deleted links (in previous but not in current)
+        const deletedInThisEdit: DeletedLink[] = []
+        for (const prevLink of previousLinks) {
+          // A link is considered deleted if no current link has the same workspaceId
+          const stillExists = currentLinks.some(
+            curr => curr.workspaceId && curr.workspaceId === prevLink.workspaceId
+          )
+          if (!stillExists && prevLink.workspaceId) {
+            deletedInThisEdit.push({
+              text: prevLink.text,
+              workspaceId: prevLink.workspaceId,
+              workspaceName: prevLink.workspaceName,
+              entryId: prevLink.entryId,
+              entryName: prevLink.entryName,
+              dashboardId: prevLink.dashboardId,
+              deletedAt: new Date().toISOString(),
+            })
+          }
+        }
+
+        // Update previousLinksRef for next comparison
+        previousLinksRef.current = currentLinks
+
+        // Merge newly deleted links with existing deleted links
+        if (deletedInThisEdit.length > 0) {
+          const existingDeleted = deletedLinks
+          // Avoid duplicates (same workspaceId)
+          const merged = [...existingDeleted]
+          for (const newDel of deletedInThisEdit) {
+            if (!merged.some(d => d.workspaceId === newDel.workspaceId)) {
+              merged.push(newDel)
+            }
+          }
+          onConfigChange?.({ content: newContent, deletedLinks: merged })
+        } else {
+          onConfigChange?.({ content: newContent })
+        }
       }
     }
-  }, [panel.config.content, onConfigChange])
+  }, [panel.config.content, deletedLinks, onConfigChange])
 
   // Close picker
   const closePicker = useCallback(() => {
@@ -606,6 +705,60 @@ export function LinksNotePanel({
     setSearchQuery('')
     setSelectedText('')
     setSelectedRange(null)
+  }, [])
+
+  // Restore a deleted link
+  const handleRestoreLink = useCallback((link: DeletedLink) => {
+    if (!contentRef.current) return
+
+    // Create the link element to restore
+    const linkEl = document.createElement('span')
+    linkEl.className = 'workspace-link'
+    linkEl.setAttribute('data-workspace', link.workspaceName)
+    linkEl.setAttribute('data-workspace-id', link.workspaceId)
+    linkEl.setAttribute('data-entry-id', link.entryId)
+    linkEl.setAttribute('data-entry-name', link.entryName)
+    if (link.dashboardId) {
+      linkEl.setAttribute('data-dashboard-id', link.dashboardId)
+    }
+    linkEl.textContent = link.text
+
+    // Append a space and the restored link at the end of content
+    const space = document.createTextNode(' ')
+    contentRef.current.appendChild(space)
+    contentRef.current.appendChild(linkEl)
+
+    // Update previousLinksRef
+    const newContent = contentRef.current.innerHTML
+    previousLinksRef.current = parseLinksFromContent(newContent)
+
+    // Remove from deleted links
+    const updatedDeleted = deletedLinks.filter(d => d.workspaceId !== link.workspaceId)
+
+    // Save changes
+    onConfigChange?.({ content: newContent, deletedLinks: updatedDeleted })
+  }, [deletedLinks, onConfigChange])
+
+  // Permanently delete a link from trash
+  const handlePermanentDelete = useCallback((link: DeletedLink) => {
+    const updatedDeleted = deletedLinks.filter(d => d.workspaceId !== link.workspaceId)
+    onConfigChange?.({ deletedLinks: updatedDeleted })
+  }, [deletedLinks, onConfigChange])
+
+  // Format relative time for deleted links
+  const formatDeletedTime = useCallback((dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMins / 60)
+    const diffDays = Math.floor(diffHours / 24)
+
+    if (diffMins < 1) return 'Just now'
+    if (diffMins < 60) return `${diffMins}m ago`
+    if (diffHours < 24) return `${diffHours}h ago`
+    if (diffDays < 30) return `${diffDays}d ago`
+    return date.toLocaleDateString()
   }, [])
 
   // Handle keyboard events inside workspace links (make them behave as atomic units)
@@ -768,28 +921,47 @@ export function LinksNotePanel({
 
   if (!panelDef) return null
 
+  // Build custom menu items for the dropdown
+  const customMenuItems: CustomMenuItem[] = deletedLinks.length > 0 ? [
+    {
+      id: 'view-trash',
+      label: 'View Trash',
+      icon: <Trash2 size={14} />,
+      onClick: () => setShowTrashPopover(true),
+      color: '#ef4444',
+      badge: deletedLinks.length,
+    },
+  ] : []
+
   return (
     <BaseDashboardPanel
       panel={panel}
       panelDef={panelDef}
       onClose={onClose}
+      onDelete={onDelete}
       onTitleChange={onTitleChange}
       titleEditable={true}
       isActive={isActive}
       badge={panel.badge}
+      customMenuItems={customMenuItems}
     >
       <style>{`
         .links-note-container {
           position: relative;
           height: 100%;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
         }
         .links-note-editor {
+          flex: 1;
           min-height: 80px;
           outline: none;
           font-size: 14px;
           line-height: 1.7;
           color: #e0e0e0;
           padding-right: 4px;
+          overflow-y: auto;
         }
         .links-note-editor:empty:before {
           content: "Type here... Select text and press ⌘K to link to a workspace";
@@ -1028,6 +1200,173 @@ export function LinksNotePanel({
           letter-spacing: 0.5px;
           padding: 8px 10px 6px;
         }
+        /* Fixed trash icon button */
+        .links-trash-fab {
+          position: absolute;
+          bottom: 8px;
+          right: 8px;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(239, 68, 68, 0.15);
+          border: 1px solid rgba(239, 68, 68, 0.25);
+          border-radius: 8px;
+          cursor: pointer;
+          color: #ef4444;
+          transition: all 0.2s;
+          z-index: 5;
+        }
+        .links-trash-fab:hover {
+          background: rgba(239, 68, 68, 0.25);
+          transform: scale(1.05);
+        }
+        .links-trash-fab-badge {
+          position: absolute;
+          top: -4px;
+          right: -4px;
+          min-width: 16px;
+          height: 16px;
+          padding: 0 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #ef4444;
+          border-radius: 8px;
+          font-size: 10px;
+          font-weight: 600;
+          color: white;
+        }
+        /* Trash popover panel */
+        .links-trash-popover {
+          position: absolute;
+          bottom: 48px;
+          right: 8px;
+          width: 220px;
+          max-height: 240px;
+          background: #1e222a;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 10px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+          z-index: 15;
+          overflow: hidden;
+          animation: trashPopoverIn 0.15s ease-out;
+        }
+        @keyframes trashPopoverIn {
+          from {
+            opacity: 0;
+            transform: translateY(8px) scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        .links-trash-popover-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 10px 12px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .links-trash-popover-title {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #ef4444;
+        }
+        .links-trash-popover-close {
+          width: 20px;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          color: #5c6070;
+          transition: all 0.15s;
+        }
+        .links-trash-popover-close:hover {
+          background: rgba(255, 255, 255, 0.08);
+          color: #f0f0f0;
+        }
+        .links-trash-popover-list {
+          max-height: 180px;
+          overflow-y: auto;
+          padding: 6px;
+        }
+        .links-trash-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 6px;
+          transition: background 0.15s;
+        }
+        .links-trash-item:hover {
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .links-trash-item-text {
+          flex: 1;
+          min-width: 0;
+          font-size: 12px;
+          color: #c0c4d0;
+        }
+        .links-trash-item-text span {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .links-trash-item-time {
+          font-size: 10px;
+          color: #5c6070;
+          white-space: nowrap;
+        }
+        .links-trash-item-actions {
+          display: flex;
+          gap: 2px;
+          opacity: 0;
+          transition: opacity 0.15s;
+        }
+        .links-trash-item:hover .links-trash-item-actions {
+          opacity: 1;
+        }
+        .links-trash-action-btn {
+          width: 22px;
+          height: 22px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          border-radius: 4px;
+          cursor: pointer;
+          color: #5c6070;
+          transition: all 0.15s;
+        }
+        .links-trash-action-btn:hover {
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .links-trash-action-btn.restore:hover {
+          color: #22c55e;
+          background: rgba(34, 197, 94, 0.15);
+        }
+        .links-trash-action-btn.delete:hover {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.15);
+        }
+        .links-trash-empty {
+          padding: 20px;
+          text-align: center;
+          color: #5c6070;
+          font-size: 12px;
+        }
       `}</style>
 
       <div ref={containerRef} className="links-note-container">
@@ -1043,6 +1382,64 @@ export function LinksNotePanel({
           onKeyDown={handleEditorKeyDown}
           onBlur={handleBlur}
         />
+
+        {/* Fixed trash icon - always visible when there are deleted links */}
+        {deletedLinks.length > 0 && (
+          <button
+            className="links-trash-fab"
+            onClick={() => setShowTrashPopover(!showTrashPopover)}
+            title="Deleted links"
+          >
+            <Trash2 size={16} />
+            <span className="links-trash-fab-badge">{deletedLinks.length}</span>
+          </button>
+        )}
+
+        {/* Trash popover panel */}
+        {showTrashPopover && deletedLinks.length > 0 && (
+          <div className="links-trash-popover">
+            <div className="links-trash-popover-header">
+              <div className="links-trash-popover-title">
+                <Trash2 size={14} />
+                <span>Deleted Links</span>
+              </div>
+              <button
+                className="links-trash-popover-close"
+                onClick={() => setShowTrashPopover(false)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="links-trash-popover-list">
+              {deletedLinks.map((link, index) => (
+                <div key={`${link.workspaceId}-${index}`} className="links-trash-item">
+                  <div className="links-trash-item-text">
+                    <span title={link.text}>{link.text}</span>
+                  </div>
+                  <span className="links-trash-item-time">
+                    {formatDeletedTime(link.deletedAt)}
+                  </span>
+                  <div className="links-trash-item-actions">
+                    <button
+                      className="links-trash-action-btn restore"
+                      onClick={() => handleRestoreLink(link)}
+                      title="Restore link"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
+                      className="links-trash-action-btn delete"
+                      onClick={() => handlePermanentDelete(link)}
+                      title="Delete permanently"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Navigation tooltip - appears when hovering a workspace link */}
         {hoveredLink && (

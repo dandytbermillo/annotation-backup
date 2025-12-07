@@ -34,7 +34,7 @@ interface EntryInfo {
   }[]
 }
 
-export function CategoryPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, isActive }: BasePanelProps) {
+export function CategoryPanel({ panel, onClose, onConfigChange, onTitleChange, onNavigate, onDelete, isActive }: BasePanelProps) {
   const panelDef = panelTypeRegistry.category
   const config = panel.config as CategoryConfig
 
@@ -317,6 +317,7 @@ export function CategoryPanel({ panel, onClose, onConfigChange, onTitleChange, o
         icon: categoryIcon,
       }}
       onClose={onClose}
+      onDelete={onDelete}
       onTitleChange={onTitleChange}
       isActive={isActive}
       contentClassName="p-2"

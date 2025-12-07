@@ -33,6 +33,7 @@ export async function GET(
         wp.config,
         wp.badge,
         wp.is_visible,
+        wp.deleted_at,
         wp.created_at,
         wp.updated_at
       FROM workspace_panels wp
@@ -60,6 +61,7 @@ export async function GET(
       config: row.config || {},
       badge: row.badge || null,
       isVisible: row.is_visible,
+      deletedAt: row.deleted_at || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
@@ -133,6 +135,12 @@ export async function PATCH(
       paramIndex++
     }
 
+    // Handle restore action - clears deleted_at and makes panel visible
+    if (body.restore === true) {
+      updates.push(`deleted_at = NULL`)
+      updates.push(`is_visible = true`)
+    }
+
     if (updates.length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     }
@@ -163,6 +171,7 @@ export async function PATCH(
       config: row.config || {},
       badge: row.badge || null,
       isVisible: row.is_visible,
+      deletedAt: row.deleted_at || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }
@@ -179,7 +188,12 @@ export async function PATCH(
 
 /**
  * DELETE /api/dashboard/panels/[panelId]
- * Delete a panel
+ * Soft delete a panel (move to trash) or permanently delete
+ *
+ * Query params:
+ * - permanent=true: Permanently delete (for purging trash)
+ *
+ * Default behavior: Soft delete (set deleted_at = NOW())
  */
 export async function DELETE(
   request: NextRequest,
@@ -192,23 +206,49 @@ export async function DELETE(
     }
 
     const { panelId } = await params
+    const permanent = request.nextUrl.searchParams.get('permanent') === 'true'
 
-    // Verify panel belongs to user's workspace and delete
-    const result = await serverPool.query(
-      `DELETE FROM workspace_panels wp
-       USING note_workspaces nw
-       WHERE wp.workspace_id = nw.id
-         AND wp.id = $1
-         AND nw.user_id = $2
-       RETURNING wp.id`,
-      [panelId, userId]
-    )
+    if (permanent) {
+      // Permanent delete - actually remove from database
+      const result = await serverPool.query(
+        `DELETE FROM workspace_panels wp
+         USING note_workspaces nw
+         WHERE wp.workspace_id = nw.id
+           AND wp.id = $1
+           AND nw.user_id = $2
+         RETURNING wp.id`,
+        [panelId, userId]
+      )
 
-    if (result.rows.length === 0) {
-      return NextResponse.json({ error: 'Panel not found' }, { status: 404 })
+      if (result.rows.length === 0) {
+        return NextResponse.json({ error: 'Panel not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({ success: true, deletedId: panelId, permanent: true })
+    } else {
+      // Soft delete - set deleted_at and hide panel
+      const result = await serverPool.query(
+        `UPDATE workspace_panels wp
+         SET deleted_at = NOW(), is_visible = false, updated_at = NOW()
+         FROM note_workspaces nw
+         WHERE wp.workspace_id = nw.id
+           AND wp.id = $1
+           AND nw.user_id = $2
+         RETURNING wp.id, wp.deleted_at`,
+        [panelId, userId]
+      )
+
+      if (result.rows.length === 0) {
+        return NextResponse.json({ error: 'Panel not found' }, { status: 404 })
+      }
+
+      return NextResponse.json({
+        success: true,
+        deletedId: panelId,
+        permanent: false,
+        deletedAt: result.rows[0].deleted_at
+      })
     }
-
-    return NextResponse.json({ success: true, deletedId: panelId })
   } catch (error) {
     console.error('[dashboard/panels/[panelId]] DELETE Error:', error)
     return NextResponse.json(
