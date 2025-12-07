@@ -23,6 +23,7 @@ import { requestWorkspaceListRefresh } from '@/lib/note-workspaces/state'
 import {
   setActiveEntryContext,
   getActiveEntryContext,
+  subscribeToActiveEntryContext,
   createEntryForWorkspace,
   createWorkspaceForEntry,
 } from '@/lib/entry'
@@ -82,6 +83,7 @@ export function LinksNotePanel({
   onConfigChange,
   onTitleChange,
   onNavigate,
+  onOpenWorkspace,
   onDelete,
   isActive,
 }: BasePanelProps) {
@@ -119,12 +121,32 @@ export function LinksNotePanel({
   } | null>(null)
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Function to update external link classes based on current entry context
+  const updateExternalLinkClasses = useCallback(() => {
+    if (!contentRef.current) return
+
+    const currentEntryId = getActiveEntryContext()
+    const links = contentRef.current.querySelectorAll('.workspace-link')
+
+    links.forEach((link) => {
+      const linkEntryId = link.getAttribute('data-entry-id')
+      // Mark as external if link's entryId exists and differs from current entry
+      if (linkEntryId && currentEntryId && linkEntryId !== currentEntryId) {
+        link.classList.add('external-link')
+      } else {
+        link.classList.remove('external-link')
+      }
+    })
+  }, [])
+
   // Load initial content and initialize link tracking
   useEffect(() => {
     if (contentRef.current && panel.config.content) {
       contentRef.current.innerHTML = panel.config.content
       // Initialize previous links for deletion tracking
       previousLinksRef.current = parseLinksFromContent(panel.config.content)
+      // Update external link classes
+      updateExternalLinkClasses()
     }
 
     // Auto-purge old deleted links on load
@@ -135,6 +157,54 @@ export function LinksNotePanel({
       }
     }
   }, [])
+
+  // Update external link classes when content changes
+  useEffect(() => {
+    updateExternalLinkClasses()
+  }, [panel.config.content, updateExternalLinkClasses])
+
+  // Subscribe to entry context changes to update external link classes
+  useEffect(() => {
+    // Call immediately in case entry context is already set
+    // (subscription only fires on changes, not initial value)
+    const currentEntryId = getActiveEntryContext()
+    debugLog({
+      component: 'LinksNotePanel',
+      action: 'entry_context_subscription_init',
+      metadata: { currentEntryId, hasContent: !!contentRef.current?.innerHTML },
+    })
+
+    if (currentEntryId) {
+      updateExternalLinkClasses()
+    }
+
+    // Delayed fallback check - entry context might be set shortly after mount
+    const timeoutId = setTimeout(() => {
+      const delayedEntryId = getActiveEntryContext()
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'entry_context_delayed_check',
+        metadata: { delayedEntryId, hasContent: !!contentRef.current?.innerHTML },
+      })
+      if (delayedEntryId) {
+        updateExternalLinkClasses()
+      }
+    }, 500)
+
+    const unsubscribe = subscribeToActiveEntryContext((entryId) => {
+      debugLog({
+        component: 'LinksNotePanel',
+        action: 'entry_context_changed',
+        metadata: { newEntryId: entryId },
+      })
+      updateExternalLinkClasses()
+    })
+
+    return () => {
+      clearTimeout(timeoutId)
+      unsubscribe()
+    }
+  }, [updateExternalLinkClasses])
 
   // Search workspaces (with optional entry filtering)
   const searchWorkspaces = useCallback(async (query: string, shouldFilterByEntry: boolean = true) => {
@@ -330,12 +400,34 @@ export function LinksNotePanel({
         }
       }
 
-      // Navigate to Dashboard (or fallback to stored workspace)
+      // Check if this is an internal link (same entry as current)
+      const currentEntryId = getActiveEntryContext()
+      const isInternalLink = entryId === currentEntryId
+
+      if (isInternalLink && workspaceId) {
+        // Internal link - open workspace within dashboard (like selecting from dropdown)
+        debugLog({
+          component: 'LinksNotePanel',
+          action: 'navigating_to_workspace_internal',
+          metadata: { entryId, workspaceId, isInternalLink, hasOnOpenWorkspace: !!onOpenWorkspace },
+        })
+
+        if (onOpenWorkspace) {
+          // Use onOpenWorkspace to stay within dashboard view
+          onOpenWorkspace(workspaceId)
+        } else if (onNavigate) {
+          // Fallback to onNavigate if onOpenWorkspace not available
+          onNavigate(entryId, workspaceId)
+        }
+        return
+      }
+
+      // External link - Navigate to Dashboard (or fallback to stored workspace)
       const targetId = dashboardId || workspaceId
       debugLog({
         component: 'LinksNotePanel',
         action: 'navigating_to_dashboard',
-        metadata: { entryId, targetId, dashboardId, workspaceId },
+        metadata: { entryId, targetId, dashboardId, workspaceId, isInternalLink },
       })
 
       setActiveEntryContext(entryId)
@@ -446,6 +538,9 @@ export function LinksNotePanel({
     selectedRange.deleteContents()
     selectedRange.insertNode(link)
 
+    // Update external link classes
+    updateExternalLinkClasses()
+
     // Clear selection state
     window.getSelection()?.removeAllRanges()
     setShowLinkToolbar(false)
@@ -458,7 +553,7 @@ export function LinksNotePanel({
     if (contentRef.current) {
       onConfigChange?.({ content: contentRef.current.innerHTML })
     }
-  }, [selectedRange, onConfigChange])
+  }, [selectedRange, onConfigChange, updateExternalLinkClasses])
 
   // Create a new workspace (with entry) and link to it
   const createNewWorkspace = useCallback(async () => {
@@ -599,6 +694,9 @@ export function LinksNotePanel({
       setSelectedText('')
       setSearchQuery('')
 
+      // Update external link classes
+      updateExternalLinkClasses()
+
       // Save content
       onConfigChange?.({ content: contentRef.current.innerHTML })
 
@@ -642,7 +740,7 @@ export function LinksNotePanel({
     } finally {
       setIsCreatingWorkspace(false)
     }
-  }, [selectedRange, selectedText, onConfigChange, onNavigate])
+  }, [selectedRange, selectedText, onConfigChange, onNavigate, updateExternalLinkClasses])
 
   // Save content on blur and track deleted links
   const handleBlur = useCallback((e: React.FocusEvent) => {
@@ -728,6 +826,9 @@ export function LinksNotePanel({
     contentRef.current.appendChild(space)
     contentRef.current.appendChild(linkEl)
 
+    // Update external link classes
+    updateExternalLinkClasses()
+
     // Update previousLinksRef
     const newContent = contentRef.current.innerHTML
     previousLinksRef.current = parseLinksFromContent(newContent)
@@ -737,7 +838,7 @@ export function LinksNotePanel({
 
     // Save changes
     onConfigChange?.({ content: newContent, deletedLinks: updatedDeleted })
-  }, [deletedLinks, onConfigChange])
+  }, [deletedLinks, onConfigChange, updateExternalLinkClasses])
 
   // Permanently delete a link from trash
   const handlePermanentDelete = useCallback((link: DeletedLink) => {
@@ -968,11 +1069,13 @@ export function LinksNotePanel({
           color: #5c6070;
           pointer-events: none;
         }
+        /* Internal links - subtle border style (no heavy background) */
         .links-note-editor .workspace-link {
           display: inline;
           padding: 2px 8px;
-          background: rgba(99, 102, 241, 0.15);
-          color: #818cf8;
+          background: rgba(255, 255, 255, 0.03);
+          color: #a5b4fc;
+          border: 1px solid rgba(165, 180, 252, 0.3);
           border-radius: 4px;
           font-size: 13px;
           font-weight: 500;
@@ -981,7 +1084,15 @@ export function LinksNotePanel({
           transition: all 0.15s;
         }
         .links-note-editor .workspace-link:hover {
-          background: rgba(99, 102, 241, 0.25);
+          background: rgba(255, 255, 255, 0.06);
+          border-color: rgba(165, 180, 252, 0.5);
+        }
+        /* External links - same style with arrow icon suffix */
+        .links-note-editor .workspace-link.external-link::after {
+          content: ' ↗';
+          font-size: 11px;
+          opacity: 0.7;
+          margin-left: 2px;
         }
         /* Navigation tooltip that appears on hover */
         .link-navigate-tooltip {
@@ -1442,22 +1553,31 @@ export function LinksNotePanel({
         )}
 
         {/* Navigation tooltip - appears when hovering a workspace link */}
-        {hoveredLink && (
-          <div
-            className="link-navigate-tooltip"
-            style={{
-              left: hoveredLink.rect.left + hoveredLink.rect.width / 2,
-              top: hoveredLink.rect.bottom + 8,
-              transform: 'translateX(-50%)',
-            }}
-            onMouseEnter={handleTooltipMouseEnter}
-            onMouseLeave={handleTooltipMouseLeave}
-          >
-            <button onClick={handleNavigateFromTooltip} title="Go to Dashboard">
-              <ExternalLink size={14} />
-            </button>
-          </div>
-        )}
+        {hoveredLink && (() => {
+          // Compute tooltip text based on internal vs external link
+          const currentEntryId = getActiveEntryContext()
+          const isInternal = hoveredLink.entryId === currentEntryId
+          const tooltipText = isInternal
+            ? `Go to ${hoveredLink.workspaceName || 'workspace'}`
+            : `Go to ${hoveredLink.element?.getAttribute('data-entry-name') || 'entry'} Dashboard`
+
+          return (
+            <div
+              className="link-navigate-tooltip"
+              style={{
+                left: hoveredLink.rect.left + hoveredLink.rect.width / 2,
+                top: hoveredLink.rect.bottom + 8,
+                transform: 'translateX(-50%)',
+              }}
+              onMouseEnter={handleTooltipMouseEnter}
+              onMouseLeave={handleTooltipMouseLeave}
+            >
+              <button onClick={handleNavigateFromTooltip} title={tooltipText}>
+                <ExternalLink size={14} />
+              </button>
+            </div>
+          )
+        })()}
 
         {/* Link toolbar - appears on text selection */}
         {showLinkToolbar && !showPicker && (

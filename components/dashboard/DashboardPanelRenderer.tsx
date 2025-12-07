@@ -25,6 +25,7 @@ interface DashboardPanelRendererProps {
   onConfigChange?: (config: Partial<PanelConfig>) => void
   onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
+  onOpenWorkspace?: (workspaceId: string) => void
   onDelete?: () => void
   isActive?: boolean
 }
@@ -35,6 +36,7 @@ export function DashboardPanelRenderer({
   onConfigChange,
   onTitleChange,
   onNavigate,
+  onOpenWorkspace,
   onDelete,
   isActive,
 }: DashboardPanelRendererProps) {
@@ -53,6 +55,7 @@ export function DashboardPanelRenderer({
     onConfigChange,
     onTitleChange,
     onNavigate,
+    onOpenWorkspace,
     onDelete,
     isActive,
   }

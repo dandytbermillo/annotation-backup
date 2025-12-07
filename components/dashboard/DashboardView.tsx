@@ -1467,6 +1467,7 @@ export function DashboardView({
                     onConfigChange={(config) => handleConfigChange(panel.id, config)}
                     onTitleChange={(newTitle) => handleTitleChange(panel.id, newTitle)}
                     onNavigate={onNavigate}
+                    onOpenWorkspace={handleWorkspaceSelectById}
                     isActive={activePanelId === panel.id}
                   />
                 </div>

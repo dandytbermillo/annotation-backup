@@ -89,6 +89,7 @@ export interface BasePanelProps {
   onConfigChange?: (config: Partial<PanelConfig>) => void
   onTitleChange?: (newTitle: string) => void
   onNavigate?: (entryId: string, workspaceId: string) => void
+  onOpenWorkspace?: (workspaceId: string) => void // Open workspace within dashboard (for internal links)
   onDelete?: () => void // Soft delete - moves to trash
   isActive?: boolean
 }

@@ -133,6 +133,9 @@ export function DashboardInitializer({
           entryName: data.homeEntryName || "Home",
         })
 
+        // Set the active entry context so components can detect internal vs external links
+        setActiveEntryContext(data.homeEntryId)
+
         // Always show dashboard on app start when feature is enabled
         // The "Continue" panel will show the last workspace for quick access
         // This gives users a "home base" to start from each session
