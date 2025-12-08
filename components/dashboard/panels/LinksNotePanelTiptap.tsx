@@ -661,24 +661,35 @@ export function LinksNotePanelTiptap({
   const handleRestoreLink = useCallback((link: DeletedLink) => {
     if (!editor) return
 
-    // Insert the link at the end
+    // Guard: Don't restore if no text content
+    const linkText = (link.text || link.workspaceName || '').trim()
+    if (!linkText) return
+
+    // Single atomic operation: insert space + link with mark
+    // Using array ensures space (no marks) and link (with mark) are distinct nodes
     editor
       .chain()
-      .focus()
-      .command(({ tr, state }) => {
-        const endPos = state.doc.content.size
-        tr.insertText(' ', endPos)
-        return true
-      })
+      .focus('end')
+      .insertContent([
+        { type: 'text', text: ' ' },
+        {
+          type: 'text',
+          text: linkText,
+          marks: [
+            {
+              type: 'quickLinksLink',
+              attrs: {
+                workspaceId: link.workspaceId,
+                workspaceName: link.workspaceName,
+                entryId: link.entryId,
+                entryName: link.entryName,
+                dashboardId: link.dashboardId,
+              },
+            },
+          ],
+        },
+      ])
       .run()
-
-    insertQuickLink(editor, {
-      workspaceId: link.workspaceId,
-      workspaceName: link.workspaceName,
-      entryId: link.entryId,
-      entryName: link.entryName,
-      dashboardId: link.dashboardId,
-    })
 
     // Remove from deleted links
     const updatedDeleted = deletedLinks.filter(d => d.workspaceId !== link.workspaceId)

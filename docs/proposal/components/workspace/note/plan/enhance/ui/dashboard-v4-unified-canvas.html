@@ -47,6 +47,74 @@
       height: 100vh;
     }
 
+    .main-content {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+    }
+
+    .entry-sidebar {
+      width: 260px;
+      background: rgba(17,19,26,0.9);
+      border-right: 1px solid var(--border);
+      padding: 20px 16px;
+      overflow-y: auto;
+    }
+
+    .entry-sidebar h3 {
+      font-size: 13px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      margin-bottom: 18px;
+      text-transform: uppercase;
+    }
+
+    .entry-group {
+      margin-bottom: 20px;
+    }
+
+    .entry-root {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-primary);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .entry-node {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+
+    .entry-node:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .entry-node.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid var(--accent-dim);
+    }
+
+    .entry-node span {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .entry-summary {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
     /* ========== TOP BAR ========== */
     .topbar {
       height: 52px;
@@ -1083,10 +1151,65 @@
       </div>
     </nav>
 
-    <!-- Canvas -->
-    <div class="canvas-container" id="canvas-container">
-      <div class="canvas-surface" id="canvas-surface">
-        <!-- Panels rendered by JS -->
+    <div class="main-content">
+      <!-- Entry Sidebar (Knowledge Base hierarchy) -->
+      <aside class="entry-sidebar" id="entry-sidebar">
+        <h3>Knowledge Base</h3>
+        <div class="entry-group">
+          <div class="entry-root">📚 Root /knowledge-base</div>
+          <div class="entry-node active">
+            <div>
+              Personal
+              <div style="font-size:11px;color:var(--text-muted);">Dash · Journal · Finance</div>
+            </div>
+            <span>4 workspaces</span>
+          </div>
+          <div class="entry-node">
+            <div>
+              Work
+              <div style="font-size:11px;color:var(--text-muted);">Clients · Reports · Labs</div>
+            </div>
+            <span>5</span>
+          </div>
+          <div class="entry-node">
+            <div>
+              Business
+              <div style="font-size:11px;color:var(--text-muted);">Leads · Ops · Finance</div>
+            </div>
+            <span>3</span>
+          </div>
+          <div class="entry-node">
+            <div>
+              Projects
+              <div style="font-size:11px;color:var(--text-muted);">Alpha · Beta · Test4</div>
+            </div>
+            <span>6</span>
+          </div>
+        </div>
+        <div class="entry-group">
+          <div class="entry-root">🗂 Custom Entries</div>
+          <div class="entry-node">
+            <div>
+              Research
+              <div style="font-size:11px;color:var(--text-muted);">Dashboard + Planning + Experiments</div>
+            </div>
+            <span>3</span>
+          </div>
+          <div class="entry-node">
+            <div>
+              Templates
+              <div style="font-size:11px;color:var(--text-muted);">Blank dashboards for new teams</div>
+            </div>
+            <span>2</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Canvas -->
+      <div class="canvas-container" id="canvas-container">
+        <div class="canvas-surface" id="canvas-surface">
+          <!-- Panels rendered by JS -->
+        </div>
       </div>
     </div>
 
@@ -1189,30 +1312,90 @@
         id: "home",
         name: "Home",
         icon: "H",
-        isSystem: true,
+        summary: "System entry",
+        group: "system",
         workspaces: [
           { id: "home-dashboard", name: "Dashboard", isDefault: true }
         ]
       },
       {
-        id: "alpha",
-        name: "Project Alpha",
-        icon: "A",
+        id: "personal",
+        name: "Personal",
+        icon: "P",
+        summary: "Dash · Journal · Finance",
+        group: "knowledge-base",
         workspaces: [
-          { id: "alpha-dashboard", name: "Dashboard", isDefault: true },
-          { id: "alpha-default", name: "Default" },
-          { id: "alpha-planning", name: "Planning" }
+          { id: "personal-dashboard", name: "Dashboard", isDefault: true },
+          { id: "personal-daily", name: "Daily Notes" },
+          { id: "personal-journal", name: "Journal" },
+          { id: "personal-finance", name: "Finance" }
         ]
       },
       {
-        id: "beta",
-        name: "Project Beta",
-        icon: "B",
+        id: "work",
+        name: "Work",
+        icon: "W",
+        summary: "Clients · Reports · Labs",
+        group: "knowledge-base",
         workspaces: [
-          { id: "beta-dashboard", name: "Dashboard", isDefault: true },
-          { id: "beta-default", name: "Default" }
+          { id: "work-dashboard", name: "Dashboard", isDefault: true },
+          { id: "work-clients", name: "Client Board" },
+          { id: "work-reports", name: "Reports" },
+          { id: "work-labs", name: "Labs" }
+        ]
+      },
+      {
+        id: "business",
+        name: "Business",
+        icon: "B",
+        summary: "Leads · Ops · Finance",
+        group: "knowledge-base",
+        workspaces: [
+          { id: "business-dashboard", name: "Dashboard", isDefault: true },
+          { id: "business-leads", name: "Leads" },
+          { id: "business-ops", name: "Operations" }
+        ]
+      },
+      {
+        id: "projects",
+        name: "Projects",
+        icon: "PR",
+        summary: "Alpha · Beta · Test4",
+        group: "knowledge-base",
+        workspaces: [
+          { id: "projects-dashboard", name: "Dashboard", isDefault: true },
+          { id: "projects-alpha", name: "Project Alpha" },
+          { id: "projects-beta", name: "Project Beta" },
+          { id: "projects-test4", name: "Test4" }
+        ]
+      },
+      {
+        id: "research",
+        name: "Research",
+        icon: "R",
+        summary: "Brainstorms · Experiments",
+        group: "custom",
+        workspaces: [
+          { id: "research-dashboard", name: "Dashboard", isDefault: true },
+          { id: "research-notes", name: "Notes" }
+        ]
+      },
+      {
+        id: "templates",
+        name: "Templates",
+        icon: "T",
+        summary: "Starter boards",
+        group: "custom",
+        workspaces: [
+          { id: "templates-dashboard", name: "Dashboard", isDefault: true },
+          { id: "templates-engineering", name: "Engineering" }
         ]
       }
+    ];
+
+    const entryGroups = [
+      { id: "knowledge-base", title: "Knowledge Base", rootLabel: "/knowledge-base", entryIds: ["personal","work","business","projects"] },
+      { id: "custom", title: "Custom Entries", rootLabel: "", entryIds: ["research","templates"] }
     ];
 
     // Panel types
@@ -1243,26 +1426,33 @@
         { id: "p4", type: "capture", x: 380, y: 280, width: 280, title: "Quick Capture" },
         { id: "p5", type: "links", x: 700, y: 40, width: 320, title: "Quick Links",
           content: `<h3>Projects</h3>
-            <p><span class="workspace-link" data-entry="alpha" data-workspace="alpha-dashboard">Project Alpha</span></p>
-            <p><span class="workspace-link" data-entry="beta" data-workspace="beta-dashboard">Project Beta</span></p>
+            <p><span class="workspace-link" data-entry="projects" data-workspace="projects-alpha">Project Alpha</span></p>
+            <p><span class="workspace-link" data-entry="projects" data-workspace="projects-beta">Project Beta</span></p>
             <h3>Create New</h3>
             <p><span class="workspace-link demo-create" data-name="test4">test4</span> - click to demo!</p>`
         }
       ],
-      "alpha-dashboard": [...defaultDashboardPanels].map((p, i) => ({
-        ...p,
-        id: `alpha-${p.id}`,
-        content: p.type === 'links' ? `<h3>Alpha Links</h3>
-          <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>
-          <p><span class="workspace-link" data-entry="alpha" data-workspace="alpha-planning">Planning</span></p>` : undefined
-      })),
-      "beta-dashboard": [...defaultDashboardPanels].map((p, i) => ({
-        ...p,
-        id: `beta-${p.id}`,
-        content: p.type === 'links' ? `<h3>Beta Links</h3>
-          <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>` : undefined
-      }))
+      "personal-dashboard": mapPanels("personal"),
+      "work-dashboard": mapPanels("work"),
+      "business-dashboard": mapPanels("business"),
+      "projects-dashboard": mapPanels("projects"),
+      "research-dashboard": mapPanels("research"),
+      "templates-dashboard": mapPanels("templates")
     };
+
+    function mapPanels(entryId) {
+      const entry = entries.find(e => e.id === entryId);
+      const entryLabel = entry ? entry.name : entryId;
+      return defaultDashboardPanels.map(p => ({
+        ...p,
+        id: `${entryId}-${p.id}`,
+        content: p.type === 'links'
+          ? `<h3>${entryLabel} Links</h3>
+              <p><span class="workspace-link" data-entry="home" data-workspace="home-dashboard">Back to Home</span></p>
+              <p>Add more links here...</p>`
+          : undefined
+      }));
+    }
 
     // ========== STATE ==========
     let currentEntry = entries[0];
@@ -1317,20 +1507,26 @@
       hidePicker();
 
       // Simulate creating new entry "test4"
-      const newEntry = {
-        id: "test4",
-        name: "test4",
-        icon: "T",
-        workspaces: [
-          { id: "test4-dashboard", name: "Dashboard", isDefault: true },
-          { id: "test4-default", name: "test4" }
-        ]
-      };
+    const newEntry = {
+      id: "test4",
+      name: "test4",
+      icon: "T",
+      summary: "New entry",
+      group: "knowledge-base",
+      workspaces: [
+        { id: "test4-dashboard", name: "Dashboard", isDefault: true },
+        { id: "test4-default", name: "test4" }
+      ]
+    };
 
-      // Add to entries list
-      if (!entries.find(e => e.id === "test4")) {
-        entries.push(newEntry);
+    // Add to entries list
+    if (!entries.find(e => e.id === "test4")) {
+      entries.push(newEntry);
+      const kbGroup = entryGroups.find(g => g.id === 'knowledge-base');
+      if (kbGroup && !kbGroup.entryIds.includes(newEntry.id)) {
+        kbGroup.entryIds.push(newEntry.id);
       }
+    }
 
       // Create Dashboard panels for new entry
       workspacePanels["test4-dashboard"] = [...defaultDashboardPanels].map((p, i) => ({
@@ -1355,27 +1551,68 @@
     }
 
     // ========== RENDER ==========
-    function render() {
-      renderBreadcrumb();
-      renderTabs();
-      renderPanels();
-      renderMinimap();
-    }
+function render() {
+  renderBreadcrumb();
+  renderTabs();
+  renderPanels();
+  renderSidebar();
+  renderMinimap();
+}
 
-    function renderBreadcrumb() {
-      const bc = document.getElementById("breadcrumb");
+function renderSidebar() {
+  const sidebar = document.getElementById("entry-sidebar");
+  if (!sidebar) return;
 
-      if (currentEntry.isSystem) {
-        bc.innerHTML = `
-          <span class="breadcrumb-item current">${currentEntry.name}</span>
-          <span class="home-badge">System</span>
-        `;
-      } else {
-        bc.innerHTML = `
-          <span class="breadcrumb-item" onclick="goToHome()">Home</span>
-          <span class="breadcrumb-separator">/</span>
-          <span class="breadcrumb-item current">${currentEntry.name}</span>
-          <span class="breadcrumb-separator">/</span>
+  let html = "";
+  entryGroups.forEach(group => {
+    html += `<div class="entry-group">`;
+    html += `<div class="entry-root">${group.id === 'knowledge-base' ? '📚' : group.id === 'system' ? '⚙️' : '🗂'} ${group.title}${group.rootLabel ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;">${group.rootLabel}</span>` : ''}</div>`;
+    group.entryIds.forEach(entryId => {
+      const entry = entries.find(e => e.id === entryId);
+      if (!entry) return;
+      const isActive = entry.id === currentEntry.id;
+      html += `
+        <div class="entry-node ${isActive ? 'active' : ''}" data-entry="${entry.id}">
+          <div>
+            ${entry.name}
+            <div class="entry-summary">${entry.summary || ''}</div>
+          </div>
+          <span>${entry.workspaces.length} workspaces</span>
+        </div>
+      `;
+    });
+    html += `</div>`;
+  });
+
+  sidebar.innerHTML = html;
+  sidebar.querySelectorAll('.entry-node').forEach(node => {
+    node.addEventListener('click', () => {
+      const entryId = node.getAttribute('data-entry');
+      const entry = entries.find(e => e.id === entryId);
+      if (entry) {
+        const defaultWorkspace = entry.workspaces[0];
+        navigateTo(entry.id, defaultWorkspace.id);
+      }
+    });
+  });
+}
+
+function renderBreadcrumb() {
+  const bc = document.getElementById("breadcrumb");
+
+  if (currentEntry.group === 'system') {
+    bc.innerHTML = `
+      <span class="breadcrumb-item current">${currentEntry.name}</span>
+      <span class="home-badge">System</span>
+    `;
+  } else {
+    const group = entryGroups.find(g => g.entryIds.includes(currentEntry.id));
+    const rootLabel = group?.title || 'Knowledge Base';
+    bc.innerHTML = `
+      <span class="breadcrumb-item" onclick="goToHome()">${rootLabel}</span>
+      <span class="breadcrumb-separator">/</span>
+      <span class="breadcrumb-item current">${currentEntry.name}</span>
+      <span class="breadcrumb-separator">/</span>
           <span class="breadcrumb-item current">${currentWorkspace.name}</span>
         `;
       }
