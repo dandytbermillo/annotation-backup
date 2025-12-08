@@ -9,7 +9,7 @@
 import type { ComponentType } from 'react'
 
 // Panel type identifiers matching the database schema
-export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'category' | 'category_navigator'
+export type PanelTypeId = 'note' | 'navigator' | 'recent' | 'continue' | 'quick_capture' | 'links_note' | 'links_note_tiptap' | 'category' | 'category_navigator'
 
 // Deleted link stored in Quick Links panel trash
 export interface DeletedLink {
@@ -163,6 +163,16 @@ export const panelTypeRegistry: Record<PanelTypeId, PanelTypeDefinition> = {
     id: 'links_note',
     name: 'Quick Links',
     description: 'Note with workspace links',
+    icon: '🔗',
+    defaultSize: { width: 320, height: 320 },
+    minSize: { width: 250, height: 200 },
+    maxSize: { width: 500, height: 600 },
+    defaultConfig: { content: '' },
+  },
+  links_note_tiptap: {
+    id: 'links_note_tiptap',
+    name: 'Quick Links (TipTap)',
+    description: 'Note with workspace links using TipTap editor',
     icon: '🔗',
     defaultSize: { width: 320, height: 320 },
     minSize: { width: 250, height: 200 },

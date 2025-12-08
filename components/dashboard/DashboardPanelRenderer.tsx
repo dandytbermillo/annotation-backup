@@ -9,6 +9,7 @@
  */
 
 import React from 'react'
+import dynamic from 'next/dynamic'
 import type { WorkspacePanel, BasePanelProps, PanelConfig } from '@/lib/dashboard/panel-registry'
 import { isValidPanelType } from '@/lib/dashboard/panel-registry'
 import { ContinuePanel } from './panels/ContinuePanel'
@@ -18,6 +19,29 @@ import { QuickCapturePanel } from './panels/QuickCapturePanel'
 import { LinksNotePanel } from './panels/LinksNotePanel'
 import { CategoryPanel } from './panels/CategoryPanel'
 import { CategoryNavigatorPanel } from './panels/CategoryNavigatorPanel'
+
+// Dynamic import for TipTap-based component to prevent SSR hydration issues
+// TipTap uses browser-specific APIs that cause hydration mismatches
+const LinksNotePanelTiptap = dynamic(
+  () => import('./panels/LinksNotePanelTiptap').then(mod => mod.LinksNotePanelTiptap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex items-center justify-center h-full min-h-[100px]" style={{ background: 'rgba(15, 17, 23, 0.95)' }}>
+        <div
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: '50%',
+            border: '2px solid rgba(255,255,255,0.1)',
+            borderTopColor: '#6366f1',
+            animation: 'spin 1s linear infinite',
+          }}
+        />
+      </div>
+    )
+  }
+)
 
 interface DashboardPanelRendererProps {
   panel: WorkspacePanel
@@ -71,6 +95,8 @@ export function DashboardPanelRenderer({
       return <QuickCapturePanel {...props} />
     case 'links_note':
       return <LinksNotePanel {...props} />
+    case 'links_note_tiptap':
+      return <LinksNotePanelTiptap {...props} />
     case 'category':
       return <CategoryPanel {...props} />
     case 'category_navigator':

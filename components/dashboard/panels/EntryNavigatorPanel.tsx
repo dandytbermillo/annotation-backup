@@ -93,12 +93,14 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onTitleCha
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Subscribe to active entry context changes for highlighting
+  // NOTE: Empty dependency array is intentional - we only want to subscribe once on mount.
+  // The callback uses the entryId parameter, not closure variables.
   useEffect(() => {
     const unsubscribe = subscribeToActiveEntryContext((entryId) => {
       debugLog({
         component: 'EntryNavigatorPanel',
         action: 'entry_context_changed',
-        metadata: { newEntryId: entryId, previousEntryId: activeEntryId },
+        metadata: { newEntryId: entryId },
       })
       setActiveEntryId(entryId)
       // Auto-expand the active entry's parent chain if needed
@@ -107,7 +109,7 @@ export function EntryNavigatorPanel({ panel, onClose, onConfigChange, onTitleCha
       }
     })
     return () => { unsubscribe() }
-  }, [activeEntryId])
+  }, [])
 
   // Close create menu when clicking outside
   useEffect(() => {
