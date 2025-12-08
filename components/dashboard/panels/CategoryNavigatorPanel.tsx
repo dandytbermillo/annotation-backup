@@ -110,19 +110,20 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Parse HTML content to extract workspace links
+  // Supports both original format (.workspace-link) and TipTap format ([data-quick-link])
   const parseLinksFromContent = useCallback((html: string): ExtractedLink[] => {
     if (!html) return []
 
     const links: ExtractedLink[] = []
+    const seenWorkspaceIds = new Set<string>()
 
     // Create a temporary div to parse HTML
     const div = document.createElement('div')
     div.innerHTML = html
 
-    // Find all workspace-link spans
-    const linkElements = div.querySelectorAll('.workspace-link')
-
-    linkElements.forEach((el) => {
+    // Find all workspace-link spans (original format)
+    const originalLinkElements = div.querySelectorAll('.workspace-link')
+    originalLinkElements.forEach((el) => {
       const text = el.textContent || ''
       const workspaceId = el.getAttribute('data-workspace-id') || ''
       const workspaceName = el.getAttribute('data-workspace') || text
@@ -130,7 +131,31 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
       const entryName = el.getAttribute('data-entry-name') || ''
       const dashboardId = el.getAttribute('data-dashboard-id') || undefined
 
-      if (text || workspaceName) {
+      if ((text || workspaceName) && workspaceId && !seenWorkspaceIds.has(workspaceId)) {
+        seenWorkspaceIds.add(workspaceId)
+        links.push({
+          text,
+          workspaceId,
+          workspaceName,
+          entryId,
+          entryName,
+          dashboardId,
+        })
+      }
+    })
+
+    // Find all quick-link spans (TipTap format)
+    const tiptapLinkElements = div.querySelectorAll('[data-quick-link]')
+    tiptapLinkElements.forEach((el) => {
+      const text = el.textContent || ''
+      const workspaceId = el.getAttribute('data-workspace-id') || ''
+      const workspaceName = el.getAttribute('data-workspace-name') || text
+      const entryId = el.getAttribute('data-entry-id') || ''
+      const entryName = el.getAttribute('data-entry-name') || ''
+      const dashboardId = el.getAttribute('data-dashboard-id') || undefined
+
+      if ((text || workspaceName) && workspaceId && !seenWorkspaceIds.has(workspaceId)) {
+        seenWorkspaceIds.add(workspaceId)
         links.push({
           text,
           workspaceId,
@@ -205,9 +230,9 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
         },
       })
 
-      // Filter to only links_note panels and parse their content
+      // Filter to links_note and links_note_tiptap panels and parse their content
       const linksNotePanels: QuickLinksPanel[] = allPanels
-        .filter((p: any) => p.panelType === 'links_note')
+        .filter((p: any) => p.panelType === 'links_note' || p.panelType === 'links_note_tiptap')
         .map((p: any) => ({
           id: p.id,
           title: p.title || 'Quick Links',
@@ -237,9 +262,9 @@ export function CategoryNavigatorPanel({ panel, onClose, onConfigChange, onTitle
           const deletedData = await deletedResponse.json()
           const deletedPanels = deletedData.panels || []
 
-          // Filter to only links_note panels and map to trash panel format
+          // Filter to links_note and links_note_tiptap panels and map to trash panel format
           const trashedLinksPanels: TrashedQuickLinksPanel[] = deletedPanels
-            .filter((p: any) => p.panelType === 'links_note')
+            .filter((p: any) => p.panelType === 'links_note' || p.panelType === 'links_note_tiptap')
             .map((p: any) => ({
               id: p.id,
               title: p.title || 'Quick Links',

@@ -16,7 +16,8 @@ import { ContinuePanel } from './panels/ContinuePanel'
 import { EntryNavigatorPanel } from './panels/EntryNavigatorPanel'
 import { RecentPanel } from './panels/RecentPanel'
 import { QuickCapturePanel } from './panels/QuickCapturePanel'
-import { LinksNotePanel } from './panels/LinksNotePanel'
+// LinksNotePanel (original) is deprecated - use LinksNotePanelTiptap instead
+// import { LinksNotePanel } from './panels/LinksNotePanel'
 import { CategoryPanel } from './panels/CategoryPanel'
 import { CategoryNavigatorPanel } from './panels/CategoryNavigatorPanel'
 
@@ -94,7 +95,8 @@ export function DashboardPanelRenderer({
     case 'quick_capture':
       return <QuickCapturePanel {...props} />
     case 'links_note':
-      return <LinksNotePanel {...props} />
+      // Deprecated: links_note now uses TipTap version for consistency
+      return <LinksNotePanelTiptap {...props} />
     case 'links_note_tiptap':
       return <LinksNotePanelTiptap {...props} />
     case 'category':

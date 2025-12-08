@@ -96,13 +96,23 @@ export async function POST(
     )
 
     // Insert default panels
+    // Track badge assignment for links_note and links_note_tiptap panels (A, B, C...)
     let panelCount = 0
+    let linksNoteBadgeIndex = 0
     for (const panel of DEFAULT_PANEL_LAYOUT) {
       const panelDef = panelTypeRegistry[panel.panelType]
+
+      // Assign badge for links_note and links_note_tiptap panels
+      let badge: string | null = null
+      if (panel.panelType === 'links_note' || panel.panelType === 'links_note_tiptap') {
+        badge = String.fromCharCode(65 + linksNoteBadgeIndex) // A=65, B=66, etc.
+        linksNoteBadgeIndex++
+      }
+
       await client.query(
         `INSERT INTO workspace_panels (
-          workspace_id, panel_type, position_x, position_y, width, height, title, config
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          workspace_id, panel_type, position_x, position_y, width, height, title, config, badge
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [
           dashboardWorkspaceId,
           panel.panelType,
@@ -112,6 +122,7 @@ export async function POST(
           panel.height,
           panel.title,
           JSON.stringify(panelDef?.defaultConfig || {}),
+          badge,
         ]
       )
       panelCount++

@@ -157,13 +157,13 @@ export async function POST(request: NextRequest) {
     )
     const nextZIndex = zIndexResult.rows[0].next_z
 
-    // Auto-assign badge for links_note panels
+    // Auto-assign badge for links_note and links_note_tiptap panels
     let badge: string | null = null
-    if (panelType === 'links_note') {
-      // Get existing badges for links_note panels in this workspace
+    if (panelType === 'links_note' || panelType === 'links_note_tiptap') {
+      // Get existing badges for links_note/links_note_tiptap panels in this workspace
       const badgeResult = await serverPool.query(
         `SELECT badge FROM workspace_panels
-         WHERE workspace_id = $1 AND panel_type = 'links_note' AND badge IS NOT NULL
+         WHERE workspace_id = $1 AND panel_type IN ('links_note', 'links_note_tiptap') AND badge IS NOT NULL
          ORDER BY badge ASC`,
         [workspaceId]
       )

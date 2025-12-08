@@ -213,9 +213,9 @@ export async function POST(request: NextRequest) {
     for (const panel of DEFAULT_PANEL_LAYOUT) {
       const panelDef = panelTypeRegistry[panel.panelType]
 
-      // Assign badge for links_note panels
+      // Assign badge for links_note and links_note_tiptap panels
       let badge: string | null = null
-      if (panel.panelType === 'links_note') {
+      if (panel.panelType === 'links_note' || panel.panelType === 'links_note_tiptap') {
         badge = String.fromCharCode(65 + linksNoteBadgeIndex) // A=65, B=66, etc.
         linksNoteBadgeIndex++
       }
