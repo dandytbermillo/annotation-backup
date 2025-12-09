@@ -183,7 +183,9 @@ export function LinksNotePanelTiptap({
       }
     }
 
-    setActiveEntryContext(entryId)
+    // Note: Entry context is set by handleDashboardNavigate (the navigation handler)
+    // after it determines the correct workspace. Setting it here would cause a race
+    // condition where stale workspace context is used before navigation completes.
     if (onNavigateRef.current) {
       onNavigateRef.current(entryId, targetId)
     }

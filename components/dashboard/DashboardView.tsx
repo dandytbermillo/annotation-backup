@@ -1203,10 +1203,10 @@ export function DashboardView({
               <DashboardBreadcrumb
                 workspaceId={workspaceId}
                 onHomeClick={handleGoHome}
-                onEntryClick={(clickedEntryId) => {
+                onEntryClick={(clickedEntryId, dashboardWorkspaceId) => {
                   // Navigate to clicked entry's dashboard
-                  if (onNavigate) {
-                    onNavigate(clickedEntryId, '')
+                  if (onNavigate && dashboardWorkspaceId) {
+                    onNavigate(clickedEntryId, dashboardWorkspaceId)
                   }
                 }}
                 onWorkspaceClick={(wsId) => {
