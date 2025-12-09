@@ -17,6 +17,10 @@ export { PanelCatalog, AddPanelButton } from './PanelCatalog'
 // Navigation & Breadcrumb (Phase 3)
 export { DashboardBreadcrumb, CompactBreadcrumb } from './DashboardBreadcrumb'
 
+// Pinned Entries (State Preservation Feature)
+export { PinEntryButton, PinnedIndicator } from './PinEntryButton'
+export { PinWorkspaceButton, WorkspacePinnedDot } from './PinWorkspaceButton'
+
 // Workspace link picker (Phase 3)
 export { WorkspaceLinkPicker, useWorkspaceLinkPicker } from './WorkspaceLinkPicker'
 export type { WorkspaceOption } from './WorkspaceLinkPicker'

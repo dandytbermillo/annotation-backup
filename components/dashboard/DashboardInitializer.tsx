@@ -10,10 +10,12 @@
  * - Initial dashboard loading when feature is enabled
  * - Rendering DashboardView when on dashboard workspace
  * - Navigating between different entry Dashboards
+ * - Pinned Entries: Keeping entry dashboards mounted when switching entries
  */
 
 import { useEffect, useRef, useState, useCallback, createContext, useContext } from "react"
 import { isHomeDashboardEnabled } from "@/lib/flags/dashboard"
+import { isPinnedEntriesFeatureEnabled, getPinnedEntriesMax, getPinnedWorkspacesPerEntryMax } from "@/lib/flags/pinned-entries"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import { setActiveEntryContext } from "@/lib/entry/entry-context"
@@ -23,6 +25,10 @@ import {
   updateCurrentWorkspace,
   updateViewMode,
 } from "@/lib/navigation/navigation-context"
+import {
+  initializePinnedEntryManager,
+  usePinnedEntriesState,
+} from "@/lib/navigation"
 import { DashboardView } from "./DashboardView"
 
 // Context for navigation handler
@@ -64,6 +70,7 @@ export function DashboardInitializer({
   children,
 }: DashboardInitializerProps) {
   const [dashboardEnabled] = useState(() => isHomeDashboardEnabled())
+  const [pinnedEntriesEnabled] = useState(() => isPinnedEntriesFeatureEnabled())
   const [isLoading, setIsLoading] = useState(true)
   const [dashboardInfo, setDashboardInfo] = useState<DashboardInfo | null>(null)
   const [showDashboard, setShowDashboard] = useState(false)
@@ -72,6 +79,10 @@ export function DashboardInitializer({
   // Current entry info (for breadcrumb display)
   const [currentEntryInfo, setCurrentEntryInfo] = useState<CurrentEntryInfo | null>(null)
   const fetchedRef = useRef(false)
+  const pinnedManagerInitRef = useRef(false)
+
+  // Pinned entries state (for keeping entry dashboards mounted when switching)
+  const pinnedEntriesState = usePinnedEntriesState()
 
   // Phase 4: Parse URL params for initial view mode state restoration
   const [initialViewMode, setInitialViewMode] = useState<'dashboard' | 'workspace'>('dashboard')
@@ -97,10 +108,34 @@ export function DashboardInitializer({
     }
   }, [])
 
+  // Initialize PinnedEntryManager on mount
+  useEffect(() => {
+    if (pinnedManagerInitRef.current) return
+    pinnedManagerInitRef.current = true
+
+    initializePinnedEntryManager({
+      enabled: pinnedEntriesEnabled,
+      limits: {
+        maxPinnedEntries: getPinnedEntriesMax(),
+        maxWorkspacesPerEntry: getPinnedWorkspacesPerEntryMax(),
+      },
+    })
+
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "pinned_manager_initialized",
+      metadata: {
+        enabled: pinnedEntriesEnabled,
+        maxPinnedEntries: getPinnedEntriesMax(),
+        maxWorkspacesPerEntry: getPinnedWorkspacesPerEntryMax(),
+      },
+    })
+  }, [pinnedEntriesEnabled])
+
   // Debug: log on mount
   useEffect(() => {
-    console.log("[DashboardInitializer] Mount - dashboardEnabled:", dashboardEnabled)
-  }, [dashboardEnabled])
+    console.log("[DashboardInitializer] Mount - dashboardEnabled:", dashboardEnabled, "pinnedEntriesEnabled:", pinnedEntriesEnabled)
+  }, [dashboardEnabled, pinnedEntriesEnabled])
 
   // Fetch dashboard info
   useEffect(() => {
@@ -422,6 +457,106 @@ export function DashboardInitializer({
   // Use currentDashboardWorkspaceId which can be updated when navigating to other entries
   if (showDashboard && currentDashboardWorkspaceId) {
     console.log("[DashboardInitializer] Rendering DashboardView with workspaceId:", currentDashboardWorkspaceId)
+
+    // When pinned entries feature is enabled, render pinned entries' DashboardViews
+    // alongside the active entry's DashboardView for state preservation
+    if (pinnedEntriesEnabled && pinnedEntriesState.enabled) {
+      const activeEntryId = currentEntryInfo?.entryId
+      const pinnedEntries = pinnedEntriesState.entries
+      const isActiveEntryPinned = pinnedEntries.some(e => e.entryId === activeEntryId)
+
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "render_with_pinned_entries",
+        metadata: {
+          activeEntryId,
+          pinnedCount: pinnedEntries.length,
+          pinnedIds: pinnedEntries.map(e => e.entryId),
+          isActiveEntryPinned,
+        },
+      })
+
+      // Log before rendering pinned entries
+      void debugLog({
+        component: "DashboardInitializer",
+        action: "rendering_pinned_entries",
+        metadata: {
+          count: pinnedEntries.length,
+          activeEntryId,
+          pinnedIds: pinnedEntries.map(e => e.entryId),
+        },
+      })
+
+      return (
+        <div className="relative w-screen h-screen">
+          {/* Render all pinned entries' DashboardViews */}
+          {/* Active pinned entry is shown, others are hidden but stay mounted */}
+          {pinnedEntries.map((pinnedEntry, index) => {
+            const isActive = pinnedEntry.entryId === activeEntryId
+
+            void debugLog({
+              component: "DashboardInitializer",
+              action: "rendering_pinned_entry",
+              metadata: {
+                index,
+                entryId: pinnedEntry.entryId,
+                entryName: pinnedEntry.entryName,
+                dashboardWorkspaceId: pinnedEntry.dashboardWorkspaceId,
+                isActive,
+                pinnedWorkspaceIds: pinnedEntry.pinnedWorkspaceIds,
+              },
+            })
+
+            return (
+              <div
+                key={`pinned-${pinnedEntry.entryId}`}
+                className="absolute inset-0"
+                style={{
+                  visibility: isActive ? 'visible' : 'hidden',
+                  pointerEvents: isActive ? 'auto' : 'none',
+                  zIndex: isActive ? 10 : 0,
+                }}
+                aria-hidden={!isActive}
+              >
+                <DashboardView
+                  workspaceId={pinnedEntry.dashboardWorkspaceId}
+                  onNavigate={handleDashboardNavigate}
+                  entryId={pinnedEntry.entryId}
+                  entryName={pinnedEntry.entryName}
+                  homeEntryId={dashboardInfo?.homeEntryId}
+                  className="w-full h-full"
+                  onViewModeChange={handleViewModeChange}
+                  // Only restore URL view mode for the initially active entry
+                  initialViewMode={isActive ? initialViewMode : 'dashboard'}
+                  initialActiveWorkspaceId={isActive ? initialActiveWorkspaceId : undefined}
+                />
+              </div>
+            )
+          })}
+
+          {/* If active entry is NOT pinned, render it separately */}
+          {/* This handles non-pinned entries that remount normally */}
+          {!isActiveEntryPinned && (
+            <div className="absolute inset-0" style={{ zIndex: 10 }}>
+              <DashboardView
+                key={currentEntryInfo?.entryId}  // Force remount on entry change
+                workspaceId={currentDashboardWorkspaceId}
+                onNavigate={handleDashboardNavigate}
+                entryId={currentEntryInfo?.entryId}
+                entryName={currentEntryInfo?.entryName}
+                homeEntryId={dashboardInfo?.homeEntryId}
+                className="w-full h-full"
+                onViewModeChange={handleViewModeChange}
+                initialViewMode={initialViewMode}
+                initialActiveWorkspaceId={initialActiveWorkspaceId}
+              />
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    // Standard rendering without pinned entries feature
     return (
       <DashboardView
         key={currentEntryInfo?.entryId}  // Force remount on entry change to reset viewMode state

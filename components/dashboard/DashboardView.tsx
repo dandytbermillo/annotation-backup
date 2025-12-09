@@ -13,6 +13,7 @@ import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
 import { AddPanelButton } from "./PanelCatalog"
 import { DashboardBreadcrumb } from "./DashboardBreadcrumb"
+import { PinEntryButton } from "./PinEntryButton"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
 import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh } from "@/lib/note-workspaces/state"
@@ -1232,6 +1233,16 @@ export function DashboardView({
                 </>
               )}
             </div>
+
+            {/* Pin Entry Button - allows pinning this entry for state preservation */}
+            {entryId && (
+              <PinEntryButton
+                entryId={entryId}
+                dashboardWorkspaceId={workspaceId}
+                entryName={entryName}
+                size="sm"
+              />
+            )}
           </div>
 
           {/* Right side: Dashboard button + Workspace dropdown + Add Panel + Reset */}
@@ -1295,6 +1306,7 @@ export function DashboardView({
               onSelectWorkspace={handleWorkspaceSelectById}
               onDeleteWorkspace={handleDeleteWorkspace}
               onRenameWorkspace={handleRenameWorkspace}
+              entryId={entryId}
             />
 
             <AddPanelButton

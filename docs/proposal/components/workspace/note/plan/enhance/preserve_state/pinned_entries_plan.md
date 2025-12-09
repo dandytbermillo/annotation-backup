@@ -6,7 +6,8 @@
 1. Let a dashboard/workspace pair remain mounted (hidden) when user switches entries.
 2. Preserve all in-memory operations inside pinned entries (timers, queued Quick Links, panel scroll positions, etc.).
 3. Provide pin controls at both entry and workspace level: users can pin a whole entry but only keep selected workspaces inside it alive (e.g., 1 or 3 out of 10), to control memory usage.
-4. Integrate with existing navigation context, runtime ledger, and Quick Links so pinned entries don’t break live-state guarantees.
+4. Include the Home (main) dashboard in the same pinning system so users can preserve their Home context just like any other entry.
+5. Integrate with existing navigation context, runtime ledger, and Quick Links so pinned entries don’t break live-state guarantees.
 
 ## Architecture Overview
 ```
@@ -63,13 +64,15 @@ DashboardInitializer
 1. Add “Pin Entry” button near breadcrumb or workspace tabs.
 2. Add per-workspace pin toggles in the workspace dropdown/list so users can pick which canvases in a pinned entry stay alive.
 3. Pinned tabs component showing pinned entries with nested indicators for pinned workspaces (e.g., `📌 Work [Clients, Reports]`).
-4. Visual cues: pinned entries/workspaces show 📌 icon, active items highlighted.
+4. Ensure the Home dashboard (system entry) has the same pin controls so users can keep their main dashboard alive.
+5. Visual cues: pinned entries/workspaces show 📌 icon, active items highlighted.
 5. Show toast or tooltip when auto-unpin occurs (limit reached).
 
 ### Phase 4 – Persistence & Limits
 1. Decide global limit (3–5 pinned entries) AND per-entry workspace limits (e.g., max 2 pinned workspaces per entry). Enforce by unpinning least-recently-used workspace when limit exceeded.
 2. Ensure pinned entries still obey per-workspace runtime ledger; only pinned workspaces stay mounted.
-3. Handle quick links / external navigation: if user opens pinned entry/workspace via Quick Link, just switch active IDs without remounting.
+3. Treat the Home dashboard as an entry within these limits (e.g., it counts toward the pinned entry total if pinned).
+4. Handle quick links / external navigation: if user opens pinned entry/workspace via Quick Link, just switch active IDs without remounting.
 
 ### Phase 5 – Testing & Rollout
 1. Feature flag `PINNED_ENTRIES`.

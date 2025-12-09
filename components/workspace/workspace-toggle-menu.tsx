@@ -2,6 +2,8 @@
 
 import { forwardRef, useState } from "react"
 import { Trash2 } from "lucide-react"
+import { PinWorkspaceButton, WorkspacePinnedDot } from "@/components/dashboard/PinWorkspaceButton"
+
 type WorkspaceSummary = {
   id: string
   name: string
@@ -27,6 +29,8 @@ type WorkspaceToggleMenuProps = {
   onRenameWorkspace?: (workspaceId: string, name: string) => void | Promise<void>
   className?: string
   labelTitle?: string
+  /** Entry ID for workspace pinning (optional - enables pin buttons when provided) */
+  entryId?: string
 }
 
 export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMenuProps>(
@@ -47,6 +51,7 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
       className,
       labelTitle = "Workspace",
       onRenameWorkspace,
+      entryId,
     },
     ref,
   ) {
@@ -165,12 +170,30 @@ export const WorkspaceToggleMenu = forwardRef<HTMLDivElement, WorkspaceToggleMen
                               placeholder="Workspace name"
                             />
                           ) : (
-                            <span className="font-medium">{workspace.name}</span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="font-medium">{workspace.name}</span>
+                              {entryId && (
+                                <WorkspacePinnedDot
+                                  entryId={entryId}
+                                  workspaceId={workspace.id}
+                                />
+                              )}
+                            </span>
                           )}
                           {countLabel ? <span className="text-xs text-white/60">{countLabel}</span> : null}
                         </div>
                         <div className="mt-1 text-[11px] text-white/50">{lastUpdated}</div>
                       </button>
+                      {/* Pin workspace button - only shown when entry is provided and pinned */}
+                      {entryId && (
+                        <div className="absolute right-[4.5rem] top-2 opacity-0 transition-all group-hover:opacity-100">
+                          <PinWorkspaceButton
+                            entryId={entryId}
+                            workspaceId={workspace.id}
+                            size="xs"
+                          />
+                        </div>
+                      )}
                       {onRenameWorkspace ? (
                         <button
                           type="button"
