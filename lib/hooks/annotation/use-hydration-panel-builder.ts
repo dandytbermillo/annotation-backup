@@ -339,15 +339,8 @@ export function useHydrationNoteTracker() {
       const isSameNote = lastHydratedNoteRef.current === targetNoteId
       const skipHydration = !isInitialHydration && mainPanelExists
 
+      // NOTE: Removed hot-path debug log (skip_already_hydrated_note) - was causing 390+ DB writes/min
       if (!isInitialHydration) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "skip_already_hydrated_note",
-          metadata: {
-            noteId: targetNoteId,
-            reason: "note_marked_hydrated",
-          },
-        })
         return {
           shouldHydrate: false,
           isInitialHydration,

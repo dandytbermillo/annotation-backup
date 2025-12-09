@@ -184,6 +184,15 @@ export function useComponentCreationHandler({
     [setCanvasItems, onComponentChange],
   )
 
+  const handleComponentStateChange = useCallback(
+    (id: string, componentState: any) => {
+      setCanvasItems(prev => prev.map(item => (item.id === id ? { ...item, componentState } : item)))
+      // Note: We don't call onComponentChange here to avoid excessive saves during state updates
+      // State is persisted in canvasItems and will be saved with the next position change or workspace save
+    },
+    [setCanvasItems],
+  )
+
   const componentItems = useMemo(() => canvasItems.filter(isComponent), [canvasItems])
 
   const stickyNoteItems = useMemo(
@@ -200,6 +209,7 @@ export function useComponentCreationHandler({
     handleAddComponent,
     handleComponentClose,
     handleComponentPositionChange,
+    handleComponentStateChange,
     componentItems,
     stickyNoteItems,
     floatingComponents,

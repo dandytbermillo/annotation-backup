@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Calculator as CalcIcon } from 'lucide-react'
 import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
 
@@ -26,7 +26,17 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
   const [display, setDisplay] = useState(state?.display || '0')
   const [previousValue, setPreviousValue] = useState(state?.previousValue || null)
   const [operation, setOperation] = useState(state?.operation || null)
-  const [waitingForNewValue, setWaitingForNewValue] = useState(false)
+  const [waitingForNewValue, setWaitingForNewValue] = useState(state?.waitingForNewValue ?? false)
+
+  // Persist state changes to parent for runtime ledger storage
+  useEffect(() => {
+    onStateUpdate?.({
+      display,
+      previousValue,
+      operation,
+      waitingForNewValue,
+    })
+  }, [display, previousValue, operation, waitingForNewValue, onStateUpdate])
   
   // TEST FUNCTION: Makes calculator unresponsive for testing isolation
   const makeUnresponsive = () => {

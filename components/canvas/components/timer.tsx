@@ -16,6 +16,7 @@ interface TimerState {
   minutes: number
   seconds: number
   isRunning: boolean
+  inputMinutes?: string
 }
 
 export function Timer({ componentId, workspaceId, position, state, onStateUpdate }: TimerProps) {
@@ -32,8 +33,18 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
   const [minutes, setMinutes] = useState<number>(state?.minutes ?? 5)
   const [seconds, setSeconds] = useState<number>(state?.seconds ?? 0)
   const [isRunning, setIsRunning] = useState<boolean>(state?.isRunning ?? false)
-  const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? 5))
+  const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? state?.inputMinutes ?? 5))
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Persist state changes to parent for runtime ledger storage
+  useEffect(() => {
+    onStateUpdate?.({
+      minutes,
+      seconds,
+      isRunning,
+      inputMinutes,
+    })
+  }, [minutes, seconds, isRunning, inputMinutes, onStateUpdate])
 
   useEffect(() => {
     if (isRunning) {

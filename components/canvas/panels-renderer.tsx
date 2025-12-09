@@ -80,17 +80,7 @@ export const PanelsRenderer = memo(function PanelsRenderer({
 
   const panels = canvasItems.filter(isPanel)
 
-  // DEBUG: Log panels being rendered
-  void debugLog({
-    component: "PanelsRenderer",
-    action: "rendering_panels_list",
-    metadata: {
-      hydrationReady,
-      totalCanvasItems: canvasItems.length,
-      totalPanels: panels.length,
-      panelIds: panels.map(p => p.panelId),
-    },
-  })
+  // NOTE: Removed hot-path debug log (rendering_panels_list) - was causing 290+ DB writes/min
 
   return (
     <>

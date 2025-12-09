@@ -455,7 +455,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     hasNotes,
     noteIds,
     noteId,
-    canvasItemsLength: canvasItems.length,
     mainOnlyNoteSet,
     freshNoteSeeds,
     onConsumeFreshNoteSeed,
@@ -686,6 +685,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     handleAddComponent,
     handleComponentClose,
     handleComponentPositionChange,
+    handleComponentStateChange,
     stickyNoteItems,
     floatingComponents,
   } = useComponentCreationHandler({
@@ -1128,8 +1128,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
                 type={component.componentType!}
                 position={component.position}
                 workspaceId={workspaceId}
+                initialState={component.componentState}
                 onClose={handleComponentClose}
                 onPositionChange={handleComponentPositionChange}
+                onStateChange={handleComponentStateChange}
               />
             ))}
           </div>

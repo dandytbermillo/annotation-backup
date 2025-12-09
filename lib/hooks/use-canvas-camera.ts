@@ -49,23 +49,7 @@ export function useCanvasCamera() {
     const newX = oldX - dxWorld
     const newY = oldY - dyWorld
 
-    // DEBUG: Log every camera pan dispatch
-    import('@/lib/utils/debug-logger').then(({ debugLog }) => {
-      debugLog({
-        component: 'CanvasCamera',
-        action: 'panCameraBy_dispatch',
-        metadata: {
-          screenDelta: { dx: dxScreen, dy: dyScreen },
-          worldDelta: { dx: dxWorld, dy: dyWorld },
-          oldPosition: { x: oldX, y: oldY },
-          newPosition: { x: newX, y: newY },
-          payload: {
-            translateX: newX,
-            translateY: newY
-          }
-        }
-      })
-    })
+    // NOTE: Removed hot-path debug log (panCameraBy_dispatch) - was causing 250+ DB writes/min
 
     // Update canvas state with new camera position. Subtracting moves the
     // viewport in the direction of the pointer (drag right ⇒ camera pans right).

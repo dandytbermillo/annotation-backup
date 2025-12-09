@@ -19,17 +19,25 @@ interface ComponentPanelProps {
   type: ComponentType
   position: { x: number; y: number }
   workspaceId?: string | null
+  initialState?: any
   onClose?: (id: string) => void
   onPositionChange?: (id: string, position: { x: number; y: number }) => void
+  onStateChange?: (id: string, state: any) => void
 }
 
 // Global variable to track which component is currently being dragged
 let globalDraggingComponentId: string | null = null
 
-export function ComponentPanel({ id, type, position, workspaceId, onClose, onPositionChange }: ComponentPanelProps) {
+export function ComponentPanel({ id, type, position, workspaceId, initialState, onClose, onPositionChange, onStateChange }: ComponentPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
-  const [componentState, setComponentState] = useState({})
+  const [componentState, setComponentState] = useState(initialState ?? {})
+
+  // Notify parent when component state changes (for persistence to canvas items)
+  const handleStateUpdate = useCallback((newState: any) => {
+    setComponentState(newState)
+    onStateChange?.(id, newState)
+  }, [id, onStateChange])
   const { isIsolated, level, placeholder } = useIsolation(id)
   // Register with isolation manager for heuristic metrics
   useRegisterWithIsolation(id, panelRef as any, type === 'sticky-note' ? 'high' : 'normal', type)
@@ -290,14 +298,14 @@ export function ComponentPanel({ id, type, position, workspaceId, onClose, onPos
     switch (type) {
       case 'calculator':
         // Phase 3 Unification: Pass position to component for runtime ledger registration
-        return <Calculator componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={setComponentState} />
+        return <Calculator componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'timer':
         // Phase 3 Unification: Pass position to component for runtime ledger registration
-        return <Timer componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={setComponentState} />
+        return <Timer componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'sticky-note':
-        return <StickyNote componentId={id} state={componentState} onStateUpdate={setComponentState} />
+        return <StickyNote componentId={id} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'dragtest':
-        return <DragTest componentId={id} state={componentState} onStateUpdate={setComponentState} />
+        return <DragTest componentId={id} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'perftest':
         return <PerformanceTest componentId={id} />
       default:

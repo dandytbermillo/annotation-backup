@@ -4,8 +4,9 @@ import { useEffect, useCallback, useRef } from "react"
 
 import { createPanelItem } from "@/types/canvas-items"
 import { ensurePanelKey } from "@/lib/canvas/composite-id"
-import { getDefaultMainPosition, isDefaultMainPosition } from "@/lib/canvas/canvas-defaults"
-import { debugLog } from "@/lib/utils/debug-logger"
+import { getDefaultMainPosition } from "@/lib/canvas/canvas-defaults"
+// NOTE: debugLog removed - this hook runs on every render cycle and was causing
+// thousands of DB writes per minute, freezing the app
 import type { DataStore } from "@/lib/data-store"
 
 import type { CanvasItem } from "@/types/canvas-items"
@@ -44,7 +45,6 @@ type UseCanvasNoteSyncOptions = {
   hasNotes: boolean
   noteIds: string[]
   noteId: string
-  canvasItemsLength: number
   mainOnlyNoteSet: Set<string>
   freshNoteSeeds: Record<string, { x: number; y: number }>
   onConsumeFreshNoteSeed?: (noteId: string) => void
@@ -63,7 +63,6 @@ export function useCanvasNoteSync({
   hasNotes,
   noteIds,
   noteId,
-  canvasItemsLength,
   mainOnlyNoteSet,
   freshNoteSeeds,
   onConsumeFreshNoteSeed,
@@ -86,102 +85,31 @@ export function useCanvasNoteSync({
   useEffect(() => {
     const revisionChanged = lastSnapshotRevisionRef.current !== workspaceSnapshotRevision
     lastSnapshotRevisionRef.current = workspaceSnapshotRevision
-    debugLog({
-      component: "AnnotationCanvas",
-      action: "noteIds_sync_effect_triggered",
-      metadata: {
-        hasNotes,
-        noteIds,
-        currentItemsCount: canvasItemsLength,
-        currentNoteIdProp: noteId,
-        revisionChanged,
-        workspaceSnapshotRevision,
-      },
-    })
 
     if (!hasNotes) {
       // FIX 16: Use functional update to prevent render loop.
-      // Previously, setCanvasItems([]) created a NEW empty array every time,
-      // causing React to detect a state change ([] !== []) and re-render,
-      // which re-triggered this effect in an infinite loop.
-      // Now we check if already empty and return prev to prevent the loop.
       setCanvasItems(prev => {
         if (prev.length === 0) {
-          // Already empty - return same reference to prevent re-render
           return prev
         }
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "clearing_canvas_items_no_notes",
-          metadata: {
-            reason: "hasNotes_is_false",
-            previousCount: prev.length,
-          },
-        })
         return []
       })
       return
     }
 
     setCanvasItems(prev => {
-      debugLog({
-        component: "AnnotationCanvas",
-        action: "setCanvasItems_called_before_sync",
-        metadata: {
-          prevItemsCount: prev.length,
-          prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-          noteIds,
-          revisionChanged,
-          workspaceRestorationInProgress: workspaceRestorationInProgressRef?.current ?? false,
-        },
-      })
-
-      // COMPREHENSIVE FIX: Skip ALL syncs during workspace restoration
-      // This prevents syncs triggered by ANY dependency change (noteIds, noteId, etc.)
-      // from running before snapshot restore + hydration complete
+      // Skip during workspace restoration
       if (workspaceRestorationInProgressRef?.current) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "noteIds_sync_skip_during_workspace_restoration",
-          metadata: {
-            reason: "workspace_restoration_in_progress",
-            workspaceSnapshotRevision,
-            prevItemsCount: prev.length,
-            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-          },
-        })
         return prev
       }
 
-      // Option 3: Skip filtering entirely when workspace snapshot revision changed
-      // Let workspace snapshot restoration control canvas items during workspace switches
+      // Skip during snapshot restoration
       if (revisionChanged) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "noteIds_sync_skip_during_snapshot_restoration",
-          metadata: {
-            reason: "let_workspace_snapshot_control_items",
-            workspaceSnapshotRevision,
-            prevItemsCount: prev.length,
-            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-          },
-        })
         return prev
       }
 
-      // Skip filtering while non-main panel hydration is in progress
-      // This prevents the race condition where hydration fetches panels asynchronously
-      // but sync runs again and filters them out before hydration completes
+      // Skip during hydration
       if (hydrationInProgressRef?.current) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "noteIds_sync_skip_during_hydration",
-          metadata: {
-            reason: "non_main_panel_hydration_in_progress",
-            prevItemsCount: prev.length,
-            prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-          },
-        })
         return prev
       }
 
@@ -190,13 +118,6 @@ export function useCanvasNoteSync({
 
       const mainByNote = new Map<string, CanvasItem>()
       const otherItems: CanvasItem[] = []
-
-      const prevMainPanels = prev
-        .filter(item => item.itemType === "panel" && item.panelId === "main")
-        .map(item => ({
-          noteId: getItemNoteId(item),
-          position: item.position,
-        }))
 
       prev.forEach(item => {
         if (item.itemType === "panel" && item.panelId === "main") {
@@ -262,17 +183,6 @@ export function useCanvasNoteSync({
               (existing.position?.x !== nextPosition?.x || existing.position?.y !== nextPosition?.y))
 
           if (needsMetaUpdate) {
-            debugLog({
-              component: "AnnotationCanvas",
-              action: "noteIds_sync_updating_metadata_only",
-              metadata: {
-                noteId: id,
-                existingNoteId: existing.noteId,
-                existingPosition: existing.position,
-                keepingPosition: storedPosition === null,
-              },
-            })
-
             nextMainItems.push({
               ...existing,
               position: nextPosition,
@@ -291,20 +201,6 @@ export function useCanvasNoteSync({
             resolveWorkspacePosition(id) ??
             storedPosition ??
             getDefaultMainPosition()
-
-          debugLog({
-            component: "AnnotationCanvas",
-            action: "noteIds_sync_creating_new_panel",
-            metadata: {
-              noteId: id,
-              targetPosition,
-              source: seedPosition
-                ? "fresh_seed"
-                : isDefaultMainPosition(targetPosition)
-                  ? "default"
-                  : "workspace",
-            },
-          })
 
           nextMainItems.push(
             createPanelItem("main", targetPosition, "main", id, targetStoreKey),
@@ -334,15 +230,6 @@ export function useCanvasNoteSync({
               state: "active",
               closedAt: null,
             })
-            debugLog({
-              component: "AnnotationCanvas",
-              action: "noteIds_sync_seeded_datastore",
-              metadata: {
-                noteId: id,
-                storeKey: targetStoreKey,
-                position: targetPosition,
-              },
-            })
           }
 
           if (seedPosition && onConsumeFreshNoteSeed) {
@@ -355,51 +242,7 @@ export function useCanvasNoteSync({
       const newItems = [...nextMainItems, ...otherItems]
 
       if (!changed && newItems.length === prev.length) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "noteIds_sync_NO_CHANGE",
-          metadata: {
-            noteIds,
-            itemCount: prev.length,
-            reason: "items_unchanged_returning_prev",
-          },
-        })
         return prev
-      }
-
-      const nextMainPanels = nextMainItems.map(item => ({
-        noteId: getItemNoteId(item),
-        position: item.position,
-      }))
-
-      debugLog({
-        component: "AnnotationCanvas",
-        action: "noteIds_sync_updated_items",
-        metadata: {
-          prevCount: prev.length,
-          newCount: newItems.length,
-          changed,
-          noteIdsInput: noteIds,
-          currentNoteIdProp: noteId,
-          prevMainPanels,
-          nextMainPanels,
-          mainByNoteKeys: Array.from(mainByNote.keys()),
-          prevPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-          newPanelIds: newItems.filter(item => item.itemType === "panel").map(p => p.panelId),
-        },
-      })
-
-      if (changed) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "canvas_items_state_will_change",
-          metadata: {
-            previousPanelIds: prev.filter(item => item.itemType === "panel").map(p => p.panelId),
-            newPanelIds: newItems.filter(item => item.itemType === "panel").map(p => p.panelId),
-            panelsRemoved: prev.filter(item => item.itemType === "panel" && !newItems.some(ni => ni.itemType === "panel" && ni.panelId === item.panelId)).map(p => p.panelId),
-            panelsAdded: newItems.filter(item => item.itemType === "panel" && !prev.some(pi => pi.itemType === "panel" && pi.panelId === item.panelId)).map(p => p.panelId),
-          },
-        })
       }
 
       return newItems

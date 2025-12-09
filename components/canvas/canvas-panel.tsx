@@ -1840,6 +1840,9 @@ export function CanvasPanel({
   const zoomRef = useRef(state.canvasState.zoom)
   const dataStoreRef = useRef(dataStore)
   const persistPanelUpdateRef = useRef(persistPanelUpdate)
+  const updateMainPositionRef = useRef(updateMainPosition)
+  const checkAutoScrollRef = useRef(checkAutoScroll)
+  const stopAutoScrollRef = useRef(stopAutoScroll)
   const storeKeyRef = useRef(storeKey)
   const branchRef = useRef(branch)
   const resizeStartRef = useRef(resizeStart)
@@ -1850,6 +1853,9 @@ export function CanvasPanel({
     zoomRef.current = state.canvasState.zoom
     dataStoreRef.current = dataStore
     persistPanelUpdateRef.current = persistPanelUpdate
+    updateMainPositionRef.current = updateMainPosition
+    checkAutoScrollRef.current = checkAutoScroll
+    stopAutoScrollRef.current = stopAutoScroll
     storeKeyRef.current = storeKey
     branchRef.current = branch
     resizeStartRef.current = resizeStart
@@ -2620,7 +2626,7 @@ export function CanvasPanel({
       })
 
       // Check for auto-scroll when near edges
-      checkAutoScroll(e.clientX, e.clientY)
+      checkAutoScrollRef.current(e.clientX, e.clientY)
 
       // Schedule RAF update if not already scheduled
       if (!state.rafScheduled) {
@@ -2641,7 +2647,7 @@ export function CanvasPanel({
       }
 
       // Stop auto-scroll when dragging ends
-      stopAutoScroll()
+      stopAutoScrollRef.current()
 
       dragState.current.isDragging = false
       setIsDraggingPanel(false)
@@ -2697,7 +2703,7 @@ export function CanvasPanel({
 
       // Persist to database - StateTransaction will update all stores atomically
       // finalX/finalY are already in world-space (from panel.style.left/top)
-      persistPanelUpdate({
+      persistPanelUpdateRef.current({
         panelId,
         storeKey: ensurePanelKey(effectiveNoteId, panelId),  // Composite key for multi-note support
         position: { x: finalX, y: finalY },
@@ -2707,7 +2713,7 @@ export function CanvasPanel({
       })
 
       if (panelId === 'main' && effectiveNoteId) {
-        void updateMainPosition(effectiveNoteId, { x: finalX, y: finalY }).catch(error => {
+        void updateMainPositionRef.current(effectiveNoteId, { x: finalX, y: finalY }).catch(error => {
           console.error('[CanvasPanel] Failed to update workspace main position:', error)
         })
       }
@@ -2756,24 +2762,22 @@ export function CanvasPanel({
       document.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener('pointerup', handlePointerUp, true)
       window.removeEventListener('blur', handleWindowBlur)
-      
+
       // Stop auto-scroll on cleanup
-      stopAutoScroll()
-      
+      stopAutoScrollRef.current()
+
       // Reset any lingering styles
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
   }, [
-    checkAutoScroll,
-    stopAutoScroll,
+    // Use refs for frequently-changing callbacks to prevent infinite re-render loops
+    // checkAutoScrollRef, stopAutoScrollRef, persistPanelUpdateRef, updateMainPositionRef are used via refs
     panelId,
     isCameraEnabled,
     resetPanAccumulation,
-    persistPanelUpdate,
-    updateMainPosition,
     effectiveNoteId
-  ]) // Add auto-scroll functions, camera deps, persistence helpers, and note context as dependencies
+  ]) // Stable deps only - callback refs are synced in separate useEffect
 
   // Update cursor when layer state changes
   useEffect(() => {

@@ -187,14 +187,8 @@ export function setActiveWorkspaceContext(workspaceId: string | null) {
 }
 
 export function getActiveWorkspaceContext(): string | null {
-  void debugLog({
-    component: "WorkspaceState",
-    action: "get_active_workspace_context",
-    metadata: {
-      value: activeWorkspaceContext,
-      stack: new Error().stack?.split('\n').slice(1, 4).join(' | '),
-    },
-  })
+  // NOTE: No debug log here - this is called by useSyncExternalStore on every render check
+  // and logging would cause thousands of DB writes, freezing the app
   return activeWorkspaceContext
 }
 

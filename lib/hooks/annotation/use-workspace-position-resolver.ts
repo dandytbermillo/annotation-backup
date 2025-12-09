@@ -2,7 +2,8 @@
 
 import { useCallback, useMemo } from "react"
 
-import { debugLog } from "@/lib/utils/debug-logger"
+// NOTE: debugLog removed from this file - this is a hot-path function called on every render
+// and logging would cause thousands of DB writes, freezing the app
 
 export interface WorkspacePositionEntry {
   mainPosition?: { x: number; y: number } | null
@@ -25,56 +26,22 @@ export function useWorkspacePositionResolver<T extends WorkspacePositionEntry>({
 }: UseWorkspacePositionResolverOptions<T>) {
   const resolveWorkspacePosition = useCallback(
     (targetNoteId: string): { x: number; y: number } | null => {
+      // NOTE: No debug logs in this hot-path function - called on every render
+      // and logging would cause thousands of DB writes, freezing the app
       const workspaceEntry = workspaceNoteMap.get(targetNoteId)
       if (workspaceEntry?.mainPosition && !isDefaultOffscreenPosition(workspaceEntry.mainPosition)) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "resolve_workspace_position_from_entry",
-          metadata: {
-            targetNoteId,
-            position: workspaceEntry.mainPosition,
-            source: "workspaceEntry.mainPosition",
-          },
-        })
         return workspaceEntry.mainPosition
       }
 
       const pending = getPendingPosition(targetNoteId)
       if (pending && !isDefaultOffscreenPosition(pending)) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "resolve_workspace_position_from_pending",
-          metadata: {
-            targetNoteId,
-            position: pending,
-            source: "pendingPosition",
-          },
-        })
         return pending
       }
 
       const cached = getCachedPosition(targetNoteId)
       if (cached && !isDefaultOffscreenPosition(cached)) {
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "resolve_workspace_position_from_cache",
-          metadata: {
-            targetNoteId,
-            position: cached,
-            source: "cachedPosition",
-          },
-        })
         return cached
       }
-
-      debugLog({
-        component: "AnnotationCanvas",
-        action: "resolve_workspace_position_null",
-        metadata: {
-          targetNoteId,
-          source: "none_found",
-        },
-      })
 
       return null
     },

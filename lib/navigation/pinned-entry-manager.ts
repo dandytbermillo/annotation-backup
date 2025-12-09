@@ -38,7 +38,7 @@ const changeListeners = new Set<(event: PinnedEntriesChangeEvent) => void>()
 
 /**
  * Initialize the pinned entry manager
- * Call this on app startup to restore state from localStorage
+ * Call this on app startup - pins are cleared on reload since in-memory state is lost anyway
  */
 export function initializePinnedEntryManager(options?: {
   enabled?: boolean
@@ -50,29 +50,15 @@ export function initializePinnedEntryManager(options?: {
     limits = { ...DEFAULT_PINNED_LIMITS, ...options.limits }
   }
 
-  // Restore from localStorage if feature is enabled
-  if (featureEnabled && typeof window !== 'undefined') {
+  // Clear any persisted pins - start fresh each session
+  // The purpose of pinning is to preserve in-memory state during a session,
+  // which is lost on reload anyway, so pins should start empty
+  pinnedEntries = []
+  if (typeof window !== 'undefined') {
     try {
-      const stored = localStorage.getItem(PINNED_ENTRIES_STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored) as { entries?: PinnedEntry[]; limits?: PinnedEntryLimits }
-        pinnedEntries = parsed.entries ?? []
-        if (parsed.limits) {
-          limits = { ...limits, ...parsed.limits }
-        }
-
-        void debugLog({
-          component: 'PinnedEntryManager',
-          action: 'restored_from_storage',
-          metadata: {
-            entryCount: pinnedEntries.length,
-            entries: pinnedEntries.map(e => ({ entryId: e.entryId, workspaceCount: e.pinnedWorkspaceIds.length })),
-          },
-        })
-      }
-    } catch (error) {
-      console.warn('[PinnedEntryManager] Failed to restore from localStorage:', error)
-      pinnedEntries = []
+      localStorage.removeItem(PINNED_ENTRIES_STORAGE_KEY)
+    } catch {
+      // Ignore localStorage errors
     }
   }
 
@@ -82,7 +68,8 @@ export function initializePinnedEntryManager(options?: {
     metadata: {
       enabled: featureEnabled,
       limits,
-      entryCount: pinnedEntries.length,
+      entryCount: 0,
+      note: 'pins_cleared_on_reload',
     },
   })
 }

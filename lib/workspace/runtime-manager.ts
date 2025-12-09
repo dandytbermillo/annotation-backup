@@ -1115,18 +1115,7 @@ export const registerRuntimeComponent = (
     })
   }
 
-  void debugLog({
-    component: "WorkspaceRuntime",
-    action: existing ? "runtime_component_updated" : "runtime_component_registered",
-    metadata: {
-      workspaceId,
-      componentId: input.componentId,
-      componentType: input.componentType,
-      position: input.position,
-      zIndex: component.zIndex,
-      totalComponents: runtime.components.size,
-    },
-  })
+  // NOTE: Removed hot-path debug log (runtime_component_updated) - was causing 300+ DB writes/min
 
   return component
 }

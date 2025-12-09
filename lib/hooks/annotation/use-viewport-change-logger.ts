@@ -1,8 +1,5 @@
 "use client"
 
-import { useEffect, useRef } from "react"
-
-import { debugLog } from "@/lib/utils/debug-logger"
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 
 interface UseViewportChangeLoggerOptions {
@@ -10,40 +7,11 @@ interface UseViewportChangeLoggerOptions {
   canvasState: CanvasViewportState
 }
 
-export function useViewportChangeLogger({ noteId, canvasState }: UseViewportChangeLoggerOptions) {
-  const previousViewportRef = useRef({
-    x: canvasState.translateX,
-    y: canvasState.translateY,
-  })
-
-  useEffect(() => {
-    const prev = previousViewportRef.current
-    const changed = prev.x !== canvasState.translateX || prev.y !== canvasState.translateY
-
-    if (!changed) {
-      return
-    }
-
-    const stack = new Error().stack
-    const caller = stack?.split("\n")[3] || "unknown"
-
-    debugLog({
-      component: "AnnotationCanvas",
-      action: "viewport_changed",
-      metadata: {
-        noteId,
-        from: { x: prev.x, y: prev.y },
-        to: { x: canvasState.translateX, y: canvasState.translateY },
-        delta: {
-          x: canvasState.translateX - prev.x,
-          y: canvasState.translateY - prev.y,
-        },
-        zoom: canvasState.zoom,
-        caller: caller.trim(),
-        isDragging: canvasState.isDragging,
-      },
-    })
-
-    previousViewportRef.current = { x: canvasState.translateX, y: canvasState.translateY }
-  }, [canvasState.translateX, canvasState.translateY, canvasState.isDragging, canvasState.zoom, noteId])
+/**
+ * DISABLED: This hook was logging viewport changes to the database on every pan/zoom,
+ * causing 300+ DB writes per minute and freezing the app.
+ * The hook is now a no-op. Remove usage or re-enable with console.log for debugging only.
+ */
+export function useViewportChangeLogger(_options: UseViewportChangeLoggerOptions) {
+  // No-op - hot-path logging disabled for performance
 }
