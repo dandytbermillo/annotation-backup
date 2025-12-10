@@ -89,14 +89,17 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     // This is critical for Phase 2 hot switching - canvases should be hidden, not unmounted.
     const everRenderedWorkspacesRef = useRef<Set<string>>(new Set())
 
-    // Build set of pinned workspace IDs for fast lookup
-    const pinnedSet = useMemo(() => new Set(pinnedWorkspaceIds ?? []), [pinnedWorkspaceIds])
-
     // Determine which canvases to render
     // Filter behavior depends on whether the parent entry is active or hidden:
     // - Entry ACTIVE: Render all workspaces (user can interact with any of them)
     // - Entry HIDDEN: Only render PINNED workspaces (save resources, stop non-pinned timers)
     const canvasesToRender = useMemo(() => {
+      // FIX: Create pinnedSet INSIDE the memo to ensure it's always fresh.
+      // Previously, pinnedSet was a separate useMemo that could become stale due to
+      // React's batching behavior when isEntryActive changes. This caused pinned
+      // workspaces to be incorrectly classified as "not_pinned" when switching entries.
+      const pinnedSet = new Set(pinnedWorkspaceIds ?? [])
+
       debugLog({
         component: "MultiWorkspaceCanvas",
         action: "filter_inputs",
@@ -104,6 +107,8 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
           isEntryActive,
           activeWorkspaceId,
           pinnedWorkspaceIds: pinnedWorkspaceIds ?? [],
+          pinnedSetSize: pinnedSet.size,
+          pinnedSetContents: Array.from(pinnedSet),
           hotRuntimesCount: hotRuntimes.length,
           hotRuntimeIds: hotRuntimes.map(r => r.workspaceId),
           everRenderedWorkspaces: Array.from(everRenderedWorkspacesRef.current),
@@ -166,7 +171,7 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
       })
 
       return result
-    }, [hotRuntimes, activeWorkspaceId, isEntryActive, pinnedSet, pinnedWorkspaceIds])
+    }, [hotRuntimes, activeWorkspaceId, isEntryActive, pinnedWorkspaceIds])
 
     // Track newly rendered workspaces (update ref after render completes)
     useEffect(() => {

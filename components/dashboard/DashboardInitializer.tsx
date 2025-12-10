@@ -29,6 +29,7 @@ import {
   initializePinnedEntryManager,
   usePinnedEntriesState,
 } from "@/lib/navigation"
+import { updatePinnedWorkspaceIds } from "@/lib/workspace/runtime-manager"
 import { DashboardView } from "./DashboardView"
 
 // Context for navigation handler
@@ -83,6 +84,35 @@ export function DashboardInitializer({
 
   // Pinned entries state (for keeping entry dashboards mounted when switching)
   const pinnedEntriesState = usePinnedEntriesState()
+
+  // Layer 2: Sync pinned workspace IDs to RuntimeManager for eviction protection
+  // When pinned entries change, update the runtime manager so it knows which
+  // workspaces should NOT be evicted (they have running timers, etc.)
+  useEffect(() => {
+    if (!pinnedEntriesEnabled || !pinnedEntriesState.enabled) {
+      // Clear pinned workspaces if feature is disabled
+      updatePinnedWorkspaceIds([])
+      return
+    }
+
+    // Collect all pinned workspace IDs across all pinned entries
+    const allPinnedWorkspaceIds = pinnedEntriesState.entries.flatMap(
+      entry => entry.pinnedWorkspaceIds
+    )
+
+    // Update runtime manager with the full list of pinned workspace IDs
+    updatePinnedWorkspaceIds(allPinnedWorkspaceIds)
+
+    void debugLog({
+      component: "DashboardInitializer",
+      action: "synced_pinned_workspaces_to_runtime",
+      metadata: {
+        pinnedEntriesCount: pinnedEntriesState.entries.length,
+        totalPinnedWorkspaces: allPinnedWorkspaceIds.length,
+        pinnedWorkspaceIds: allPinnedWorkspaceIds,
+      },
+    })
+  }, [pinnedEntriesEnabled, pinnedEntriesState.enabled, pinnedEntriesState.entries])
 
   // Phase 4: Parse URL params for initial view mode state restoration
   const [initialViewMode, setInitialViewMode] = useState<'dashboard' | 'workspace'>('dashboard')

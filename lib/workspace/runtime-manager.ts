@@ -69,6 +69,57 @@ const getMaxLiveRuntimes = (): number => {
 
 const runtimes = new Map<string, WorkspaceRuntime>()
 
+// =============================================================================
+// Layer 2: Pinned Workspace Protection
+// =============================================================================
+// Pinned workspaces should NOT be evicted by LRU, even when at capacity.
+// This ensures that workspaces with running timers, calculators, etc. preserve
+// their state when the user switches between entries.
+
+let pinnedWorkspaceIds: Set<string> = new Set()
+
+/**
+ * Update the set of pinned workspace IDs.
+ * Called when pinned entries state changes (from DashboardInitializer).
+ * Pinned workspaces will be protected from LRU eviction.
+ */
+export const updatePinnedWorkspaceIds = (ids: string[]): void => {
+  const prevSize = pinnedWorkspaceIds.size
+  pinnedWorkspaceIds = new Set(ids)
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "pinned_workspaces_updated",
+    metadata: {
+      prevPinnedCount: prevSize,
+      newPinnedCount: pinnedWorkspaceIds.size,
+      pinnedIds: ids,
+    },
+  })
+
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[WorkspaceRuntime] Pinned workspaces updated`, {
+      prevCount: prevSize,
+      newCount: pinnedWorkspaceIds.size,
+      ids,
+    })
+  }
+}
+
+/**
+ * Check if a workspace is pinned (protected from eviction).
+ */
+export const isWorkspacePinned = (workspaceId: string): boolean => {
+  return pinnedWorkspaceIds.has(workspaceId)
+}
+
+/**
+ * Get all pinned workspace IDs.
+ */
+export const getPinnedWorkspaceIds = (): string[] => {
+  return Array.from(pinnedWorkspaceIds)
+}
+
 // Phase 3: Pre-eviction callback registry
 // Callbacks are invoked BEFORE a runtime is removed, allowing persistence of dirty state
 export type PreEvictionCallback = (workspaceId: string, reason: string) => Promise<void>
@@ -740,11 +791,15 @@ export const getHotRuntimesInfo = (): Array<{
 
 /**
  * Get the least recently visible runtime ID for eviction.
- * Excludes the currently visible runtime.
+ * Excludes:
+ * - Currently visible runtime
+ * - Shared/placeholder workspace
+ * - Pinned workspaces (Layer 2 protection)
  */
 export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
   let oldestId: string | null = null
   let oldestTime = Infinity
+  let skippedPinnedCount = 0
 
   for (const [id, runtime] of runtimes.entries()) {
     // Don't evict the visible runtime
@@ -753,10 +808,30 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
     // Don't evict the shared/placeholder workspace
     if (id === SHARED_WORKSPACE_ID_INTERNAL) continue
 
+    // Layer 2: Don't evict pinned workspaces - they should preserve state
+    if (pinnedWorkspaceIds.has(id)) {
+      skippedPinnedCount++
+      continue
+    }
+
     if (runtime.lastVisibleAt < oldestTime) {
       oldestTime = runtime.lastVisibleAt
       oldestId = id
     }
+  }
+
+  // Log if we skipped pinned workspaces during eviction selection
+  if (skippedPinnedCount > 0) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "eviction_skipped_pinned",
+      metadata: {
+        skippedPinnedCount,
+        pinnedWorkspaceIds: Array.from(pinnedWorkspaceIds),
+        selectedForEviction: oldestId,
+        totalRuntimes: runtimes.size,
+      },
+    })
   }
 
   return oldestId

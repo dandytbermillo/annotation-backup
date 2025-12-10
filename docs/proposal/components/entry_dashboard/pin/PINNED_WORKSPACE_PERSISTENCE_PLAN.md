@@ -2,8 +2,10 @@
 
 **Feature Slug:** `pinned_workspace_persistence`
 **Created:** 2024-12-10
-**Status:** Planning
+**Implemented:** 2024-12-10
+**Status:** ✅ Implemented
 **Priority:** High
+**Fix Documentation:** `fixed/2024-12-10-pinned-workspace-persistence-fix.md`
 
 ---
 
@@ -390,16 +392,16 @@ LIMIT 20;
 ## 8. Acceptance Criteria
 
 ### Layer 1 (Filter Fix)
-- [ ] `isPinned` correctly computed for all pinned workspaces
-- [ ] No stale closure issues with `pinnedSet`
-- [ ] Debug logs show `isPinned: true` for workspaces in `pinnedWorkspaceIds`
+- [x] `isPinned` correctly computed for all pinned workspaces
+- [x] No stale closure issues with `pinnedSet`
+- [x] Debug logs show `isPinned: true` for workspaces in `pinnedWorkspaceIds`
 
 ### Layer 2 (Runtime Protection)
-- [ ] `updatePinnedWorkspaceIds` function exported from runtime-manager
-- [ ] Eviction logic skips pinned workspace IDs
-- [ ] Debug logs show `eviction_blocked` when all candidates are pinned
+- [x] `updatePinnedWorkspaceIds` function exported from runtime-manager
+- [x] Eviction logic skips pinned workspace IDs
+- [x] Debug logs show `eviction_skipped_pinned` when pinned workspaces are candidates
 
-### End-to-End
+### End-to-End (Requires Manual Testing)
 - [ ] "Open first, pin later" scenario preserves Timer state
 - [ ] "Pin first, open later" scenario still works
 - [ ] Multiple pinned entries preserve state independently
