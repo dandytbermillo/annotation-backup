@@ -2647,7 +2647,21 @@ export function FloatingToolbar({ x, y, onClose, onSelectNote, onCreateNote, onC
         </button>
         <button
           className="rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:from-blue-400 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          onClick={handleCreateNewNote}
+          onClick={(e) => {
+            debugLog({
+              component: "FloatingToolbar",
+              action: "note_button_clicked",
+              metadata: { isCreatingNote, clientX: e.clientX, clientY: e.clientY, workspaceName },
+            })
+            handleCreateNewNote()
+          }}
+          onMouseDown={(e) => {
+            debugLog({
+              component: "FloatingToolbar",
+              action: "note_button_mousedown",
+              metadata: { clientX: e.clientX, clientY: e.clientY, workspaceName },
+            })
+          }}
           disabled={isCreatingNote}
         >
           {isCreatingNote ? 'Creating...' : '+ Note'}

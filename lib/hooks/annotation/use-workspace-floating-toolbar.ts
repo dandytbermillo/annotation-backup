@@ -88,8 +88,11 @@ export function useWorkspaceFloatingToolbar({
     ],
   )
 
+  // FIX: Fallback toolbar only renders when canvas-based toolbar is hidden (isHidden = true)
+  // When isHidden = false, the canvas-based toolbar (CanvasAwareFloatingToolbar) handles it via portal
+  // This prevents both toolbars from rendering simultaneously which causes click events to be lost
   const floatingToolbarVisible =
-    showNotesWidget && !activeNoteId && !showConstellationPanel && !isHidden
+    showNotesWidget && !activeNoteId && !showConstellationPanel && isHidden
 
   return {
     floatingToolbarProps,

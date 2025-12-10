@@ -5,6 +5,7 @@ import { FloatingToolbar } from "./floating-toolbar"
 import type { ComponentProps } from "react"
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
+import { debugLog } from "@/lib/utils/debug-logger"
 
 /**
  * CanvasAwareFloatingToolbar - Context-Connected Toolbar Wrapper
@@ -53,10 +54,35 @@ export function CanvasAwareFloatingToolbar({
   const [mounted, setMounted] = useState(false)
   useEffect(() => {
     setMounted(true)
-  }, [])
+    debugLog({
+      component: "CanvasAwareFloatingToolbar",
+      action: "mounted",
+      metadata: { noteId },
+    })
+  }, [noteId])
+
+  // DEBUG: Log render decision
+  debugLog({
+    component: "CanvasAwareFloatingToolbar",
+    action: "render_check",
+    metadata: { mounted, isHidden, noteId, willRender: mounted && !isHidden },
+  })
 
   // Don't render portal when hidden (prevents portal from bypassing display:none)
-  if (!mounted || isHidden) return null
+  if (!mounted || isHidden) {
+    debugLog({
+      component: "CanvasAwareFloatingToolbar",
+      action: "not_rendering",
+      metadata: { mounted, isHidden, reason: !mounted ? "not_mounted" : "is_hidden" },
+    })
+    return null
+  }
+
+  debugLog({
+    component: "CanvasAwareFloatingToolbar",
+    action: "creating_portal",
+    metadata: { noteId, hasCanvasState: !!state },
+  })
 
   // Pass context values as props to FloatingToolbar
   // When state.lastUpdate changes, this component re-renders with fresh values

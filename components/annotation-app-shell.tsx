@@ -1706,7 +1706,7 @@ const initialWorkspaceSyncRef = useRef(false)
           (entry) => entry.id === noteWorkspaceState.currentWorkspaceId,
         )?.name ?? null
       }
-      isHidden={isHidden}
+      isHidden={isHidden || !isEntryActive}
     />
   ) : null
 
@@ -1830,7 +1830,7 @@ const initialWorkspaceSyncRef = useRef(false)
     recentNotesRefreshTrigger,
     toggleConstellationView,
     knowledgeBaseWorkspace,
-    isHidden,
+    isHidden: isHidden || !isEntryActive,
   })
 
   const workspaceFloatingToolbarProps = useMemo(
@@ -1848,7 +1848,7 @@ const initialWorkspaceSyncRef = useRef(false)
     onDismiss: cancelNotePreview,
     onMouseEnter: handleSidebarPreviewTooltipEnter,
     onMouseLeave: handleSidebarPreviewTooltipLeave,
-    isHidden,
+    isHidden: isHidden || !isEntryActive,
   })
 
   const sidebarPreviewPopupsProps = shouldLoadOverlay ? sidebarPreviewProps : undefined
