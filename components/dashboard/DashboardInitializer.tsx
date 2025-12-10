@@ -465,51 +465,81 @@ export function DashboardInitializer({
       const pinnedEntries = pinnedEntriesState.entries
       const isActiveEntryPinned = pinnedEntries.some(e => e.entryId === activeEntryId)
 
+      // FIX: Build unified render list to prevent unmount/remount when pin status changes.
+      // By rendering all entries (pinned + active) through a single map with consistent keys,
+      // React maintains component identity when pin status changes. This prevents:
+      // 1. Dashboard panels from refreshing (no state reset)
+      // 2. View mode from resetting to 'dashboard' when user was in workspace view
+      type RenderEntry = {
+        entryId: string
+        entryName: string
+        dashboardWorkspaceId: string
+        pinnedWorkspaceIds: string[]
+        isPinned: boolean
+      }
+
+      const entriesToRender: RenderEntry[] = []
+
+      // Add all pinned entries first
+      for (const pinnedEntry of pinnedEntries) {
+        entriesToRender.push({
+          entryId: pinnedEntry.entryId,
+          entryName: pinnedEntry.entryName,
+          dashboardWorkspaceId: pinnedEntry.dashboardWorkspaceId,
+          pinnedWorkspaceIds: pinnedEntry.pinnedWorkspaceIds,
+          isPinned: true,
+        })
+      }
+
+      // Add active entry if not already in the list (unpinned active entry)
+      // This ensures the active entry is always rendered through the same map,
+      // preventing remount when transitioning between pinned and unpinned states
+      if (!isActiveEntryPinned && activeEntryId && currentDashboardWorkspaceId) {
+        entriesToRender.push({
+          entryId: activeEntryId,
+          entryName: currentEntryInfo?.entryName ?? '',
+          dashboardWorkspaceId: currentDashboardWorkspaceId,
+          pinnedWorkspaceIds: [], // Unpinned entries don't preserve workspace state
+          isPinned: false,
+        })
+      }
+
       void debugLog({
         component: "DashboardInitializer",
-        action: "render_with_pinned_entries",
+        action: "render_unified_list",
         metadata: {
           activeEntryId,
           pinnedCount: pinnedEntries.length,
-          pinnedIds: pinnedEntries.map(e => e.entryId),
+          entriesToRenderCount: entriesToRender.length,
           isActiveEntryPinned,
-        },
-      })
-
-      // Log before rendering pinned entries
-      void debugLog({
-        component: "DashboardInitializer",
-        action: "rendering_pinned_entries",
-        metadata: {
-          count: pinnedEntries.length,
-          activeEntryId,
-          pinnedIds: pinnedEntries.map(e => e.entryId),
+          renderIds: entriesToRender.map(e => e.entryId),
         },
       })
 
       return (
         <div className="relative w-screen h-screen">
-          {/* Render all pinned entries' DashboardViews */}
-          {/* Active pinned entry is shown, others are hidden but stay mounted */}
-          {pinnedEntries.map((pinnedEntry, index) => {
-            const isActive = pinnedEntry.entryId === activeEntryId
+          {/* Unified render list: all entries rendered through single map with consistent keys */}
+          {/* This prevents unmount/remount when pin status changes for the active entry */}
+          {entriesToRender.map((entry, index) => {
+            const isActive = entry.entryId === activeEntryId
 
             void debugLog({
               component: "DashboardInitializer",
-              action: "rendering_pinned_entry",
+              action: "rendering_entry",
               metadata: {
                 index,
-                entryId: pinnedEntry.entryId,
-                entryName: pinnedEntry.entryName,
-                dashboardWorkspaceId: pinnedEntry.dashboardWorkspaceId,
+                entryId: entry.entryId,
+                entryName: entry.entryName,
+                dashboardWorkspaceId: entry.dashboardWorkspaceId,
                 isActive,
-                pinnedWorkspaceIds: pinnedEntry.pinnedWorkspaceIds,
+                isPinned: entry.isPinned,
+                pinnedWorkspaceIds: entry.pinnedWorkspaceIds,
               },
             })
 
             return (
               <div
-                key={`pinned-${pinnedEntry.entryId}`}
+                key={`entry-${entry.entryId}`}
                 className="absolute inset-0"
                 style={{
                   visibility: isActive ? 'visible' : 'hidden',
@@ -519,10 +549,10 @@ export function DashboardInitializer({
                 aria-hidden={!isActive}
               >
                 <DashboardView
-                  workspaceId={pinnedEntry.dashboardWorkspaceId}
+                  workspaceId={entry.dashboardWorkspaceId}
                   onNavigate={handleDashboardNavigate}
-                  entryId={pinnedEntry.entryId}
-                  entryName={pinnedEntry.entryName}
+                  entryId={entry.entryId}
+                  entryName={entry.entryName}
                   homeEntryId={dashboardInfo?.homeEntryId}
                   className="w-full h-full"
                   onViewModeChange={handleViewModeChange}
@@ -530,7 +560,7 @@ export function DashboardInitializer({
                   initialViewMode={isActive ? initialViewMode : 'dashboard'}
                   initialActiveWorkspaceId={isActive ? initialActiveWorkspaceId : undefined}
                   // Pass pinned workspace IDs for state preservation filtering
-                  pinnedWorkspaceIds={pinnedEntry.pinnedWorkspaceIds}
+                  pinnedWorkspaceIds={entry.pinnedWorkspaceIds}
                   // Pass entry active state for workspace filtering
                   // When entry is hidden, only pinned workspaces should stay mounted
                   isEntryActive={isActive}
@@ -538,25 +568,6 @@ export function DashboardInitializer({
               </div>
             )
           })}
-
-          {/* If active entry is NOT pinned, render it separately */}
-          {/* This handles non-pinned entries that remount normally */}
-          {!isActiveEntryPinned && (
-            <div className="absolute inset-0" style={{ zIndex: 10 }}>
-              <DashboardView
-                key={currentEntryInfo?.entryId}  // Force remount on entry change
-                workspaceId={currentDashboardWorkspaceId}
-                onNavigate={handleDashboardNavigate}
-                entryId={currentEntryInfo?.entryId}
-                entryName={currentEntryInfo?.entryName}
-                homeEntryId={dashboardInfo?.homeEntryId}
-                className="w-full h-full"
-                onViewModeChange={handleViewModeChange}
-                initialViewMode={initialViewMode}
-                initialActiveWorkspaceId={initialActiveWorkspaceId}
-              />
-            </div>
-          )}
         </div>
       )
     }
