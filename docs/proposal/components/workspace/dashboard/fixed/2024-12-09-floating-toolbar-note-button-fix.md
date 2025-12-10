@@ -93,7 +93,7 @@ When both toolbars exist in the DOM:
    **Key change:** `!isHidden` → `isHidden`
 
 2. **`components/annotation-app-shell.tsx`** (Lines 1709, 1833, 1851)
-
+ 
    Added `|| !isEntryActive` to prevent hidden pinned entries from rendering their toolbars:
    ```typescript
    isHidden={isHidden || !isEntryActive}
