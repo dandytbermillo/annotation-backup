@@ -141,6 +141,10 @@ type AnnotationAppContentProps = {
   toolbarTopOffset?: number
   /** When provided, directly control which workspace is displayed (bypasses global context subscription) */
   controlledWorkspaceId?: string
+  /** Pinned workspace IDs - only these workspaces stay mounted when entry is hidden */
+  pinnedWorkspaceIds?: string[]
+  /** Whether the parent entry is currently active/visible (vs hidden behind another entry) */
+  isEntryActive?: boolean
 }
 
 function AnnotationAppContent({
@@ -150,6 +154,8 @@ function AnnotationAppContent({
   hideWorkspaceToggle = false,
   toolbarTopOffset = 0,
   controlledWorkspaceId,
+  pinnedWorkspaceIds,
+  isEntryActive = true,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -1711,6 +1717,8 @@ const initialWorkspaceSyncRef = useRef(false)
       key="multi-workspace"
       ref={canvasRef}
       activeWorkspaceId={noteWorkspaceState.currentWorkspaceId}
+      pinnedWorkspaceIds={pinnedWorkspaceIds}
+      isEntryActive={isEntryActive}
       freshNoteSeeds={freshNoteSeeds}
       onConsumeFreshNoteSeed={consumeFreshNoteSeed}
       isNotesExplorerOpen={false}
@@ -1903,6 +1911,10 @@ export interface AnnotationAppShellProps {
   toolbarTopOffset?: number
   /** When provided, directly control which workspace is displayed (bypasses global context subscription) */
   controlledWorkspaceId?: string
+  /** Pinned workspace IDs - only these workspaces stay mounted when entry is hidden */
+  pinnedWorkspaceIds?: string[]
+  /** Whether the parent entry is currently active/visible (vs hidden behind another entry) */
+  isEntryActive?: boolean
 }
 
 export function AnnotationAppShell({
@@ -1911,6 +1923,8 @@ export function AnnotationAppShell({
   hideWorkspaceToggle = false,
   toolbarTopOffset = 0,
   controlledWorkspaceId,
+  pinnedWorkspaceIds,
+  isEntryActive = true,
 }: AnnotationAppShellProps = {}) {
   return (
     <LayerProvider initialPopupCount={0}>
@@ -1922,6 +1936,8 @@ export function AnnotationAppShell({
           hideWorkspaceToggle={hideWorkspaceToggle}
           toolbarTopOffset={toolbarTopOffset}
           controlledWorkspaceId={controlledWorkspaceId}
+          pinnedWorkspaceIds={pinnedWorkspaceIds}
+          isEntryActive={isEntryActive}
         />
       </CanvasWorkspaceProvider>
     </LayerProvider>

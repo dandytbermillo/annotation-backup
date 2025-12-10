@@ -48,6 +48,10 @@ interface DashboardViewProps {
   initialViewMode?: 'dashboard' | 'workspace'
   /** Initial active workspace ID from URL params */
   initialActiveWorkspaceId?: string
+  /** Pinned workspace IDs - only these workspaces stay mounted when switching away from this entry */
+  pinnedWorkspaceIds?: string[]
+  /** Whether this entry is currently active/visible (vs hidden behind another entry) */
+  isEntryActive?: boolean
 }
 
 export function DashboardView({
@@ -60,6 +64,8 @@ export function DashboardView({
   onViewModeChange,
   initialViewMode = 'dashboard',
   initialActiveWorkspaceId,
+  pinnedWorkspaceIds,
+  isEntryActive = true,
 }: DashboardViewProps) {
   const [panels, setPanels] = useState<WorkspacePanel[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -1523,6 +1529,8 @@ export function DashboardView({
               hideWorkspaceToggle
               toolbarTopOffset={56}
               controlledWorkspaceId={activeWorkspaceId ?? undefined}
+              pinnedWorkspaceIds={pinnedWorkspaceIds}
+              isEntryActive={isEntryActive}
             />
           </div>
         )}

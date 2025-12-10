@@ -529,6 +529,11 @@ export function DashboardInitializer({
                   // Only restore URL view mode for the initially active entry
                   initialViewMode={isActive ? initialViewMode : 'dashboard'}
                   initialActiveWorkspaceId={isActive ? initialActiveWorkspaceId : undefined}
+                  // Pass pinned workspace IDs for state preservation filtering
+                  pinnedWorkspaceIds={pinnedEntry.pinnedWorkspaceIds}
+                  // Pass entry active state for workspace filtering
+                  // When entry is hidden, only pinned workspaces should stay mounted
+                  isEntryActive={isActive}
                 />
               </div>
             )

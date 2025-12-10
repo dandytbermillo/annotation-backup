@@ -29,6 +29,10 @@ export type MultiWorkspaceCanvasContainerProps = Omit<
 > & {
   /** The currently active/visible workspace ID */
   activeWorkspaceId: string | null
+  /** Pinned workspace IDs - only these workspaces stay mounted when entry is hidden */
+  pinnedWorkspaceIds?: string[]
+  /** Whether the parent entry is currently active/visible (vs hidden behind another entry) */
+  isEntryActive?: boolean
   /** Callback when a canvas becomes visible (for telemetry) */
   onWorkspaceVisible?: (workspaceId: string) => void
   /** Callback when a canvas becomes hidden (for telemetry) */
@@ -52,6 +56,8 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
   function MultiWorkspaceCanvasContainer(
     {
       activeWorkspaceId,
+      pinnedWorkspaceIds,
+      isEntryActive = true,
       onWorkspaceVisible,
       onWorkspaceHidden,
       children,
@@ -83,30 +89,63 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
     // This is critical for Phase 2 hot switching - canvases should be hidden, not unmounted.
     const everRenderedWorkspacesRef = useRef<Set<string>>(new Set())
 
+    // Build set of pinned workspace IDs for fast lookup
+    const pinnedSet = useMemo(() => new Set(pinnedWorkspaceIds ?? []), [pinnedWorkspaceIds])
+
     // Determine which canvases to render
-    // IMPORTANT: Render canvases that EITHER:
-    // 1. Have at least one note (normal case for new canvases), OR
-    // 2. Were previously rendered (keep alive for hot switching)
-    // This prevents the hook order violation in ModernAnnotationCanvasInner while also
-    // keeping hot canvases mounted during workspace switches.
+    // Filter behavior depends on whether the parent entry is active or hidden:
+    // - Entry ACTIVE: Render all workspaces (user can interact with any of them)
+    // - Entry HIDDEN: Only render PINNED workspaces (save resources, stop non-pinned timers)
     const canvasesToRender = useMemo(() => {
+      debugLog({
+        component: "MultiWorkspaceCanvas",
+        action: "filter_inputs",
+        metadata: {
+          isEntryActive,
+          activeWorkspaceId,
+          pinnedWorkspaceIds: pinnedWorkspaceIds ?? [],
+          hotRuntimesCount: hotRuntimes.length,
+          hotRuntimeIds: hotRuntimes.map(r => r.workspaceId),
+          everRenderedWorkspaces: Array.from(everRenderedWorkspacesRef.current),
+        },
+      })
+
       const result = hotRuntimes
         .filter((runtime) => {
           const hasNotes = runtime.openNotes.length > 0
+          const isActiveWorkspace = runtime.workspaceId === activeWorkspaceId
+          const isPinned = pinnedSet.has(runtime.workspaceId)
           const wasRenderedBefore = everRenderedWorkspacesRef.current.has(runtime.workspaceId)
-          const shouldRender = hasNotes || wasRenderedBefore
 
-          if (!hasNotes && wasRenderedBefore) {
-            debugLog({
-              component: "MultiWorkspaceCanvas",
-              action: "keeping_canvas_alive",
-              metadata: {
-                workspaceId: runtime.workspaceId,
-                reason: "previously_rendered_but_no_notes",
-                openNotesCount: runtime.openNotes.length,
-              },
-            })
+          let shouldRender: boolean
+          let reason: string
+
+          if (isEntryActive) {
+            // Entry is ACTIVE: Original behavior - render all interactive workspaces
+            // User can interact with any workspace, even empty ones
+            shouldRender = hasNotes || wasRenderedBefore || isActiveWorkspace
+            reason = hasNotes ? "has_notes" : wasRenderedBefore ? "previously_rendered" : isActiveWorkspace ? "is_active" : "no_match"
+          } else {
+            // Entry is HIDDEN: Only keep pinned workspaces running
+            // Non-pinned workspaces will unmount, stopping their background operations
+            shouldRender = isPinned && (wasRenderedBefore || hasNotes)
+            reason = shouldRender ? "pinned_and_has_content" : isPinned ? "pinned_but_no_content" : "not_pinned"
           }
+
+          debugLog({
+            component: "MultiWorkspaceCanvas",
+            action: "filter_decision",
+            metadata: {
+              workspaceId: runtime.workspaceId,
+              isEntryActive,
+              hasNotes,
+              isActiveWorkspace,
+              isPinned,
+              wasRenderedBefore,
+              shouldRender,
+              reason,
+            },
+          })
 
           return shouldRender
         })
@@ -115,8 +154,19 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
           isActive: runtime.workspaceId === activeWorkspaceId,
         }))
 
+      debugLog({
+        component: "MultiWorkspaceCanvas",
+        action: "filter_result",
+        metadata: {
+          isEntryActive,
+          inputCount: hotRuntimes.length,
+          outputCount: result.length,
+          renderedWorkspaceIds: result.map(r => r.workspaceId),
+        },
+      })
+
       return result
-    }, [hotRuntimes, activeWorkspaceId])
+    }, [hotRuntimes, activeWorkspaceId, isEntryActive, pinnedSet, pinnedWorkspaceIds])
 
     // Track newly rendered workspaces (update ref after render completes)
     useEffect(() => {
