@@ -1086,9 +1086,33 @@ export function useNoteWorkspaces({
       }
 
       ownerId = snapshotOwnerWorkspaceIdRef.current ?? ownerId
-      const fallbackPanels = ownerId
+      const rawFallbackPanels = ownerId
         ? getLastNonEmptySnapshot(ownerId, lastNonEmptySnapshotsRef.current, workspaceSnapshotsRef.current)
         : []
+      // FIX: Filter fallback panels to only include notes that are still open
+      // This prevents restoring deleted notes from stale fallback cache
+      const currentOpenNotesForFallback = ownerId ? getWorkspaceOpenNotes(ownerId) : []
+      const currentOpenNoteIdsForFallback = new Set(
+        currentOpenNotesForFallback
+          .map((n) => n.noteId)
+          .filter((id): id is string => Boolean(id)),
+      )
+      const fallbackPanels = rawFallbackPanels.filter((panel) => {
+        if (!panel.noteId) return false
+        if (!currentOpenNoteIdsForFallback.has(panel.noteId)) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "panel_snapshot_fallback_skipped_closed_note",
+            metadata: {
+              workspaceId: ownerId,
+              noteId: panel.noteId,
+              reason: "note_no_longer_open",
+            },
+          })
+          return false
+        }
+        return true
+      })
       let panelsToPersist =
         panels.length > 0
           ? panels
@@ -1103,6 +1127,8 @@ export function useNoteWorkspaces({
             reason,
             workspaceId: ownerId,
             cachedPanelCount: fallbackPanels.length,
+            rawFallbackCount: rawFallbackPanels.length,
+            filteredOutCount: rawFallbackPanels.length - fallbackPanels.length,
           },
         })
       }
@@ -1114,9 +1140,32 @@ export function useNoteWorkspaces({
               .map((panel) => (panel.noteId ? String(panel.noteId) : null))
               .filter((id): id is string => Boolean(id)),
           )
+          // FIX: Get current open notes to filter out panels for notes that were closed
+          // This prevents deleted notes from being restored via stale cached panels
+          const currentOpenNotes = getWorkspaceOpenNotes(ownerId)
+          const currentOpenNoteIds = new Set(
+            currentOpenNotes
+              .map((n) => n.noteId)
+              .filter((id): id is string => Boolean(id)),
+          )
           const preservedPanels = existingPanels.filter((panel) => {
             if (!panel.noteId) return false
-            return !updatedNoteIds.has(panel.noteId)
+            // Don't preserve if this panel's note is in the update set (being updated)
+            if (updatedNoteIds.has(panel.noteId)) return false
+            // FIX: Don't preserve if this panel's note is no longer open in the workspace
+            if (!currentOpenNoteIds.has(panel.noteId)) {
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "panel_snapshot_merge_skipped_closed_note",
+                metadata: {
+                  workspaceId: ownerId,
+                  noteId: panel.noteId,
+                  reason: "note_no_longer_open",
+                },
+              })
+              return false
+            }
+            return true
           })
           panelsToPersist = mergePanelSnapshots(preservedPanels, panelsToPersist)
           emitDebugLog({
@@ -1126,6 +1175,8 @@ export function useNoteWorkspaces({
               workspaceId: ownerId,
               mergedCount: panelsToPersist.length,
               updatedNoteIds: Array.from(updatedNoteIds),
+              preservedNoteIds: preservedPanels.map((p) => p.noteId),
+              currentOpenNoteIds: Array.from(currentOpenNoteIds),
             },
           })
         }
@@ -1845,7 +1896,32 @@ export function useNoteWorkspaces({
           .map((panel) => panel.noteId)
           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
       )
-      const missingOpenNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+      // FIX: In live-state mode, runtime is the source of truth for open notes.
+      // Notes in DataStore panels that aren't in runtime were likely closed.
+      // Don't seed them back - that would restore deleted notes.
+      // Only compute missingOpenNotes for non-live-state mode.
+      const missingOpenNotes = liveStateEnabled
+        ? [] // In live-state mode, runtime is authoritative - don't seed from stale DataStore
+        : Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+
+      if (liveStateEnabled && observedNoteIds.size > openNoteIds.size) {
+        // Log that we're skipping seed due to live state (for debugging)
+        const skippedNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+        if (skippedNotes.length > 0) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_open_note_seed_skipped_live_state",
+            metadata: {
+              workspaceId,
+              skippedNoteIds: skippedNotes,
+              runtimeOpenNoteIds: Array.from(openNoteIds),
+              observedNoteIds: Array.from(observedNoteIds),
+              reason: "runtime_is_authoritative_in_live_state",
+            },
+          })
+        }
+      }
+
       // FIX 1: Guard against stale provider state in live-state hot runtime
       if (liveStateEnabled && hasWorkspaceRuntime(workspaceId) && missingOpenNotes.length > 0) {
         const currentAttempts = captureRetryAttemptsRef.current.get(workspaceId) ?? 0

@@ -664,7 +664,32 @@ export function useWorkspaceSnapshot({
           .map((panel) => panel.noteId)
           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
       )
-      const missingOpenNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+      // FIX: In live-state mode, runtime is the source of truth for open notes.
+      // Notes in DataStore panels that aren't in runtime were likely closed.
+      // Don't seed them back - that would restore deleted notes.
+      // Only compute missingOpenNotes for non-live-state mode.
+      const missingOpenNotes = liveStateEnabled
+        ? [] // In live-state mode, runtime is authoritative - don't seed from stale DataStore
+        : Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+
+      if (liveStateEnabled && observedNoteIds.size > openNoteIds.size) {
+        // Log that we're skipping seed due to live state (for debugging)
+        const skippedNotes = Array.from(observedNoteIds).filter((noteId) => !openNoteIds.has(noteId))
+        if (skippedNotes.length > 0) {
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "snapshot_open_note_seed_skipped_live_state",
+            metadata: {
+              workspaceId,
+              skippedNoteIds: skippedNotes,
+              runtimeOpenNoteIds: Array.from(openNoteIds),
+              observedNoteIds: Array.from(observedNoteIds),
+              reason: "runtime_is_authoritative_in_live_state",
+            },
+          })
+        }
+      }
+
       if (liveStateEnabled && hasWorkspaceRuntime(workspaceId) && missingOpenNotes.length > 0) {
         const currentAttempts = captureRetryAttemptsRef.current.get(workspaceId) ?? 0
         const maxRetries = 3
