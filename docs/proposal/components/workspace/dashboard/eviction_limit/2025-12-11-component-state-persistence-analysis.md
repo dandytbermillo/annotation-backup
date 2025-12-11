@@ -319,8 +319,239 @@ ORDER BY created_at DESC LIMIT 20;
 
 ---
 
+---
+
+## Session 2: Additional Failed Fixes (2025-12-11 Evening)
+
+After Fix 7 (save cooldown) still didn't work, additional fixes were attempted focusing on the **rendering pipeline** rather than the **persistence pipeline**.
+
+### Fix 8: Timer Component useEffect for State Sync
+
+**File**: `components/canvas/components/timer.tsx`
+
+**What was added:**
+```typescript
+const prevStateRef = useRef(state)
+useEffect(() => {
+  if (state && state !== prevStateRef.current) {
+    if (state.minutes !== undefined) setMinutes(state.minutes)
+    if (state.seconds !== undefined) setSeconds(state.seconds)
+    if (state.isRunning !== undefined) setIsRunning(state.isRunning)
+    if (state.inputMinutes !== undefined) {
+      setInputMinutes(String(state.inputMinutes))
+    } else if (state.minutes !== undefined) {
+      setInputMinutes(String(state.minutes))
+    }
+    prevStateRef.current = state
+  }
+}, [state])
+```
+
+**Rationale:** React's `useState` only reads the initial value once at mount. This effect syncs when parent provides new state from DB restore.
+
+**Why it failed:** The parent (ComponentPanel) wasn't updating its internal `componentState` when `initialState` prop changed. Timer never received the restored state through props.
+
+---
+
+### Fix 9: Calculator Component useEffect for State Sync
+
+**File**: `components/canvas/components/calculator.tsx`
+
+**What was added:**
+```typescript
+const prevStateRef = useRef(state)
+useEffect(() => {
+  if (state && state !== prevStateRef.current) {
+    if (state.display !== undefined) setDisplay(state.display)
+    if (state.previousValue !== undefined) setPreviousValue(state.previousValue)
+    if (state.operation !== undefined) setOperation(state.operation)
+    if (state.waitingForNewValue !== undefined) setWaitingForNewValue(state.waitingForNewValue)
+    prevStateRef.current = state
+  }
+}, [state])
+```
+
+**Rationale:** Same as Timer - sync state prop to internal state after mount.
+
+**Why it failed:** Same as Timer - ComponentPanel wasn't propagating the restored state.
+
+---
+
+### Fix 10: Cooldown Logic - Never Shorten Existing Cooldown (4 Locations)
+
+**File**: `lib/hooks/annotation/use-note-workspaces.ts`
+
+**Locations:**
+1. Line ~2177 - `previewWorkspaceFromSnapshot` cold path
+2. Line ~3444 - `hydrateWorkspace` after DB load
+3. Line ~4250 - Non-v2 path in workspace switching
+4. Line ~4292 - V2 path after DB load
+
+**What was added at each location:**
+```typescript
+// COLD RESTORE FIX: Never SHORTEN an existing cooldown - only extend it.
+const existingCooldown = skipSavesUntilRef.current.get(workspaceId) ?? 0
+const newCooldown = Date.now() + 500
+if (newCooldown > existingCooldown) {
+  skipSavesUntilRef.current.set(workspaceId, newCooldown)
+}
+```
+
+**Rationale:**
+- Cold restore sets a 5000ms save cooldown
+- Multiple places were setting 500ms cooldowns that **overwrite** the 5000ms protection
+- Fix: Only set cooldown if the new value is longer than existing
+
+**Evidence the cooldown was working (from logs):**
+```
+hydrate_success: { saveCooldownSet: true, cooldownExtended: false }
+persist_now_skip_cooldown: { remainingMs: 2987, ... }
+```
+
+`cooldownExtended: false` means the 5000ms cooldown was preserved. Saves were being skipped during cooldown.
+
+**Why it failed:** The cooldown prevents SAVING defaults to DB, but doesn't help if components never RECEIVE the restored state. The problem is in the **rendering pipeline**, not the **persistence pipeline**.
+
+---
+
+### Fix 11: ComponentPanel useEffect for initialState Sync
+
+**File**: `components/canvas/component-panel.tsx`
+
+**What was added:**
+```typescript
+const prevInitialStateRef = useRef(initialState)
+useEffect(() => {
+  if (initialState && initialState !== prevInitialStateRef.current) {
+    setComponentState(initialState)
+    prevInitialStateRef.current = initialState
+  }
+}, [initialState])
+```
+
+**Rationale:**
+ComponentPanel has:
+```typescript
+const [componentState, setComponentState] = useState(initialState ?? {})
+```
+
+`useState` only reads `initialState` at mount. When parent re-renders with restored state, ComponentPanel's `componentState` stays at old value. This effect syncs the prop change to internal state.
+
+**Why it failed:** Unknown. The data flow appears correct:
+1. hydrateWorkspace → populateRuntimeComponents (metadata stored)
+2. useRuntimeComponents → runtimeComponentsToCanvasItems (metadata → componentState)
+3. canvasItems → floatingComponents → ComponentPanel (initialState prop)
+4. useEffect syncs initialState → componentState → child components
+
+**Possible reasons:**
+- Dev server wasn't restarted after fixes
+- Another layer preventing state from reaching components
+- Runtime ledger not updated before components render
+- React scheduling differences between Firefox and Chrome/Safari
+
+---
+
+## Updated Data Flow Analysis
+
+### Complete Data Flow for Cold Restore:
+
+```
+1. User switches to evicted workspace
+   │
+   ▼
+2. previewWorkspaceFromSnapshot
+   - Sets 5000ms cooldown ← Fix 10 prevents shortening
+   - May use cached snapshot (doesn't have component state)
+   │
+   ▼
+3. hydrateWorkspace loads from DB
+   - Gets workspace_components with metadata
+   - Calls populateRuntimeComponents(workspaceId, resolvedComponents)
+   │
+   ▼
+4. Runtime ledger updated (runtime.components Map)
+   - Each component has metadata: { minutes: 3, seconds: 44, ... }
+   │
+   ▼
+5. useRuntimeComponents(workspaceId) returns updated components
+   │
+   ▼
+6. runtimeComponentsToCanvasItems maps metadata → componentState
+   │
+   ▼
+7. setCanvasItems updates with new componentState
+   │
+   ▼
+8. ComponentPanel re-renders with new initialState prop
+   │
+   ▼
+9. [FIX 11] useEffect syncs to componentState
+   │
+   ▼
+10. [FIX 8/9] Timer/Calculator useEffect syncs from props
+    │
+    ▼
+11. Component displays restored values
+```
+
+### Suspected Failure Points:
+
+1. **Step 5**: Does `useRuntimeComponents` return updated data immediately after `populateRuntimeComponents`? Could be stale closure.
+
+2. **Step 7**: Does `setCanvasItems` run before or after components mount? Could be timing issue.
+
+3. **Step 8**: Is ComponentPanel actually re-rendering when canvasItems update? Could be referential equality preventing re-render.
+
+4. **React scheduling**: Chrome/Safari may schedule renders differently than Firefox, causing steps to happen in wrong order.
+
+---
+
+## Browser-Specific Behavior Analysis
+
+**Observation:**
+- Firefox: State persists correctly
+- Chrome/Safari: State resets to defaults
+
+**Possible explanations:**
+
+1. **Concurrent Rendering**: Chrome might use different React scheduling, causing components to render before state is ready.
+
+2. **Event Loop Timing**: Different microtask queue handling between browsers.
+
+3. **useEffect Timing**: Chrome may batch state updates differently, causing effects to run in different order.
+
+4. **Zustand Store Updates**: The runtime store might update synchronously in Firefox but asynchronously in Chrome.
+
+---
+
+## What Still Needs Investigation
+
+1. **Add console.logs at every step** of data flow to trace exact order in Chrome vs Firefox.
+
+2. **Check if components remount** vs re-render during cold restore. If remount, useState reinitializes.
+
+3. **Verify useRuntimeComponents** returns fresh data after populateRuntimeComponents.
+
+4. **Check workspaceSnapshotRevision** - is it being bumped at the right time?
+
+5. **Profile with React DevTools** to see exact render timeline.
+
+---
+
 ## Conclusion
 
 The core issue is architectural: the system is designed for **instant UI feedback** (mount components immediately, load data async), but this creates a race condition where **default state overwrites persisted state**.
 
 Each fix addressed a symptom without solving the fundamental timing problem. The most recent fix (save cooldown) directly blocks the problematic save, which is the most promising approach so far.
+
+**Session 2 Conclusion:**
+
+The cooldown fixes (Fix 7/10) successfully prevent default values from being saved to DB. But the problem persists because components aren't **receiving** the restored state through the rendering pipeline.
+
+Fixes 8-11 attempted to fix the rendering pipeline by ensuring state changes propagate from parent to child components. However, these didn't work - likely because the issue is even earlier: the parent (canvasItems) isn't being updated with restored state before components render, OR useRuntimeComponents returns stale data.
+
+**The next step should focus on:**
+1. Adding extensive logging to trace exactly when each step happens
+2. Verifying useRuntimeComponents returns fresh data synchronously
+3. Checking if components are remounting vs re-rendering
+4. Understanding why Firefox works but Chrome/Safari don't

@@ -98,6 +98,8 @@ import {
   mergeComponentSnapshots,
 } from "./workspace/workspace-utils"
 import { useWorkspaceRefs } from "./workspace/workspace-refs"
+import { useWorkspaceMembership } from "./workspace/use-workspace-membership"
+import { useWorkspacePanelSnapshots } from "./workspace/use-workspace-panel-snapshots"
 import type { UseNoteWorkspaceOptions, UseNoteWorkspaceResult } from "./workspace/workspace-types"
 
 export function useNoteWorkspaces({
@@ -220,6 +222,71 @@ export function useNoteWorkspaces({
     return filtered.length > 0 ? filtered : excludeDashboard(workspaces)
   }, [workspaces, currentEntryId])
 
+  // Create a stable ref-based wrapper for emitDebugLog that forwards to the ref
+  // This allows calling emitDebugLog before it's defined, since callbacks capture closures at call-time
+  const emitDebugLogViaRef = useCallback(
+    (payload: { component: string; action: string; metadata?: Record<string, unknown> }) => {
+      emitDebugLogRef.current?.(payload)
+    },
+    [emitDebugLogRef],
+  )
+
+  // Use extracted membership hook
+  const {
+    setWorkspaceNoteMembership,
+    getWorkspaceNoteMembership,
+    commitWorkspaceOpenNotes,
+    getWorkspaceOpenNotes,
+  } = useWorkspaceMembership({
+    refs: {
+      adapterRef,
+      panelSnapshotsRef,
+      workspaceSnapshotsRef,
+      lastNonEmptySnapshotsRef,
+      lastPreviewedSnapshotRef,
+      lastComponentsSnapshotRef,
+      workspaceOpenNotesRef,
+      workspaceNoteMembershipRef,
+      ownedNotesRef,
+      inferredWorkspaceNotesRef,
+      snapshotOwnerWorkspaceIdRef,
+      currentWorkspaceIdRef,
+      workspaceRevisionRef,
+      workspaceStoresRef,
+      previousVisibleWorkspaceRef,
+      lastHydratedWorkspaceIdRef,
+      lastPendingTimestampRef,
+      lastSavedPayloadHashRef,
+      lastPanelSnapshotHashRef,
+      lastSaveReasonRef,
+      saveInFlightRef,
+      skipSavesUntilRef,
+      workspaceDirtyRef,
+      saveTimeoutRef,
+      isHydratingRef,
+      replayingWorkspaceRef,
+      lastCameraRef,
+      previousEntryIdRef,
+      unavailableNoticeShownRef,
+      listedOnceRef,
+      captureRetryAttemptsRef,
+      deferredCachedCaptureCountRef,
+      persistWorkspaceByIdRef,
+      captureSnapshotRef,
+      emitDebugLogRef,
+    },
+    liveStateEnabled,
+    v2Enabled,
+    emitDebugLog: emitDebugLogViaRef,
+    openNotes,
+    openNotesWorkspaceId: openNotesWorkspaceId ?? null,
+  })
+
+  // NOTE: The following inline implementations of setWorkspaceNoteMembership, getWorkspaceNoteMembership,
+  // commitWorkspaceOpenNotes, and getWorkspaceOpenNotes have been extracted to use-workspace-membership.ts
+  // Keep the old code commented for reference during migration, then delete after verification.
+
+  /* EXTRACTED TO use-workspace-membership.ts
   const setWorkspaceNoteMembership = useCallback(
     (
       workspaceId: string | null | undefined,
@@ -500,7 +567,70 @@ export function useNoteWorkspaces({
     },
     [commitWorkspaceOpenNotes, getRuntimeOpenNotes, liveStateEnabled, openNotes, openNotesWorkspaceId],
   )
+  END OF EXTRACTED MEMBERSHIP FUNCTIONS */
 
+  // Use extracted panel snapshots hook
+  const {
+    filterPanelsForWorkspace,
+    getRuntimeDataStore,
+    getWorkspaceDataStore,
+    collectPanelSnapshotsFromDataStore,
+    getAllPanelSnapshots,
+    updatePanelSnapshotMap,
+    waitForPanelSnapshotReadiness,
+  } = useWorkspacePanelSnapshots({
+    refs: {
+      adapterRef,
+      panelSnapshotsRef,
+      workspaceSnapshotsRef,
+      lastNonEmptySnapshotsRef,
+      lastPreviewedSnapshotRef,
+      lastComponentsSnapshotRef,
+      workspaceOpenNotesRef,
+      workspaceNoteMembershipRef,
+      ownedNotesRef,
+      inferredWorkspaceNotesRef,
+      snapshotOwnerWorkspaceIdRef,
+      currentWorkspaceIdRef,
+      workspaceRevisionRef,
+      workspaceStoresRef,
+      previousVisibleWorkspaceRef,
+      lastHydratedWorkspaceIdRef,
+      lastPendingTimestampRef,
+      lastSavedPayloadHashRef,
+      lastPanelSnapshotHashRef,
+      lastSaveReasonRef,
+      saveInFlightRef,
+      skipSavesUntilRef,
+      workspaceDirtyRef,
+      saveTimeoutRef,
+      isHydratingRef,
+      replayingWorkspaceRef,
+      lastCameraRef,
+      previousEntryIdRef,
+      unavailableNoticeShownRef,
+      listedOnceRef,
+      captureRetryAttemptsRef,
+      deferredCachedCaptureCountRef,
+      persistWorkspaceByIdRef,
+      captureSnapshotRef,
+      emitDebugLogRef,
+    },
+    featureEnabled,
+    liveStateEnabled,
+    v2Enabled,
+    emitDebugLog: emitDebugLogViaRef,
+    getWorkspaceNoteMembership,
+    currentWorkspaceId,
+    sharedWorkspace: sharedWorkspace ?? null,
+  })
+
+  // NOTE: The following inline implementations of filterPanelsForWorkspace, getRuntimeDataStore,
+  // getWorkspaceDataStore, collectPanelSnapshotsFromDataStore, getAllPanelSnapshots,
+  // updatePanelSnapshotMap, and waitForPanelSnapshotReadiness have been extracted to
+  // use-workspace-panel-snapshots.ts. Keep the old code commented for reference during migration.
+
+  /* EXTRACTED TO use-workspace-panel-snapshots.ts
   const filterPanelsForWorkspace = useCallback(
     (workspaceId: string | null | undefined, panels: NoteWorkspacePanelSnapshot[]) => {
       if (!workspaceId) return panels
@@ -543,6 +673,7 @@ export function useNoteWorkspaces({
     },
     [sharedWorkspace?.dataStore, v2Enabled, liveStateEnabled, getRuntimeDataStore],
   )
+  END OF EXTRACTED PANEL SNAPSHOT HELPERS (filterPanelsForWorkspace, getRuntimeDataStore, getWorkspaceDataStore) */
 
   const emitDebugLog = useCallback(
     (payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => {
@@ -660,6 +791,7 @@ export function useNoteWorkspaces({
     [commitWorkspaceOpenNotes, emitDebugLog, getRuntimeMembership, getRuntimeOpenNotes, v2Enabled],
   )
 
+  /* EXTRACTED TO use-workspace-panel-snapshots.ts (continued)
   // FIX 9: Accept optional targetWorkspaceId parameter to prevent workspace ID mismatch.
   // Previously, this function independently resolved the workspace ID using refs that could
   // be stale (snapshotOwnerWorkspaceIdRef → currentWorkspaceIdRef → currentWorkspaceId),
@@ -1157,6 +1289,7 @@ export function useNoteWorkspaces({
     },
     [currentWorkspaceId, emitDebugLog, featureEnabled, v2Enabled, waitForWorkspaceSnapshotReady],
   )
+  END OF EXTRACTED PANEL SNAPSHOT FUNCTIONS (collectPanelSnapshotsFromDataStore, getAllPanelSnapshots, updatePanelSnapshotMap, useEffect dataStore, waitForPanelSnapshotReadiness) */
 
   const applyPanelSnapshots = useCallback(
     (
@@ -1975,7 +2108,7 @@ export function useNoteWorkspaces({
             },
           })
           return // Don't apply - would lose notes
-        }
+      }
       }
 
       snapshotOwnerWorkspaceIdRef.current = workspaceId

@@ -1,0 +1,28 @@
+/**
+ * Workspace management hooks - re-exports
+ *
+ * @see docs/proposal/refactor/use-note-workspaces/REFACTORING_PLAN.md
+ */
+
+// Types
+export * from "./workspace-types"
+
+// Utilities
+export * from "./workspace-utils"
+
+// Refs
+export { useWorkspaceRefs, type WorkspaceRefs } from "./workspace-refs"
+
+// Membership & Open Notes
+export {
+  useWorkspaceMembership,
+  type UseWorkspaceMembershipOptions,
+  type UseWorkspaceMembershipResult,
+} from "./use-workspace-membership"
+
+// Panel Snapshots
+export {
+  useWorkspacePanelSnapshots,
+  type UseWorkspacePanelSnapshotsOptions,
+  type UseWorkspacePanelSnapshotsResult,
+} from "./use-workspace-panel-snapshots"
