@@ -33,3 +33,17 @@ export {
   type UseWorkspaceSnapshotOptions,
   type UseWorkspaceSnapshotResult,
 } from "./use-workspace-snapshot"
+
+// Persistence
+export {
+  useWorkspacePersistence,
+  type UseWorkspacePersistenceOptions,
+  type UseWorkspacePersistenceResult,
+} from "./use-workspace-persistence"
+
+// Hydration
+export {
+  useWorkspaceHydration,
+  type UseWorkspaceHydrationOptions,
+  type UseWorkspaceHydrationResult,
+} from "./use-workspace-hydration"

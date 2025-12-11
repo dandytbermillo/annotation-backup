@@ -101,6 +101,8 @@ import { useWorkspaceRefs } from "./workspace/workspace-refs"
 import { useWorkspaceMembership } from "./workspace/use-workspace-membership"
 import { useWorkspacePanelSnapshots } from "./workspace/use-workspace-panel-snapshots"
 import { useWorkspaceSnapshot } from "./workspace/use-workspace-snapshot"
+import { useWorkspacePersistence } from "./workspace/use-workspace-persistence"
+import { useWorkspaceHydration } from "./workspace/use-workspace-hydration"
 import type { UseNoteWorkspaceOptions, UseNoteWorkspaceResult } from "./workspace/workspace-types"
 
 export function useNoteWorkspaces({
@@ -2696,1138 +2698,130 @@ export function useNoteWorkspaces({
     [emitDebugLog, flagEnabled, onUnavailable],
   )
 
-  const buildPayload = useCallback((): NoteWorkspacePayload => {
-    const cameraTransform =
-      canvasState != null
-        ? {
-            x: canvasState.translateX,
-            y: canvasState.translateY,
-            scale: canvasState.zoom,
-          }
-        : layerContext?.transforms.notes ?? DEFAULT_CAMERA
-    lastCameraRef.current = cameraTransform
-    const workspaceIdForComponents =
-      currentWorkspaceId ?? snapshotOwnerWorkspaceIdRef.current ?? currentWorkspaceIdRef.current
-    if (!workspaceIdForComponents) {
-      return {
-        schemaVersion: "1.1.0",
-        openNotes: [],
-        activeNoteId: null,
-        camera: cameraTransform,
-        panels: [],
-        components: [],
-      }
-    }
-    const workspaceMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
-    // FIX: Use getWorkspaceOpenNotes which reads from runtime in live-state mode.
-    // Previously used workspaceOpenNotesRef.current which is a legacy ref that could be stale.
-    const storedOpenNotesForWorkspace = getWorkspaceOpenNotes(workspaceIdForComponents)
-    let hasKnownNotes = Boolean(
-      (workspaceMembership && workspaceMembership.size > 0) || storedOpenNotesForWorkspace.length > 0,
-    )
-    // FIX 9: Pass workspaceIdForComponents to ensure we read panels from the correct workspace's
-    // DataStore. Previously, collectPanelSnapshotsFromDataStore() would independently resolve the
-    // workspace ID using refs that could be stale, causing cross-workspace panel contamination.
-    let panelSnapshots =
-      v2Enabled && currentWorkspaceId
-        ? collectPanelSnapshotsFromDataStore(workspaceIdForComponents)
-        : getAllPanelSnapshots({ useFallback: false })
-    const observedNoteIds = new Set(
-      panelSnapshots
-        .map((panel) => panel.noteId)
-        .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
-    )
-    const workspacePruned = pruneWorkspaceEntries(workspaceIdForComponents, observedNoteIds, "build_payload")
-    if (v2Enabled && workspaceIdForComponents && observedNoteIds.size > 0) {
-      setWorkspaceNoteMembership(workspaceIdForComponents, observedNoteIds)
-    }
-    if (workspacePruned) {
-      // FIX: Use getWorkspaceOpenNotes which reads from runtime
-      const refreshedSlots = getWorkspaceOpenNotes(workspaceIdForComponents)
-      const refreshedMembership = getWorkspaceNoteMembership(workspaceIdForComponents)
-      hasKnownNotes =
-        refreshedSlots.length > 0 ||
-        Boolean(refreshedMembership && refreshedMembership.size > 0)
-    }
-    const cachedPanelsForWorkspace =
-      workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.panels ??
-      getLastNonEmptySnapshot(
-        workspaceIdForComponents,
-        lastNonEmptySnapshotsRef.current,
-        workspaceSnapshotsRef.current,
-      )
-    if (panelSnapshots.length === 0 && hasKnownNotes && cachedPanelsForWorkspace.length > 0) {
-      panelSnapshots = cachedPanelsForWorkspace
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "panel_snapshot_use_cached_for_payload",
-        metadata: {
-          workspaceId: workspaceIdForComponents,
-          fallbackCount: cachedPanelsForWorkspace.length,
-        },
-      })
-    }
-    // FIX: Last resort fallback - generate main panel snapshots from open notes
-    // This handles the case where:
-    // 1. DataStore wasn't seeded (useCanvasNoteSync skipped during workspace restoration)
-    // 2. No cached panels exist (new workspace or cache was cleared)
-    // 3. But we have open notes that need to be preserved
-    // Without this, workspaces with notes but no DataStore seeding would save with 0 panels,
-    // causing notes to disappear when switching back.
-    if (panelSnapshots.length === 0 && hasKnownNotes) {
-      const openNotesForWorkspace = storedOpenNotesForWorkspace.length > 0
-        ? storedOpenNotesForWorkspace
-        : workspaceMembership
-          ? Array.from(workspaceMembership).map((noteId) => ({ noteId, mainPosition: null }))
-          : []
-      if (openNotesForWorkspace.length > 0) {
-        panelSnapshots = openNotesForWorkspace.map((note) => ({
-          noteId: note.noteId,
-          panelId: "main",
-          type: "main",
-          title: null,
-          position: note.mainPosition ?? null,
-          size: null,
-          zIndex: null,
-          metadata: null,
-          parentId: null,
-          branches: null,
-          worldPosition: note.mainPosition ?? null,
-          worldSize: null,
-        }))
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_snapshot_generated_from_open_notes",
-          metadata: {
-            workspaceId: workspaceIdForComponents,
-            generatedCount: panelSnapshots.length,
-            reason: "datastore_and_cache_empty_but_notes_exist",
-          },
-        })
-      }
-    }
-    const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
-    updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
-    // Phase 1 Unification: Read components from runtime ledger first (authoritative source)
-    // This ensures component data persists across React unmounts
-    const runtimeComponents = listRuntimeComponents(workspaceIdForComponents)
-    let components: NoteWorkspaceComponentSnapshot[] = runtimeComponents.map((comp) => ({
-      id: comp.componentId,
-      type: comp.componentType,
-      position: comp.position,
-      size: comp.size,
-      zIndex: comp.zIndex,
-      metadata: comp.metadata,
-    }))
-
-    // Phase 4: Get deleted components to exclude from fallback
-    const deletedComponents = getDeletedComponents(workspaceIdForComponents)
-
-    // Fallback 1: If runtime ledger is empty, try LayerManager (backward compatibility)
-    if (components.length === 0) {
-      const lm = getWorkspaceLayerManager(workspaceIdForComponents)
-      if (lm && typeof lm.getNodes === "function") {
-        const beforeFilterCount = Array.from(lm.getNodes().values()).filter((node: any) => node.type === "component").length
-        components = Array.from(lm.getNodes().values())
-          .filter((node: any) => node.type === "component")
-          // Phase 4: Exclude deleted components from fallback
-          .filter((node: any) => !deletedComponents.has(node.id))
-          .map((node: any) => ({
-            id: node.id,
-            type:
-              (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
-                ? (node as any).metadata.componentType
-                : typeof node.type === "string"
-                  ? node.type
-                  : "component",
-            position: (node as any).position ?? null,
-            size: (node as any).dimensions ?? null,
-            zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
-            metadata: (node as any).metadata ?? null,
-          }))
-        if (components.length > 0 || beforeFilterCount > 0) {
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "build_payload_component_fallback",
-            metadata: {
-              workspaceId: workspaceIdForComponents,
-              fallbackSource: "layerManager",
-              componentCount: components.length,
-              beforeFilterCount,
-              deletedCount: deletedComponents.size,
-            },
-          })
-        }
-      }
-    }
-
-    // Fallback 2: If still empty, try cached components (existing Fix 5)
-    // This prevents component loss when the workspace is in a transitional state (evicted, cold).
-    if (components.length === 0 && workspaceIdForComponents) {
-      const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceIdForComponents)
-      const snapshotComponents = workspaceSnapshotsRef.current.get(workspaceIdForComponents)?.components
-      if (cachedComponents && cachedComponents.length > 0) {
-        // Phase 4: Exclude deleted components from fallback
-        const beforeFilterCount = cachedComponents.length
-        components = cachedComponents.filter((c) => !deletedComponents.has(c.id))
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "build_payload_component_fallback",
-          metadata: {
-            workspaceId: workspaceIdForComponents,
-            fallbackSource: "lastComponentsSnapshotRef",
-            componentCount: components.length,
-            beforeFilterCount,
-            deletedCount: deletedComponents.size,
-          },
-        })
-      } else if (snapshotComponents && snapshotComponents.length > 0) {
-        // Phase 4: Exclude deleted components from fallback
-        const beforeFilterCount = snapshotComponents.length
-        components = snapshotComponents.filter((c) => !deletedComponents.has(c.id))
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "build_payload_component_fallback",
-          metadata: {
-            workspaceId: workspaceIdForComponents,
-            fallbackSource: "workspaceSnapshotsRef",
-            componentCount: components.length,
-            beforeFilterCount,
-            deletedCount: deletedComponents.size,
-          },
-        })
-      }
-    }
-
-    // Log component source for debugging
-    if (components.length > 0) {
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "build_payload_components",
-        metadata: {
-          workspaceId: workspaceIdForComponents,
-          componentCount: components.length,
-          runtimeLedgerCount: runtimeComponents.length,
-          source: runtimeComponents.length > 0 ? "runtime_ledger" : "fallback",
-        },
-      })
-    }
-
-    let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
-    // FIX: In live-state mode, runtime is the authoritative source of truth for open notes.
-    // Don't infer from stale membership - that would restore deleted notes.
-    // Only infer from membership when NOT in live-state mode (legacy fallback).
-    if (workspaceOpenNotes.length === 0 && workspaceMembership && workspaceMembership.size > 0) {
-      if (!liveStateEnabled) {
-        const inferredSlots = Array.from(workspaceMembership).map((noteId) => ({
-          noteId,
-          mainPosition: resolveMainPanelPosition(noteId),
-        }))
-        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceIdForComponents, inferredSlots, {
-          updateCache: false,
-          callSite: "buildPayload_inferred",
-        })
-      } else {
-        // Log that we skipped inference in live-state mode
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "build_payload_inferred_skipped_live_state",
-          metadata: {
-            workspaceId: workspaceIdForComponents,
-            membershipSize: workspaceMembership.size,
-            membershipNoteIds: Array.from(workspaceMembership),
-            reason: "runtime_is_authoritative_in_live_state",
-          },
-        })
-      }
-    }
-    const payload: NoteWorkspacePayload = {
-      schemaVersion: "1.1.0",
-      openNotes: workspaceOpenNotes.map((note) => {
-        const snapshot = getPanelSnapshot(note.noteId)
-        return {
-          noteId: note.noteId,
-          position: resolveMainPanelPosition(note.noteId) ?? null,
-          size: snapshot?.size ?? null,
-          zIndex: snapshot?.zIndex ?? null,
-          isPinned: snapshot?.isPinned ?? false,
-        }
-      }),
-      activeNoteId,
-      camera: cameraTransform,
-      panels: panelSnapshots,
-      components,
-    }
-    if (v2Enabled && currentWorkspaceId) {
-      cacheWorkspaceSnapshot({
-        workspaceId: currentWorkspaceId,
-        panels: panelSnapshots,
-        components,
-        openNotes: payload.openNotes.map((entry) => ({
-          noteId: entry.noteId,
-          mainPosition: entry.position ?? null,
-        })),
-        camera: cameraTransform,
-        activeNoteId,
-      })
-      lastPreviewedSnapshotRef.current.delete(currentWorkspaceId)
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "snapshot_cached_from_payload",
-        metadata: {
-          workspaceId: currentWorkspaceId,
-          panelCount: panelSnapshots.length,
-          componentCount: components?.length ?? 0,
-          openCount: payload.openNotes.length,
-        },
-      })
-    }
-    return payload
-  }, [
-    activeNoteId,
-    currentWorkspaceId,
-    canvasState?.translateX,
-    canvasState?.translateY,
-    canvasState?.zoom,
-    collectPanelSnapshotsFromDataStore,
-    commitWorkspaceOpenNotes,
-    getPanelSnapshot,
-    getWorkspaceLayerManager,
-    getWorkspaceNoteMembership,
-    getWorkspaceOpenNotes,
-    pruneWorkspaceEntries,
-    setWorkspaceNoteMembership,
-    openNotes,
-    resolveMainPanelPosition,
-    layerContext?.transforms.notes?.x,
-    layerContext?.transforms.notes?.y,
-    layerContext?.transforms.notes?.scale,
-    getAllPanelSnapshots,
-    panelSnapshotVersion,
-    updatePanelSnapshotMap,
-    v2Enabled,
-    emitDebugLog,
-    liveStateEnabled,
-  ])
-
-  /**
-   * Persist any workspace (active or background) by ID.
-   *
-   * For the active workspace: uses buildPayload() which collects fresh data and caches properly.
-   * For background workspaces: ensures snapshot is captured/cached before reading.
-   *
-   * This addresses the issue where persistWorkspaceSnapshot reads from stale cache
-   * because cacheWorkspaceSnapshot() was only called for the active workspace.
-   */
-  const persistWorkspaceById = useCallback(
-    async (
-      targetWorkspaceId: string,
-      reason: string,
-      options?: { skipReadinessCheck?: boolean; isBackground?: boolean }
-    ): Promise<boolean> => {
-      if (!targetWorkspaceId || !adapterRef.current) {
-        return false
-      }
-
-      const isActiveWorkspace = targetWorkspaceId === currentWorkspaceId
-      const isBackground = options?.isBackground ?? !isActiveWorkspace
-      const saveStart = Date.now()
-
-      // Get open notes from runtime to check if workspace has notes
-      const workspaceOpenNotes = getWorkspaceOpenNotes(targetWorkspaceId)
-
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "persist_by_id_start",
-        metadata: {
-          workspaceId: targetWorkspaceId,
-          reason,
-          isActiveWorkspace,
-          isBackground,
-          openCount: workspaceOpenNotes.length,
-          skipReadinessCheck: options?.skipReadinessCheck ?? false,
-        },
-      })
-
-      // Check cooldown period for this workspace
-      const skipUntil = skipSavesUntilRef.current.get(targetWorkspaceId) ?? 0
-      if (Date.now() < skipUntil) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "persist_by_id_skip_cooldown",
-          metadata: { workspaceId: targetWorkspaceId, reason, skipUntil },
-        })
-        return false
-      }
-
-      // Check if save is in flight for this workspace
-      if (saveInFlightRef.current.get(targetWorkspaceId)) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "persist_by_id_skip_in_flight",
-          metadata: { workspaceId: targetWorkspaceId, reason },
-        })
-        return false
-      }
-
-      // Skip if hydrating or replaying
-      if (isHydratingRef.current || replayingWorkspaceRef.current > 0) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "persist_by_id_skip_busy",
-          metadata: {
-            workspaceId: targetWorkspaceId,
-            reason,
-            hydrating: isHydratingRef.current,
-            replaying: replayingWorkspaceRef.current > 0,
-          },
-        })
-        return false
-      }
-
-      saveInFlightRef.current.set(targetWorkspaceId, true)
-
-      try {
-        // Wait for panel snapshot readiness unless skipped
-        if (!options?.skipReadinessCheck) {
-          const ready = await waitForPanelSnapshotReadiness(
-            `persist_by_id_${reason}`,
-            800,
-            targetWorkspaceId
-          )
-          if (!ready) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "persist_by_id_skip_not_ready",
-              metadata: { workspaceId: targetWorkspaceId, reason },
-            })
-            saveInFlightRef.current.set(targetWorkspaceId, false)
-            return false
-          }
-        }
-
-        let payload: NoteWorkspacePayload
-
-        if (isActiveWorkspace) {
-          // For active workspace, use buildPayload() which handles caching correctly
-          payload = buildPayload()
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "persist_by_id_used_build_payload",
-            metadata: {
-              workspaceId: targetWorkspaceId,
-              panelCount: payload.panels.length,
-              openCount: payload.openNotes.length,
-            },
-          })
-        } else {
-          // For background workspace, we need to ensure the snapshot is properly cached
-          // First, set membership from observed notes in runtime
-          if (workspaceOpenNotes.length > 0) {
-            const membershipNoteIds = new Set(workspaceOpenNotes.map((n) => n.noteId))
-            setWorkspaceNoteMembership(targetWorkspaceId, membershipNoteIds)
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "persist_by_id_set_membership",
-              metadata: {
-                workspaceId: targetWorkspaceId,
-                membershipSize: membershipNoteIds.size,
-              },
-            })
-          }
-
-          // Capture the snapshot to update the cache
-          await captureCurrentWorkspaceSnapshot(targetWorkspaceId, {
-            readinessReason: `persist_by_id_capture_${reason}`,
-            readinessMaxWaitMs: options?.skipReadinessCheck ? 0 : 500,
-          })
-
-          // Now read the freshly cached snapshot
-          const snapshot = getWorkspaceSnapshot(targetWorkspaceId)
-          if (!snapshot) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "persist_by_id_no_snapshot",
-              metadata: { workspaceId: targetWorkspaceId, reason },
-            })
-            saveInFlightRef.current.set(targetWorkspaceId, false)
-            return false
-          }
-
-          // Check if snapshot is empty but runtime has notes (cache wasn't updated properly)
-          if (snapshot.panels.length === 0 && workspaceOpenNotes.length > 0) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "persist_by_id_snapshot_empty_but_has_notes",
-              metadata: {
-                workspaceId: targetWorkspaceId,
-                reason,
-                snapshotPanels: snapshot.panels.length,
-                runtimeNotes: workspaceOpenNotes.length,
-              },
-            })
-            // Don't save empty data when runtime has notes - this would cause data loss
-            saveInFlightRef.current.set(targetWorkspaceId, false)
-            return false
-          }
-
-          payload = buildPayloadFromSnapshot(targetWorkspaceId, snapshot)
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "persist_by_id_used_snapshot",
-            metadata: {
-              workspaceId: targetWorkspaceId,
-              panelCount: payload.panels.length,
-              openCount: payload.openNotes.length,
-            },
-          })
-        }
-
-        // Compare hash to check for changes
-        const payloadHash = serializeWorkspacePayload(payload)
-        const previousHash = lastSavedPayloadHashRef.current.get(targetWorkspaceId)
-
-        if (previousHash === payloadHash) {
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "persist_by_id_skip_no_changes",
-            metadata: {
-              workspaceId: targetWorkspaceId,
-              reason,
-              panelCount: payload.panels.length,
-              openCount: payload.openNotes.length,
-              durationMs: Date.now() - saveStart,
-            },
-          })
-          saveInFlightRef.current.set(targetWorkspaceId, false)
-          // Clear dirty flag since no changes needed
-          workspaceDirtyRef.current.delete(targetWorkspaceId)
-          return true // No changes needed, but not a failure
-        }
-
-        // Perform the save
-        const revision = workspaceRevisionRef.current.get(targetWorkspaceId) ?? ""
-        const updated = await adapterRef.current.saveWorkspace({
-          id: targetWorkspaceId,
-          payload,
-          revision,
-        })
-
-        // Update tracking refs
-        workspaceRevisionRef.current.set(targetWorkspaceId, updated.revision ?? null)
-        lastSavedPayloadHashRef.current.set(targetWorkspaceId, payloadHash)
-
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "persist_by_id_success",
-          metadata: {
-            workspaceId: targetWorkspaceId,
-            reason,
-            isBackground,
-            panelCount: payload.panels.length,
-            openCount: payload.openNotes.length,
-            componentCount: payload.components?.length ?? 0,
-            durationMs: Date.now() - saveStart,
-          },
-        })
-
-        // Update workspace list if this is the active workspace
-        if (isActiveWorkspace) {
-          setWorkspaces((prev) =>
-            prev.map((workspace) =>
-              workspace.id === updated.id
-                ? {
-                    ...workspace,
-                    revision: updated.revision,
-                    updatedAt: updated.updatedAt,
-                    noteCount: updated.noteCount,
-                  }
-                : workspace
-            )
-          )
-          setStatusHelperText(formatSyncedLabel(updated.updatedAt))
-        }
-
-        // Clear dirty flag and in-flight status on success
-        workspaceDirtyRef.current.delete(targetWorkspaceId)
-        saveInFlightRef.current.set(targetWorkspaceId, false)
-        return true
-      } catch (error) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "persist_by_id_error",
-          metadata: {
-            workspaceId: targetWorkspaceId,
-            reason,
-            error: error instanceof Error ? error.message : String(error),
-            durationMs: Date.now() - saveStart,
-          },
-        })
-        console.warn("[NoteWorkspace] persistWorkspaceById failed", error)
-        // Set cooldown for this workspace only
-        skipSavesUntilRef.current.set(targetWorkspaceId, Date.now() + 1000)
-        saveInFlightRef.current.set(targetWorkspaceId, false)
-        return false
-      }
-    },
-    [
+  // Construct refs object for extracted hooks
+  const workspaceRefsForHooks = useMemo(
+    () => ({
       adapterRef,
-      buildPayload,
-      buildPayloadFromSnapshot,
-      captureCurrentWorkspaceSnapshot,
-      currentWorkspaceId,
-      emitDebugLog,
-      getWorkspaceOpenNotes,
-      setWorkspaceNoteMembership,
-      waitForPanelSnapshotReadiness,
-    ]
+      panelSnapshotsRef,
+      workspaceSnapshotsRef,
+      workspaceOpenNotesRef,
+      workspaceNoteMembershipRef,
+      lastNonEmptySnapshotsRef,
+      snapshotOwnerWorkspaceIdRef,
+      currentWorkspaceIdRef,
+      lastPreviewedSnapshotRef,
+      workspaceRevisionRef,
+      workspaceStoresRef,
+      lastComponentsSnapshotRef,
+      lastPendingTimestampRef,
+      replayingWorkspaceRef,
+      lastSavedPayloadHashRef,
+      lastPanelSnapshotHashRef,
+      ownedNotesRef,
+      inferredWorkspaceNotesRef,
+      previousVisibleWorkspaceRef,
+      lastSaveReasonRef,
+      saveInFlightRef,
+      skipSavesUntilRef,
+      workspaceDirtyRef,
+      saveTimeoutRef,
+      isHydratingRef,
+      lastCameraRef,
+      previousEntryIdRef,
+      unavailableNoticeShownRef,
+      lastHydratedWorkspaceIdRef,
+      captureRetryAttemptsRef,
+      deferredCachedCaptureCountRef,
+      persistWorkspaceByIdRef,
+      captureSnapshotRef,
+      emitDebugLogRef,
+      ensureRuntimePreparedRef,
+      pruneWorkspaceEntriesRef,
+      listedOnceRef,
+    }),
+    // These refs are stable and don't change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   )
 
-  // Keep persistWorkspaceByIdRef updated with the latest version
-  persistWorkspaceByIdRef.current = persistWorkspaceById
-
-  const persistWorkspaceNow = useCallback(async () => {
-    // Early bail if no workspace
-    if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "save_skipped_workspace_busy",
-        metadata: {
-          workspaceId: currentWorkspaceSummary?.id,
-          reason: replayingWorkspaceRef.current > 0 ? "replaying" : "hydrating",
-        },
-      })
-      return
-    }
-    if (!adapterRef.current) return
-
-    const workspaceId = currentWorkspaceSummary.id
-    const now = Date.now()
-
-    // Check cooldown for this workspace
-    const skipUntil = skipSavesUntilRef.current.get(workspaceId) ?? 0
-    if (now < skipUntil) {
-      return
-    }
-
-    // Check if save already in flight for this workspace
-    if (saveInFlightRef.current.get(workspaceId)) {
-      return
-    }
-
-    saveInFlightRef.current.set(workspaceId, true)
-
-    const saveStart = Date.now()
-    const reason = lastSaveReasonRef.current
-    const workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
-    emitDebugLog({
-      component: "NoteWorkspace",
-      action: "save_attempt",
-      metadata: {
-        workspaceId,
-        reason,
-        timestampMs: saveStart,
-        openCount: workspaceOpenNotes.length,
-      },
-    })
-    try {
-      const ready = await waitForPanelSnapshotReadiness("persist_workspace", 800, workspaceId)
-      if (!ready) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_skip_pending_snapshot",
-          metadata: {
-            workspaceId,
-            reason,
-          },
-        })
-        saveInFlightRef.current.set(workspaceId, false)
-        return
-      }
-      const payload = buildPayload()
-      const payloadHash = serializeWorkspacePayload(payload)
-      const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
-      if (previousHash === payloadHash) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_skip_no_changes",
-          metadata: {
-            workspaceId,
-            panelCount: payload.panels.length,
-            openCount: payload.openNotes.length,
-            durationMs: Date.now() - saveStart,
-            reason,
-          },
-        })
-        saveInFlightRef.current.set(workspaceId, false)
-        workspaceDirtyRef.current.delete(workspaceId)
-        return
-      }
-      const updated = await adapterRef.current.saveWorkspace({
-        id: workspaceId,
-        payload,
-        revision: currentWorkspaceSummary.revision,
-      })
-      workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "save_success",
-        metadata: {
-          workspaceId,
-          panelCount: payload.panels.length,
-          openCount: payload.openNotes.length,
-          durationMs: Date.now() - saveStart,
-          reason,
-        },
-      })
-      workspaceDirtyRef.current.delete(workspaceId)
-      saveInFlightRef.current.set(workspaceId, false)
-      lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
-      setWorkspaces((prev) =>
-        prev.map((workspace) =>
-          workspace.id === updated.id
-            ? {
-                ...workspace,
-                revision: updated.revision,
-                updatedAt: updated.updatedAt,
-                noteCount: updated.noteCount,
-              }
-            : workspace,
-        ),
-      )
-      setStatusHelperText(formatSyncedLabel(updated.updatedAt))
-    } catch (error) {
-      console.warn("[NoteWorkspace] save failed", error)
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_error",
-          metadata: {
-            workspaceId,
-            error: error instanceof Error ? error.message : String(error),
-            durationMs: Date.now() - saveStart,
-            reason,
-          },
-        })
-        skipSavesUntilRef.current.set(workspaceId, Date.now() + 1000)
-        saveInFlightRef.current.set(workspaceId, false)
-        return
-    }
-  }, [buildPayload, currentWorkspaceSummary, emitDebugLog, featureEnabled, getWorkspaceOpenNotes])
-
-  useEffect(() => {
-    if (!featureEnabled || !v2Enabled) return
-    const unsubscribe = subscribeToWorkspaceSnapshotState((event) => {
-      if (event.type === "panel_pending") {
-        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_pending",
-          metadata: {
-            workspaceId: event.workspaceId,
-            noteId: event.noteId,
-            panelId: event.panelId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      } else if (event.type === "panel_ready") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "panel_ready",
-          metadata: {
-            workspaceId: event.workspaceId,
-            noteId: event.noteId,
-            panelId: event.panelId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-        if (
-          event.workspaceId === currentWorkspaceId &&
-          !isHydratingRef.current &&
-          replayingWorkspaceRef.current === 0
-        ) {
-          void (async () => {
-            await captureCurrentWorkspaceSnapshot(undefined, { readinessReason: "panel_ready_capture" })
-            lastSaveReasonRef.current = "panel_ready_auto_save"
-            await persistWorkspaceNow()
-          })()
-        }
-      } else if (event.type === "component_pending") {
-        lastPendingTimestampRef.current.set(event.workspaceId, Date.now())
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "component_pending",
-          metadata: {
-            workspaceId: event.workspaceId,
-            componentId: event.componentId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-      } else if (event.type === "component_ready") {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "component_ready",
-          metadata: {
-            workspaceId: event.workspaceId,
-            componentId: event.componentId,
-            pendingCount: event.pendingCount,
-            timestampMs: event.timestamp,
-          },
-        })
-        if (
-          event.workspaceId === currentWorkspaceId &&
-          !isHydratingRef.current &&
-          replayingWorkspaceRef.current === 0
-        ) {
-          void (async () => {
-            await captureCurrentWorkspaceSnapshot(undefined, { readinessReason: "component_ready_capture" })
-            lastSaveReasonRef.current = "component_ready_auto_save"
-            await persistWorkspaceNow()
-          })()
-        }
-      }
-    })
-    return unsubscribe
-  }, [
-    captureCurrentWorkspaceSnapshot,
-    currentWorkspaceId,
-    emitDebugLog,
-    featureEnabled,
+  // Use extracted persistence hook
+  const {
+    buildPayload,
+    persistWorkspaceById,
     persistWorkspaceNow,
+    scheduleSave,
+    flushPendingSave,
+    handleEntryChange,
+  } = useWorkspacePersistence({
+    refs: workspaceRefsForHooks,
+    featureEnabled,
+    liveStateEnabled,
     v2Enabled,
-  ])
+    emitDebugLog,
+    currentWorkspaceId,
+    currentWorkspaceSummary,
+    currentWorkspaceSummaryId,
+    activeNoteId,
+    canvasState,
+    layerContext,
+    openNotes,
+    panelSnapshotVersion,
+    currentEntryId,
+    setWorkspaces,
+    setStatusHelperText: (text: string) => setStatusHelperText(text),
+    setCurrentEntryIdState,
+    getWorkspaceNoteMembership,
+    setWorkspaceNoteMembership,
+    commitWorkspaceOpenNotes,
+    getWorkspaceOpenNotes,
+    collectPanelSnapshotsFromDataStore,
+    getAllPanelSnapshots,
+    updatePanelSnapshotMap,
+    getPanelSnapshot,
+    pruneWorkspaceEntries,
+    resolveMainPanelPosition,
+    waitForPanelSnapshotReadiness,
+    captureCurrentWorkspaceSnapshot,
+    buildPayloadFromSnapshot,
+    getWorkspaceSnapshot,
+    cacheWorkspaceSnapshot,
+  })
 
-  const scheduleSave = useCallback(
-    (options?: { immediate?: boolean; reason?: string }) => {
-      if (!featureEnabled || !currentWorkspaceSummary || isHydratingRef.current) {
-        return
-      }
-      const { immediate = false, reason = "unspecified" } = options ?? {}
-      if (!adapterRef.current) return
-      const workspaceId = currentWorkspaceSummary.id
+  // Use extracted hydration hook
+  const { hydrateWorkspace } = useWorkspaceHydration({
+    refs: workspaceRefsForHooks,
+    featureEnabled,
+    flagEnabled,
+    liveStateEnabled,
+    v2Enabled,
+    isWorkspaceReady,
+    isUnavailable,
+    emitDebugLog,
+    currentWorkspaceId,
+    layerContext,
+    openNotes,
+    setWorkspaces,
+    setCurrentWorkspaceId,
+    setIsLoading,
+    setStatusHelperText: (text: string) => setStatusHelperText(text),
+    setActiveNoteId,
+    setCanvasState: setCanvasState ?? null,
+    markUnavailable,
+    bumpSnapshotRevision,
+    setWorkspaceNoteMembership,
+    commitWorkspaceOpenNotes,
+    filterPanelsForWorkspace,
+    updatePanelSnapshotMap,
+    applyPanelSnapshots,
+    openWorkspaceNote,
+    closeWorkspaceNote,
+  })
 
-      // Clear any existing timeout for this workspace
-      const existingTimeout = saveTimeoutRef.current.get(workspaceId)
-      if (existingTimeout) {
-        clearTimeout(existingTimeout)
-        saveTimeoutRef.current.delete(workspaceId)
-      }
+  // NOTE: The following inline implementations of buildPayload, persistWorkspaceById, scheduleSave,
+  // flushPendingSave, persistWorkspaceNow, handleEntryChange, and hydrateWorkspace have been extracted
+  // to use-workspace-persistence.ts and use-workspace-hydration.ts.
+  // Keep the old code commented for reference during migration, then delete after verification.
 
-      // Mark workspace as dirty
-      if (!workspaceDirtyRef.current.has(workspaceId)) {
-        workspaceDirtyRef.current.set(workspaceId, Date.now())
-      }
-
-      lastSaveReasonRef.current = reason
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "save_schedule",
-        metadata: {
-          workspaceId,
-          immediate,
-          reason,
-          dirtyAt: workspaceDirtyRef.current.get(workspaceId),
-        },
-      })
-      if (immediate) {
-        void persistWorkspaceById(workspaceId, reason)
-        return
-      }
-      const timeout = setTimeout(() => {
-        saveTimeoutRef.current.delete(workspaceId)
-        void persistWorkspaceById(workspaceId, reason)
-      }, 2500)
-      saveTimeoutRef.current.set(workspaceId, timeout)
-    },
-    [currentWorkspaceSummary, emitDebugLog, featureEnabled, persistWorkspaceById],
-  )
-
-  const flushPendingSave = useCallback(
-    (reason = "manual_flush") => {
-      // Flush ALL pending dirty workspaces, not just current
-      // This is important for beforeunload/visibility_hidden scenarios
-      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys())
-
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "save_flush_all",
-        metadata: {
-          reason,
-          pendingCount: pendingWorkspaceIds.length,
-          pendingWorkspaceIds,
-          currentWorkspaceId: currentWorkspaceSummaryId,
-        },
-      })
-
-      // Clear and save all pending workspaces
-      for (const workspaceId of pendingWorkspaceIds) {
-        const existingTimeout = saveTimeoutRef.current.get(workspaceId)
-        if (existingTimeout) {
-          clearTimeout(existingTimeout)
-          saveTimeoutRef.current.delete(workspaceId)
-        }
-        void persistWorkspaceById(workspaceId, reason)
-      }
-
-      // Also save current workspace if dirty but no timeout was pending
-      if (
-        currentWorkspaceSummaryId &&
-        workspaceDirtyRef.current.has(currentWorkspaceSummaryId) &&
-        !pendingWorkspaceIds.includes(currentWorkspaceSummaryId)
-      ) {
-        void persistWorkspaceById(currentWorkspaceSummaryId, reason)
-      }
-    },
-    [currentWorkspaceSummaryId, emitDebugLog, persistWorkspaceById],
-  )
-
-  // Entry switch handler - flushes dirty workspaces before changing entry
-  const handleEntryChange = useCallback(
-    (newEntryId: string | null) => {
-      const previousEntryId = previousEntryIdRef.current
-      if (previousEntryId === newEntryId) return
-
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "entry_switch",
-        metadata: {
-          previousEntryId,
-          newEntryId,
-          dirtyWorkspaceCount: workspaceDirtyRef.current.size,
-        },
-      })
-
-      // Flush all dirty workspaces from previous entry before switching
-      if (previousEntryId && workspaceDirtyRef.current.size > 0) {
-        flushPendingSave("entry_switch")
-      }
-
-      // Update entry state
-      previousEntryIdRef.current = newEntryId
-      setCurrentEntryIdState(newEntryId)
-      setActiveEntryContext(newEntryId)
-    },
-    [emitDebugLog, flushPendingSave],
-  )
-
-  // Subscribe to external entry context changes (e.g., from Quick Links)
-  useEffect(() => {
-    if (!featureEnabled) return
-
-    const unsubscribe = subscribeToActiveEntryContext((entryId) => {
-      if (entryId !== currentEntryId) {
-        handleEntryChange(entryId)
-      }
-    })
-
-    return () => {
-      unsubscribe()
-    }
-  }, [featureEnabled, currentEntryId, handleEntryChange])
-
-  const hydrateWorkspace = useCallback(
-    async (workspaceId: string) => {
-      if (!adapterRef.current) return
-      setIsLoading(true)
-      const hydrateStart = Date.now()
-      try {
-        const record = await adapterRef.current.loadWorkspace(workspaceId)
-        isHydratingRef.current = true
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
-        workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
-        const declaredNoteIds = new Set(
-          record.payload.openNotes.map((entry) => entry.noteId).filter((noteId): noteId is string => Boolean(noteId)),
-        )
-        const incomingPanels = record.payload.panels ?? []
-        if (declaredNoteIds.size === 0) {
-          incomingPanels.forEach((panel) => {
-            if (panel.noteId) {
-              declaredNoteIds.add(panel.noteId)
-            }
-          })
-        }
-        setWorkspaceNoteMembership(workspaceId, declaredNoteIds)
-        const scopedPanels = filterPanelsForWorkspace(workspaceId, incomingPanels)
-        const targetIds = new Set<string>(declaredNoteIds)
-        scopedPanels.forEach((panel) => {
-          if (panel.noteId) {
-            targetIds.add(panel.noteId)
-          }
-        })
-        const incomingComponents = record.payload.components ?? []
-        const resolvedComponents =
-          incomingComponents && incomingComponents.length > 0
-            ? incomingComponents
-            : lastComponentsSnapshotRef.current.get(workspaceId) ?? incomingComponents
-        updatePanelSnapshotMap(scopedPanels, "hydrate_workspace", { allowEmpty: true })
-        const cache = ensureWorkspaceSnapshotCache(workspaceSnapshotsRef.current, workspaceId)
-        cache.panels = scopedPanels
-        cache.components = resolvedComponents ?? []
-        const normalizedSnapshotOpenNotes = record.payload.openNotes.map((entry) => ({
-          noteId: entry.noteId,
-          mainPosition: entry.position ?? null,
-        }))
-        cache.openNotes = normalizedSnapshotOpenNotes
-        commitWorkspaceOpenNotes(workspaceId, normalizedSnapshotOpenNotes, { callSite: "restoreWorkspace" })
-        lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
-        if (resolvedComponents && resolvedComponents.length > 0) {
-          lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
-          // Phase 1 Unification: Populate runtime component ledger from hydrated components
-          // This ensures components are available in the runtime before React renders them
-          populateRuntimeComponents(workspaceId, resolvedComponents)
-        }
-        const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
-        panelNoteIds.forEach((id) => targetIds.add(id))
-        applyPanelSnapshots(scopedPanels, panelNoteIds, resolvedComponents, {
-          allowEmptyApply: true,
-          suppressMutationEvents: true,
-          reason: "hydrate_workspace",
-        })
-        const closePromises = openNotes
-          .filter((note) => !targetIds.has(note.noteId))
-          .map((note) =>
-            closeWorkspaceNote(note.noteId, { persist: false, removeWorkspace: false }).catch(() => {}),
-          )
-        await Promise.all(closePromises)
-
-        for (const panel of record.payload.openNotes) {
-          const alreadyOpen = openNotes.some((note) => note.noteId === panel.noteId)
-          if (!alreadyOpen) {
-            await openWorkspaceNote(panel.noteId, {
-              mainPosition: panel.position ?? undefined,
-              persist: false,
-              persistPosition: false,
-              workspaceId,
-            })
-          }
-        }
-
-        const nextActive = record.payload.activeNoteId || record.payload.openNotes[0]?.noteId || null
-        setActiveNoteId(nextActive)
-
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
-
-        const nextCamera = record.payload.camera ?? DEFAULT_CAMERA
-        if (layerContext?.setTransform) {
-          layerContext.setTransform("notes", nextCamera)
-        }
-        if (setCanvasState) {
-          setCanvasState((prev) => ({
-            ...prev,
-            translateX: nextCamera.x,
-            translateY: nextCamera.y,
-            zoom: nextCamera.scale,
-          }))
-        }
-
-        if (v2Enabled) {
-          cacheWorkspaceSnapshot({
-            workspaceId,
-            revision: record.revision ?? null,
-            panels: incomingPanels,
-            openNotes: record.payload.openNotes.map((entry) => ({
-              noteId: entry.noteId,
-              mainPosition: entry.position ?? null,
-            })),
-            camera: nextCamera,
-            activeNoteId: nextActive,
-          })
-          lastPreviewedSnapshotRef.current.delete(workspaceId)
-        }
-
-        setStatusHelperText(formatSyncedLabel(record.updatedAt))
-        setWorkspaces((prev) =>
-          prev.map((workspace) =>
-            workspace.id === record.id
-              ? {
-                  ...workspace,
-                  revision: record.revision,
-                  updatedAt: record.updatedAt,
-                  noteCount: record.noteCount,
-              }
-            : workspace,
-        ),
-        )
-        lastSavedPayloadHashRef.current.set(workspaceId, serializeWorkspacePayload(record.payload))
-
-        // FIX: Set save cooldown after hydration to prevent race condition.
-        // When bumpSnapshotRevision() triggers panelSnapshotVersion change, the components_changed
-        // effect runs in the next render cycle. By that time, isHydratingRef.current is already false.
-        // Setting a cooldown ensures persistWorkspaceById will skip saves for a short period after
-        // hydration, preventing the effect from saving empty/incomplete data.
-        skipSavesUntilRef.current.set(workspaceId, Date.now() + 500)
-
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "hydrate_success",
-          metadata: {
-            workspaceId,
-            panelCount: incomingPanels.length,
-            openCount: record.payload.openNotes.length,
-            componentCount: resolvedComponents?.length ?? 0,
-            durationMs: Date.now() - hydrateStart,
-            saveCooldownSet: true,
-          },
-        })
-        bumpSnapshotRevision()
-
-        // Phase 2: Mark runtime visible after initial hydration completes
-        if (liveStateEnabled) {
-          setRuntimeVisible(workspaceId, true)
-
-          // Phase 5: Associate workspace with current entry for cross-entry state handling
-          const entryId = getActiveEntryContext()
-          if (entryId) {
-            setWorkspaceEntry(workspaceId, entryId)
-            // Check if this is the default workspace for its entry
-            if (record.isDefault) {
-              markWorkspaceAsDefault(workspaceId)
-            }
-          }
-
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "workspace_runtime_visible",
-            metadata: { workspaceId, wasCold: true, source: "hydrate_workspace", entryId },
-          })
-        }
-      } catch (error) {
-        console.error("[NoteWorkspace] hydrate failed", error)
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "hydrate_error",
-          metadata: {
-            workspaceId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        })
-      } finally {
-        isHydratingRef.current = false
-        snapshotOwnerWorkspaceIdRef.current = workspaceId
-        setIsLoading(false)
-      }
-    },
-    [
-      applyPanelSnapshots,
-      closeWorkspaceNote,
-      commitWorkspaceOpenNotes,
-      emitDebugLog,
-      filterPanelsForWorkspace,
-      layerContext,
-      liveStateEnabled,
-      openNotes,
-      openWorkspaceNote,
-      setActiveNoteId,
-      setCanvasState,
-      setWorkspaceNoteMembership,
-      setIsLoading,
-      setStatusHelperText,
-      setWorkspaces,
-      bumpSnapshotRevision,
-    ],
-  )
 
   useEffect(() => {
     if (!flagEnabled || isUnavailable) return
