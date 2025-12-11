@@ -82,6 +82,16 @@ export interface WorkspaceRefs {
     ((workspaceId?: string | null, options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean }) => Promise<void>) | null
   >
   emitDebugLogRef: MutableRefObject<((payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => void) | null>
+
+  // Ref for ensureRuntimePrepared (resolves circular dependency with useWorkspaceSnapshot)
+  ensureRuntimePreparedRef: MutableRefObject<
+    ((workspaceId: string, reason: string) => Promise<void>) | null
+  >
+
+  // Ref for pruneWorkspaceEntries (resolves ordering dependency with useWorkspaceSnapshot)
+  pruneWorkspaceEntriesRef: MutableRefObject<
+    ((workspaceId: string | null | undefined, observedNoteIds: Set<string>, reason: string) => boolean) | null
+  >
 }
 
 // ============================================================================
@@ -154,6 +164,16 @@ export function useWorkspaceRefs(initialEntryId: string | null): WorkspaceRefs {
   >(null)
   const emitDebugLogRef = useRef<((payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => void) | null>(null)
 
+  // Ref for ensureRuntimePrepared (resolves circular dependency with useWorkspaceSnapshot)
+  const ensureRuntimePreparedRef = useRef<
+    ((workspaceId: string, reason: string) => Promise<void>) | null
+  >(null)
+
+  // Ref for pruneWorkspaceEntries (resolves ordering dependency with useWorkspaceSnapshot)
+  const pruneWorkspaceEntriesRef = useRef<
+    ((workspaceId: string | null | undefined, observedNoteIds: Set<string>, reason: string) => boolean) | null
+  >(null)
+
   return {
     adapterRef,
     panelSnapshotsRef,
@@ -190,5 +210,7 @@ export function useWorkspaceRefs(initialEntryId: string | null): WorkspaceRefs {
     persistWorkspaceByIdRef,
     captureSnapshotRef,
     emitDebugLogRef,
+    ensureRuntimePreparedRef,
+    pruneWorkspaceEntriesRef,
   }
 }

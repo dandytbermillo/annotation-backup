@@ -26,3 +26,10 @@ export {
   type UseWorkspacePanelSnapshotsOptions,
   type UseWorkspacePanelSnapshotsResult,
 } from "./use-workspace-panel-snapshots"
+
+// Snapshot Management
+export {
+  useWorkspaceSnapshot,
+  type UseWorkspaceSnapshotOptions,
+  type UseWorkspaceSnapshotResult,
+} from "./use-workspace-snapshot"

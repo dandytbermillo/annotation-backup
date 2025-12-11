@@ -100,6 +100,7 @@ import {
 import { useWorkspaceRefs } from "./workspace/workspace-refs"
 import { useWorkspaceMembership } from "./workspace/use-workspace-membership"
 import { useWorkspacePanelSnapshots } from "./workspace/use-workspace-panel-snapshots"
+import { useWorkspaceSnapshot } from "./workspace/use-workspace-snapshot"
 import type { UseNoteWorkspaceOptions, UseNoteWorkspaceResult } from "./workspace/workspace-types"
 
 export function useNoteWorkspaces({
@@ -163,6 +164,8 @@ export function useNoteWorkspaces({
     persistWorkspaceByIdRef,
     captureSnapshotRef,
     emitDebugLogRef,
+    ensureRuntimePreparedRef,
+    pruneWorkspaceEntriesRef,
     listedOnceRef,
   } = useWorkspaceRefs(initialEntryId)
 
@@ -231,6 +234,29 @@ export function useNoteWorkspaces({
     [emitDebugLogRef],
   )
 
+  // Create a stable ref-based wrapper for ensureRuntimePrepared
+  // This resolves the circular dependency: useWorkspaceSnapshot needs ensureRuntimePrepared
+  // from useNoteWorkspaceRuntimeManager, but the runtime manager needs captureCurrentWorkspaceSnapshot
+  // from useWorkspaceSnapshot. By using a ref-forwarding wrapper, useWorkspaceSnapshot can be
+  // called before the runtime manager, and the ref is populated afterward.
+  const ensureRuntimePreparedViaRef = useCallback(
+    async (workspaceId: string, reason: string): Promise<void> => {
+      await ensureRuntimePreparedRef.current?.(workspaceId, reason)
+    },
+    [ensureRuntimePreparedRef],
+  )
+
+  // Create a stable ref-based wrapper for pruneWorkspaceEntries
+  // This resolves ordering dependency: useWorkspaceSnapshot needs pruneWorkspaceEntries
+  // but it's defined after emitDebugLog. By using a ref-forwarding wrapper, useWorkspaceSnapshot
+  // can be called earlier, and the ref is populated after pruneWorkspaceEntries is defined.
+  const pruneWorkspaceEntriesViaRef = useCallback(
+    (workspaceId: string | null | undefined, observedNoteIds: Set<string>, reason: string): boolean => {
+      return pruneWorkspaceEntriesRef.current?.(workspaceId, observedNoteIds, reason) ?? false
+    },
+    [pruneWorkspaceEntriesRef],
+  )
+
   // Use extracted membership hook
   const {
     setWorkspaceNoteMembership,
@@ -274,6 +300,8 @@ export function useNoteWorkspaces({
       persistWorkspaceByIdRef,
       captureSnapshotRef,
       emitDebugLogRef,
+      ensureRuntimePreparedRef,
+      pruneWorkspaceEntriesRef,
     },
     liveStateEnabled,
     v2Enabled,
@@ -615,6 +643,8 @@ export function useNoteWorkspaces({
       persistWorkspaceByIdRef,
       captureSnapshotRef,
       emitDebugLogRef,
+      ensureRuntimePreparedRef,
+      pruneWorkspaceEntriesRef,
     },
     featureEnabled,
     liveStateEnabled,
@@ -623,6 +653,85 @@ export function useNoteWorkspaces({
     getWorkspaceNoteMembership,
     currentWorkspaceId,
     sharedWorkspace: sharedWorkspace ?? null,
+  })
+
+  // Use extracted snapshot management hook
+  // Note: Uses ref-forwarding wrappers for ensureRuntimePrepared (circular dependency with runtime manager)
+  // and pruneWorkspaceEntries (ordering dependency - defined after emitDebugLog)
+  const {
+    applyPanelSnapshots,
+    captureCurrentWorkspaceSnapshot,
+    buildPayloadFromSnapshot,
+    rehydratePanelsForNote,
+    previewWorkspaceFromSnapshot,
+  } = useWorkspaceSnapshot({
+    refs: {
+      adapterRef,
+      panelSnapshotsRef,
+      workspaceSnapshotsRef,
+      lastNonEmptySnapshotsRef,
+      lastPreviewedSnapshotRef,
+      lastComponentsSnapshotRef,
+      workspaceOpenNotesRef,
+      workspaceNoteMembershipRef,
+      ownedNotesRef,
+      inferredWorkspaceNotesRef,
+      snapshotOwnerWorkspaceIdRef,
+      currentWorkspaceIdRef,
+      workspaceRevisionRef,
+      workspaceStoresRef,
+      previousVisibleWorkspaceRef,
+      lastHydratedWorkspaceIdRef,
+      lastPendingTimestampRef,
+      lastSavedPayloadHashRef,
+      lastPanelSnapshotHashRef,
+      lastSaveReasonRef,
+      saveInFlightRef,
+      skipSavesUntilRef,
+      workspaceDirtyRef,
+      saveTimeoutRef,
+      isHydratingRef,
+      replayingWorkspaceRef,
+      lastCameraRef,
+      previousEntryIdRef,
+      unavailableNoticeShownRef,
+      listedOnceRef,
+      captureRetryAttemptsRef,
+      deferredCachedCaptureCountRef,
+      persistWorkspaceByIdRef,
+      captureSnapshotRef,
+      emitDebugLogRef,
+      ensureRuntimePreparedRef,
+      pruneWorkspaceEntriesRef,
+    },
+    featureEnabled,
+    liveStateEnabled,
+    v2Enabled,
+    emitDebugLog: emitDebugLogViaRef,
+    currentWorkspaceId,
+    activeNoteId,
+    canvasState,
+    layerContext,
+    sharedWorkspace: sharedWorkspace ?? null,
+    openNotes,
+    maxDeferredCachedCaptures: MAX_DEFERRED_CACHED_CAPTURES,
+    bumpSnapshotRevision,
+    setActiveNoteId,
+    setCanvasState: setCanvasState ?? null,
+    getWorkspaceDataStore,
+    getWorkspaceNoteMembership,
+    setWorkspaceNoteMembership,
+    commitWorkspaceOpenNotes,
+    getWorkspaceOpenNotes,
+    filterPanelsForWorkspace,
+    collectPanelSnapshotsFromDataStore,
+    updatePanelSnapshotMap,
+    waitForPanelSnapshotReadiness,
+    pruneWorkspaceEntries: pruneWorkspaceEntriesViaRef,
+    resolveMainPanelPosition,
+    openWorkspaceNote,
+    closeWorkspaceNote,
+    ensureRuntimePrepared: ensureRuntimePreparedViaRef,
   })
 
   // NOTE: The following inline implementations of filterPanelsForWorkspace, getRuntimeDataStore,
@@ -790,6 +899,11 @@ export function useNoteWorkspaces({
     },
     [commitWorkspaceOpenNotes, emitDebugLog, getRuntimeMembership, getRuntimeOpenNotes, v2Enabled],
   )
+
+  // Populate pruneWorkspaceEntriesRef after pruneWorkspaceEntries is defined
+  // This resolves the ordering dependency: useWorkspaceSnapshot needed pruneWorkspaceEntries
+  // but is called before pruneWorkspaceEntries is defined (due to emitDebugLog dependency)
+  pruneWorkspaceEntriesRef.current = pruneWorkspaceEntries
 
   /* EXTRACTED TO use-workspace-panel-snapshots.ts (continued)
   // FIX 9: Accept optional targetWorkspaceId parameter to prevent workspace ID mismatch.
@@ -1291,6 +1405,7 @@ export function useNoteWorkspaces({
   )
   END OF EXTRACTED PANEL SNAPSHOT FUNCTIONS (collectPanelSnapshotsFromDataStore, getAllPanelSnapshots, updatePanelSnapshotMap, useEffect dataStore, waitForPanelSnapshotReadiness) */
 
+  /* EXTRACTED TO use-workspace-snapshot.ts
   const applyPanelSnapshots = useCallback(
     (
       panels: NoteWorkspacePanelSnapshot[] | undefined,
@@ -1946,10 +2061,12 @@ export function useNoteWorkspaces({
       v2Enabled,
     ],
   )
+  END OF EXTRACTED (applyPanelSnapshots, captureCurrentWorkspaceSnapshot) */
 
   // Keep captureSnapshotRef updated with the latest version
   captureSnapshotRef.current = captureCurrentWorkspaceSnapshot
 
+  /* EXTRACTED TO use-workspace-snapshot.ts (buildPayloadFromSnapshot)
   const buildPayloadFromSnapshot = useCallback(
     (workspaceId: string, snapshot: NoteWorkspaceSnapshot): NoteWorkspacePayload => {
       const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
@@ -1981,6 +2098,7 @@ export function useNoteWorkspaces({
     },
     [],
   )
+  END OF EXTRACTED (buildPayloadFromSnapshot) */
 
   const persistWorkspaceSnapshot = useCallback(
     async (workspaceId: string | null | undefined, reason: string) => {
@@ -2063,6 +2181,12 @@ export function useNoteWorkspaces({
     emitDebugLog,
   })
 
+  // Populate ensureRuntimePreparedRef after the runtime manager is defined
+  // This resolves the circular dependency: useWorkspaceSnapshot needed ensureRuntimePrepared
+  // but is called before useNoteWorkspaceRuntimeManager
+  ensureRuntimePreparedRef.current = ensureRuntimePrepared
+
+  /* EXTRACTED TO use-workspace-snapshot.ts (rehydratePanelsForNote, previewWorkspaceFromSnapshot)
   const rehydratePanelsForNote = useCallback(
     (noteId: string, workspaceId?: string) => {
       if (workspaceId && workspaceSnapshotsRef.current.has(workspaceId)) {
@@ -2320,6 +2444,7 @@ export function useNoteWorkspaces({
       setCanvasState,
     ],
   )
+  END OF EXTRACTED SNAPSHOT MANAGEMENT FUNCTIONS (applyPanelSnapshots, captureCurrentWorkspaceSnapshot, buildPayloadFromSnapshot, rehydratePanelsForNote, previewWorkspaceFromSnapshot) */
 
 
 
