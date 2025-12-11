@@ -74,6 +74,7 @@ export function runtimeComponentsToCanvasItems(components: RuntimeComponent[]): 
   zIndex?: number
   dimensions?: { width: number; height: number } | null
   metadata?: Record<string, unknown>
+  componentState?: Record<string, unknown>
 }> {
   return components.map((component) => ({
     id: component.componentId,
@@ -83,6 +84,8 @@ export function runtimeComponentsToCanvasItems(components: RuntimeComponent[]): 
     zIndex: component.zIndex,
     dimensions: component.size,
     metadata: component.metadata,
+    // Map metadata to componentState for ComponentPanel's initialState prop
+    componentState: component.metadata,
   }))
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { Calculator as CalcIcon } from 'lucide-react'
 import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
 
@@ -13,30 +13,35 @@ interface CalculatorProps {
 }
 
 export function Calculator({ componentId, workspaceId, position, state, onStateUpdate }: CalculatorProps) {
-  // Phase 1 & 3 Unification: Register with workspace runtime for lifecycle management
-  // Now includes position for runtime ledger persistence
-  useComponentRegistration({
-    workspaceId,
-    componentId,
-    componentType: 'calculator',
-    position,
-    // strict: false for now - will be strict: true once all call sites pass workspaceId
-    strict: false,
-  })
   const [display, setDisplay] = useState(state?.display || '0')
   const [previousValue, setPreviousValue] = useState(state?.previousValue || null)
   const [operation, setOperation] = useState(state?.operation || null)
   const [waitingForNewValue, setWaitingForNewValue] = useState(state?.waitingForNewValue ?? false)
 
-  // Persist state changes to parent for runtime ledger storage
+  // Combine state for persistence
+  const componentState = useMemo(() => ({
+    display,
+    previousValue,
+    operation,
+    waitingForNewValue,
+  }), [display, previousValue, operation, waitingForNewValue])
+
+  // Persist state changes to parent (calculator changes are user-initiated, not continuous)
   useEffect(() => {
-    onStateUpdate?.({
-      display,
-      previousValue,
-      operation,
-      waitingForNewValue,
-    })
-  }, [display, previousValue, operation, waitingForNewValue, onStateUpdate])
+    onStateUpdate?.(componentState)
+  }, [componentState, onStateUpdate])
+
+  // Register with workspace runtime for lifecycle management
+  // Now includes metadata for state persistence
+  useComponentRegistration({
+    workspaceId,
+    componentId,
+    componentType: 'calculator',
+    position,
+    metadata: componentState,
+    isActive: false, // Calculator has no background operations
+    strict: false,
+  })
   
   // TEST FUNCTION: Makes calculator unresponsive for testing isolation
   const makeUnresponsive = () => {

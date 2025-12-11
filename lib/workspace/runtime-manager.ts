@@ -27,6 +27,7 @@ export type RuntimeComponent = {
   zIndex: number
   createdAt: number
   lastSeenAt: number  // Updated when component is visible/interacted with
+  isActive: boolean   // True if component has active background operation (e.g., running timer)
 }
 
 export type WorkspaceRuntime = {
@@ -54,9 +55,12 @@ export type WorkspaceRuntime = {
 }
 
 // Phase 3: Max live runtime configuration
+// Increased desktop limit from 4 to 12 to better support users with high-memory machines
+// and reduce state loss from eviction. Smart eviction scoring still determines which
+// workspaces to evict when the limit is reached.
 export const MAX_LIVE_WORKSPACES = {
-  desktop: 4,
-  tablet: 2,
+  desktop: 12,
+  tablet: 3,
 } as const
 
 // Detect platform for runtime cap (can be overridden via feature flag)
@@ -465,6 +469,10 @@ const performRuntimeRemoval = (workspaceId: string, hadKey: boolean, runtime: Wo
   }
   runtimes.delete(workspaceId)
 
+  // Phase 5: Clean up entry-workspace tracking when runtime is destroyed
+  workspaceEntryMap.delete(workspaceId)
+  defaultWorkspaceIds.delete(workspaceId)
+
   // Phase 2: Notify listeners when runtime is removed
   notifyRuntimeChanges()
 }
@@ -686,7 +694,7 @@ export const clearRuntimeNoteOwner = (workspaceId: string, noteId: string) => {
 
 export const getRuntimeNoteOwner = (noteId: string): string | null => {
   // Check all runtimes to find which one owns this note
-  for (const [workspaceId, runtime] of runtimes.entries()) {
+  for (const [_workspaceId, runtime] of runtimes.entries()) {
     if (runtime.noteOwners.has(noteId)) {
       return runtime.noteOwners.get(noteId) ?? null
     }
@@ -790,16 +798,67 @@ export const getHotRuntimesInfo = (): Array<{
 }
 
 /**
- * Get the least recently visible runtime ID for eviction.
+ * Calculate eviction score for a workspace.
+ * Lower score = more likely to be evicted.
+ *
+ * Scoring factors:
+ * - Base: recency (older = lower score, 0-100)
+ * - +500: default workspace (protected)
+ * - +1000: has active background operation (most protected)
+ * - +200: has components with metadata (has state to preserve)
+ */
+const calculateEvictionScore = (workspaceId: string, runtime: WorkspaceRuntime): number => {
+  let score = 0
+
+  // Base score: recency (0-100 based on how recently visited)
+  // More recent = higher score = less likely to evict
+  const now = Date.now()
+  const age = now - runtime.lastVisibleAt
+  const maxAge = 10 * 60 * 1000 // 10 minutes
+  const recencyScore = Math.max(0, 100 - (age / maxAge) * 100)
+  score += recencyScore
+
+  // +500 for default workspace - should be evicted last among regular workspaces
+  if (defaultWorkspaceIds.has(workspaceId)) {
+    score += 500
+  }
+
+  // +1000 for active background operations (running timers, etc.)
+  // These should almost never be evicted
+  for (const component of runtime.components.values()) {
+    if (component.isActive) {
+      score += 1000
+      break
+    }
+  }
+
+  // +200 for having components with metadata (has state worth preserving)
+  for (const component of runtime.components.values()) {
+    if (Object.keys(component.metadata).length > 0) {
+      score += 200
+      break
+    }
+  }
+
+  return score
+}
+
+/**
+ * Get the workspace to evict using smart scoring.
  * Excludes:
  * - Currently visible runtime
  * - Shared/placeholder workspace
- * - Pinned workspaces (Layer 2 protection)
+ * - Pinned workspaces (Layer 2 protection - absolute, not scored)
+ *
+ * Among eligible workspaces, selects the one with lowest eviction score.
  */
 export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
-  let oldestId: string | null = null
-  let oldestTime = Infinity
+  let lowestScoreId: string | null = null
+  let lowestScore = Infinity
   let skippedPinnedCount = 0
+  let protectedDefaultCount = 0
+  let protectedActiveCount = 0
+  const candidates: Array<{ id: string; score: number; factors: string[] }> = []
 
   for (const [id, runtime] of runtimes.entries()) {
     // Don't evict the visible runtime
@@ -808,19 +867,64 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
     // Don't evict the shared/placeholder workspace
     if (id === SHARED_WORKSPACE_ID_INTERNAL) continue
 
-    // Layer 2: Don't evict pinned workspaces - they should preserve state
+    // Layer 2: Don't evict pinned workspaces - they should preserve state (absolute protection)
     if (pinnedWorkspaceIds.has(id)) {
       skippedPinnedCount++
       continue
     }
 
-    if (runtime.lastVisibleAt < oldestTime) {
-      oldestTime = runtime.lastVisibleAt
-      oldestId = id
+    // Calculate eviction score
+    const score = calculateEvictionScore(id, runtime)
+    const factors: string[] = []
+
+    if (defaultWorkspaceIds.has(id)) {
+      factors.push("default")
+      protectedDefaultCount++
+    }
+
+    let hasActiveOp = false
+    for (const component of runtime.components.values()) {
+      if (component.isActive) {
+        hasActiveOp = true
+        break
+      }
+    }
+    if (hasActiveOp) {
+      factors.push("active_operation")
+      protectedActiveCount++
+    }
+
+    candidates.push({ id, score, factors })
+
+    if (score < lowestScore) {
+      lowestScore = score
+      lowestScoreId = id
     }
   }
 
-  // Log if we skipped pinned workspaces during eviction selection
+  // Log eviction selection with smart scoring details
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "smart_eviction_selection",
+    metadata: {
+      selectedForEviction: lowestScoreId,
+      selectedScore: Math.round(lowestScore),
+      skippedPinnedCount,
+      protectedDefaultCount,
+      protectedActiveCount,
+      pinnedWorkspaceIds: Array.from(pinnedWorkspaceIds),
+      defaultWorkspaceIds: Array.from(defaultWorkspaceIds),
+      totalRuntimes: runtimes.size,
+      candidateCount: candidates.length,
+      candidates: candidates.map(c => ({
+        id: c.id.substring(0, 8),
+        score: Math.round(c.score),
+        factors: c.factors,
+      })),
+    },
+  })
+
+  // Log if we skipped pinned workspaces during eviction selection (legacy log for compatibility)
   if (skippedPinnedCount > 0) {
     void debugLog({
       component: "WorkspaceRuntime",
@@ -828,13 +932,13 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
       metadata: {
         skippedPinnedCount,
         pinnedWorkspaceIds: Array.from(pinnedWorkspaceIds),
-        selectedForEviction: oldestId,
+        selectedForEviction: lowestScoreId,
         totalRuntimes: runtimes.size,
       },
     })
   }
 
-  return oldestId
+  return lowestScoreId
 }
 
 // =============================================================================
@@ -1138,6 +1242,7 @@ export type RuntimeComponentInput = {
   size?: { width: number; height: number } | null
   metadata?: Record<string, unknown>
   zIndex?: number
+  isActive?: boolean  // True if component has active background operation (e.g., running timer)
 }
 
 /**
@@ -1176,6 +1281,7 @@ export const registerRuntimeComponent = (
     zIndex: input.zIndex ?? existing?.zIndex ?? 100,
     createdAt: existing?.createdAt ?? now,
     lastSeenAt: now,
+    isActive: input.isActive ?? false,
   }
 
   runtime.components.set(input.componentId, component)
@@ -1207,7 +1313,7 @@ export const registerRuntimeComponent = (
 export const updateRuntimeComponent = (
   workspaceId: string,
   componentId: string,
-  updates: Partial<Pick<RuntimeComponent, "position" | "size" | "metadata" | "zIndex">>,
+  updates: Partial<Pick<RuntimeComponent, "position" | "size" | "metadata" | "zIndex" | "isActive">>,
 ): RuntimeComponent | null => {
   const runtime = runtimes.get(workspaceId)
   if (!runtime) return null
@@ -1231,6 +1337,7 @@ export const updateRuntimeComponent = (
       ? { ...existing.metadata, ...updates.metadata }
       : existing.metadata,
     zIndex: updates.zIndex ?? existing.zIndex,
+    isActive: updates.isActive !== undefined ? updates.isActive : existing.isActive,
     lastSeenAt: Date.now(),
   }
 
@@ -1397,6 +1504,7 @@ export const populateRuntimeComponents = (
       zIndex: comp.zIndex ?? 100,
       createdAt: existing?.createdAt ?? now,
       lastSeenAt: now,
+      isActive: false, // Restored components start inactive - they'll update their own state
     }
 
     runtime.components.set(comp.id, component)
@@ -1596,4 +1704,229 @@ export const clearDeletedComponents = (workspaceId: string): void => {
       clearedCount: previousCount,
     },
   })
+}
+
+// =============================================================================
+// Phase 5: Active Operation Detection & Entry-Workspace Tracking
+// =============================================================================
+// These functions support smart eviction by detecting which workspaces have
+// active background operations (running timers) and tracking workspace-entry
+// associations for cross-entry state handling.
+
+// Track workspace -> entry associations for cross-entry state handling
+const workspaceEntryMap = new Map<string, string>()
+
+// Track which workspaces are the default workspace for their entry
+const defaultWorkspaceIds = new Set<string>()
+
+/**
+ * Check if a workspace has any active background operations.
+ * Used by smart eviction to protect workspaces with running timers, etc.
+ *
+ * @param workspaceId - The workspace to check
+ * @returns true if any component has isActive: true
+ */
+export const hasActiveBackgroundOperation = (workspaceId: string): boolean => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return false
+
+  for (const component of runtime.components.values()) {
+    if (component.isActive) return true
+  }
+  return false
+}
+
+/**
+ * Get count of active operations in a workspace.
+ *
+ * @param workspaceId - The workspace to check
+ * @returns Number of components with isActive: true
+ */
+export const getActiveOperationCount = (workspaceId: string): number => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return 0
+
+  let count = 0
+  for (const component of runtime.components.values()) {
+    if (component.isActive) count++
+  }
+  return count
+}
+
+/**
+ * Associate a workspace with an entry.
+ * Called when workspace runtime is created or accessed.
+ *
+ * @param workspaceId - The workspace ID
+ * @param entryId - The entry (item) ID this workspace belongs to
+ */
+export const setWorkspaceEntry = (workspaceId: string, entryId: string): void => {
+  const previousEntryId = workspaceEntryMap.get(workspaceId)
+  if (previousEntryId === entryId) return // No change
+
+  workspaceEntryMap.set(workspaceId, entryId)
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "workspace_entry_associated",
+    metadata: {
+      workspaceId,
+      entryId,
+      previousEntryId,
+    },
+  })
+}
+
+/**
+ * Get the entry ID for a workspace.
+ *
+ * @param workspaceId - The workspace ID
+ * @returns The entry ID, or null if not tracked
+ */
+export const getWorkspaceEntry = (workspaceId: string): string | null => {
+  return workspaceEntryMap.get(workspaceId) ?? null
+}
+
+/**
+ * Get all workspaces associated with an entry.
+ *
+ * @param entryId - The entry (item) ID
+ * @returns Array of workspace IDs for this entry
+ */
+export const getWorkspacesForEntry = (entryId: string): string[] => {
+  const workspaceIds: string[] = []
+  for (const [wsId, eId] of workspaceEntryMap.entries()) {
+    if (eId === entryId) workspaceIds.push(wsId)
+  }
+  return workspaceIds
+}
+
+/**
+ * Mark a workspace as the default workspace for its entry.
+ * Default workspaces get priority protection from eviction.
+ *
+ * @param workspaceId - The workspace to mark as default
+ */
+export const markWorkspaceAsDefault = (workspaceId: string): void => {
+  defaultWorkspaceIds.add(workspaceId)
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "workspace_marked_default",
+    metadata: {
+      workspaceId,
+      totalDefaults: defaultWorkspaceIds.size,
+    },
+  })
+}
+
+/**
+ * Unmark a workspace as default.
+ *
+ * @param workspaceId - The workspace to unmark
+ */
+export const unmarkWorkspaceAsDefault = (workspaceId: string): void => {
+  defaultWorkspaceIds.delete(workspaceId)
+}
+
+/**
+ * Check if a workspace is the default for its entry.
+ *
+ * @param workspaceId - The workspace to check
+ * @returns true if this is a default workspace
+ */
+export const isDefaultWorkspace = (workspaceId: string): boolean => {
+  return defaultWorkspaceIds.has(workspaceId)
+}
+
+/**
+ * Clean up all tracking data when a workspace runtime is destroyed.
+ * Called during eviction or explicit destruction.
+ *
+ * @param workspaceId - The workspace being destroyed
+ */
+export const cleanupWorkspaceTracking = (workspaceId: string): void => {
+  workspaceEntryMap.delete(workspaceId)
+  defaultWorkspaceIds.delete(workspaceId)
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "workspace_tracking_cleaned",
+    metadata: { workspaceId },
+  })
+}
+
+/**
+ * Clear all component metadata for a workspace.
+ * Components will re-initialize with defaults on next mount.
+ * Used when switching away from a non-pinned entry.
+ *
+ * @param workspaceId - The workspace to clear metadata for
+ */
+export const clearRuntimeComponentMetadata = (workspaceId: string): void => {
+  const runtime = runtimes.get(workspaceId)
+  if (!runtime) return
+
+  let clearedCount = 0
+  for (const component of runtime.components.values()) {
+    if (Object.keys(component.metadata).length > 0) {
+      component.metadata = {}
+      clearedCount++
+    }
+    component.isActive = false
+  }
+
+  if (clearedCount > 0) {
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "component_metadata_cleared",
+      metadata: {
+        workspaceId,
+        clearedCount,
+        totalComponents: runtime.components.size,
+      },
+    })
+  }
+}
+
+/**
+ * Called when user switches away from an entry.
+ * Clears component metadata for non-pinned workspaces to prevent
+ * zombie background operations.
+ *
+ * @param entryId - The entry being deactivated
+ */
+export const onEntryDeactivated = (entryId: string): void => {
+  const workspaceIds = getWorkspacesForEntry(entryId)
+
+  void debugLog({
+    component: "WorkspaceRuntime",
+    action: "entry_deactivating",
+    metadata: {
+      entryId,
+      workspaceCount: workspaceIds.length,
+      workspaceIds,
+    },
+  })
+
+  for (const workspaceId of workspaceIds) {
+    // Skip pinned workspaces - they should retain state
+    if (pinnedWorkspaceIds.has(workspaceId)) {
+      void debugLog({
+        component: "WorkspaceRuntime",
+        action: "entry_deactivated_skip_pinned",
+        metadata: { entryId, workspaceId },
+      })
+      continue
+    }
+
+    // Clear component metadata for non-pinned workspaces
+    clearRuntimeComponentMetadata(workspaceId)
+
+    void debugLog({
+      component: "WorkspaceRuntime",
+      action: "entry_deactivated_cleared_metadata",
+      metadata: { entryId, workspaceId },
+    })
+  }
 }

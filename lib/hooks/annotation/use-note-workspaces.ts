@@ -40,6 +40,9 @@ import {
   // Phase 4: Deleted component tracking
   getDeletedComponents,
   clearDeletedComponents,
+  // Phase 5: Entry-workspace tracking
+  setWorkspaceEntry,
+  markWorkspaceAsDefault,
 } from "@/lib/workspace/runtime-manager"
 import { NoteWorkspaceAdapter, type NoteWorkspaceSummary } from "@/lib/adapters/note-workspace-adapter"
 import {
@@ -407,6 +410,18 @@ export function useNoteWorkspaces({
   )
   const targetWorkspaceId = pendingWorkspaceId ?? currentWorkspaceId
   const currentWorkspaceSummaryId = currentWorkspaceSummary?.id ?? null
+
+  // Phase 5: Mark default workspaces when workspace list changes
+  // This ensures default workspaces are marked for eviction protection
+  useEffect(() => {
+    if (!liveStateEnabled) return
+
+    for (const workspace of workspaces) {
+      if (workspace.isDefault) {
+        markWorkspaceAsDefault(workspace.id)
+      }
+    }
+  }, [workspaces, liveStateEnabled])
 
   // Filter workspaces by current entry context
   // Also exclude "Dashboard" workspaces - they are shown via DashboardView, not in dropdown
@@ -3728,10 +3743,21 @@ export function useNoteWorkspaces({
         // Phase 2: Mark runtime visible after initial hydration completes
         if (liveStateEnabled) {
           setRuntimeVisible(workspaceId, true)
+
+          // Phase 5: Associate workspace with current entry for cross-entry state handling
+          const entryId = getActiveEntryContext()
+          if (entryId) {
+            setWorkspaceEntry(workspaceId, entryId)
+            // Check if this is the default workspace for its entry
+            if (record.isDefault) {
+              markWorkspaceAsDefault(workspaceId)
+            }
+          }
+
           emitDebugLog({
             component: "NoteWorkspace",
             action: "workspace_runtime_visible",
-            metadata: { workspaceId, wasCold: true, source: "hydrate_workspace" },
+            metadata: { workspaceId, wasCold: true, source: "hydrate_workspace", entryId },
           })
         }
       } catch (error) {
@@ -4385,10 +4411,17 @@ export function useNoteWorkspaces({
 
         // Show target runtime
         setRuntimeVisible(workspaceId, true)
+
+        // Phase 5: Associate workspace with current entry for cross-entry state handling
+        const entryId = getActiveEntryContext()
+        if (entryId) {
+          setWorkspaceEntry(workspaceId, entryId)
+        }
+
         emitDebugLog({
           component: "NoteWorkspace",
           action: "workspace_runtime_visible",
-          metadata: { workspaceId, wasCold: false },
+          metadata: { workspaceId, wasCold: false, entryId },
         })
 
         // Update state without async snapshot work

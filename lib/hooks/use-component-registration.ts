@@ -36,6 +36,12 @@ type UseComponentRegistrationOptions = {
    * Phase 1 Unification: Component z-index for runtime ledger
    */
   zIndex?: number
+  /**
+   * Phase 5: Indicates if component has active background operation.
+   * When true, workspace is protected from eviction by smart eviction.
+   * Example: Timer with isActive: isRunning
+   */
+  isActive?: boolean
 }
 
 /**
@@ -75,6 +81,7 @@ export function useComponentRegistration({
   size,
   metadata,
   zIndex,
+  isActive = false,
 }: UseComponentRegistrationOptions): void {
   // Track whether we've registered to avoid duplicate registrations
   const isRegisteredRef = useRef(false)
@@ -105,12 +112,13 @@ export function useComponentRegistration({
         size,
         metadata,
         zIndex,
+        isActive,
       })
       isRuntimeRegisteredRef.current = true
     }
-  }, [workspaceId, componentId, componentType, position, size, metadata, zIndex])
+  }, [workspaceId, componentId, componentType, position, size, metadata, zIndex, isActive])
 
-  // Phase 1 Unification: Update runtime ledger when position/metadata changes
+  // Phase 1 Unification: Update runtime ledger when position/metadata/isActive changes
   useEffect(() => {
     if (!workspaceId || !isRuntimeRegisteredRef.current) return
 
@@ -121,9 +129,10 @@ export function useComponentRegistration({
         size,
         metadata,
         zIndex,
+        isActive,
       })
     }
-  }, [workspaceId, componentId, position, size, metadata, zIndex])
+  }, [workspaceId, componentId, position, size, metadata, zIndex, isActive])
 
   // Phase 1 Unification: Touch component when visible (update lastSeenAt)
   useEffect(() => {

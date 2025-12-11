@@ -1,8 +1,9 @@
 "use client"
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Timer as TimerIcon, Play, Pause, RotateCcw } from 'lucide-react'
 import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
+import { useThrottledComponentState } from '@/lib/hooks/use-throttled-component-state'
 
 interface TimerProps {
   componentId: string
@@ -20,31 +21,44 @@ interface TimerState {
 }
 
 export function Timer({ componentId, workspaceId, position, state, onStateUpdate }: TimerProps) {
-  // Phase 1 & 3 Unification: Register with workspace runtime for lifecycle management
-  // Now includes position for runtime ledger persistence
-  useComponentRegistration({
-    workspaceId,
-    componentId,
-    componentType: 'timer',
-    position,
-    // strict: false for now - will be strict: true once all call sites pass workspaceId
-    strict: false,
-  })
   const [minutes, setMinutes] = useState<number>(state?.minutes ?? 5)
   const [seconds, setSeconds] = useState<number>(state?.seconds ?? 0)
   const [isRunning, setIsRunning] = useState<boolean>(state?.isRunning ?? false)
   const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? state?.inputMinutes ?? 5))
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Persist state changes to parent for runtime ledger storage
-  useEffect(() => {
-    onStateUpdate?.({
-      minutes,
-      seconds,
-      isRunning,
-      inputMinutes,
-    })
-  }, [minutes, seconds, isRunning, inputMinutes, onStateUpdate])
+  // Combine state for persistence
+  const componentState = useMemo(() => ({
+    minutes,
+    seconds,
+    isRunning,
+    inputMinutes,
+  }), [minutes, seconds, isRunning, inputMinutes])
+
+  // Throttled persistence to runtime ledger via metadata
+  // Timer ticks every second, but we only persist every 2 seconds
+  // Immediate persist when isRunning changes (start/stop)
+  useThrottledComponentState({
+    state: componentState,
+    throttleMs: 2000,
+    immediateKeys: ['isRunning'],
+    onPersist: (newState) => {
+      onStateUpdate?.(newState)
+    },
+    componentId,
+  })
+
+  // Register with workspace runtime for lifecycle management
+  // Now includes metadata for state persistence and isActive for smart eviction
+  useComponentRegistration({
+    workspaceId,
+    componentId,
+    componentType: 'timer',
+    position,
+    metadata: componentState,
+    isActive: isRunning, // Active when timer is running - protected from eviction
+    strict: false,
+  })
 
   useEffect(() => {
     if (isRunning) {

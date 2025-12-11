@@ -11,6 +11,7 @@
  */
 
 import type { EntryContextChangeEvent } from './entry-types'
+import { onEntryDeactivated } from '@/lib/workspace/runtime-manager'
 
 // Current active entry ID
 let activeEntryContext: string | null = null
@@ -30,6 +31,12 @@ export function setActiveEntryContext(entryId: string | null): void {
 
   const previousEntryId = activeEntryContext
   activeEntryContext = entryId
+
+  // Phase 5: Clear component metadata for non-pinned workspaces in the previous entry
+  // This prevents zombie background operations (running timers, etc.) when switching entries
+  if (previousEntryId) {
+    onEntryDeactivated(previousEntryId)
+  }
 
   // Notify simple listeners
   entryContextListeners.forEach((listener) => {
