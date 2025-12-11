@@ -401,3 +401,77 @@ export const buildPanelSnapshotFromRecord = (
     worldSize: normalizeSize(rec.worldSize),
   }
 }
+
+/**
+ * Create a unique key for a panel snapshot.
+ * Used for deduplication and merging panel snapshots.
+ *
+ * @param panel - Panel snapshot to create key for
+ * @returns Unique key string "noteId:panelId"
+ */
+export const panelSnapshotToKey = (panel: NoteWorkspacePanelSnapshot): string =>
+  `${panel.noteId ?? "unknown"}:${panel.panelId ?? "unknown"}`
+
+/**
+ * Merge two arrays of panel snapshots, deduplicating by key.
+ * Later entries (from `primary`) override earlier entries (from `fallback`).
+ *
+ * @param fallback - Fallback panels (used if not in primary)
+ * @param primary - Primary panels (override fallback)
+ * @returns Merged array of panel snapshots
+ */
+export const mergePanelSnapshots = (
+  fallback: NoteWorkspacePanelSnapshot[],
+  primary: NoteWorkspacePanelSnapshot[],
+): NoteWorkspacePanelSnapshot[] => {
+  if (fallback.length === 0) return primary
+  if (primary.length === 0) return fallback
+
+  const mergeMap = new Map<string, NoteWorkspacePanelSnapshot>()
+
+  for (const panel of fallback) {
+    if (!panel.noteId || !panel.panelId) continue
+    mergeMap.set(panelSnapshotToKey(panel), panel)
+  }
+
+  for (const panel of primary) {
+    if (!panel.noteId || !panel.panelId) continue
+    mergeMap.set(panelSnapshotToKey(panel), panel)
+  }
+
+  return Array.from(mergeMap.values())
+}
+
+// ============================================================================
+// Component Snapshot Utilities
+// ============================================================================
+
+/**
+ * Merge component snapshots with fallback enrichment.
+ * Enriches components that have generic "component" type with type/metadata from fallbacks.
+ *
+ * @param source - Primary source of components (may have incomplete type info)
+ * @param cachedComponents - Cached components for fallback
+ * @param lastComponents - Last known components for fallback
+ * @returns Merged array with enriched type information
+ */
+export const mergeComponentSnapshots = (
+  source: NoteWorkspaceComponentSnapshot[],
+  cachedComponents: NoteWorkspaceComponentSnapshot[],
+  lastComponents: NoteWorkspaceComponentSnapshot[],
+): NoteWorkspaceComponentSnapshot[] => {
+  if (!source || source.length === 0) return []
+
+  const byId = new Map<string, NoteWorkspaceComponentSnapshot>()
+  cachedComponents.forEach((c) => byId.set(c.id, c))
+  lastComponents.forEach((c) => byId.set(c.id, c))
+
+  return source.map((c) => {
+    if (c.type && c.type !== "component") return c
+    const fallback = byId.get(c.id)
+    if (fallback && fallback.type && fallback.type !== "component") {
+      return { ...c, type: fallback.type, metadata: c.metadata ?? fallback.metadata ?? null }
+    }
+    return c
+  })
+}

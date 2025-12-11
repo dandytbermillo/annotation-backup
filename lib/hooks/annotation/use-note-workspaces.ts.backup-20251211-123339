@@ -94,11 +94,46 @@ import {
   normalizeWorkspaceSlots,
   areWorkspaceSlotsEqual,
   buildPanelSnapshotFromRecord,
-  mergePanelSnapshots,
-  mergeComponentSnapshots,
 } from "./workspace/workspace-utils"
 import { useWorkspaceRefs } from "./workspace/workspace-refs"
-import type { UseNoteWorkspaceOptions, UseNoteWorkspaceResult } from "./workspace/workspace-types"
+
+type UseNoteWorkspaceOptions = {
+  openNotes: NoteWorkspaceSlot[]
+  openNotesWorkspaceId?: string | null
+  activeNoteId: string | null
+  setActiveNoteId: Dispatch<SetStateAction<string | null>>
+  resolveMainPanelPosition: (noteId: string) => { x: number; y: number } | null
+  openWorkspaceNote: (noteId: string, options?: { mainPosition?: { x: number; y: number } | null; persist?: boolean; persistPosition?: boolean; workspaceId?: string }) => Promise<void>
+  closeWorkspaceNote: (noteId: string, options?: { persist?: boolean; removeWorkspace?: boolean }) => Promise<void>
+  layerContext: LayerContextValue | null
+  isWorkspaceReady: boolean
+  getPanelSnapshot: (noteId: string) => WorkspacePanelSnapshot | null
+  panelSnapshotVersion: number
+  canvasState: CanvasState | null
+  setCanvasState?: Dispatch<SetStateAction<CanvasState>>
+  onUnavailable?: () => void
+  debugLog?: NoteWorkspaceDebugLogger
+  sharedWorkspace: NoteWorkspace | null
+}
+
+type UseNoteWorkspaceResult = {
+  featureEnabled: boolean
+  isUnavailable: boolean
+  workspaces: NoteWorkspaceSummary[]
+  workspacesForCurrentEntry: NoteWorkspaceSummary[]
+  isLoading: boolean
+  statusHelperText: string | null
+  currentWorkspaceId: string | null
+  targetWorkspaceId: string | null
+  currentEntryId: string | null
+  setCurrentEntryId: (entryId: string | null) => void
+  snapshotRevision: number
+  selectWorkspace: (workspaceId: string) => void
+  createWorkspace: () => void
+  deleteWorkspace: (workspaceId: string) => void
+  renameWorkspace: (workspaceId: string, name: string) => void
+  scheduleImmediateSave?: (reason?: string) => void
+}
 
 export function useNoteWorkspaces({
   openNotes,
@@ -872,7 +907,14 @@ export function useNoteWorkspaces({
             if (!panel.noteId) return false
             return !updatedNoteIds.has(panel.noteId)
           })
-          panelsToPersist = mergePanelSnapshots(preservedPanels, panelsToPersist)
+          const merged = [...preservedPanels, ...panelsToPersist]
+          const deduped = new Map<string, NoteWorkspacePanelSnapshot>()
+          merged.forEach((panel) => {
+            if (!panel.noteId || !panel.panelId) return
+            const key = `${panel.noteId}:${panel.panelId}`
+            deduped.set(key, panel)
+          })
+          panelsToPersist = Array.from(deduped.values())
           emitDebugLog({
             component: "NoteWorkspace",
             action: "panel_snapshot_merge_existing",
@@ -1671,7 +1713,26 @@ export function useNoteWorkspaces({
         lastNonEmptySnapshotsRef.current,
         workspaceSnapshotsRef.current,
       )
-      const mergedPanels = mergePanelSnapshots(fallbackPanels, snapshots)
+      const mergedPanels = (() => {
+        if (fallbackPanels.length === 0) {
+          return snapshots
+        }
+        if (snapshots.length === 0) {
+          return fallbackPanels
+        }
+        const mergeMap = new Map<string, NoteWorkspacePanelSnapshot>()
+        const toKey = (panel: NoteWorkspacePanelSnapshot) =>
+          `${panel.noteId ?? "unknown"}:${panel.panelId ?? "unknown"}`
+        fallbackPanels.forEach((panel) => {
+          if (!panel.noteId || !panel.panelId) return
+          mergeMap.set(toKey(panel), panel)
+        })
+        snapshots.forEach((panel) => {
+          if (!panel.noteId || !panel.panelId) return
+          mergeMap.set(toKey(panel), panel)
+        })
+        return Array.from(mergeMap.values())
+      })()
       if (fallbackPanels.length > 0 && snapshots.length > 0 && mergedPanels.length > snapshots.length) {
         emitDebugLog({
           component: "NoteWorkspace",
@@ -1736,13 +1797,22 @@ export function useNoteWorkspaces({
 
       const cachedSnapshot = workspaceId ? getWorkspaceSnapshot(workspaceId) : null
       const lastComponents = workspaceId ? lastComponentsSnapshotRef.current.get(workspaceId) ?? [] : []
-      const componentSource =
-        componentsFromManager.length > 0 ? componentsFromManager : cachedSnapshot?.components ?? lastComponents
-      const components: NoteWorkspaceComponentSnapshot[] = mergeComponentSnapshots(
-        componentSource,
-        cachedSnapshot?.components ?? [],
-        lastComponents
-      )
+      const components: NoteWorkspaceComponentSnapshot[] = (() => {
+        const source =
+          componentsFromManager.length > 0 ? componentsFromManager : cachedSnapshot?.components ?? lastComponents
+        if (!source || source.length === 0) return []
+        const byId = new Map<string, NoteWorkspaceComponentSnapshot>()
+        ;(cachedSnapshot?.components ?? []).forEach((c) => byId.set(c.id, c))
+        lastComponents.forEach((c) => byId.set(c.id, c))
+        return source.map((c) => {
+          if (c.type && c.type !== "component") return c
+          const fallback = byId.get(c.id)
+          if (fallback && fallback.type && fallback.type !== "component") {
+            return { ...c, type: fallback.type, metadata: c.metadata ?? fallback.metadata ?? null }
+          }
+        return c
+      })
+    })()
     if (v2Enabled) {
       if (components.length > 0 && workspaceId) {
         lastComponentsSnapshotRef.current.set(workspaceId, components)
