@@ -84,6 +84,8 @@ import {
   CAPTURE_DEFER_DELAY_MS,
   type WorkspaceSnapshotCache,
   detectRuntimeCapacity,
+  normalizePoint,
+  normalizeSize,
   serializeWorkspacePayload,
   serializePanelSnapshots,
   ensureWorkspaceSnapshotCache,
@@ -91,9 +93,6 @@ import {
   existingOpenSnapshot,
   now,
   formatSyncedLabel,
-  normalizeWorkspaceSlots,
-  areWorkspaceSlotsEqual,
-  buildPanelSnapshotFromRecord,
 } from "./workspace/workspace-utils"
 import { useWorkspaceRefs } from "./workspace/workspace-refs"
 
@@ -373,6 +372,49 @@ export function useNoteWorkspaces({
     },
     [liveStateEnabled],
   )
+
+  const normalizeWorkspaceSlots = (
+    slots:
+      | Iterable<{
+          noteId?: string | null
+          mainPosition?: { x: number; y: number } | null
+          position?: { x: number; y: number } | null
+        }>
+      | null
+      | undefined,
+  ): NoteWorkspaceSlot[] => {
+    if (!slots) return []
+    const normalized: NoteWorkspaceSlot[] = []
+    const seen = new Set<string>()
+    for (const slot of slots) {
+      if (!slot || typeof slot.noteId !== "string" || slot.noteId.length === 0) continue
+      if (seen.has(slot.noteId)) continue
+      const position = slot.mainPosition ?? slot.position ?? null
+      const mainPosition =
+        position && typeof position.x === "number" && typeof position.y === "number"
+          ? { x: position.x, y: position.y }
+          : null
+      normalized.push({ noteId: slot.noteId, mainPosition })
+      seen.add(slot.noteId)
+    }
+    return normalized
+  }
+
+  const areWorkspaceSlotsEqual = (a: NoteWorkspaceSlot[] | null | undefined, b: NoteWorkspaceSlot[] | null | undefined) => {
+    if (a === b) return true
+    if (!a || !b) return false
+    if (a.length !== b.length) return false
+    for (let index = 0; index < a.length; index += 1) {
+      const left = a[index]
+      const right = b[index]
+      if (left.noteId !== right.noteId) return false
+      const leftPos = left.mainPosition
+      const rightPos = right.mainPosition
+      if (Boolean(leftPos) !== Boolean(rightPos)) return false
+      if (leftPos && rightPos && (leftPos.x !== rightPos.x || leftPos.y !== rightPos.y)) return false
+    }
+    return true
+  }
 
   const commitWorkspaceOpenNotes = useCallback(
     (
@@ -719,10 +761,32 @@ export function useNoteWorkspaces({
         const panelId = parsed?.panelId ?? "main"
         if (!noteId) continue
         const record = store.get(rawKey)
-        const snapshot = buildPanelSnapshotFromRecord(noteId, panelId, record)
-        if (snapshot) {
-          snapshots.push(snapshot)
+        if (!record || typeof record !== "object") continue
+        const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
+        const size = normalizeSize((record as any).dimensions) ?? normalizeSize((record as any).worldSize)
+        const branches = Array.isArray((record as any).branches)
+          ? (record as any).branches.map((entry: unknown) => String(entry))
+          : null
+        if (!position && !size && !branches && typeof (record as any).zIndex !== "number" && !(record as any).type) {
+          continue
         }
+        snapshots.push({
+          noteId,
+          panelId,
+          type: typeof (record as any).type === "string" ? (record as any).type : null,
+          title: typeof (record as any).title === "string" ? (record as any).title : null,
+          position,
+          size,
+          zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
+          metadata:
+            (record as any).metadata && typeof (record as any).metadata === "object"
+              ? (record as any).metadata
+              : null,
+          parentId: typeof (record as any).parentId === "string" ? (record as any).parentId : null,
+          branches,
+          worldPosition: normalizePoint((record as any).worldPosition),
+          worldSize: normalizeSize((record as any).worldSize),
+        })
       }
     }
 

@@ -77,25 +77,199 @@ import {
   subscribeToActiveEntryContext,
   setActiveEntryContext,
 } from "@/lib/entry"
-import {
-  DEFAULT_CAMERA,
-  NOTE_WORKSPACE_DEBUG_ENABLED,
-  DESKTOP_RUNTIME_CAP,
-  CAPTURE_DEFER_DELAY_MS,
-  type WorkspaceSnapshotCache,
-  detectRuntimeCapacity,
-  serializeWorkspacePayload,
-  serializePanelSnapshots,
-  ensureWorkspaceSnapshotCache,
-  getLastNonEmptySnapshot,
-  existingOpenSnapshot,
-  now,
-  formatSyncedLabel,
-  normalizeWorkspaceSlots,
-  areWorkspaceSlotsEqual,
-  buildPanelSnapshotFromRecord,
-} from "./workspace/workspace-utils"
-import { useWorkspaceRefs } from "./workspace/workspace-refs"
+
+const DEFAULT_CAMERA = { x: 0, y: 0, scale: 1 }
+// Enable workspace debug logging; can be toggled at runtime if needed.
+const NOTE_WORKSPACE_DEBUG_ENABLED = true
+const DESKTOP_RUNTIME_CAP = 4
+const TOUCH_RUNTIME_CAP = 2
+const CAPTURE_DEFER_DELAY_MS = 48
+
+const detectRuntimeCapacity = () => {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return DESKTOP_RUNTIME_CAP
+  }
+  try {
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      return TOUCH_RUNTIME_CAP
+    }
+  } catch {
+    // ignore matchMedia errors
+  }
+  return DESKTOP_RUNTIME_CAP
+}
+
+const normalizePoint = (value: any): { x: number; y: number } | null => {
+  if (!value || typeof value !== "object") return null
+  const { x, y } = value as { x?: number; y?: number }
+  if (typeof x !== "number" || typeof y !== "number") {
+    return null
+  }
+  return { x, y }
+}
+
+const normalizeSize = (value: any): { width: number; height: number } | null => {
+  if (!value || typeof value !== "object") return null
+  const { width, height } = value as { width?: number; height?: number }
+  if (typeof width !== "number" || typeof height !== "number") {
+    return null
+  }
+  return { width, height }
+}
+
+const roundNumber = (value: unknown): number => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0
+  }
+  return Number(value.toFixed(4))
+}
+
+const serializeWorkspacePayload = (payload: NoteWorkspacePayload): string => {
+  const normalizePointForHash = (point: { x?: number | null; y?: number | null } | null | undefined) => {
+    if (!point || typeof point !== "object") return null
+    return {
+      x: roundNumber(point.x),
+      y: roundNumber(point.y),
+    }
+  }
+
+  const normalizeSizeForHash = (size: { width?: number | null; height?: number | null } | null | undefined) => {
+    if (!size || typeof size !== "object") return null
+    return {
+      width: roundNumber(size.width),
+      height: roundNumber(size.height),
+    }
+  }
+
+  const normalizedOpenNotes = [...payload.openNotes]
+    .map((entry) => ({
+      noteId: entry.noteId ?? "",
+      position: normalizePointForHash(entry.position as any),
+      size: normalizeSizeForHash(entry.size as any),
+      zIndex: typeof entry.zIndex === "number" ? entry.zIndex : null,
+      isPinned: Boolean(entry.isPinned),
+    }))
+    .sort((a, b) => a.noteId.localeCompare(b.noteId))
+
+  const normalizedPanels = [...payload.panels]
+    .map((panel) => ({
+      noteId: panel.noteId ?? "",
+      panelId: panel.panelId ?? "",
+      type: panel.type ?? null,
+      title: panel.title ?? null,
+      position: normalizePointForHash(panel.position),
+      size: normalizeSizeForHash(panel.size),
+      zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
+      metadata: panel.metadata ?? null,
+      parentId: panel.parentId ?? null,
+      branches: Array.isArray(panel.branches) ? [...panel.branches].sort() : null,
+      worldPosition: normalizePointForHash(panel.worldPosition),
+      worldSize: normalizeSizeForHash(panel.worldSize),
+    }))
+    .sort((a, b) => {
+      const byNote = a.noteId.localeCompare(b.noteId)
+      if (byNote !== 0) return byNote
+      return a.panelId.localeCompare(b.panelId)
+    })
+
+  const normalizedComponents = [...(payload.components ?? [])]
+    .map((component) => ({
+      id: component.id ?? "",
+      type: component.type ?? "",
+      position: normalizePointForHash(component.position as any),
+      size: normalizeSizeForHash(component.size as any),
+      zIndex: typeof component.zIndex === "number" ? component.zIndex : null,
+      metadata: component.metadata ?? null,
+    }))
+    .sort((a, b) => {
+      const byType = a.type.localeCompare(b.type)
+      if (byType !== 0) return byType
+      return a.id.localeCompare(b.id)
+    })
+
+  const normalizedCamera = {
+    x: roundNumber(payload.camera?.x),
+    y: roundNumber(payload.camera?.y),
+    scale: roundNumber(payload.camera?.scale ?? 1),
+  }
+
+  return JSON.stringify({
+    activeNoteId: payload.activeNoteId ?? null,
+    camera: normalizedCamera,
+    openNotes: normalizedOpenNotes,
+    panels: normalizedPanels,
+    components: normalizedComponents,
+  })
+}
+
+const serializePanelSnapshots = (panels: NoteWorkspacePanelSnapshot[]): string => {
+  const normalizePointForHash = (point: { x?: number | null; y?: number | null } | null | undefined) => {
+    if (!point || typeof point !== "object") return null
+    return {
+      x: roundNumber(point.x),
+      y: roundNumber(point.y),
+    }
+  }
+
+  const normalizeSizeForHash = (size: { width?: number | null; height?: number | null } | null | undefined) => {
+    if (!size || typeof size !== "object") return null
+    return {
+      width: roundNumber(size.width),
+      height: roundNumber(size.height),
+    }
+  }
+
+  const normalizedPanels = panels
+    .map((panel) => ({
+      noteId: panel.noteId ?? "",
+      panelId: panel.panelId ?? "",
+      type: panel.type ?? null,
+      title: panel.title ?? null,
+      position: normalizePointForHash(panel.position),
+      size: normalizeSizeForHash(panel.size),
+      zIndex: typeof panel.zIndex === "number" ? panel.zIndex : null,
+      parentId: panel.parentId ?? null,
+      branches: Array.isArray(panel.branches) ? [...panel.branches].sort() : null,
+      worldPosition: normalizePointForHash(panel.worldPosition),
+      worldSize: normalizeSizeForHash(panel.worldSize),
+    }))
+    .sort((a, b) => {
+      const byNote = a.noteId.localeCompare(b.noteId)
+      if (byNote !== 0) return byNote
+      return a.panelId.localeCompare(b.panelId)
+    })
+
+  return JSON.stringify(normalizedPanels)
+}
+
+type WorkspaceSnapshotCache = {
+  panels: NoteWorkspacePanelSnapshot[]
+  components: NoteWorkspaceComponentSnapshot[]
+  openNotes: NoteWorkspaceSlot[]
+}
+
+const ensureWorkspaceSnapshotCache = (
+  cacheMap: Map<string, WorkspaceSnapshotCache>,
+  workspaceId: string,
+): WorkspaceSnapshotCache => {
+  if (!cacheMap.has(workspaceId)) {
+    cacheMap.set(workspaceId, { panels: [], components: [], openNotes: [] })
+  }
+  return cacheMap.get(workspaceId)!
+}
+
+const getLastNonEmptySnapshot = (
+  workspaceId: string,
+  lastNonEmpty: Map<string, NoteWorkspacePanelSnapshot[]>,
+  cached: Map<string, WorkspaceSnapshotCache>,
+): NoteWorkspacePanelSnapshot[] => {
+  const fromLast = lastNonEmpty.get(workspaceId)
+  if (fromLast && fromLast.length > 0) return fromLast
+  const fromCached = cached.get(workspaceId)?.panels ?? []
+  return fromCached && fromCached.length > 0 ? fromCached : []
+}
+const existingOpenSnapshot = new Map<string, boolean>()
+const now = () => Date.now()
 
 type UseNoteWorkspaceOptions = {
   openNotes: NoteWorkspaceSlot[]
@@ -135,6 +309,17 @@ type UseNoteWorkspaceResult = {
   scheduleImmediateSave?: (reason?: string) => void
 }
 
+const formatSyncedLabel = (timestamp: string | Date) => {
+  const date = typeof timestamp === "string" ? new Date(timestamp) : timestamp
+  if (Number.isNaN(date.getTime())) {
+    return ""
+  }
+  return `Note workspace synced at ${new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date)}`
+}
+
 export function useNoteWorkspaces({
   openNotes,
   openNotesWorkspaceId = null,
@@ -156,61 +341,60 @@ export function useNoteWorkspaces({
   const flagEnabled = isNoteWorkspaceEnabled()
   const v2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
-
-  // Get initial entry ID for refs initialization
-  const initialEntryId = getActiveEntryContext()
-
-  // Initialize all workspace refs via centralized hook
-  const {
-    adapterRef,
-    panelSnapshotsRef,
-    workspaceSnapshotsRef,
-    workspaceOpenNotesRef,
-    workspaceNoteMembershipRef,
-    lastNonEmptySnapshotsRef,
-    snapshotOwnerWorkspaceIdRef,
-    currentWorkspaceIdRef,
-    lastPreviewedSnapshotRef,
-    workspaceRevisionRef,
-    workspaceStoresRef,
-    lastComponentsSnapshotRef,
-    lastPendingTimestampRef,
-    replayingWorkspaceRef,
-    lastSavedPayloadHashRef,
-    lastPanelSnapshotHashRef,
-    ownedNotesRef,
-    inferredWorkspaceNotesRef,
-    previousVisibleWorkspaceRef,
-    lastSaveReasonRef,
-    saveInFlightRef,
-    skipSavesUntilRef,
-    workspaceDirtyRef,
-    saveTimeoutRef,
-    isHydratingRef,
-    lastCameraRef,
-    previousEntryIdRef,
-    unavailableNoticeShownRef,
-    lastHydratedWorkspaceIdRef,
-    captureRetryAttemptsRef,
-    deferredCachedCaptureCountRef,
-    persistWorkspaceByIdRef,
-    captureSnapshotRef,
-    emitDebugLogRef,
-    listedOnceRef,
-  } = useWorkspaceRefs(initialEntryId)
-
-  // State declarations
+  const adapterRef = useRef<NoteWorkspaceAdapter | null>(null)
+  const panelSnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
+  const workspaceSnapshotsRef = useRef<Map<string, WorkspaceSnapshotCache>>(new Map())
+  const workspaceOpenNotesRef = useRef<Map<string, NoteWorkspaceSlot[]>>(new Map())
+  const workspaceNoteMembershipRef = useRef<Map<string, Set<string>>>(new Map())
+  const lastNonEmptySnapshotsRef = useRef<Map<string, NoteWorkspacePanelSnapshot[]>>(new Map())
+  const snapshotOwnerWorkspaceIdRef = useRef<string | null>(null)
+  const currentWorkspaceIdRef = useRef<string | null>(null)
+  const lastPreviewedSnapshotRef = useRef<Map<string, NoteWorkspaceSnapshot | null>>(new Map())
+  const workspaceRevisionRef = useRef<Map<string, string | null>>(new Map())
+  const workspaceStoresRef = useRef<Map<string, DataStore>>(new Map())
+  const lastComponentsSnapshotRef = useRef<Map<string, NoteWorkspaceComponentSnapshot[]>>(new Map())
+  const lastPendingTimestampRef = useRef<Map<string, number>>(new Map())
+  const replayingWorkspaceRef = useRef(0)
+  const lastSavedPayloadHashRef = useRef<Map<string, string>>(new Map())
+  const lastPanelSnapshotHashRef = useRef<string | null>(null)
+  const ownedNotesRef = useRef<Map<string, string>>(new Map())
+  const inferredWorkspaceNotesRef = useRef<Map<string, Set<string>>>(new Map())
+  const previousVisibleWorkspaceRef = useRef<string | null>(null)
+  const lastSaveReasonRef = useRef<string>("initial_schedule")
+  // Phase 2: Per-workspace save state tracking (Maps instead of singletons)
+  const saveInFlightRef = useRef<Map<string, boolean>>(new Map())
+  const skipSavesUntilRef = useRef<Map<string, number>>(new Map())
+  const workspaceDirtyRef = useRef<Map<string, number>>(new Map())
+  const saveTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const [workspaces, setWorkspaces] = useState<NoteWorkspaceSummary[]>([])
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState<string | null>(null)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [statusHelperText, setStatusHelperText] = useState<string | null>(null)
+  const isHydratingRef = useRef(false)
+  const lastCameraRef = useRef(DEFAULT_CAMERA)
   const [isUnavailable, setIsUnavailable] = useState(false)
   // Entry context state - tracks which entry (item) the user is working in
-  const [currentEntryId, setCurrentEntryIdState] = useState<string | null>(() => initialEntryId)
+  const [currentEntryId, setCurrentEntryIdState] = useState<string | null>(() => getActiveEntryContext())
+  const previousEntryIdRef = useRef<string | null>(currentEntryId)
   const featureEnabled = flagEnabled && !isUnavailable
-  // Loop breaker constant
+  const unavailableNoticeShownRef = useRef(false)
+  const lastHydratedWorkspaceIdRef = useRef<string | null>(null)
+  const captureRetryAttemptsRef = useRef<Map<string, number>>(new Map())
+  // Loop breaker for deferred cached open notes capture - prevents infinite retry loop
+  // when runtime is empty but cache has stale data (e.g., after eviction with REVISION_MISMATCH)
+  const deferredCachedCaptureCountRef = useRef<Map<string, number>>(new Map())
   const MAX_DEFERRED_CACHED_CAPTURES = 3
+  // Phase 3: Refs for pre-eviction callback to avoid stale closures
+  // These refs always point to the latest versions of the functions,
+  // preventing the callback from using stale versions during async operations
+  const persistWorkspaceByIdRef = useRef<
+    ((workspaceId: string, reason: string, options?: { skipReadinessCheck?: boolean; isBackground?: boolean }) => Promise<boolean>) | null
+  >(null)
+  const captureSnapshotRef = useRef<
+    ((workspaceId?: string | null, options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean }) => Promise<void>) | null
+  >(null)
+  const emitDebugLogRef = useRef<((payload: Parameters<NonNullable<NoteWorkspaceDebugLogger>>[0]) => void) | null>(null)
   const [snapshotRevision, setSnapshotRevision] = useState(0)
   const bumpSnapshotRevision = useCallback(() => {
     setSnapshotRevision((prev) => prev + 1)
@@ -373,6 +557,49 @@ export function useNoteWorkspaces({
     },
     [liveStateEnabled],
   )
+
+  const normalizeWorkspaceSlots = (
+    slots:
+      | Iterable<{
+          noteId?: string | null
+          mainPosition?: { x: number; y: number } | null
+          position?: { x: number; y: number } | null
+        }>
+      | null
+      | undefined,
+  ): NoteWorkspaceSlot[] => {
+    if (!slots) return []
+    const normalized: NoteWorkspaceSlot[] = []
+    const seen = new Set<string>()
+    for (const slot of slots) {
+      if (!slot || typeof slot.noteId !== "string" || slot.noteId.length === 0) continue
+      if (seen.has(slot.noteId)) continue
+      const position = slot.mainPosition ?? slot.position ?? null
+      const mainPosition =
+        position && typeof position.x === "number" && typeof position.y === "number"
+          ? { x: position.x, y: position.y }
+          : null
+      normalized.push({ noteId: slot.noteId, mainPosition })
+      seen.add(slot.noteId)
+    }
+    return normalized
+  }
+
+  const areWorkspaceSlotsEqual = (a: NoteWorkspaceSlot[] | null | undefined, b: NoteWorkspaceSlot[] | null | undefined) => {
+    if (a === b) return true
+    if (!a || !b) return false
+    if (a.length !== b.length) return false
+    for (let index = 0; index < a.length; index += 1) {
+      const left = a[index]
+      const right = b[index]
+      if (left.noteId !== right.noteId) return false
+      const leftPos = left.mainPosition
+      const rightPos = right.mainPosition
+      if (Boolean(leftPos) !== Boolean(rightPos)) return false
+      if (leftPos && rightPos && (leftPos.x !== rightPos.x || leftPos.y !== rightPos.y)) return false
+    }
+    return true
+  }
 
   const commitWorkspaceOpenNotes = useCallback(
     (
@@ -719,10 +946,32 @@ export function useNoteWorkspaces({
         const panelId = parsed?.panelId ?? "main"
         if (!noteId) continue
         const record = store.get(rawKey)
-        const snapshot = buildPanelSnapshotFromRecord(noteId, panelId, record)
-        if (snapshot) {
-          snapshots.push(snapshot)
+        if (!record || typeof record !== "object") continue
+        const position = normalizePoint((record as any).position) ?? normalizePoint((record as any).worldPosition)
+        const size = normalizeSize((record as any).dimensions) ?? normalizeSize((record as any).worldSize)
+        const branches = Array.isArray((record as any).branches)
+          ? (record as any).branches.map((entry: unknown) => String(entry))
+          : null
+        if (!position && !size && !branches && typeof (record as any).zIndex !== "number" && !(record as any).type) {
+          continue
         }
+        snapshots.push({
+          noteId,
+          panelId,
+          type: typeof (record as any).type === "string" ? (record as any).type : null,
+          title: typeof (record as any).title === "string" ? (record as any).title : null,
+          position,
+          size,
+          zIndex: typeof (record as any).zIndex === "number" ? (record as any).zIndex : null,
+          metadata:
+            (record as any).metadata && typeof (record as any).metadata === "object"
+              ? (record as any).metadata
+              : null,
+          parentId: typeof (record as any).parentId === "string" ? (record as any).parentId : null,
+          branches,
+          worldPosition: normalizePoint((record as any).worldPosition),
+          worldSize: normalizeSize((record as any).worldSize),
+        })
       }
     }
 
@@ -3546,6 +3795,8 @@ export function useNoteWorkspaces({
       bumpSnapshotRevision,
     ],
   )
+
+  const listedOnceRef = useRef(false)
 
   useEffect(() => {
     if (!flagEnabled || isUnavailable) return
