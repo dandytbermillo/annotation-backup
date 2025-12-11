@@ -2914,15 +2914,32 @@ export function useNoteWorkspaces({
     }
 
     let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceIdForComponents)
+    // FIX: In live-state mode, runtime is the authoritative source of truth for open notes.
+    // Don't infer from stale membership - that would restore deleted notes.
+    // Only infer from membership when NOT in live-state mode (legacy fallback).
     if (workspaceOpenNotes.length === 0 && workspaceMembership && workspaceMembership.size > 0) {
-      const inferredSlots = Array.from(workspaceMembership).map((noteId) => ({
-        noteId,
-        mainPosition: resolveMainPanelPosition(noteId),
-      }))
-      workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceIdForComponents, inferredSlots, {
-        updateCache: false,
-        callSite: "buildPayload_inferred",
-      })
+      if (!liveStateEnabled) {
+        const inferredSlots = Array.from(workspaceMembership).map((noteId) => ({
+          noteId,
+          mainPosition: resolveMainPanelPosition(noteId),
+        }))
+        workspaceOpenNotes = commitWorkspaceOpenNotes(workspaceIdForComponents, inferredSlots, {
+          updateCache: false,
+          callSite: "buildPayload_inferred",
+        })
+      } else {
+        // Log that we skipped inference in live-state mode
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "build_payload_inferred_skipped_live_state",
+          metadata: {
+            workspaceId: workspaceIdForComponents,
+            membershipSize: workspaceMembership.size,
+            membershipNoteIds: Array.from(workspaceMembership),
+            reason: "runtime_is_authoritative_in_live_state",
+          },
+        })
+      }
     }
     const payload: NoteWorkspacePayload = {
       schemaVersion: "1.1.0",
@@ -2990,6 +3007,7 @@ export function useNoteWorkspaces({
     updatePanelSnapshotMap,
     v2Enabled,
     emitDebugLog,
+    liveStateEnabled,
   ])
 
   /**
