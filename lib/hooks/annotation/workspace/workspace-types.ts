@@ -110,4 +110,6 @@ export type UseNoteWorkspaceResult = {
   scheduleImmediateSave?: (reason?: string) => void
   /** Clear a deleted component from cache to prevent hydration loops */
   clearDeletedComponentFromCache?: (workspaceId: string, componentId: string) => void
+  /** Clear a closed note from cache to prevent stale note restoration */
+  clearClosedNoteFromCache?: (workspaceId: string, noteId: string) => void
 }

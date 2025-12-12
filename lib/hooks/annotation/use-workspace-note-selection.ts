@@ -76,6 +76,7 @@ type UseWorkspaceNoteSelectionOptions = {
   reopenSequenceRef: MutableRefObject<RapidSequenceState>
   lastCanvasInteractionRef: MutableRefObject<{ x: number; y: number } | null>
   debugLog: DebugLogFn
+  clearClosedNoteFromCache?: (workspaceId: string, noteId: string) => void
 }
 
 export function useWorkspaceNoteSelection({
@@ -101,6 +102,7 @@ export function useWorkspaceNoteSelection({
   reopenSequenceRef,
   lastCanvasInteractionRef,
   debugLog,
+  clearClosedNoteFromCache,
 }: UseWorkspaceNoteSelectionOptions): WorkspaceNoteSelectionHandlers {
   const handleNoteSelect = useCallback(
     (noteId: string, options?: NoteSelectionOptions) => {
@@ -423,11 +425,39 @@ export function useWorkspaceNoteSelection({
     (noteId: string) => {
       if (!noteId) return
 
+      // FIX: Clear activeNoteId immediately when closing the active note.
+      // This prevents the stale activeNoteId from being persisted before
+      // the React effect in annotation-app-shell has a chance to clear it.
+      if (noteId === activeNoteId) {
+        // Find the next open note to set as active, or null if none remain
+        const remainingNotes = openNotes.filter(n => n.noteId !== noteId)
+        const nextActiveNote = remainingNotes[0]?.noteId ?? null
+
+        debugLog({
+          component: "AnnotationApp",
+          action: "clearing_active_note_on_close",
+          metadata: {
+            closedNoteId: noteId,
+            previousActiveNoteId: activeNoteId,
+            nextActiveNoteId: nextActiveNote,
+            remainingNotesCount: remainingNotes.length,
+          },
+        })
+
+        setActiveNoteId(nextActiveNote)
+      }
+
+      // FIX: Clear the closed note from workspace cache to prevent stale restoration
+      // during hot runtime hydration (same pattern as clearDeletedComponentFromCache).
+      if (currentWorkspaceId && clearClosedNoteFromCache) {
+        clearClosedNoteFromCache(currentWorkspaceId, noteId)
+      }
+
       void closeWorkspaceNote(noteId, { persist: false, removeWorkspace: false }).catch(error => {
         console.error("[AnnotationApp] Failed to close workspace note:", error)
       })
     },
-    [closeWorkspaceNote],
+    [activeNoteId, clearClosedNoteFromCache, closeWorkspaceNote, currentWorkspaceId, debugLog, openNotes, setActiveNoteId],
   )
 
   const handleCenterNote = useCallback(

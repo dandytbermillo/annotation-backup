@@ -1272,6 +1272,7 @@ const initialWorkspaceSyncRef = useRef(false)
     reopenSequenceRef,
     lastCanvasInteractionRef,
     debugLog,
+    clearClosedNoteFromCache: noteWorkspaceState.clearClosedNoteFromCache,
   })
 
   const handleSnapshotSettled = useCallback((noteId: string) => {

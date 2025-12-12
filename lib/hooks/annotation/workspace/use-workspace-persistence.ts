@@ -499,6 +499,30 @@ export function useWorkspacePersistence(
         })
       }
     }
+    // FIX: Validate activeNoteId exists in openNotes before persisting.
+    // This prevents persisting a stale activeNoteId when a note has been closed
+    // but the React state hasn't updated yet (e.g., due to effect timing).
+    // This is a safety net - the primary fix clears activeNoteId when closing notes.
+    const openNoteIds = new Set(workspaceOpenNotes.map(n => n.noteId))
+    const validatedActiveNoteId = activeNoteId && openNoteIds.has(activeNoteId)
+      ? activeNoteId
+      : (workspaceOpenNotes[0]?.noteId ?? null)
+
+    // Log if we corrected a stale activeNoteId
+    if (activeNoteId && validatedActiveNoteId !== activeNoteId) {
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "build_payload_corrected_stale_active_note",
+        metadata: {
+          workspaceId: workspaceIdForComponents,
+          staleActiveNoteId: activeNoteId,
+          correctedActiveNoteId: validatedActiveNoteId,
+          openNoteCount: workspaceOpenNotes.length,
+          reason: "active_note_not_in_open_notes",
+        },
+      })
+    }
+
     const payload: NoteWorkspacePayload = {
       schemaVersion: "1.1.0",
       openNotes: workspaceOpenNotes.map((note) => {
@@ -511,7 +535,7 @@ export function useWorkspacePersistence(
           isPinned: snapshot?.isPinned ?? false,
         }
       }),
-      activeNoteId,
+      activeNoteId: validatedActiveNoteId,
       camera: cameraTransform,
       panels: panelSnapshots,
       components,
@@ -526,7 +550,7 @@ export function useWorkspacePersistence(
           mainPosition: entry.position ?? null,
         })),
         camera: cameraTransform,
-        activeNoteId,
+        activeNoteId: validatedActiveNoteId,
       })
       lastPreviewedSnapshotRef.current.delete(currentWorkspaceId)
       emitDebugLog({

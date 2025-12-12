@@ -3775,6 +3775,64 @@ export function useNoteWorkspaces({
     [emitDebugLog],
   )
 
+  /**
+   * Clear a closed note from the workspace snapshot caches.
+   * This prevents hydration from trying to restore closed notes,
+   * which would cause the note to briefly appear then disappear (stale toolbar state).
+   * Similar pattern to clearDeletedComponentFromCache.
+   */
+  const clearClosedNoteFromCache = useCallback(
+    (workspaceId: string, noteId: string) => {
+      let clearedFromOpenNotes = false
+      let clearedFromPanels = false
+      let clearedFromNonEmpty = false
+
+      // Clear from workspaceSnapshotsRef.openNotes
+      const cached = workspaceSnapshotsRef.current.get(workspaceId)
+      if (cached) {
+        const filteredOpenNotes = cached.openNotes.filter(n => n.noteId !== noteId)
+        if (filteredOpenNotes.length !== cached.openNotes.length) {
+          cached.openNotes = filteredOpenNotes
+          clearedFromOpenNotes = true
+        }
+
+        // Also clear panels for this note
+        const filteredPanels = cached.panels.filter(p => p.noteId !== noteId)
+        if (filteredPanels.length !== cached.panels.length) {
+          cached.panels = filteredPanels
+          clearedFromPanels = true
+        }
+      }
+
+      // Clear from lastNonEmptySnapshotsRef
+      const nonEmpty = lastNonEmptySnapshotsRef.current.get(workspaceId)
+      if (nonEmpty && nonEmpty.length > 0) {
+        const filteredNonEmpty = nonEmpty.filter(p => p.noteId !== noteId)
+        if (filteredNonEmpty.length !== nonEmpty.length) {
+          lastNonEmptySnapshotsRef.current.set(workspaceId, filteredNonEmpty)
+          clearedFromNonEmpty = true
+        }
+      }
+
+      if (clearedFromOpenNotes || clearedFromPanels || clearedFromNonEmpty) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "cleared_closed_note_from_cache",
+          metadata: {
+            workspaceId,
+            noteId,
+            clearedFromOpenNotes,
+            clearedFromPanels,
+            clearedFromNonEmpty,
+            remainingOpenNotes: cached?.openNotes.length ?? 0,
+            remainingPanels: cached?.panels.length ?? 0,
+          },
+        })
+      }
+    },
+    [emitDebugLog],
+  )
+
   return {
     featureEnabled,
     isUnavailable,
@@ -3793,5 +3851,6 @@ export function useNoteWorkspaces({
     renameWorkspace: handleRenameWorkspace,
     scheduleImmediateSave: flushPendingSave,
     clearDeletedComponentFromCache,
+    clearClosedNoteFromCache,
   }
 }
