@@ -272,7 +272,111 @@ To verify the fix:
 3. Reload the app
 4. **Expected:** Canvas shows "no notes" placeholder correctly, toolbar is empty
 
+## Verification Evidence
+
+### Debug Logs After Fix
+
+The following debug logs confirm the fix is working:
+
+```
+AnnotationApp | clearing_active_note_on_close     | {
+  "closedNoteId": "98a380f1-fcf4-4e9e-84ef-fb9936f30d20",
+  "nextActiveNoteId": null,
+  "remainingNotesCount": 0,
+  "previousActiveNoteId": "98a380f1-fcf4-4e9e-84ef-fb9936f30d20"
+}
+
+NoteWorkspace | cleared_closed_note_from_cache    | {
+  "noteId": "98a380f1-fcf4-4e9e-84ef-fb9936f30d20",
+  "workspaceId": "167d6b28-e98c-446f-8cfd-671c25626bc6",
+  "workspaceName": "Workspace 2",
+  "remainingPanels": 0,
+  "clearedFromPanels": true,
+  "remainingOpenNotes": 0,
+  "clearedFromNonEmpty": true,
+  "clearedFromOpenNotes": true
+}
+
+NoteWorkspace | preview_snapshot_skip_hot_runtime | {
+  "workspaceId": "167d6b28-e98c-446f-8cfd-671c25626bc6",
+  "workspaceName": "Workspace 2",
+  "panelsInSnapshot": 0,        ← Cache cleared!
+  "openNotesInSnapshot": 0,     ← No stale notes!
+  "componentsInSnapshot": 0,
+  "runtimeComponentCount": 0
+}
+```
+
+### Database State After Fix
+
+```sql
+SELECT id, name, payload->>'openNotes', payload->>'activeNoteId'
+FROM note_workspaces WHERE name = 'Workspace 2';
+
+-- Result:
+-- 167d6b28-e98c-446f-8cfd-671c25626bc6 | Workspace 2 | [] | (null)
+```
+
+Both `openNotes` and `activeNoteId` are correctly empty after note closure.
+
+### Before vs After Comparison
+
+| Metric | Before Fix | After Fix |
+|--------|-----------|-----------|
+| `openNotesInSnapshot` | 1 (stale) | 0 (correct) |
+| `panelsInSnapshot` | 1 (stale) | 0 (correct) |
+| DB `activeNoteId` | stale UUID | null |
+| Cache cleared on close | ❌ | ✅ |
+| Toolbar after reload | Shows deleted note | Empty (correct) |
+
+## Investigation Timeline
+
+### Initial Analysis (Fixes 1 & 2)
+
+1. **Problem identified**: Stale `activeNoteId` in database after note deletion
+2. **Fix 1 implemented**: Clear `activeNoteId` immediately in `handleCloseNote`
+3. **Fix 2 implemented**: Validate `activeNoteId` in `buildPayload()` before persistence
+
+### Bug Persisted - Deeper Analysis
+
+After implementing Fixes 1 & 2, testing revealed the bug still occurred. Debug log analysis showed:
+
+```
+preview_snapshot_skip_hot_runtime | openNotesInSnapshot: 1  ← Still stale!
+```
+
+The logs showed that while `activeNoteId` was being corrected (Fix 1 & 2 working), the **in-memory workspace snapshot cache** still contained the deleted note. This cached data was being replayed during hot runtime hydration.
+
+### Root Cause Discovery
+
+The actual root cause was multi-layered:
+
+1. **Layer 1 (Fixed by Fix 1 & 2)**: `activeNoteId` not cleared on close
+2. **Layer 2 (Fixed by Fix 3)**: `workspaceSnapshotsRef` cache not cleared on close
+
+The workspace system maintains in-memory caches for performance:
+- `workspaceSnapshotsRef` - cached workspace snapshots
+- `lastNonEmptySnapshotsRef` - last known non-empty panel state
+
+When switching workspaces (hot runtime path), these caches are used to restore state without hitting the database. If the closed note remained in these caches, it would be restored during the next workspace switch, causing the brief "ghost" appearance before disappearing.
+
+### Pattern Recognition
+
+This exact pattern was previously identified and fixed for **component deletion** (`clearDeletedComponentFromCache`). The same defense-in-depth approach was applied:
+
+1. Clear state immediately on action (close/delete)
+2. Validate before persistence
+3. Clear from all caches
+
 ## Related Issues
 
-- Component deletion infinite loop (fixed in 2025-12-11)
-- Same defense-in-depth pattern applied
+- **Component deletion infinite loop** (fixed 2025-12-11) - Same pattern
+  - See: `2025-12-11-component-deletion-infinite-loop-fix.md`
+- Both fixes use the same "clear cache on delete" pattern
+
+## Lessons Learned
+
+1. **Defense in depth is essential**: Multiple layers of protection prevent edge cases
+2. **Cache invalidation matters**: Any delete operation should clear all related caches
+3. **Debug logs are critical**: The `preview_snapshot_skip_hot_runtime` log revealed the true root cause
+4. **Pattern consistency**: When fixing similar issues (component vs note deletion), apply the same proven patterns

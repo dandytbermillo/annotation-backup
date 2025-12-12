@@ -47,3 +47,17 @@ export {
   type UseWorkspaceHydrationOptions,
   type UseWorkspaceHydrationResult,
 } from "./use-workspace-hydration"
+
+// CRUD Operations
+export {
+  useWorkspaceCrud,
+  type UseWorkspaceCrudOptions,
+  type WorkspaceCrudHandlers,
+} from "./use-workspace-crud"
+
+// Selection (Workspace Switching)
+export {
+  useWorkspaceSelection,
+  type UseWorkspaceSelectionOptions,
+  type WorkspaceSelectionHandlers,
+} from "./use-workspace-selection"
