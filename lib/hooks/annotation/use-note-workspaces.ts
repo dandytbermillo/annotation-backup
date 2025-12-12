@@ -3748,6 +3748,33 @@ export function useNoteWorkspaces({
     emitDebugLog,
   ])
 
+  /**
+   * Clear a deleted component from the lastComponentsSnapshotRef cache.
+   * This prevents hydration from trying to restore deleted components,
+   * which would cause an infinite loop.
+   */
+  const clearDeletedComponentFromCache = useCallback(
+    (workspaceId: string, componentId: string) => {
+      const cached = lastComponentsSnapshotRef.current.get(workspaceId)
+      if (!cached) return
+
+      const filtered = cached.filter(c => c.id !== componentId)
+      if (filtered.length !== cached.length) {
+        lastComponentsSnapshotRef.current.set(workspaceId, filtered)
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "cleared_deleted_component_from_cache",
+          metadata: {
+            workspaceId,
+            componentId,
+            remainingCount: filtered.length,
+          },
+        })
+      }
+    },
+    [emitDebugLog],
+  )
+
   return {
     featureEnabled,
     isUnavailable,
@@ -3765,5 +3792,6 @@ export function useNoteWorkspaces({
     deleteWorkspace: handleDeleteWorkspace,
     renameWorkspace: handleRenameWorkspace,
     scheduleImmediateSave: flushPendingSave,
+    clearDeletedComponentFromCache,
   }
 }

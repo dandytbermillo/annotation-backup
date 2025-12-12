@@ -17,6 +17,8 @@ interface UseComponentCreationHandlerOptions {
   layerManager?: LayerManager | null
   onComponentChange?: () => void
   workspaceId?: string | null
+  /** Callback when a component is deleted - use to clear caches */
+  onComponentDeleted?: (workspaceId: string, componentId: string) => void
 }
 
 export function useComponentCreationHandler({
@@ -26,6 +28,7 @@ export function useComponentCreationHandler({
   layerManager,
   onComponentChange,
   workspaceId,
+  onComponentDeleted,
 }: UseComponentCreationHandlerOptions) {
   const layerMgr = layerManager ?? null
   const workspaceKey = workspaceId ?? null
@@ -142,6 +145,8 @@ export function useComponentCreationHandler({
       // This must happen before any other cleanup
       if (workspaceKey) {
         markComponentDeleted(workspaceKey, id)
+        // Clear from caches to prevent hydration loop trying to restore deleted components
+        onComponentDeleted?.(workspaceKey, id)
       }
 
       // Phase 4: Remove from runtime ledger
@@ -173,7 +178,7 @@ export function useComponentCreationHandler({
       setCanvasItems(prev => prev.filter(item => item.id !== id))
       onComponentChange?.()
     },
-    [setCanvasItems, onComponentChange, workspaceKey, layerMgr],
+    [setCanvasItems, onComponentChange, workspaceKey, layerMgr, onComponentDeleted],
   )
 
   const handleComponentPositionChange = useCallback(

@@ -98,6 +98,8 @@ interface ModernAnnotationCanvasProps {
   onToggleAddComponentMenu?: () => void
   onRegisterActiveEditor?: (editorRef: any, panelId: string) => void
   onSnapshotLoadComplete?: () => void  // Called after snapshot load + centering completes
+  /** Callback when a component is deleted - use to clear caches */
+  onComponentDeleted?: (workspaceId: string, componentId: string) => void
   skipSnapshotForNote?: string | null
   onSnapshotSettled?: (noteId: string) => void
   children?: React.ReactNode  // Toolbar and other components rendered inside CanvasProvider
@@ -159,7 +161,7 @@ function NoteHydrator({
 
 // helper functions moved to lib/canvas/canvas-defaults.ts
 
-const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({ 
+const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnnotationCanvasProps>(({
   noteIds,
   primaryNoteId,
   workspaceId = null,
@@ -179,6 +181,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   noteTitleMap = null,
   workspaceSnapshotRevision = 0,
   onComponentChange,
+  onComponentDeleted,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
   const hasNotes = noteIds.length > 0 && noteId.length > 0
@@ -695,6 +698,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     layerManager: layerManagerApi.manager,
     onComponentChange,
     workspaceId: workspaceId ?? null,
+    onComponentDeleted,
   })
 
   // Phase 3 Unification: Read components from runtime ledger (authoritative source)

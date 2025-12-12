@@ -1736,6 +1736,7 @@ const initialWorkspaceSyncRef = useRef(false)
       noteTitleMap={noteTitleMapRef.current}
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
       onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
+      onComponentDeleted={noteWorkspaceState.clearDeletedComponentFromCache}
     >
       {floatingToolbarChild}
     </MultiWorkspaceCanvasContainer>
@@ -1764,6 +1765,7 @@ const initialWorkspaceSyncRef = useRef(false)
       noteTitleMap={noteTitleMapRef.current}
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
       onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
+      onComponentDeleted={noteWorkspaceState.clearDeletedComponentFromCache}
     >
       {floatingToolbarChild}
     </AnnotationWorkspaceCanvas>

@@ -1459,7 +1459,7 @@ export const populateRuntimeComponents = (
     metadata?: Record<string, unknown> | null
     zIndex?: number | null
   }>,
-): void => {
+): { populatedCount: number; skippedDeletedCount: number } => {
   const runtime = runtimes.get(workspaceId)
   if (!runtime) {
     if (process.env.NODE_ENV === "development") {
@@ -1467,7 +1467,7 @@ export const populateRuntimeComponents = (
         `[WorkspaceRuntime] Cannot populate runtime components - runtime not found: ${workspaceId}`
       )
     }
-    return
+    return { populatedCount: 0, skippedDeletedCount: 0 }
   }
 
   const now = Date.now()
@@ -1532,6 +1532,8 @@ export const populateRuntimeComponents = (
       totalComponents: runtime.components.size,
     },
   })
+
+  return { populatedCount, skippedDeletedCount }
 }
 
 /**

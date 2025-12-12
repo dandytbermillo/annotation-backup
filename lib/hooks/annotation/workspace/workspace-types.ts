@@ -108,4 +108,6 @@ export type UseNoteWorkspaceResult = {
   renameWorkspace: (workspaceId: string, name: string) => void
   /** Schedule an immediate save (optional) */
   scheduleImmediateSave?: (reason?: string) => void
+  /** Clear a deleted component from cache to prevent hydration loops */
+  clearDeletedComponentFromCache?: (workspaceId: string, componentId: string) => void
 }

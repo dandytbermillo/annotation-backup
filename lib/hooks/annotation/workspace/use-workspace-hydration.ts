@@ -610,8 +610,11 @@ export function useWorkspaceHydration(
 
           if (componentsToRestore && componentsToRestore.length > 0) {
             // Phase 1 Unification: Always populate runtime ledger first (authoritative source)
+            // FIX: Capture the return value to check if any components were actually populated
+            let actuallyPopulatedCount = 0
             if (runtimeLedgerCount === 0) {
-              populateRuntimeComponents(currentWorkspaceId, componentsToRestore)
+              const result = populateRuntimeComponents(currentWorkspaceId, componentsToRestore)
+              actuallyPopulatedCount = result.populatedCount
             }
 
             // Also register to LayerManager for rendering
@@ -638,14 +641,31 @@ export function useWorkspaceHydration(
                 metadata: {
                   workspaceId: currentWorkspaceId,
                   componentCount: componentsToRestore.length,
+                  actuallyPopulatedCount,
                   runtimeLedgerCount,
                   source: cachedComponents ? "lastComponentsSnapshotRef" : "workspaceSnapshotsRef",
                 },
               })
-              // Bump revision to trigger canvas useEffect that reads from LayerManager.
-              // This is safe for hot runtimes because the canvas's FIX 11 only sets
-              // workspaceRestorationInProgressRef on first mount, not on revision bumps.
-              bumpSnapshotRevision()
+              // FIX: Only bump revision if components were actually populated.
+              // If all components were skipped (e.g., marked as deleted), don't bump revision
+              // to prevent infinite loop where hydration keeps trying to restore deleted components.
+              if (actuallyPopulatedCount > 0 || runtimeLedgerCount > 0) {
+                // Bump revision to trigger canvas useEffect that reads from LayerManager.
+                // This is safe for hot runtimes because the canvas's FIX 11 only sets
+                // workspaceRestorationInProgressRef on first mount, not on revision bumps.
+                bumpSnapshotRevision()
+              } else {
+                emitDebugLog({
+                  component: "NoteWorkspace",
+                  action: "hydrate_skipped_revision_bump",
+                  metadata: {
+                    workspaceId: currentWorkspaceId,
+                    reason: "no_components_actually_populated",
+                    componentCount: componentsToRestore.length,
+                    actuallyPopulatedCount,
+                  },
+                })
+              }
             }
           }
         }

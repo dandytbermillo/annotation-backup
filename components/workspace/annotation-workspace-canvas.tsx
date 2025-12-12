@@ -32,6 +32,8 @@ export type AnnotationWorkspaceCanvasProps = {
   workspaceSnapshotRevision?: number
   children?: ReactNode
   onComponentChange?: () => void
+  /** Callback when a component is deleted - use to clear caches */
+  onComponentDeleted?: (workspaceId: string, componentId: string) => void
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
@@ -57,6 +59,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     workspaceSnapshotRevision = 0,
     children,
     onComponentChange,
+    onComponentDeleted,
   },
   ref,
 ) {
@@ -83,6 +86,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       noteTitleMap={noteTitleMap}
       workspaceSnapshotRevision={workspaceSnapshotRevision}
       onComponentChange={onComponentChange}
+      onComponentDeleted={onComponentDeleted}
     >
       {children}
     </ModernAnnotationCanvas>
