@@ -2,8 +2,8 @@
  * Debug Logger - Logs to PostgreSQL debug_logs table
  */
 
-// Hard-disable debug logging to avoid flooding /api/debug/log during troubleshooting.
-const DEBUG_LOGGING_ENABLED = true;
+// Debug logging is opt-in to avoid flooding `/api/debug/log`.
+// Enable with `NEXT_PUBLIC_DEBUG_LOGGING=true` or localStorage key `annotation:debug-logging`.
 const DEBUG_OVERRIDE_STORAGE_KEY = 'annotation:debug-logging';
 const RUNTIME_PREF_CACHE_MS = 1000;
 const RATE_LIMIT_INTERVAL_MS = 1000;
@@ -31,12 +31,17 @@ const parseOverride = (value: OverrideValue): boolean | null => {
   return null;
 };
 
-let cachedPreference = DEBUG_LOGGING_ENABLED;
+const DEFAULT_DEBUG_LOGGING_ENABLED = (() => {
+  const envOverride = parseOverride(process.env.NEXT_PUBLIC_DEBUG_LOGGING);
+  return envOverride ?? false;
+})();
+
+let cachedPreference = DEFAULT_DEBUG_LOGGING_ENABLED;
 let lastPreferenceCheck = 0;
 
 const computeRuntimePreference = (): boolean => {
   if (typeof window === 'undefined') {
-    return DEBUG_LOGGING_ENABLED;
+    return DEFAULT_DEBUG_LOGGING_ENABLED;
   }
 
   const globalOverride = parseOverride(
@@ -57,16 +62,47 @@ const computeRuntimePreference = (): boolean => {
     // Ignore storage errors; fall back to default
   }
 
-  return DEBUG_LOGGING_ENABLED;
+  return DEFAULT_DEBUG_LOGGING_ENABLED;
 };
 
-export const isDebugEnabled = () => true;
+export const isDebugEnabled = () => {
+  const now = Date.now();
+  if (now - lastPreferenceCheck > RUNTIME_PREF_CACHE_MS) {
+    cachedPreference = computeRuntimePreference();
+    lastPreferenceCheck = now;
+  }
+  return cachedPreference;
+};
 
 let rateWindowStart = 0;
 let rateWindowCount = 0;
 let rateLimitWarned = false;
 
-const shouldEmitDebugLog = () => true;
+const shouldEmitDebugLog = () => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  if (!isDebugEnabled()) {
+    return false;
+  }
+  const now = Date.now();
+  if (now - rateWindowStart >= RATE_LIMIT_INTERVAL_MS) {
+    rateWindowStart = now;
+    rateWindowCount = 0;
+    rateLimitWarned = false;
+  }
+  rateWindowCount += 1;
+  if (rateWindowCount > RATE_LIMIT_MAX) {
+    if (!rateLimitWarned && typeof console !== 'undefined') {
+      rateLimitWarned = true;
+      console.warn(
+        `[debugLog] rate limited: ${rateWindowCount}/${RATE_LIMIT_MAX} in ${RATE_LIMIT_INTERVAL_MS}ms`,
+      );
+    }
+    return false;
+  }
+  return true;
+};
 
 let sessionId: string | null = null;
 
@@ -95,6 +131,9 @@ export async function debugLog(
   _event?: string,
   _details?: any
 ): Promise<void> {
+  if (!shouldEmitDebugLog()) {
+    return;
+  }
   const data: DebugLogData =
     typeof _dataOrContext === "string"
       ? {

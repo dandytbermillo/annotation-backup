@@ -309,10 +309,14 @@ export function useWorkspaceSelection({
           // Phase 2: Show new runtime after cold load complete
           if (liveStateEnabled) {
             setRuntimeVisible(workspaceId, true)
+            const entryId = getActiveEntryContext()
+            if (entryId) {
+              setWorkspaceEntry(workspaceId, entryId)
+            }
             emitDebugLog({
               component: "NoteWorkspace",
               action: "workspace_runtime_visible",
-              metadata: { workspaceId, wasCold: true },
+              metadata: { workspaceId, wasCold: true, entryId },
             })
           }
         } catch (error) {

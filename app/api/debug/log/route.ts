@@ -8,6 +8,7 @@ const pool = new Pool({
 })
 
 const DEBUG_LOG_FILE = path.join(process.cwd(), 'logs', 'debug.log')
+const SHOULD_APPEND_DEBUG_LOG_FILE = process.env.DEBUG_LOG_TO_FILE === 'true'
 
 async function appendFileSafe(payload: unknown) {
   try {
@@ -75,7 +76,9 @@ export async function POST(request: NextRequest) {
       values,
     )
 
-    await appendFileSafe({ component, action, metadata, note_id, workspaceId, timestamp: new Date().toISOString() })
+    if (SHOULD_APPEND_DEBUG_LOG_FILE) {
+      await appendFileSafe({ component, action, metadata, note_id, workspaceId, timestamp: new Date().toISOString() })
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

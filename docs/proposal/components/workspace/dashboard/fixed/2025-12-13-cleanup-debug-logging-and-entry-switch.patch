@@ -1,0 +1,778 @@
+diff --git a/lib/utils/debug-logger.ts b/lib/utils/debug-logger.ts
+--- a/lib/utils/debug-logger.ts
++++ b/lib/utils/debug-logger.ts
+@@ -2,8 +2,8 @@
+  * Debug Logger - Logs to PostgreSQL debug_logs table
+
+  */
+
+ 
+
+-// Hard-disable debug logging to avoid flooding /api/debug/log during troubleshooting.
+
+-const DEBUG_LOGGING_ENABLED = true;
+
++// Debug logging is opt-in to avoid flooding `/api/debug/log`.
+
++// Enable with `NEXT_PUBLIC_DEBUG_LOGGING=true` or localStorage key `annotation:debug-logging`.
+
+ const DEBUG_OVERRIDE_STORAGE_KEY = 'annotation:debug-logging';
+
+ const RUNTIME_PREF_CACHE_MS = 1000;
+
+ const RATE_LIMIT_INTERVAL_MS = 1000;
+
+@@ -31,12 +31,17 @@
+   return null;
+
+ };
+
+ 
+
+-let cachedPreference = DEBUG_LOGGING_ENABLED;
+
++const DEFAULT_DEBUG_LOGGING_ENABLED = (() => {
+
++  const envOverride = parseOverride(process.env.NEXT_PUBLIC_DEBUG_LOGGING);
+
++  return envOverride ?? false;
+
++})();
+
++
+
++let cachedPreference = DEFAULT_DEBUG_LOGGING_ENABLED;
+
+ let lastPreferenceCheck = 0;
+
+ 
+
+ const computeRuntimePreference = (): boolean => {
+
+   if (typeof window === 'undefined') {
+
+-    return DEBUG_LOGGING_ENABLED;
+
++    return DEFAULT_DEBUG_LOGGING_ENABLED;
+
+   }
+
+ 
+
+   const globalOverride = parseOverride(
+
+@@ -57,16 +62,47 @@
+     // Ignore storage errors; fall back to default
+
+   }
+
+ 
+
+-  return DEBUG_LOGGING_ENABLED;
+
+-};
+
+-
+
+-export const isDebugEnabled = () => true;
+
++  return DEFAULT_DEBUG_LOGGING_ENABLED;
+
++};
+
++
+
++export const isDebugEnabled = () => {
+
++  const now = Date.now();
+
++  if (now - lastPreferenceCheck > RUNTIME_PREF_CACHE_MS) {
+
++    cachedPreference = computeRuntimePreference();
+
++    lastPreferenceCheck = now;
+
++  }
+
++  return cachedPreference;
+
++};
+
+ 
+
+ let rateWindowStart = 0;
+
+ let rateWindowCount = 0;
+
+ let rateLimitWarned = false;
+
+ 
+
+-const shouldEmitDebugLog = () => true;
+
++const shouldEmitDebugLog = () => {
+
++  if (typeof window === 'undefined') {
+
++    return false;
+
++  }
+
++  if (!isDebugEnabled()) {
+
++    return false;
+
++  }
+
++  const now = Date.now();
+
++  if (now - rateWindowStart >= RATE_LIMIT_INTERVAL_MS) {
+
++    rateWindowStart = now;
+
++    rateWindowCount = 0;
+
++    rateLimitWarned = false;
+
++  }
+
++  rateWindowCount += 1;
+
++  if (rateWindowCount > RATE_LIMIT_MAX) {
+
++    if (!rateLimitWarned && typeof console !== 'undefined') {
+
++      rateLimitWarned = true;
+
++      console.warn(
+
++        `[debugLog] rate limited: ${rateWindowCount}/${RATE_LIMIT_MAX} in ${RATE_LIMIT_INTERVAL_MS}ms`,
+
++      );
+
++    }
+
++    return false;
+
++  }
+
++  return true;
+
++};
+
+ 
+
+ let sessionId: string | null = null;
+
+ 
+
+@@ -95,6 +131,9 @@
+   _event?: string,
+
+   _details?: any
+
+ ): Promise<void> {
+
++  if (!shouldEmitDebugLog()) {
+
++    return;
+
++  }
+
+   const data: DebugLogData =
+
+     typeof _dataOrContext === "string"
+
+       ? {
+
+diff --git a/app/api/debug/log/route.ts b/app/api/debug/log/route.ts
+--- a/app/api/debug/log/route.ts
++++ b/app/api/debug/log/route.ts
+@@ -8,6 +8,7 @@
+ })
+
+ 
+
+ const DEBUG_LOG_FILE = path.join(process.cwd(), 'logs', 'debug.log')
+
++const SHOULD_APPEND_DEBUG_LOG_FILE = process.env.DEBUG_LOG_TO_FILE === 'true'
+
+ 
+
+ async function appendFileSafe(payload: unknown) {
+
+   try {
+
+@@ -75,7 +76,9 @@
+       values,
+
+     )
+
+ 
+
+-    await appendFileSafe({ component, action, metadata, note_id, workspaceId, timestamp: new Date().toISOString() })
+
++    if (SHOULD_APPEND_DEBUG_LOG_FILE) {
+
++      await appendFileSafe({ component, action, metadata, note_id, workspaceId, timestamp: new Date().toISOString() })
+
++    }
+
+ 
+
+     return NextResponse.json({ success: true })
+
+   } catch (error) {
+
+diff --git a/lib/hooks/annotation/use-canvas-items.ts b/lib/hooks/annotation/use-canvas-items.ts
+--- a/lib/hooks/annotation/use-canvas-items.ts
++++ b/lib/hooks/annotation/use-canvas-items.ts
+@@ -4,7 +4,7 @@
+ 
+
+ import type { CanvasItem } from "@/types/canvas-items"
+
+ import { dedupeCanvasItems, type CanvasDedupeWarning } from "@/lib/canvas/dedupe-canvas-items"
+
+-import { debugLog } from "@/lib/utils/debug-logger"
+
++import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
+
+ 
+
+ type UpdateOptions = { append?: boolean }
+
+ 
+
+@@ -28,17 +28,19 @@
+   if (!mountedRef.current) {
+
+     mountedRef.current = true
+
+     const initialComponents = initialItems.filter(item => item.itemType === "component")
+
+-    debugLog({
+
+-      component: "CanvasItems",
+
+-      action: "hook_mount_initial_state",
+
+-      metadata: {
+
+-        noteId,
+
+-        workspaceId: workspaceId ?? "unknown",
+
+-        initialItemCount: initialItems.length,
+
+-        initialComponentCount: initialComponents.length,
+
+-        initialComponentTypes: initialComponents.map(c => (c as any).componentType),
+
+-      },
+
+-    })
+
++    if (isDebugEnabled()) {
+
++      debugLog({
+
++        component: "CanvasItems",
+
++        action: "hook_mount_initial_state",
+
++        metadata: {
+
++          noteId,
+
++          workspaceId: workspaceId ?? "unknown",
+
++          initialItemCount: initialItems.length,
+
++          initialComponentCount: initialComponents.length,
+
++          initialComponentTypes: initialComponents.map(c => (c as any).componentType),
+
++        },
+
++      })
+
++    }
+
+   }
+
+ 
+
+   const [canvasItems, internalSetCanvasItems] = useState<CanvasItem[]>(initialItems)
+
+@@ -87,23 +89,29 @@
+ 
+
+   const setCanvasItems: typeof internalSetCanvasItems = useCallback(
+
+     (update) => {
+
+-      const stack = new Error().stack
+
+-      const caller = stack?.split("\n").slice(2, 4).join(" | ") || "unknown"
+
++      const debugEnabled = isDebugEnabled()
+
++      const caller = (() => {
+
++        if (!debugEnabled) return "unknown"
+
++        const stack = new Error().stack
+
++        return stack?.split("\n").slice(2, 4).join(" | ") || "unknown"
+
++      })()
+
+ 
+
+       return internalSetCanvasItems(prev => {
+
+         const next = typeof update === "function" ? update(prev) : update
+
+ 
+
+         if (next === prev) {
+
+-          debugLog({
+
+-            component: "AnnotationCanvas",
+
+-            action: "setCanvasItems_SKIPPED_SAME_REF",
+
+-            metadata: {
+
+-              noteId,
+
+-              workspaceId: workspaceId ?? "unknown",
+
+-              reason: "update_returned_same_array_reference",
+
+-              caller: caller.substring(0, 200),
+
+-            },
+
+-          })
+
++          if (debugEnabled) {
+
++            debugLog({
+
++              component: "AnnotationCanvas",
+
++              action: "setCanvasItems_SKIPPED_SAME_REF",
+
++              metadata: {
+
++                noteId,
+
++                workspaceId: workspaceId ?? "unknown",
+
++                reason: "update_returned_same_array_reference",
+
++                caller: caller.substring(0, 200),
+
++              },
+
++            })
+
++          }
+
+           return prev
+
+         }
+
+ 
+
+@@ -117,7 +125,7 @@
+         const removedComponents = prevComponents.filter(c => !nextComponentIds.has(c.id))
+
+ 
+
+         // Log if components are being added - this is key for tracking contamination
+
+-        if (addedComponents.length > 0) {
+
++        if (addedComponents.length > 0 && debugEnabled) {
+
+           debugLog({
+
+             component: "CanvasItems",
+
+             action: "COMPONENT_ADDED_TO_CANVAS",
+
+@@ -134,7 +142,7 @@
+           })
+
+         }
+
+ 
+
+-        if (removedComponents.length > 0) {
+
++        if (removedComponents.length > 0 && debugEnabled) {
+
+           debugLog({
+
+             component: "CanvasItems",
+
+             action: "COMPONENT_REMOVED_FROM_CANVAS",
+
+@@ -150,28 +158,30 @@
+ 
+
+         const mainPanels = next.filter(item => item.itemType === "panel" && item.panelId === "main")
+
+ 
+
+-        debugLog({
+
+-          component: "AnnotationCanvas",
+
+-          action: "setCanvasItems_called",
+
+-          metadata: {
+
+-            noteId,
+
+-            workspaceId: workspaceId ?? "unknown",
+
+-            isFunction: typeof update === "function",
+
+-            prevItemCount: prev.length,
+
+-            nextItemCount: next.length,
+
+-            prevComponentCount: prevComponents.length,
+
+-            nextComponentCount: nextComponents.length,
+
+-            mainPanelPositions: mainPanels.map(p => ({
+
+-              noteId: p.noteId,
+
+-              position: p.position,
+
+-            })),
+
+-            caller: caller.substring(0, 300),
+
+-          },
+
+-        })
+
++        if (debugEnabled) {
+
++          debugLog({
+
++            component: "AnnotationCanvas",
+
++            action: "setCanvasItems_called",
+
++            metadata: {
+
++              noteId,
+
++              workspaceId: workspaceId ?? "unknown",
+
++              isFunction: typeof update === "function",
+
++              prevItemCount: prev.length,
+
++              nextItemCount: next.length,
+
++              prevComponentCount: prevComponents.length,
+
++              nextComponentCount: nextComponents.length,
+
++              mainPanelPositions: mainPanels.map(p => ({
+
++                noteId: p.noteId,
+
++                position: p.position,
+
++              })),
+
++              caller: caller.substring(0, 300),
+
++            },
+
++          })
+
++        }
+
+ 
+
+         const result = dedupeCanvasItems(next, { fallbackNoteId: noteId })
+
+ 
+
+-        if (result.removedCount > 0) {
+
++        if (result.removedCount > 0 && debugEnabled) {
+
+           debugLog({
+
+             component: "AnnotationCanvas",
+
+             action: "canvasItems_deduped_at_source",
+
+@@ -183,7 +193,7 @@
+           })
+
+         }
+
+ 
+
+-        if (result.warnings.length > 0) {
+
++        if (result.warnings.length > 0 && debugEnabled) {
+
+           result.warnings.forEach(warning => {
+
+             debugLog({
+
+               component: "AnnotationCanvas",
+
+diff --git a/lib/hooks/annotation/workspace/use-workspace-selection.ts b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+--- a/lib/hooks/annotation/workspace/use-workspace-selection.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+@@ -309,10 +309,14 @@
+           // Phase 2: Show new runtime after cold load complete
+
+           if (liveStateEnabled) {
+
+             setRuntimeVisible(workspaceId, true)
+
++            const entryId = getActiveEntryContext()
+
++            if (entryId) {
+
++              setWorkspaceEntry(workspaceId, entryId)
+
++            }
+
+             emitDebugLog({
+
+               component: "NoteWorkspace",
+
+               action: "workspace_runtime_visible",
+
+-              metadata: { workspaceId, wasCold: true },
+
++              metadata: { workspaceId, wasCold: true, entryId },
+
+             })
+
+           }
+
+         } catch (error) {
+
+diff --git a/lib/hooks/annotation/workspace/use-workspace-persistence.ts b/lib/hooks/annotation/workspace/use-workspace-persistence.ts
+--- a/lib/hooks/annotation/workspace/use-workspace-persistence.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-persistence.ts
+@@ -23,6 +23,7 @@
+ import {
+
+   listRuntimeComponents,
+
+   getDeletedComponents,
+
++  getWorkspacesForEntry,
+
+ } from "@/lib/workspace/runtime-manager"
+
+ import {
+
+   subscribeToWorkspaceSnapshotState,
+
+@@ -181,7 +182,7 @@
+   /** Schedule a save */
+
+   scheduleSave: (options?: { immediate?: boolean; reason?: string }) => void
+
+   /** Flush pending saves */
+
+-  flushPendingSave: (reason?: string) => void
+
++  flushPendingSave: (reason?: string, options?: { workspaceIds?: string[] }) => void
+
+   /** Handle entry change */
+
+   handleEntryChange: (newEntryId: string | null) => void
+
+ }
+
+@@ -1182,10 +1183,14 @@
+   // flushPendingSave
+
+   // ---------------------------------------------------------------------------
+
+   const flushPendingSave = useCallback(
+
+-    (reason = "manual_flush") => {
+
++    (reason = "manual_flush", options?: { workspaceIds?: string[] }) => {
+
++      const scopedWorkspaceIds =
+
++        options?.workspaceIds && options.workspaceIds.length > 0 ? new Set(options.workspaceIds) : null
+
+       // Flush ALL pending dirty workspaces, not just current
+
+       // This is important for beforeunload/visibility_hidden scenarios
+
+-      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys())
+
++      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys()).filter(
+
++        (workspaceId) => (scopedWorkspaceIds ? scopedWorkspaceIds.has(workspaceId) : true),
+
++      )
+
+ 
+
+       emitDebugLog({
+
+         component: "NoteWorkspace",
+
+@@ -1214,7 +1219,9 @@
+         workspaceDirtyRef.current.has(currentWorkspaceSummaryId) &&
+
+         !pendingWorkspaceIds.includes(currentWorkspaceSummaryId)
+
+       ) {
+
+-        void persistWorkspaceById(currentWorkspaceSummaryId, reason)
+
++        if (!scopedWorkspaceIds || scopedWorkspaceIds.has(currentWorkspaceSummaryId)) {
+
++          void persistWorkspaceById(currentWorkspaceSummaryId, reason)
+
++        }
+
+       }
+
+     },
+
+     [
+
+@@ -1246,7 +1253,8 @@
+ 
+
+       // Flush all dirty workspaces from previous entry before switching
+
+       if (previousEntryId && workspaceDirtyRef.current.size > 0) {
+
+-        flushPendingSave("entry_switch")
+
++        const workspaceIdsForPreviousEntry = getWorkspacesForEntry(previousEntryId)
+
++        flushPendingSave("entry_switch", { workspaceIds: workspaceIdsForPreviousEntry })
+
+       }
+
+ 
+
+       // Update entry state
+
+diff --git a/lib/workspace/runtime-manager.ts b/lib/workspace/runtime-manager.ts
+--- a/lib/workspace/runtime-manager.ts
++++ b/lib/workspace/runtime-manager.ts
+@@ -88,8 +88,12 @@
+  * Pinned workspaces will be protected from LRU eviction.
+
+  */
+
+ export const updatePinnedWorkspaceIds = (ids: string[]): void => {
+
++  const nextPinned = new Set(ids)
+
++  const isSame =
+
++    nextPinned.size === pinnedWorkspaceIds.size && Array.from(nextPinned).every((id) => pinnedWorkspaceIds.has(id))
+
++  if (isSame) return
+
+   const prevSize = pinnedWorkspaceIds.size
+
+-  pinnedWorkspaceIds = new Set(ids)
+
++  pinnedWorkspaceIds = nextPinned
+
+ 
+
+   void debugLog({
+
+     component: "WorkspaceRuntime",
+
+diff --git a/components/dashboard/DashboardInitializer.tsx b/components/dashboard/DashboardInitializer.tsx
+--- a/components/dashboard/DashboardInitializer.tsx
++++ b/components/dashboard/DashboardInitializer.tsx
+@@ -81,6 +81,7 @@
+   const [currentEntryInfo, setCurrentEntryInfo] = useState<CurrentEntryInfo | null>(null)
+
+   const fetchedRef = useRef(false)
+
+   const pinnedManagerInitRef = useRef(false)
+
++  const pinnedWorkspaceHashRef = useRef<string>("")
+
+ 
+
+   // Pinned entries state (for keeping entry dashboards mounted when switching)
+
+   const pinnedEntriesState = usePinnedEntriesState()
+
+@@ -91,7 +92,10 @@
+   useEffect(() => {
+
+     if (!pinnedEntriesEnabled || !pinnedEntriesState.enabled) {
+
+       // Clear pinned workspaces if feature is disabled
+
+-      updatePinnedWorkspaceIds([])
+
++      if (pinnedWorkspaceHashRef.current !== "") {
+
++        pinnedWorkspaceHashRef.current = ""
+
++        updatePinnedWorkspaceIds([])
+
++      }
+
+       return
+
+     }
+
+ 
+
+@@ -99,6 +103,12 @@
+     const allPinnedWorkspaceIds = pinnedEntriesState.entries.flatMap(
+
+       entry => entry.pinnedWorkspaceIds
+
+     )
+
++
+
++    const nextHash = [...allPinnedWorkspaceIds].sort().join("|")
+
++    if (nextHash === pinnedWorkspaceHashRef.current) {
+
++      return
+
++    }
+
++    pinnedWorkspaceHashRef.current = nextHash
+
+ 
+
+     // Update runtime manager with the full list of pinned workspace IDs
+
+     updatePinnedWorkspaceIds(allPinnedWorkspaceIds)
+

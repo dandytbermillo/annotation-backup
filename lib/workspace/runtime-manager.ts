@@ -88,8 +88,17 @@ let pinnedWorkspaceIds: Set<string> = new Set()
  * Pinned workspaces will be protected from LRU eviction.
  */
 export const updatePinnedWorkspaceIds = (ids: string[]): void => {
+  // Early return if set unchanged to prevent redundant logging/cycles
+  const newSet = new Set(ids)
+  if (
+    newSet.size === pinnedWorkspaceIds.size &&
+    ids.every((id) => pinnedWorkspaceIds.has(id))
+  ) {
+    return
+  }
+
   const prevSize = pinnedWorkspaceIds.size
-  pinnedWorkspaceIds = new Set(ids)
+  pinnedWorkspaceIds = newSet
 
   void debugLog({
     component: "WorkspaceRuntime",

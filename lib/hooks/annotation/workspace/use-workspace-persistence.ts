@@ -23,6 +23,7 @@ import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manage
 import {
   listRuntimeComponents,
   getDeletedComponents,
+  getWorkspacesForEntry,
 } from "@/lib/workspace/runtime-manager"
 import {
   subscribeToWorkspaceSnapshotState,
@@ -181,7 +182,7 @@ export interface UseWorkspacePersistenceResult {
   /** Schedule a save */
   scheduleSave: (options?: { immediate?: boolean; reason?: string }) => void
   /** Flush pending saves */
-  flushPendingSave: (reason?: string) => void
+  flushPendingSave: (reason?: string, options?: { workspaceIds?: string[] }) => void
   /** Handle entry change */
   handleEntryChange: (newEntryId: string | null) => void
 }
@@ -1182,10 +1183,14 @@ export function useWorkspacePersistence(
   // flushPendingSave
   // ---------------------------------------------------------------------------
   const flushPendingSave = useCallback(
-    (reason = "manual_flush") => {
+    (reason = "manual_flush", options?: { workspaceIds?: string[] }) => {
+      const scopedWorkspaceIds =
+        options?.workspaceIds && options.workspaceIds.length > 0 ? new Set(options.workspaceIds) : null
       // Flush ALL pending dirty workspaces, not just current
       // This is important for beforeunload/visibility_hidden scenarios
-      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys())
+      const pendingWorkspaceIds = Array.from(saveTimeoutRef.current.keys()).filter(
+        (workspaceId) => (scopedWorkspaceIds ? scopedWorkspaceIds.has(workspaceId) : true),
+      )
 
       emitDebugLog({
         component: "NoteWorkspace",
@@ -1209,10 +1214,12 @@ export function useWorkspacePersistence(
       }
 
       // Also save current workspace if dirty but no timeout was pending
+      // Only save if within scope (or no scope filter)
       if (
         currentWorkspaceSummaryId &&
         workspaceDirtyRef.current.has(currentWorkspaceSummaryId) &&
-        !pendingWorkspaceIds.includes(currentWorkspaceSummaryId)
+        !pendingWorkspaceIds.includes(currentWorkspaceSummaryId) &&
+        (!scopedWorkspaceIds || scopedWorkspaceIds.has(currentWorkspaceSummaryId))
       ) {
         void persistWorkspaceById(currentWorkspaceSummaryId, reason)
       }
@@ -1244,9 +1251,10 @@ export function useWorkspacePersistence(
         },
       })
 
-      // Flush all dirty workspaces from previous entry before switching
+      // Flush only workspaces belonging to the previous entry
       if (previousEntryId && workspaceDirtyRef.current.size > 0) {
-        flushPendingSave("entry_switch")
+        const workspaceIdsForPreviousEntry = getWorkspacesForEntry(previousEntryId)
+        flushPendingSave("entry_switch", { workspaceIds: workspaceIdsForPreviousEntry })
       }
 
       // Update entry state

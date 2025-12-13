@@ -81,6 +81,7 @@ export function DashboardInitializer({
   const [currentEntryInfo, setCurrentEntryInfo] = useState<CurrentEntryInfo | null>(null)
   const fetchedRef = useRef(false)
   const pinnedManagerInitRef = useRef(false)
+  const pinnedHashRef = useRef<string | null>(null)
 
   // Pinned entries state (for keeping entry dashboards mounted when switching)
   const pinnedEntriesState = usePinnedEntriesState()
@@ -99,6 +100,13 @@ export function DashboardInitializer({
     const allPinnedWorkspaceIds = pinnedEntriesState.entries.flatMap(
       entry => entry.pinnedWorkspaceIds
     )
+
+    // Hash comparison to prevent redundant updates
+    const hash = allPinnedWorkspaceIds.slice().sort().join(',')
+    if (pinnedHashRef.current === hash) {
+      return
+    }
+    pinnedHashRef.current = hash
 
     // Update runtime manager with the full list of pinned workspace IDs
     updatePinnedWorkspaceIds(allPinnedWorkspaceIds)

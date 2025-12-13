@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import type { CanvasItem } from "@/types/canvas-items"
 import { dedupeCanvasItems, type CanvasDedupeWarning } from "@/lib/canvas/dedupe-canvas-items"
-import { debugLog } from "@/lib/utils/debug-logger"
+import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
 
 type UpdateOptions = { append?: boolean }
 
@@ -28,17 +28,19 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
   if (!mountedRef.current) {
     mountedRef.current = true
     const initialComponents = initialItems.filter(item => item.itemType === "component")
-    debugLog({
-      component: "CanvasItems",
-      action: "hook_mount_initial_state",
-      metadata: {
-        noteId,
-        workspaceId: workspaceId ?? "unknown",
-        initialItemCount: initialItems.length,
-        initialComponentCount: initialComponents.length,
-        initialComponentTypes: initialComponents.map(c => (c as any).componentType),
-      },
-    })
+    if (isDebugEnabled()) {
+      debugLog({
+        component: "CanvasItems",
+        action: "hook_mount_initial_state",
+        metadata: {
+          noteId,
+          workspaceId: workspaceId ?? "unknown",
+          initialItemCount: initialItems.length,
+          initialComponentCount: initialComponents.length,
+          initialComponentTypes: initialComponents.map(c => (c as any).componentType),
+        },
+      })
+    }
   }
 
   const [canvasItems, internalSetCanvasItems] = useState<CanvasItem[]>(initialItems)
@@ -87,23 +89,29 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
 
   const setCanvasItems: typeof internalSetCanvasItems = useCallback(
     (update) => {
-      const stack = new Error().stack
-      const caller = stack?.split("\n").slice(2, 4).join(" | ") || "unknown"
+      const debugEnabled = isDebugEnabled()
+      const caller = (() => {
+        if (!debugEnabled) return "unknown"
+        const stack = new Error().stack
+        return stack?.split("\n").slice(2, 4).join(" | ") || "unknown"
+      })()
 
       return internalSetCanvasItems(prev => {
         const next = typeof update === "function" ? update(prev) : update
 
         if (next === prev) {
-          debugLog({
-            component: "AnnotationCanvas",
-            action: "setCanvasItems_SKIPPED_SAME_REF",
-            metadata: {
-              noteId,
-              workspaceId: workspaceId ?? "unknown",
-              reason: "update_returned_same_array_reference",
-              caller: caller.substring(0, 200),
-            },
-          })
+          if (debugEnabled) {
+            debugLog({
+              component: "AnnotationCanvas",
+              action: "setCanvasItems_SKIPPED_SAME_REF",
+              metadata: {
+                noteId,
+                workspaceId: workspaceId ?? "unknown",
+                reason: "update_returned_same_array_reference",
+                caller: caller.substring(0, 200),
+              },
+            })
+          }
           return prev
         }
 
@@ -117,7 +125,7 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
         const removedComponents = prevComponents.filter(c => !nextComponentIds.has(c.id))
 
         // Log if components are being added - this is key for tracking contamination
-        if (addedComponents.length > 0) {
+        if (addedComponents.length > 0 && debugEnabled) {
           debugLog({
             component: "CanvasItems",
             action: "COMPONENT_ADDED_TO_CANVAS",
@@ -134,7 +142,7 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
           })
         }
 
-        if (removedComponents.length > 0) {
+        if (removedComponents.length > 0 && debugEnabled) {
           debugLog({
             component: "CanvasItems",
             action: "COMPONENT_REMOVED_FROM_CANVAS",
@@ -150,28 +158,30 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
 
         const mainPanels = next.filter(item => item.itemType === "panel" && item.panelId === "main")
 
-        debugLog({
-          component: "AnnotationCanvas",
-          action: "setCanvasItems_called",
-          metadata: {
-            noteId,
-            workspaceId: workspaceId ?? "unknown",
-            isFunction: typeof update === "function",
-            prevItemCount: prev.length,
-            nextItemCount: next.length,
-            prevComponentCount: prevComponents.length,
-            nextComponentCount: nextComponents.length,
-            mainPanelPositions: mainPanels.map(p => ({
-              noteId: p.noteId,
-              position: p.position,
-            })),
-            caller: caller.substring(0, 300),
-          },
-        })
+        if (debugEnabled) {
+          debugLog({
+            component: "AnnotationCanvas",
+            action: "setCanvasItems_called",
+            metadata: {
+              noteId,
+              workspaceId: workspaceId ?? "unknown",
+              isFunction: typeof update === "function",
+              prevItemCount: prev.length,
+              nextItemCount: next.length,
+              prevComponentCount: prevComponents.length,
+              nextComponentCount: nextComponents.length,
+              mainPanelPositions: mainPanels.map(p => ({
+                noteId: p.noteId,
+                position: p.position,
+              })),
+              caller: caller.substring(0, 300),
+            },
+          })
+        }
 
         const result = dedupeCanvasItems(next, { fallbackNoteId: noteId })
 
-        if (result.removedCount > 0) {
+        if (result.removedCount > 0 && debugEnabled) {
           debugLog({
             component: "AnnotationCanvas",
             action: "canvasItems_deduped_at_source",
@@ -183,7 +193,7 @@ export function useCanvasItems({ noteId, initialItems = [], workspaceId }: UseCa
           })
         }
 
-        if (result.warnings.length > 0) {
+        if (result.warnings.length > 0 && debugEnabled) {
           result.warnings.forEach(warning => {
             debugLog({
               component: "AnnotationCanvas",
