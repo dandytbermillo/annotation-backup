@@ -27,6 +27,10 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
   const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? state?.inputMinutes ?? 5))
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
+  // FIX: Use ref to access current minutes value in interval callback
+  // This prevents stale closure bug where old interval fires with outdated minutes
+  const minutesRef = useRef(minutes)
+
   // Combine state for persistence
   const componentState = useMemo(() => ({
     minutes,
@@ -60,13 +64,20 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
     strict: false,
   })
 
+  // Keep minutesRef synchronized with minutes state
+  useEffect(() => {
+    minutesRef.current = minutes
+  }, [minutes])
+
   useEffect(() => {
     if (isRunning) {
       intervalRef.current = setInterval(() => {
         setSeconds(prev => {
           if (prev > 0) {
             return prev - 1
-          } else if (minutes > 0) {
+          } else if (minutesRef.current > 0) {
+            // FIX: Use ref instead of closure variable to get current minutes
+            // This prevents stale closure where old value causes skips/negative
             setMinutes(m => m - 1)
             return 59
           } else {
@@ -87,7 +98,7 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
         clearInterval(intervalRef.current)
       }
     }
-  }, [isRunning, minutes])
+  }, [isRunning]) // Removed minutes from deps - using ref instead
 
   const handleStart = () => {
     if (minutes === 0 && seconds === 0) {

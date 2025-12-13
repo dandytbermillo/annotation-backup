@@ -26,6 +26,7 @@ import {
   getRegisteredComponentCount,
   getRuntimeComponentCount,
   populateRuntimeComponents,
+  listRuntimeComponents,
 } from "@/lib/workspace/runtime-manager"
 import {
   cacheWorkspaceSnapshot,
@@ -541,7 +542,14 @@ export function useWorkspaceSnapshot({
           return
         }
       }
-      let workspaceOpenNotes = getWorkspaceOpenNotes(workspaceId)
+      // FIX: Bypass potentially stale getWorkspaceOpenNotes closure during eviction.
+      // When live state is enabled, read directly from runtime manager to avoid
+      // race conditions where React re-renders create stale closures.
+      // The await above creates a microtask boundary where React can re-render,
+      // potentially making getWorkspaceOpenNotes point to a stale version.
+      let workspaceOpenNotes = liveStateEnabled && workspaceId
+        ? getRuntimeOpenNotes(workspaceId)
+        : getWorkspaceOpenNotes(workspaceId)
       emitDebugLog({
         component: "NoteWorkspace",
         action: "snapshot_open_notes_source",
@@ -804,30 +812,54 @@ export function useWorkspaceSnapshot({
 
       setWorkspaceNoteMembership(workspaceId, membershipSource)
       const workspaceIdForComponents = workspaceId
-      const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
-      const componentsFromManager: NoteWorkspaceComponentSnapshot[] =
-        lm && typeof lm.getNodes === "function"
-          ? Array.from(lm.getNodes().values())
-              .filter((node: any) => node.type === "component")
-              .map((node: any) => ({
-                id: node.id,
-                type:
-                  (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
-                    ? (node as any).metadata.componentType
-                    : typeof node.type === "string"
-                      ? node.type
-                      : "component",
-                position: (node as any).position ?? null,
-                size: (node as any).dimensions ?? null,
-                zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
-                metadata: (node as any).metadata ?? null,
-              }))
-          : []
+
+      // FIX: Read components from runtime ledger FIRST (authoritative source for component metadata)
+      // This mirrors the pattern in use-workspace-persistence.ts buildPayload
+      // LayerManager only has {componentType} in metadata, but runtime ledger has full state
+      // (e.g., timer has minutes, seconds, isRunning; calculator has display, etc.)
+      const runtimeComponents = workspaceIdForComponents ? listRuntimeComponents(workspaceIdForComponents) : []
+      const componentsFromRuntime: NoteWorkspaceComponentSnapshot[] = runtimeComponents.map((comp) => ({
+        id: comp.componentId,
+        type: comp.componentType,
+        position: comp.position,
+        size: comp.size,
+        zIndex: comp.zIndex,
+        metadata: comp.metadata, // Full metadata including component state!
+      }))
+
+      // Fall back to LayerManager only if runtime has no components (cold runtime case)
+      let componentsFromManager: NoteWorkspaceComponentSnapshot[] = []
+      if (componentsFromRuntime.length === 0) {
+        const lm = workspaceIdForComponents ? getWorkspaceLayerManager(workspaceIdForComponents) : null
+        componentsFromManager =
+          lm && typeof lm.getNodes === "function"
+            ? Array.from(lm.getNodes().values())
+                .filter((node: any) => node.type === "component")
+                .map((node: any) => ({
+                  id: node.id,
+                  type:
+                    (node as any).metadata?.componentType && typeof (node as any).metadata?.componentType === "string"
+                      ? (node as any).metadata.componentType
+                      : typeof node.type === "string"
+                        ? node.type
+                        : "component",
+                  position: (node as any).position ?? null,
+                  size: (node as any).dimensions ?? null,
+                  zIndex: typeof (node as any).zIndex === "number" ? (node as any).zIndex : null,
+                  metadata: (node as any).metadata ?? null,
+                }))
+            : []
+      }
 
       const cachedSnapshot = workspaceId ? getWorkspaceSnapshot(workspaceId) : null
       const lastComponents = workspaceId ? lastComponentsSnapshotRef.current.get(workspaceId) ?? [] : []
+      // Prefer runtime components, then LayerManager, then cached/last
       const componentSource =
-        componentsFromManager.length > 0 ? componentsFromManager : cachedSnapshot?.components ?? lastComponents
+        componentsFromRuntime.length > 0
+          ? componentsFromRuntime
+          : componentsFromManager.length > 0
+            ? componentsFromManager
+            : cachedSnapshot?.components ?? lastComponents
       const components: NoteWorkspaceComponentSnapshot[] = mergeComponentSnapshots(
         componentSource,
         cachedSnapshot?.components ?? [],
