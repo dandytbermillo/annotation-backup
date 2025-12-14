@@ -1,48 +1,112 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useEffect, useCallback } from 'react'
 import { Calculator as CalcIcon } from 'lucide-react'
 import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
+import {
+  useComponentState,
+  useWorkspaceStoreActions,
+} from '@/lib/hooks/use-workspace-component-store'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface CalculatorProps {
   componentId: string
   workspaceId?: string | null
   position?: { x: number; y: number }
-  state?: any
-  onStateUpdate?: (state: any) => void
+  state?: CalculatorState
+  onStateUpdate?: (state: CalculatorState) => void
 }
 
+interface CalculatorState {
+  display: string
+  previousValue: number | null
+  operation: string | null
+  waitingForNewValue: boolean
+}
+
+const DEFAULT_CALCULATOR_STATE: CalculatorState = {
+  display: '0',
+  previousValue: null,
+  operation: null,
+  waitingForNewValue: false,
+}
+
+/**
+ * Calculator Component - Phase 5 Migration
+ *
+ * Migrated to use workspace component store for state management.
+ * Calculator has no background operations, but benefits from:
+ * - Single source of truth
+ * - Proper cold restore
+ * - Consistent persistence
+ */
 export function Calculator({ componentId, workspaceId, position, state, onStateUpdate }: CalculatorProps) {
-  const [display, setDisplay] = useState(state?.display || '0')
-  const [previousValue, setPreviousValue] = useState(state?.previousValue || null)
-  const [operation, setOperation] = useState(state?.operation || null)
-  const [waitingForNewValue, setWaitingForNewValue] = useState(state?.waitingForNewValue ?? false)
+  // ==========================================================================
+  // Phase 5: Read state from workspace component store
+  // ==========================================================================
 
-  // Combine state for persistence
-  const componentState = useMemo(() => ({
-    display,
-    previousValue,
-    operation,
-    waitingForNewValue,
-  }), [display, previousValue, operation, waitingForNewValue])
+  const storeState = useComponentState<CalculatorState>(workspaceId, componentId)
+  const actions = useWorkspaceStoreActions(workspaceId)
 
-  // Persist state changes to parent (calculator changes are user-initiated, not continuous)
+  // Resolve effective state: store state > prop state > defaults
+  const display = storeState?.display ?? state?.display ?? DEFAULT_CALCULATOR_STATE.display
+  const previousValue = storeState?.previousValue ?? state?.previousValue ?? DEFAULT_CALCULATOR_STATE.previousValue
+  const operation = storeState?.operation ?? state?.operation ?? DEFAULT_CALCULATOR_STATE.operation
+  const waitingForNewValue = storeState?.waitingForNewValue ?? state?.waitingForNewValue ?? DEFAULT_CALCULATOR_STATE.waitingForNewValue
+
+  // ==========================================================================
+  // Phase 5: Initialize store state if not present
+  // ==========================================================================
+
   useEffect(() => {
-    onStateUpdate?.(componentState)
-  }, [componentState, onStateUpdate])
+    if (!workspaceId) return
 
-  // Register with workspace runtime for lifecycle management
-  // Now includes metadata for state persistence
+    if (storeState === null) {
+      const initialState: CalculatorState = {
+        display: state?.display ?? DEFAULT_CALCULATOR_STATE.display,
+        previousValue: state?.previousValue ?? DEFAULT_CALCULATOR_STATE.previousValue,
+        operation: state?.operation ?? DEFAULT_CALCULATOR_STATE.operation,
+        waitingForNewValue: state?.waitingForNewValue ?? DEFAULT_CALCULATOR_STATE.waitingForNewValue,
+      }
+
+      actions.updateComponentState<CalculatorState>(componentId, initialState)
+
+      void debugLog({
+        component: 'CalculatorDiagnostic',
+        action: 'calculator_store_initialized',
+        metadata: { componentId, workspaceId, initialState },
+      })
+    }
+  }, [workspaceId, componentId, storeState, state, actions])
+
+  // ==========================================================================
+  // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)
+  // ==========================================================================
+
+  useEffect(() => {
+    if (storeState && onStateUpdate) {
+      onStateUpdate(storeState)
+    }
+  }, [storeState, onStateUpdate])
+
+  // ==========================================================================
+  // Legacy: Register with runtime ledger (backward compatibility during migration)
+  // ==========================================================================
+
   useComponentRegistration({
     workspaceId,
     componentId,
     componentType: 'calculator',
     position,
-    metadata: componentState,
+    metadata: (storeState ?? { display, previousValue, operation, waitingForNewValue }) as unknown as Record<string, unknown>,
     isActive: false, // Calculator has no background operations
     strict: false,
   })
   
+  // ==========================================================================
+  // Action Handlers - dispatch to store
+  // ==========================================================================
+
   // TEST FUNCTION: Makes calculator unresponsive for testing isolation
   const makeUnresponsive = () => {
     console.log('🔴 Making calculator unresponsive for 5 seconds...')
@@ -54,49 +118,49 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
     console.log('✅ Calculator responsive again')
   }
 
-  const inputNumber = (num: string) => {
+  const inputNumber = useCallback((num: string) => {
+    if (!workspaceId) return
+
     if (waitingForNewValue) {
-      setDisplay(num)
-      setWaitingForNewValue(false)
+      actions.updateComponentState<CalculatorState>(componentId, {
+        display: num,
+        waitingForNewValue: false,
+      })
     } else {
-      setDisplay(display === '0' ? num : display + num)
+      actions.updateComponentState<CalculatorState>(componentId, {
+        display: display === '0' ? num : display + num,
+      })
     }
-  }
+  }, [workspaceId, componentId, waitingForNewValue, display, actions])
 
-  const inputDecimal = () => {
+  const inputDecimal = useCallback(() => {
+    if (!workspaceId) return
+
     if (waitingForNewValue) {
-      setDisplay('0.')
-      setWaitingForNewValue(false)
+      actions.updateComponentState<CalculatorState>(componentId, {
+        display: '0.',
+        waitingForNewValue: false,
+      })
     } else if (display.indexOf('.') === -1) {
-      setDisplay(display + '.')
+      actions.updateComponentState<CalculatorState>(componentId, {
+        display: display + '.',
+      })
     }
-  }
+  }, [workspaceId, componentId, waitingForNewValue, display, actions])
 
-  const clear = () => {
-    setDisplay('0')
-    setPreviousValue(null)
-    setOperation(null)
-    setWaitingForNewValue(false)
-  }
+  const clear = useCallback(() => {
+    if (!workspaceId) return
 
-  const performOperation = (nextOperation: string) => {
-    const inputValue = parseFloat(display)
+    actions.updateComponentState<CalculatorState>(componentId, {
+      display: '0',
+      previousValue: null,
+      operation: null,
+      waitingForNewValue: false,
+    })
+  }, [workspaceId, componentId, actions])
 
-    if (previousValue === null) {
-      setPreviousValue(inputValue)
-    } else if (operation) {
-      const currentValue = previousValue || 0
-      const newValue = calculate(currentValue, inputValue, operation)
-      setDisplay(String(newValue))
-      setPreviousValue(newValue)
-    }
-
-    setWaitingForNewValue(true)
-    setOperation(nextOperation)
-  }
-
-  const calculate = (firstValue: number, secondValue: number, operation: string) => {
-    switch (operation) {
+  const calculate = (firstValue: number, secondValue: number, op: string): number => {
+    switch (op) {
       case '+': return firstValue + secondValue
       case '-': return firstValue - secondValue
       case '*': return firstValue * secondValue
@@ -105,6 +169,48 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
       default: return secondValue
     }
   }
+
+  const performOperation = useCallback((nextOperation: string) => {
+    if (!workspaceId) return
+
+    const inputValue = parseFloat(display)
+
+    if (previousValue === null) {
+      actions.updateComponentState<CalculatorState>(componentId, {
+        previousValue: inputValue,
+        waitingForNewValue: true,
+        operation: nextOperation,
+      })
+    } else if (operation) {
+      const currentValue = previousValue || 0
+      const newValue = calculate(currentValue, inputValue, operation)
+      actions.updateComponentState<CalculatorState>(componentId, {
+        display: String(newValue),
+        previousValue: newValue,
+        waitingForNewValue: true,
+        operation: nextOperation,
+      })
+    } else {
+      actions.updateComponentState<CalculatorState>(componentId, {
+        waitingForNewValue: true,
+        operation: nextOperation,
+      })
+    }
+  }, [workspaceId, componentId, display, previousValue, operation, actions])
+
+  const handleNegate = useCallback(() => {
+    if (!workspaceId) return
+    actions.updateComponentState<CalculatorState>(componentId, {
+      display: String(-parseFloat(display)),
+    })
+  }, [workspaceId, componentId, display, actions])
+
+  const handlePercent = useCallback(() => {
+    if (!workspaceId) return
+    actions.updateComponentState<CalculatorState>(componentId, {
+      display: String(parseFloat(display) / 100),
+    })
+  }, [workspaceId, componentId, display, actions])
 
   const buttons = [
     ['C', '±', '%', '÷'],
@@ -135,8 +241,8 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
                 key={btn}
                 onClick={() => {
                   if (btn === 'C') clear()
-                  else if (btn === '±') setDisplay(String(-parseFloat(display)))
-                  else if (btn === '%') setDisplay(String(parseFloat(display) / 100))
+                  else if (btn === '±') handleNegate()
+                  else if (btn === '%') handlePercent()
                   else if (btn === '.') inputDecimal()
                   else if (['+', '-', '×', '÷', '='].includes(btn)) {
                     const op = btn === '×' ? '*' : btn === '÷' ? '/' : btn

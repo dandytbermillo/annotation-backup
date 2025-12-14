@@ -30,6 +30,7 @@ import {
   usePinnedEntriesState,
 } from "@/lib/navigation"
 import { updatePinnedWorkspaceIds } from "@/lib/workspace/runtime-manager"
+import { initializeStoreRuntimeBridge } from "@/lib/workspace/store-runtime-bridge"
 import { DashboardView } from "./DashboardView"
 
 // Context for navigation handler
@@ -146,10 +147,14 @@ export function DashboardInitializer({
     }
   }, [])
 
-  // Initialize PinnedEntryManager on mount
+  // Initialize PinnedEntryManager and StoreRuntimeBridge on mount
   useEffect(() => {
     if (pinnedManagerInitRef.current) return
     pinnedManagerInitRef.current = true
+
+    // Phase 3: Initialize workspace component store bridge
+    // This registers pre-eviction callbacks for persist-before-evict
+    initializeStoreRuntimeBridge()
 
     initializePinnedEntryManager({
       enabled: pinnedEntriesEnabled,
@@ -166,6 +171,7 @@ export function DashboardInitializer({
         enabled: pinnedEntriesEnabled,
         maxPinnedEntries: getPinnedEntriesMax(),
         maxWorkspacesPerEntry: getPinnedWorkspacesPerEntryMax(),
+        storeRuntimeBridgeInitialized: true,
       },
     })
   }, [pinnedEntriesEnabled])

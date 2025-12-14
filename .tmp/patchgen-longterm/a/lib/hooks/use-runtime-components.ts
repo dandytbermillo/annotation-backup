@@ -21,10 +21,7 @@ import {
  * @param workspaceId - The workspace to read components from
  * @returns Array of runtime components for the workspace
  */
-export function useRuntimeComponents(
-  workspaceId: string | null | undefined,
-  workspaceSnapshotRevision?: number,
-): RuntimeComponent[] {
+export function useRuntimeComponents(workspaceId: string | null | undefined): RuntimeComponent[] {
   const [components, setComponents] = useState<RuntimeComponent[]>([])
   const workspaceIdRef = useRef(workspaceId)
 
@@ -42,7 +39,7 @@ export function useRuntimeComponents(
   useEffect(() => {
     workspaceIdRef.current = workspaceId
     syncComponents()
-  }, [workspaceId, workspaceSnapshotRevision, syncComponents])
+  }, [workspaceId, syncComponents])
 
   // Set up polling to detect runtime ledger changes
   // This is a simple approach; could be replaced with an event system later

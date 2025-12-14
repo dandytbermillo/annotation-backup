@@ -274,6 +274,9 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
                 // FIX 10: Always pass workspaceSnapshotRevision to ALL canvases
                 // This prevents the revision from jumping 0 → N when a hidden canvas becomes active
                 workspaceSnapshotRevision={workspaceSnapshotRevision}
+                // FIX: Pass isCanvasHidden to pause hydration for hidden canvases
+                // This prevents infinite fetch loops when a pinned entry is hidden
+                isCanvasHidden={!runtime.isActive}
                 // Only pass interactive props and children to the visible canvas
                 {...(runtime.isActive
                   ? { ...interactiveCanvasProps, children }

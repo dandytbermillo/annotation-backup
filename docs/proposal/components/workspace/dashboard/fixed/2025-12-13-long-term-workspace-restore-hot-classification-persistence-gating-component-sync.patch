@@ -1,0 +1,529 @@
+diff --git a/components/annotation-canvas-modern.tsx b/components/annotation-canvas-modern.tsx
+index 0a5364d8..01977ea0 100644
+--- a/components/annotation-canvas-modern.tsx
++++ b/components/annotation-canvas-modern.tsx
+@@ -707,7 +707,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
+   })
+ 
+   // Phase 3 Unification: Read components from runtime ledger (authoritative source)
+-  const runtimeComponents = useRuntimeComponents(workspaceId)
++  const runtimeComponents = useRuntimeComponents(workspaceId, workspaceSnapshotRevision)
+ 
+   // Phase 3 Unification: Rehydrate component items from runtime ledger when snapshot/revision changes.
+   // The runtime ledger is now the authoritative source (populated during hydration/replay in Phase 2).
+@@ -772,8 +772,9 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
+       const nextComponents = nodes.map((node: any) => ({
+         id: node.id,
+         itemType: "component" as const,
+         componentType: (node as any).metadata?.componentType ?? (node as any).type,
+         position: node.position ?? { x: 0, y: 0 },
+         zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
+         dimensions: (node as any).dimensions ?? undefined,
++        componentState: (node as any).metadata,
+       }))
+diff --git a/components/canvas/component-panel.tsx b/components/canvas/component-panel.tsx
+index ac644ca3..7f2d9974 100644
+--- a/components/canvas/component-panel.tsx
++++ b/components/canvas/component-panel.tsx
+@@ -32,6 +32,9 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState,
+   const panelRef = useRef<HTMLDivElement>(null)
+   const [isMinimized, setIsMinimized] = useState(false)
+   const [componentState, setComponentState] = useState(initialState ?? {})
++  useEffect(() => {
++    setComponentState(initialState ?? {})
++  }, [initialState])
+ 
+   // Notify parent when component state changes (for persistence to canvas items)
+   const handleStateUpdate = useCallback((newState: any) => {
+diff --git a/components/canvas/components/calculator.tsx b/components/canvas/components/calculator.tsx
+index 860651d9..d74dae7f 100644
+--- a/components/canvas/components/calculator.tsx
++++ b/components/canvas/components/calculator.tsx
+@@ -18,6 +18,15 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
+   const [operation, setOperation] = useState(state?.operation || null)
+   const [waitingForNewValue, setWaitingForNewValue] = useState(state?.waitingForNewValue ?? false)
+ 
++  // Sync internal state if restored state arrives after mount
++  useEffect(() => {
++    if (!state) return
++    if (typeof state.display === "string") setDisplay(state.display)
++    if (state.previousValue !== undefined) setPreviousValue(state.previousValue)
++    if (state.operation !== undefined) setOperation(state.operation)
++    if (typeof state.waitingForNewValue === "boolean") setWaitingForNewValue(state.waitingForNewValue)
++  }, [state?.display, state?.previousValue, state?.operation, state?.waitingForNewValue])
++
+   // Combine state for persistence
+   const componentState = useMemo(() => ({
+     display,
+@@ -172,4 +181,4 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
+       </button>
+     </div>
+   )
+-}
+\ No newline at end of file
++}
+diff --git a/components/canvas/components/sticky-note.tsx b/components/canvas/components/sticky-note.tsx
+index d11971ab..c7646a67 100644
+--- a/components/canvas/components/sticky-note.tsx
++++ b/components/canvas/components/sticky-note.tsx
+@@ -22,6 +22,13 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
+   const [colorIndex, setColorIndex] = useState(state?.colorIndex || 0)
+   const textareaRef = useRef<HTMLTextAreaElement>(null)
+   
++  // Sync internal state if restored state arrives after mount
++  useEffect(() => {
++    if (!state) return
++    if (typeof state.content === "string") setContent(state.content)
++    if (typeof state.colorIndex === "number") setColorIndex(state.colorIndex)
++  }, [state?.content, state?.colorIndex])
++  
+   const currentColor = STICKY_COLORS[colorIndex]
+ 
+   // Auto-resize textarea based on content
+@@ -90,4 +97,4 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
+       </div>
+     </div>
+   )
+-}
+\ No newline at end of file
++}
+diff --git a/components/canvas/components/timer.tsx b/components/canvas/components/timer.tsx
+index 85d4b365..41db1fc3 100644
+--- a/components/canvas/components/timer.tsx
++++ b/components/canvas/components/timer.tsx
+@@ -27,6 +27,16 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
+   const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? state?.inputMinutes ?? 5))
+   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+ 
++  // Sync internal state if restored state arrives after mount
++  useEffect(() => {
++    if (!state) return
++    if (typeof state.minutes === "number") setMinutes(state.minutes)
++    if (typeof state.seconds === "number") setSeconds(state.seconds)
++    if (typeof state.isRunning === "boolean") setIsRunning(state.isRunning)
++    if (typeof state.inputMinutes === "string") setInputMinutes(state.inputMinutes)
++    else if (typeof state.minutes === "number") setInputMinutes(String(state.minutes))
++  }, [state?.minutes, state?.seconds, state?.isRunning, state?.inputMinutes])
++
+   // FIX: Use ref to access current minutes value in interval callback
+   // This prevents stale closure bug where old interval fires with outdated minutes
+   const minutesRef = useRef(minutes)
+diff --git a/lib/hooks/annotation/workspace/use-workspace-hydration.ts b/lib/hooks/annotation/workspace/use-workspace-hydration.ts
+index ec6434b0..5454ce4b 100644
+--- a/lib/hooks/annotation/workspace/use-workspace-hydration.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-hydration.ts
+@@ -22,9 +22,13 @@ import { NoteWorkspaceAdapter as NoteWorkspaceAdapterClass } from "@/lib/adapter
+ import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
+ import {
+   hasWorkspaceRuntime,
++  isWorkspaceHydrated,
+   getRuntimeOpenNotes,
+   getRegisteredComponentCount,
+   getRuntimeComponentCount,
++  markWorkspaceHydrated,
++  markWorkspaceHydrating,
++  markWorkspaceUnhydrated,
+   populateRuntimeComponents,
+   setRuntimeVisible,
+   setWorkspaceEntry,
+@@ -231,9 +235,13 @@ export function useWorkspaceHydration(
+       if (!adapterRef.current) return
+       setIsLoading(true)
+       const hydrateStart = Date.now()
++      const wasHydratedBeforeLoad = isWorkspaceHydrated(workspaceId)
++      isHydratingRef.current = true
++      if (liveStateEnabled) {
++        markWorkspaceHydrating(workspaceId, "hydrate_workspace")
++      }
+       try {
+         const record = await adapterRef.current.loadWorkspace(workspaceId)
+-        isHydratingRef.current = true
+         snapshotOwnerWorkspaceIdRef.current = workspaceId
+         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
+         const declaredNoteIds = new Set(
+@@ -370,6 +378,9 @@ export function useWorkspaceHydration(
+             saveCooldownSet: true,
+           },
+         })
++        if (liveStateEnabled) {
++          markWorkspaceHydrated(workspaceId, "hydrate_workspace")
++        }
+         bumpSnapshotRevision()
+ 
+         // Phase 2: Mark runtime visible after initial hydration completes
+@@ -402,6 +413,13 @@ export function useWorkspaceHydration(
+             error: error instanceof Error ? error.message : String(error),
+           },
+         })
++        if (liveStateEnabled) {
++          if (wasHydratedBeforeLoad) {
++            markWorkspaceHydrated(workspaceId, "hydrate_workspace_error")
++          } else {
++            markWorkspaceUnhydrated(workspaceId, "hydrate_workspace_error")
++          }
++        }
+       } finally {
+         isHydratingRef.current = false
+         snapshotOwnerWorkspaceIdRef.current = workspaceId
+@@ -592,6 +610,16 @@ export function useWorkspaceHydration(
+     // We do NOT update lastHydratedWorkspaceIdRef here so that if the runtime gets
+     // evicted later, we will properly hydrate from DB on next switch.
+     if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
++      if (!isWorkspaceHydrated(currentWorkspaceId)) {
++        emitDebugLog({
++          component: "NoteWorkspace",
++          action: "hydrate_unhydrated_runtime",
++          metadata: {
++            workspaceId: currentWorkspaceId,
++            reason: "runtime_exists_but_not_restored_will_hydrate",
++          },
++        })
++      } else {
+       const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
+       const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
+       // Skip hydration if runtime has notes OR components (either indicates meaningful state)
+@@ -690,6 +718,7 @@ export function useWorkspaceHydration(
+           reason: "runtime_exists_but_empty_will_hydrate",
+         },
+       })
++      }
+     }
+     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
+     emitDebugLog({
+diff --git a/lib/hooks/annotation/workspace/use-workspace-persistence.ts b/lib/hooks/annotation/workspace/use-workspace-persistence.ts
+index 8bc42aa7..d72dd8ab 100644
+--- a/lib/hooks/annotation/workspace/use-workspace-persistence.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-persistence.ts
+@@ -24,6 +24,7 @@ import {
+   listRuntimeComponents,
+   getDeletedComponents,
+   getWorkspacesForEntry,
++  isWorkspaceHydrating,
+ } from "@/lib/workspace/runtime-manager"
+ import {
+   subscribeToWorkspaceSnapshotState,
+@@ -655,13 +656,15 @@ export function useWorkspacePersistence(
+       }
+ 
+       // Skip if hydrating or replaying
+-      if (isHydratingRef.current || replayingWorkspaceRef.current > 0) {
++      const runtimeHydrating = liveStateEnabled && isWorkspaceHydrating(targetWorkspaceId)
++      if (runtimeHydrating || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
+         emitDebugLog({
+           component: "NoteWorkspace",
+           action: "persist_by_id_skip_busy",
+           metadata: {
+             workspaceId: targetWorkspaceId,
+             reason,
++            runtimeHydrating,
+             hydrating: isHydratingRef.current,
+             replaying: replayingWorkspaceRef.current > 0,
+           },
+diff --git a/lib/hooks/annotation/workspace/use-workspace-selection.ts b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+index 8b428b35..2f949fd8 100644
+--- a/lib/hooks/annotation/workspace/use-workspace-selection.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+@@ -15,7 +15,11 @@ import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
+ import type { NoteWorkspaceSnapshot } from "@/lib/note-workspaces/state"
+ import {
+   hasWorkspaceRuntime,
++  isWorkspaceHydrated,
+   listHotRuntimes,
++  markWorkspaceHydrated,
++  markWorkspaceHydrating,
++  markWorkspaceUnhydrated,
+   setRuntimeVisible,
+   setWorkspaceEntry,
+ } from "@/lib/workspace/runtime-manager"
+@@ -141,7 +145,7 @@ export function useWorkspaceSelection({
+       setActiveWorkspaceContext(workspaceId)
+ 
+       // Phase 2: Check if target workspace has a hot runtime
+-      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
++      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+ 
+       emitDebugLog({
+         component: "NoteWorkspace",
+@@ -255,6 +259,14 @@ export function useWorkspaceSelection({
+           }
+ 
+           await applyCachedSnapshot()
++
++          const shouldRestoreFromAdapter = v2Enabled && Boolean(adapterRef.current)
++          const wasHydratedBeforeRestore =
++            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceHydrated(workspaceId) : false
++          if (liveStateEnabled && shouldRestoreFromAdapter) {
++            markWorkspaceHydrating(workspaceId, "select_workspace")
++          }
++
+           setCurrentWorkspaceId(workspaceId)
+           setPendingWorkspaceId(null)
+           snapshotOwnerWorkspaceIdRef.current = workspaceId
+@@ -271,6 +283,7 @@ export function useWorkspaceSelection({
+           })
+ 
+           if (v2Enabled && adapterRef.current) {
++            let adapterPreviewApplied = false
+             try {
+               const record = await adapterRef.current.loadWorkspace(workspaceId)
+               const adapterRevision = (record as any).revision ?? null
+@@ -290,9 +303,11 @@ export function useWorkspaceSelection({
+ 
+               if (shouldApplyAdapter || !cachedSnapshot) {
+                 await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any, { force: true })
++                adapterPreviewApplied = true
+               } else {
+                 // Replay cached snapshot even if revisions match to keep the store populated
+                 await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
++                adapterPreviewApplied = true
+               }
+             } catch (adapterError) {
+               emitDebugLog({
+@@ -303,6 +318,14 @@ export function useWorkspaceSelection({
+                   error: adapterError instanceof Error ? adapterError.message : String(adapterError),
+                 },
+               })
++            } finally {
++              if (liveStateEnabled) {
++                if (adapterPreviewApplied || wasHydratedBeforeRestore) {
++                  markWorkspaceHydrated(workspaceId, "select_workspace")
++                } else {
++                  markWorkspaceUnhydrated(workspaceId, "select_workspace_error")
++                }
++              }
+             }
+           }
+ 
+diff --git a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+index bc5604da..bd7bfc74 100644
+--- a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+@@ -21,10 +21,14 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+ import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
+ import {
+   hasWorkspaceRuntime,
++  isWorkspaceHydrated,
+   getRuntimeMembership,
+   getRuntimeOpenNotes,
+   getRegisteredComponentCount,
+   getRuntimeComponentCount,
++  markWorkspaceHydrated,
++  markWorkspaceHydrating,
++  markWorkspaceUnhydrated,
+   populateRuntimeComponents,
+   listRuntimeComponents,
+ } from "@/lib/workspace/runtime-manager"
+@@ -1008,6 +1012,7 @@ export function useWorkspaceSnapshot({
+   const previewWorkspaceFromSnapshot = useCallback(
+     async (workspaceId: string, snapshot: NoteWorkspaceSnapshot, options?: { force?: boolean }) => {
+       const force = options?.force ?? false
++      const hadRuntimeBeforePrepare = liveStateEnabled && hasWorkspaceRuntime(workspaceId)
+       if (liveStateEnabled) {
+         await ensureRuntimePrepared(workspaceId, "preview_snapshot")
+       }
+@@ -1045,7 +1050,8 @@ export function useWorkspaceSnapshot({
+           }
+         })
+       }
+-      const runtimeState = liveStateEnabled && hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
++      const runtimeState =
++        liveStateEnabled && hadRuntimeBeforePrepare && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+ 
+       if (runtimeState === "hot") {
+         const runtimeLedgerCount = getRuntimeComponentCount(workspaceId)
+@@ -1103,6 +1109,11 @@ export function useWorkspaceSnapshot({
+         return
+       }
+ 
++      const wasHydratedBeforeReplay = liveStateEnabled && isWorkspaceHydrated(workspaceId)
++      if (liveStateEnabled) {
++        markWorkspaceHydrating(workspaceId, "preview_snapshot")
++      }
++      try {
+       emitDebugLog({
+         component: "NoteWorkspace",
+         action: "preview_set_membership_branch",
+@@ -1183,6 +1194,9 @@ export function useWorkspaceSnapshot({
+       lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
+ 
+       skipSavesUntilRef.current.set(workspaceId, Date.now() + 500)
++      if (liveStateEnabled) {
++        markWorkspaceHydrated(workspaceId, "preview_snapshot")
++      }
+ 
+       emitDebugLog({
+         component: "NoteWorkspace",
+@@ -1197,6 +1211,16 @@ export function useWorkspaceSnapshot({
+         },
+       })
+       bumpSnapshotRevision()
++      } catch (error) {
++        if (liveStateEnabled) {
++          if (wasHydratedBeforeReplay) {
++            markWorkspaceHydrated(workspaceId, "preview_snapshot_error")
++          } else {
++            markWorkspaceUnhydrated(workspaceId, "preview_snapshot_error")
++          }
++        }
++        throw error
++      }
+     },
+     [
+       applyPanelSnapshots,
+diff --git a/lib/hooks/use-runtime-components.ts b/lib/hooks/use-runtime-components.ts
+index 46c96ea0..22835d67 100644
+--- a/lib/hooks/use-runtime-components.ts
++++ b/lib/hooks/use-runtime-components.ts
+@@ -21,7 +21,10 @@ import {
+  * @param workspaceId - The workspace to read components from
+  * @returns Array of runtime components for the workspace
+  */
+-export function useRuntimeComponents(workspaceId: string | null | undefined): RuntimeComponent[] {
++export function useRuntimeComponents(
++  workspaceId: string | null | undefined,
++  workspaceSnapshotRevision?: number,
++): RuntimeComponent[] {
+   const [components, setComponents] = useState<RuntimeComponent[]>([])
+   const workspaceIdRef = useRef(workspaceId)
+ 
+@@ -39,7 +42,7 @@ export function useRuntimeComponents(workspaceId: string | null | undefined): Ru
+   useEffect(() => {
+     workspaceIdRef.current = workspaceId
+     syncComponents()
+-  }, [workspaceId, syncComponents])
++  }, [workspaceId, workspaceSnapshotRevision, syncComponents])
+ 
+   // Set up polling to detect runtime ledger changes
+   // This is a simple approach; could be replaced with an event system later
+diff --git a/lib/workspace/runtime-manager.ts b/lib/workspace/runtime-manager.ts
+index 4c401451..76b5a8d2 100644
+--- a/lib/workspace/runtime-manager.ts
++++ b/lib/workspace/runtime-manager.ts
+@@ -30,6 +30,8 @@ export type RuntimeComponent = {
+   isActive: boolean   // True if component has active background operation (e.g., running timer)
+ }
+ 
++export type WorkspaceHydrationState = "unhydrated" | "hydrating" | "hydrated"
++
+ export type WorkspaceRuntime = {
+   id: string
+   dataStore: DataStore
+@@ -37,6 +39,7 @@ export type WorkspaceRuntime = {
+   pendingPanels: Set<string>
+   pendingComponents: Set<string>
+   status: "idle" | "active" | "paused"
++  hydrationState: WorkspaceHydrationState
+   openNotes: NoteWorkspaceSlot[]
+   membership: Set<string>
+   noteOwners: Map<string, string>  // Phase 1: noteId -> workspaceId ownership
+@@ -422,6 +425,7 @@ export const getWorkspaceRuntime = (workspaceId: string): WorkspaceRuntime => {
+     pendingPanels: new Set(),
+     pendingComponents: new Set(),
+     status: "idle",
++    hydrationState: "unhydrated",
+     openNotes: [],
+     membership: new Set(),
+     noteOwners: new Map(),
+@@ -589,6 +593,72 @@ export const hasWorkspaceRuntime = (workspaceId: string): boolean => {
+   return runtimes.has(workspaceId)
+ }
+ 
++export const getWorkspaceHydrationState = (workspaceId: string): WorkspaceHydrationState | "missing" => {
++  return runtimes.get(workspaceId)?.hydrationState ?? "missing"
++}
++
++export const isWorkspaceHydrated = (workspaceId: string): boolean => {
++  return getWorkspaceHydrationState(workspaceId) === "hydrated"
++}
++
++export const isWorkspaceHydrating = (workspaceId: string): boolean => {
++  return getWorkspaceHydrationState(workspaceId) === "hydrating"
++}
++
++export const markWorkspaceHydrating = (workspaceId: string, source: string): void => {
++  const runtime = runtimes.get(workspaceId)
++  if (!runtime) return
++  const prev = runtime.hydrationState
++  if (prev === "hydrating") return
++  runtime.hydrationState = "hydrating"
++  void debugLog({
++    component: "WorkspaceRuntime",
++    action: "workspace_hydration_state",
++    metadata: {
++      workspaceId,
++      source,
++      prev,
++      next: runtime.hydrationState,
++    },
++  })
++}
++
++export const markWorkspaceHydrated = (workspaceId: string, source: string): void => {
++  const runtime = runtimes.get(workspaceId)
++  if (!runtime) return
++  const prev = runtime.hydrationState
++  if (prev === "hydrated") return
++  runtime.hydrationState = "hydrated"
++  void debugLog({
++    component: "WorkspaceRuntime",
++    action: "workspace_hydration_state",
++    metadata: {
++      workspaceId,
++      source,
++      prev,
++      next: runtime.hydrationState,
++    },
++  })
++}
++
++export const markWorkspaceUnhydrated = (workspaceId: string, source: string): void => {
++  const runtime = runtimes.get(workspaceId)
++  if (!runtime) return
++  const prev = runtime.hydrationState
++  if (prev === "unhydrated") return
++  runtime.hydrationState = "unhydrated"
++  void debugLog({
++    component: "WorkspaceRuntime",
++    action: "workspace_hydration_state",
++    metadata: {
++      workspaceId,
++      source,
++      prev,
++      next: runtime.hydrationState,
++    },
++  })
++}
++
+ export const getRuntimeOpenNotes = (workspaceId: string): NoteWorkspaceSlot[] => {
+   return runtimes.get(workspaceId)?.openNotes ?? []
+ }
+
+diff --git a/lib/hooks/annotation/use-note-workspace-runtime-manager.ts b/lib/hooks/annotation/use-note-workspace-runtime-manager.ts
+index 5fb7cd82..7b9d9f34 100644
+--- a/lib/hooks/annotation/use-note-workspace-runtime-manager.ts
++++ b/lib/hooks/annotation/use-note-workspace-runtime-manager.ts
+@@ -20,7 +20,10 @@ type RuntimeManagerOptions = {
+   currentWorkspaceId: string | null
+   pendingWorkspaceId: string | null
+   runtimeCapacity: number
+-  captureSnapshot: (workspaceId?: string | null) => Promise<void>
++  captureSnapshot: (
++    workspaceId?: string | null,
++    options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean },
++  ) => Promise<void>
+   persistSnapshot: (workspaceId: string | null | undefined, reason: string) => Promise<boolean>
+   emitDebugLog?: NoteWorkspaceDebugLogger
+ }
+@@ -95,7 +98,11 @@ export function useNoteWorkspaceRuntimeManager({
+       })
+ 
+       // Capture snapshot using LATEST function
+-      await captureFn(targetWorkspaceId)
++      await captureFn(targetWorkspaceId, {
++        readinessReason: `evict_${reason}`,
++        readinessMaxWaitMs: 0,
++        skipReadiness: true,
++      })
+ 
+       // Persist using LATEST function - re-read ref in case it changed during capture await
+       const latestPersistFn = persistSnapshotRef.current

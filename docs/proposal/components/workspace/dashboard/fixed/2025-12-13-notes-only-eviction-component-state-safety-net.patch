@@ -1,0 +1,57 @@
+diff --git a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+index 8f38671..25c0f1b 100644
+--- a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+@@ -569,4 +569,4 @@ export function useWorkspaceSnapshot({
+           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
+       )
+-      if (liveStateEnabled) {
++      if (liveStateEnabled && !options?.skipReadiness) {
+         const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId)?.panels ?? []
+@@ -954,30 +958,45 @@ export function useWorkspaceSnapshot({
+   const buildPayloadFromSnapshot = useCallback(
+     (workspaceId: string, snapshot: NoteWorkspaceSnapshot): NoteWorkspacePayload => {
+       const normalizedOpenNotes = snapshot.openNotes.map((entry) => ({
+         noteId: entry.noteId,
+         position: entry.mainPosition ?? null,
+       }))
+       const active = snapshot.activeNoteId ?? normalizedOpenNotes[0]?.noteId ?? null
+ 
+       let components = snapshot.components ?? []
++      // Safety net: snapshot capture can be deferred/skipped in edge cases; for eviction/background
++      // persistence we should prefer the authoritative in-memory runtime ledger when available.
++      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
++        const runtimeComponents = listRuntimeComponents(workspaceId)
++        if (runtimeComponents.length > 0) {
++          components = runtimeComponents.map((comp) => ({
++            id: comp.componentId,
++            type: comp.componentType,
++            position: comp.position,
++            size: comp.size,
++            zIndex: comp.zIndex,
++            metadata: comp.metadata,
++          }))
++        }
++      }
+       if (components.length === 0) {
+         const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceId)
+         if (cachedComponents && cachedComponents.length > 0) {
+           components = cachedComponents
+         }
+       }
+ 
+       const payload: NoteWorkspacePayload = {
+         schemaVersion: "1.1.0",
+         openNotes: normalizedOpenNotes,
+         activeNoteId: active,
+         camera: snapshot.camera ?? DEFAULT_CAMERA,
+         panels: snapshot.panels ?? [],
+       }
+       if (components.length > 0) {
+         payload.components = components
+       }
+       return payload
+     },
+-    [lastComponentsSnapshotRef],
++    [lastComponentsSnapshotRef, liveStateEnabled],
+   )

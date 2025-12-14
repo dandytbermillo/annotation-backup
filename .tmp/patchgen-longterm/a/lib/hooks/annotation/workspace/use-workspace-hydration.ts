@@ -22,22 +22,14 @@ import { NoteWorkspaceAdapter as NoteWorkspaceAdapterClass } from "@/lib/adapter
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
   hasWorkspaceRuntime,
-  isWorkspaceHydrated,
   getRuntimeOpenNotes,
   getRegisteredComponentCount,
   getRuntimeComponentCount,
-  markWorkspaceHydrated,
-  markWorkspaceHydrating,
-  markWorkspaceUnhydrated,
   populateRuntimeComponents,
   setRuntimeVisible,
   setWorkspaceEntry,
   markWorkspaceAsDefault,
 } from "@/lib/workspace/runtime-manager"
-import {
-  restoreComponentsToWorkspace,
-  detectRestoreType,
-} from "@/lib/workspace/store-runtime-bridge"
 import {
   cacheWorkspaceSnapshot,
   subscribeToWorkspaceListRefresh,
@@ -239,13 +231,9 @@ export function useWorkspaceHydration(
       if (!adapterRef.current) return
       setIsLoading(true)
       const hydrateStart = Date.now()
-      const wasHydratedBeforeLoad = isWorkspaceHydrated(workspaceId)
-      isHydratingRef.current = true
-      if (liveStateEnabled) {
-        markWorkspaceHydrating(workspaceId, "hydrate_workspace")
-      }
       try {
         const record = await adapterRef.current.loadWorkspace(workspaceId)
+        isHydratingRef.current = true
         snapshotOwnerWorkspaceIdRef.current = workspaceId
         workspaceRevisionRef.current.set(workspaceId, (record as any).revision ?? null)
         const declaredNoteIds = new Set(
@@ -285,12 +273,8 @@ export function useWorkspaceHydration(
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
-          // Phase 3: Restore components via bridge (handles hot/cold detection + cold restore invariant)
-          // This ensures components are restored to both the new store and legacy runtime ledger
-          restoreComponentsToWorkspace(workspaceId, resolvedComponents, {
-            forceRestoreType: 'cold', // Hydration from DB is always cold restore
-          })
-          // Legacy fallback: Also populate runtime ledger directly for backward compatibility
+          // Phase 1 Unification: Populate runtime component ledger from hydrated components
+          // This ensures components are available in the runtime before React renders them
           populateRuntimeComponents(workspaceId, resolvedComponents)
         }
         const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])
@@ -386,9 +370,6 @@ export function useWorkspaceHydration(
             saveCooldownSet: true,
           },
         })
-        if (liveStateEnabled) {
-          markWorkspaceHydrated(workspaceId, "hydrate_workspace")
-        }
         bumpSnapshotRevision()
 
         // Phase 2: Mark runtime visible after initial hydration completes
@@ -421,13 +402,6 @@ export function useWorkspaceHydration(
             error: error instanceof Error ? error.message : String(error),
           },
         })
-        if (liveStateEnabled) {
-          if (wasHydratedBeforeLoad) {
-            markWorkspaceHydrated(workspaceId, "hydrate_workspace_error")
-          } else {
-            markWorkspaceUnhydrated(workspaceId, "hydrate_workspace_error")
-          }
-        }
       } finally {
         isHydratingRef.current = false
         snapshotOwnerWorkspaceIdRef.current = workspaceId
@@ -618,16 +592,6 @@ export function useWorkspaceHydration(
     // We do NOT update lastHydratedWorkspaceIdRef here so that if the runtime gets
     // evicted later, we will properly hydrate from DB on next switch.
     if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
-      if (!isWorkspaceHydrated(currentWorkspaceId)) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "hydrate_unhydrated_runtime",
-          metadata: {
-            workspaceId: currentWorkspaceId,
-            reason: "runtime_exists_but_not_restored_will_hydrate",
-          },
-        })
-      } else {
       const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
       const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
       // Skip hydration if runtime has notes OR components (either indicates meaningful state)
@@ -726,7 +690,6 @@ export function useWorkspaceHydration(
           reason: "runtime_exists_but_empty_will_hydrate",
         },
       })
-      }
     }
     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
     emitDebugLog({

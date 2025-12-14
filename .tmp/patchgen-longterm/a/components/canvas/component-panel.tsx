@@ -32,9 +32,6 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const [componentState, setComponentState] = useState(initialState ?? {})
-  useEffect(() => {
-    setComponentState(initialState ?? {})
-  }, [initialState])
 
   // Notify parent when component state changes (for persistence to canvas items)
   const handleStateUpdate = useCallback((newState: any) => {

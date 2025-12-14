@@ -707,7 +707,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   })
 
   // Phase 3 Unification: Read components from runtime ledger (authoritative source)
-  const runtimeComponents = useRuntimeComponents(workspaceId, workspaceSnapshotRevision)
+  const runtimeComponents = useRuntimeComponents(workspaceId)
 
   // Phase 3 Unification: Rehydrate component items from runtime ledger when snapshot/revision changes.
   // The runtime ledger is now the authoritative source (populated during hydration/replay in Phase 2).
@@ -776,7 +776,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         position: node.position ?? { x: 0, y: 0 },
         zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
         dimensions: (node as any).dimensions ?? undefined,
-        componentState: (node as any).metadata,
       }))
       const byId = new Map<string, any>()
       nextComponents.forEach((c) => byId.set(c.id, c))

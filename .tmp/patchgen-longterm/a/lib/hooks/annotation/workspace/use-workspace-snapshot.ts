@@ -21,21 +21,13 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
   hasWorkspaceRuntime,
-  isWorkspaceHydrated,
   getRuntimeMembership,
   getRuntimeOpenNotes,
   getRegisteredComponentCount,
   getRuntimeComponentCount,
-  markWorkspaceHydrated,
-  markWorkspaceHydrating,
-  markWorkspaceUnhydrated,
   populateRuntimeComponents,
   listRuntimeComponents,
 } from "@/lib/workspace/runtime-manager"
-import {
-  getComponentsForPersistence,
-  restoreComponentsToWorkspace,
-} from "@/lib/workspace/store-runtime-bridge"
 import {
   cacheWorkspaceSnapshot,
   getWorkspaceSnapshot,
@@ -573,7 +565,7 @@ export function useWorkspaceSnapshot({
           .map((entry) => entry.noteId)
           .filter((noteId): noteId is string => typeof noteId === "string" && noteId.length > 0),
       )
-      if (liveStateEnabled && !options?.skipReadiness) {
+      if (liveStateEnabled) {
         const cachedPanels = workspaceSnapshotsRef.current.get(workspaceId)?.panels ?? []
         if (cachedPanels.length > 0) {
           const cachedNoteIds = new Set(
@@ -821,47 +813,19 @@ export function useWorkspaceSnapshot({
       setWorkspaceNoteMembership(workspaceId, membershipSource)
       const workspaceIdForComponents = workspaceId
 
-      // Phase 3: Read components from bridge (uses new store with runtime fallback)
-      // This ensures we read from the authoritative source while maintaining backward compatibility
-      const bridgeComponents = workspaceIdForComponents ? getComponentsForPersistence(workspaceIdForComponents) : []
-      const componentsFromRuntime: NoteWorkspaceComponentSnapshot[] = bridgeComponents.map((comp) => ({
-        id: comp.id,
-        type: comp.type,
+      // FIX: Read components from runtime ledger FIRST (authoritative source for component metadata)
+      // This mirrors the pattern in use-workspace-persistence.ts buildPayload
+      // LayerManager only has {componentType} in metadata, but runtime ledger has full state
+      // (e.g., timer has minutes, seconds, isRunning; calculator has display, etc.)
+      const runtimeComponents = workspaceIdForComponents ? listRuntimeComponents(workspaceIdForComponents) : []
+      const componentsFromRuntime: NoteWorkspaceComponentSnapshot[] = runtimeComponents.map((comp) => ({
+        id: comp.componentId,
+        type: comp.componentType,
         position: comp.position,
         size: comp.size,
         zIndex: comp.zIndex,
         metadata: comp.metadata, // Full metadata including component state!
       }))
-
-      // Legacy fallback: If bridge returned empty, try direct runtime ledger read
-      if (componentsFromRuntime.length === 0 && workspaceIdForComponents) {
-        const runtimeComponents = listRuntimeComponents(workspaceIdForComponents)
-        if (runtimeComponents.length > 0) {
-          componentsFromRuntime.push(...runtimeComponents.map((comp) => ({
-            id: comp.componentId,
-            type: comp.componentType,
-            position: comp.position,
-            size: comp.size,
-            zIndex: comp.zIndex,
-            metadata: comp.metadata,
-          })))
-        }
-      }
-
-      // DIAGNOSTIC: Log what we're reading from bridge during capture
-      emitDebugLog({
-        component: "SnapshotCaptureDiagnostic",
-        action: "capture_runtime_components_read",
-        metadata: {
-          workspaceId,
-          bridgeComponentCount: bridgeComponents.length,
-          componentIds: componentsFromRuntime.map((c) => c.id),
-          componentTypes: componentsFromRuntime.map((c) => c.type),
-          timerMetadata: componentsFromRuntime
-            .filter((c) => c.type === "timer")
-            .map((c) => ({ id: c.id, metadata: c.metadata })),
-        },
-      })
 
       // Fall back to LayerManager only if runtime has no components (cold runtime case)
       let componentsFromManager: NoteWorkspaceComponentSnapshot[] = []
@@ -901,34 +865,6 @@ export function useWorkspaceSnapshot({
         cachedSnapshot?.components ?? [],
         lastComponents
       )
-
-      // DIAGNOSTIC: Log final component source decision
-      const componentSourceName =
-        componentsFromRuntime.length > 0
-          ? "runtime_ledger"
-          : componentsFromManager.length > 0
-            ? "layer_manager"
-            : cachedSnapshot?.components && cachedSnapshot.components.length > 0
-              ? "cached_snapshot"
-              : lastComponents.length > 0
-                ? "last_components_ref"
-                : "none"
-      emitDebugLog({
-        component: "SnapshotCaptureDiagnostic",
-        action: "capture_component_source_decision",
-        metadata: {
-          workspaceId,
-          source: componentSourceName,
-          runtimeCount: componentsFromRuntime.length,
-          managerCount: componentsFromManager.length,
-          cachedCount: cachedSnapshot?.components?.length ?? 0,
-          lastCount: lastComponents.length,
-          finalCount: components.length,
-          timerComponentsInFinal: components
-            .filter((c) => c.type === "timer")
-            .map((c) => ({ id: c.id, metadata: c.metadata })),
-        },
-      })
       if (v2Enabled) {
         if (components.length > 0 && workspaceId) {
           lastComponentsSnapshotRef.current.set(workspaceId, components)
@@ -1023,50 +959,12 @@ export function useWorkspaceSnapshot({
       const active = snapshot.activeNoteId ?? normalizedOpenNotes[0]?.noteId ?? null
 
       let components = snapshot.components ?? []
-      const snapshotComponentCount = components.length
-
-      // Safety net: snapshot capture can be deferred/skipped in edge cases; for eviction/background
-      // persistence we should prefer the authoritative in-memory runtime ledger when available.
-      let componentSource = "snapshot"
-      const hasRuntime = hasWorkspaceRuntime(workspaceId)
-      if (liveStateEnabled && hasRuntime) {
-        const runtimeComponents = listRuntimeComponents(workspaceId)
-        if (runtimeComponents.length > 0) {
-          components = runtimeComponents.map((comp) => ({
-            id: comp.componentId,
-            type: comp.componentType,
-            position: comp.position,
-            size: comp.size,
-            zIndex: comp.zIndex,
-            metadata: comp.metadata,
-          }))
-          componentSource = "runtime_ledger_safety_net"
-        }
-      }
       if (components.length === 0) {
         const cachedComponents = lastComponentsSnapshotRef.current.get(workspaceId)
         if (cachedComponents && cachedComponents.length > 0) {
           components = cachedComponents
-          componentSource = "last_components_cache"
         }
       }
-
-      // DIAGNOSTIC: Log what components we're using for the payload
-      emitDebugLog({
-        component: "BuildPayloadDiagnostic",
-        action: "build_payload_components",
-        metadata: {
-          workspaceId,
-          liveStateEnabled,
-          hasRuntime,
-          componentSource,
-          snapshotComponentCount,
-          finalComponentCount: components.length,
-          timerComponents: components
-            .filter((c) => c.type === "timer")
-            .map((c) => ({ id: c.id, metadata: c.metadata })),
-        },
-      })
 
       const payload: NoteWorkspacePayload = {
         schemaVersion: "1.1.0",
@@ -1080,7 +978,7 @@ export function useWorkspaceSnapshot({
       }
       return payload
     },
-    [emitDebugLog, lastComponentsSnapshotRef, liveStateEnabled],
+    [lastComponentsSnapshotRef],
   )
 
   // ---------------------------------------------------------------------------
@@ -1110,7 +1008,6 @@ export function useWorkspaceSnapshot({
   const previewWorkspaceFromSnapshot = useCallback(
     async (workspaceId: string, snapshot: NoteWorkspaceSnapshot, options?: { force?: boolean }) => {
       const force = options?.force ?? false
-      const hadRuntimeBeforePrepare = liveStateEnabled && hasWorkspaceRuntime(workspaceId)
       if (liveStateEnabled) {
         await ensureRuntimePrepared(workspaceId, "preview_snapshot")
       }
@@ -1148,8 +1045,7 @@ export function useWorkspaceSnapshot({
           }
         })
       }
-      const runtimeState =
-        liveStateEnabled && hadRuntimeBeforePrepare && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+      const runtimeState = liveStateEnabled && hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
 
       if (runtimeState === "hot") {
         const runtimeLedgerCount = getRuntimeComponentCount(workspaceId)
@@ -1207,11 +1103,6 @@ export function useWorkspaceSnapshot({
         return
       }
 
-      const wasHydratedBeforeReplay = liveStateEnabled && isWorkspaceHydrated(workspaceId)
-      if (liveStateEnabled) {
-        markWorkspaceHydrating(workspaceId, "preview_snapshot")
-      }
-      try {
       emitDebugLog({
         component: "NoteWorkspace",
         action: "preview_set_membership_branch",
@@ -1292,9 +1183,6 @@ export function useWorkspaceSnapshot({
       lastPreviewedSnapshotRef.current.set(workspaceId, snapshot)
 
       skipSavesUntilRef.current.set(workspaceId, Date.now() + 500)
-      if (liveStateEnabled) {
-        markWorkspaceHydrated(workspaceId, "preview_snapshot")
-      }
 
       emitDebugLog({
         component: "NoteWorkspace",
@@ -1309,16 +1197,6 @@ export function useWorkspaceSnapshot({
         },
       })
       bumpSnapshotRevision()
-      } catch (error) {
-        if (liveStateEnabled) {
-          if (wasHydratedBeforeReplay) {
-            markWorkspaceHydrated(workspaceId, "preview_snapshot_error")
-          } else {
-            markWorkspaceUnhydrated(workspaceId, "preview_snapshot_error")
-          }
-        }
-        throw error
-      }
     },
     [
       applyPanelSnapshots,

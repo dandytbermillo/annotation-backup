@@ -1,0 +1,46 @@
+================================================================================
+LayerManager Fallback componentState Fix
+================================================================================
+
+File: components/annotation-canvas-modern.tsx
+Lines: 772-779
+
+--------------------------------------------------------------------------------
+BEFORE (lines 772-779):
+--------------------------------------------------------------------------------
+
+      const nextComponents = nodes.map((node: any) => ({
+        id: node.id,
+        itemType: "component" as const,
+        componentType: (node as any).metadata?.componentType ?? (node as any).type,
+        position: node.position ?? { x: 0, y: 0 },
+        zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
+        dimensions: (node as any).dimensions ?? undefined,
+      }))
+
+--------------------------------------------------------------------------------
+AFTER (with fix):
+--------------------------------------------------------------------------------
+
+      const nextComponents = nodes.map((node: any) => ({
+        id: node.id,
+        itemType: "component" as const,
+        componentType: (node as any).metadata?.componentType ?? (node as any).type,
+        position: node.position ?? { x: 0, y: 0 },
+        zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
+        dimensions: (node as any).dimensions ?? undefined,
+        componentState: (node as any).metadata,
+      }))
+
+--------------------------------------------------------------------------------
+EXACT EDIT:
+--------------------------------------------------------------------------------
+
+Find this line (line 778):
+        dimensions: (node as any).dimensions ?? undefined,
+      }))
+
+Replace with:
+        dimensions: (node as any).dimensions ?? undefined,
+        componentState: (node as any).metadata,
+      }))

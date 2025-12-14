@@ -24,11 +24,7 @@ import {
   listRuntimeComponents,
   getDeletedComponents,
   getWorkspacesForEntry,
-  isWorkspaceHydrating,
 } from "@/lib/workspace/runtime-manager"
-import {
-  getComponentsForPersistence,
-} from "@/lib/workspace/store-runtime-bridge"
 import {
   subscribeToWorkspaceSnapshotState,
 } from "@/lib/note-workspaces/state"
@@ -371,30 +367,17 @@ export function useWorkspacePersistence(
     }
     const shouldAllowEmptyPanels = !hasKnownNotes && panelSnapshots.length === 0
     updatePanelSnapshotMap(panelSnapshots, "build_payload", { allowEmpty: shouldAllowEmptyPanels })
-    // Phase 3: Read components from workspace component store first (new authoritative source)
-    // Falls back to runtime ledger for backward compatibility during migration
-    const bridgeComponents = getComponentsForPersistence(workspaceIdForComponents)
-    let components: NoteWorkspaceComponentSnapshot[] = bridgeComponents.map((comp) => ({
-      id: comp.id,
-      type: comp.type,
+    // Phase 1 Unification: Read components from runtime ledger first (authoritative source)
+    // This ensures component data persists across React unmounts
+    const runtimeComponents = listRuntimeComponents(workspaceIdForComponents)
+    let components: NoteWorkspaceComponentSnapshot[] = runtimeComponents.map((comp) => ({
+      id: comp.componentId,
+      type: comp.componentType,
       position: comp.position,
       size: comp.size,
       zIndex: comp.zIndex,
       metadata: comp.metadata,
     }))
-
-    // Legacy fallback: If bridge returns empty, try direct runtime ledger read
-    if (components.length === 0) {
-      const runtimeComponents = listRuntimeComponents(workspaceIdForComponents)
-      components = runtimeComponents.map((comp) => ({
-        id: comp.componentId,
-        type: comp.componentType,
-        position: comp.position,
-        size: comp.size,
-        zIndex: comp.zIndex,
-        metadata: comp.metadata,
-      }))
-    }
 
     // Phase 4: Get deleted components to exclude from fallback
     const deletedComponents = getDeletedComponents(workspaceIdForComponents)
@@ -483,8 +466,8 @@ export function useWorkspacePersistence(
         metadata: {
           workspaceId: workspaceIdForComponents,
           componentCount: components.length,
-          bridgeComponentCount: bridgeComponents.length,
-          source: bridgeComponents.length > 0 ? "store_or_runtime_bridge" : "fallback",
+          runtimeLedgerCount: runtimeComponents.length,
+          source: runtimeComponents.length > 0 ? "runtime_ledger" : "fallback",
         },
       })
     }
@@ -672,15 +655,13 @@ export function useWorkspacePersistence(
       }
 
       // Skip if hydrating or replaying
-      const runtimeHydrating = liveStateEnabled && isWorkspaceHydrating(targetWorkspaceId)
-      if (runtimeHydrating || isHydratingRef.current || replayingWorkspaceRef.current > 0) {
+      if (isHydratingRef.current || replayingWorkspaceRef.current > 0) {
         emitDebugLog({
           component: "NoteWorkspace",
           action: "persist_by_id_skip_busy",
           metadata: {
             workspaceId: targetWorkspaceId,
             reason,
-            runtimeHydrating,
             hydrating: isHydratingRef.current,
             replaying: replayingWorkspaceRef.current > 0,
           },

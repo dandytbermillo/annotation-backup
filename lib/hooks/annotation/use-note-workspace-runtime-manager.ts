@@ -20,7 +20,10 @@ type RuntimeManagerOptions = {
   currentWorkspaceId: string | null
   pendingWorkspaceId: string | null
   runtimeCapacity: number
-  captureSnapshot: (workspaceId?: string | null) => Promise<void>
+  captureSnapshot: (
+    workspaceId?: string | null,
+    options?: { readinessReason?: string; readinessMaxWaitMs?: number; skipReadiness?: boolean },
+  ) => Promise<void>
   persistSnapshot: (workspaceId: string | null | undefined, reason: string) => Promise<boolean>
   emitDebugLog?: NoteWorkspaceDebugLogger
 }
@@ -95,7 +98,11 @@ export function useNoteWorkspaceRuntimeManager({
       })
 
       // Capture snapshot using LATEST function
-      await captureFn(targetWorkspaceId)
+      await captureFn(targetWorkspaceId, {
+        readinessReason: `evict_${reason}`,
+        readinessMaxWaitMs: 0,
+        skipReadiness: true,
+      })
 
       // Persist using LATEST function - re-read ref in case it changed during capture await
       const latestPersistFn = persistSnapshotRef.current

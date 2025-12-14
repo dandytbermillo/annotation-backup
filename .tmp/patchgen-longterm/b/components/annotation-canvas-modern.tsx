@@ -776,7 +776,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         position: node.position ?? { x: 0, y: 0 },
         zIndex: typeof node.zIndex === "number" ? node.zIndex : undefined,
         dimensions: (node as any).dimensions ?? undefined,
-        componentState: (node as any).metadata,
       }))
       const byId = new Map<string, any>()
       nextComponents.forEach((c) => byId.set(c.id, c))

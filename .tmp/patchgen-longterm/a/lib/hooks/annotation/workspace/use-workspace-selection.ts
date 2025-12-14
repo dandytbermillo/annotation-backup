@@ -15,11 +15,7 @@ import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import type { NoteWorkspaceSnapshot } from "@/lib/note-workspaces/state"
 import {
   hasWorkspaceRuntime,
-  isWorkspaceHydrated,
   listHotRuntimes,
-  markWorkspaceHydrated,
-  markWorkspaceHydrating,
-  markWorkspaceUnhydrated,
   setRuntimeVisible,
   setWorkspaceEntry,
 } from "@/lib/workspace/runtime-manager"
@@ -145,7 +141,7 @@ export function useWorkspaceSelection({
       setActiveWorkspaceContext(workspaceId)
 
       // Phase 2: Check if target workspace has a hot runtime
-      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) ? "hot" : "cold"
 
       emitDebugLog({
         component: "NoteWorkspace",
@@ -259,14 +255,6 @@ export function useWorkspaceSelection({
           }
 
           await applyCachedSnapshot()
-
-          const shouldRestoreFromAdapter = v2Enabled && Boolean(adapterRef.current)
-          const wasHydratedBeforeRestore =
-            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceHydrated(workspaceId) : false
-          if (liveStateEnabled && shouldRestoreFromAdapter) {
-            markWorkspaceHydrating(workspaceId, "select_workspace")
-          }
-
           setCurrentWorkspaceId(workspaceId)
           setPendingWorkspaceId(null)
           snapshotOwnerWorkspaceIdRef.current = workspaceId
@@ -283,7 +271,6 @@ export function useWorkspaceSelection({
           })
 
           if (v2Enabled && adapterRef.current) {
-            let adapterPreviewApplied = false
             try {
               const record = await adapterRef.current.loadWorkspace(workspaceId)
               const adapterRevision = (record as any).revision ?? null
@@ -303,11 +290,9 @@ export function useWorkspaceSelection({
 
               if (shouldApplyAdapter || !cachedSnapshot) {
                 await previewWorkspaceFromSnapshot(workspaceId, adapterSnapshot as any, { force: true })
-                adapterPreviewApplied = true
               } else {
                 // Replay cached snapshot even if revisions match to keep the store populated
                 await previewWorkspaceFromSnapshot(workspaceId, cachedSnapshot, { force: true })
-                adapterPreviewApplied = true
               }
             } catch (adapterError) {
               emitDebugLog({
@@ -318,14 +303,6 @@ export function useWorkspaceSelection({
                   error: adapterError instanceof Error ? adapterError.message : String(adapterError),
                 },
               })
-            } finally {
-              if (liveStateEnabled) {
-                if (adapterPreviewApplied || wasHydratedBeforeRestore) {
-                  markWorkspaceHydrated(workspaceId, "select_workspace")
-                } else {
-                  markWorkspaceUnhydrated(workspaceId, "select_workspace_error")
-                }
-              }
             }
           }
 

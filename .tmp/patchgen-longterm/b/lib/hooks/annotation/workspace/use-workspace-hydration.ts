@@ -35,10 +35,6 @@ import {
   markWorkspaceAsDefault,
 } from "@/lib/workspace/runtime-manager"
 import {
-  restoreComponentsToWorkspace,
-  detectRestoreType,
-} from "@/lib/workspace/store-runtime-bridge"
-import {
   cacheWorkspaceSnapshot,
   subscribeToWorkspaceListRefresh,
   getActiveWorkspaceContext,
@@ -285,12 +281,8 @@ export function useWorkspaceHydration(
         lastPanelSnapshotHashRef.current = serializePanelSnapshots(scopedPanels)
         if (resolvedComponents && resolvedComponents.length > 0) {
           lastComponentsSnapshotRef.current.set(workspaceId, resolvedComponents)
-          // Phase 3: Restore components via bridge (handles hot/cold detection + cold restore invariant)
-          // This ensures components are restored to both the new store and legacy runtime ledger
-          restoreComponentsToWorkspace(workspaceId, resolvedComponents, {
-            forceRestoreType: 'cold', // Hydration from DB is always cold restore
-          })
-          // Legacy fallback: Also populate runtime ledger directly for backward compatibility
+          // Phase 1 Unification: Populate runtime component ledger from hydrated components
+          // This ensures components are available in the runtime before React renders them
           populateRuntimeComponents(workspaceId, resolvedComponents)
         }
         const panelNoteIds = new Set(scopedPanels.map((panel) => panel.noteId).filter(Boolean) as string[])

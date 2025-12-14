@@ -141,69 +141,6 @@ export const getPinnedWorkspaceIds = (): string[] => {
 export type PreEvictionCallback = (workspaceId: string, reason: string) => Promise<void>
 const preEvictionCallbacks = new Set<PreEvictionCallback>()
 
-// Phase 4: Eviction blocked callback registry (for active operations protection)
-// Called when auto-eviction is blocked because workspace has active operations
-// This allows UI to notify user and ask for decision
-export type EvictionBlockedCallback = (blockedWorkspace: {
-  workspaceId: string
-  entryId: string | null
-  activeOperationCount: number
-  reason: string
-}) => void
-const evictionBlockedCallbacks = new Set<EvictionBlockedCallback>()
-
-/**
- * Register callback for when eviction is blocked due to active operations.
- * UI can use this to prompt user for decision.
- */
-export const registerEvictionBlockedCallback = (cb: EvictionBlockedCallback): void => {
-  evictionBlockedCallbacks.add(cb)
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[WorkspaceRuntime] Eviction blocked callback registered`, {
-      callbackCount: evictionBlockedCallbacks.size,
-    })
-  }
-}
-
-/**
- * Unregister eviction blocked callback.
- */
-export const unregisterEvictionBlockedCallback = (cb: EvictionBlockedCallback): void => {
-  evictionBlockedCallbacks.delete(cb)
-}
-
-// Internal helper to notify eviction blocked callbacks
-const notifyEvictionBlocked = (workspaceId: string, activeCount: number, reason: string): void => {
-  if (evictionBlockedCallbacks.size === 0) return
-
-  const entryId = workspaceEntryMap.get(workspaceId) ?? null
-
-  void debugLog({
-    component: "WorkspaceRuntime",
-    action: "eviction_blocked_notification",
-    metadata: {
-      workspaceId,
-      entryId,
-      activeOperationCount: activeCount,
-      reason,
-      callbackCount: evictionBlockedCallbacks.size,
-    },
-  })
-
-  for (const callback of evictionBlockedCallbacks) {
-    try {
-      callback({
-        workspaceId,
-        entryId,
-        activeOperationCount: activeCount,
-        reason,
-      })
-    } catch (error) {
-      console.warn("[WorkspaceRuntime] Eviction blocked callback error:", error)
-    }
-  }
-}
-
 export const registerPreEvictionCallback = (cb: PreEvictionCallback): void => {
   preEvictionCallbacks.add(cb)
   if (process.env.NODE_ENV === "development") {
@@ -943,13 +880,10 @@ export const getHotRuntimesInfo = (): Array<{
  * Calculate eviction score for a workspace.
  * Lower score = more likely to be evicted.
  *
- * Phase 4 NOTE: Workspaces with active operations are EXCLUDED from scoring
- * entirely - they require user decision to evict. This function only scores
- * INACTIVE workspaces.
- *
  * Scoring factors:
  * - Base: recency (older = lower score, 0-100)
  * - +500: default workspace (protected)
+ * - +1000: has active background operation (most protected)
  * - +200: has components with metadata (has state to preserve)
  */
 const calculateEvictionScore = (workspaceId: string, runtime: WorkspaceRuntime): number => {
@@ -968,9 +902,14 @@ const calculateEvictionScore = (workspaceId: string, runtime: WorkspaceRuntime):
     score += 500
   }
 
-  // Phase 4: REMOVED active operations scoring
-  // Active workspaces are now EXCLUDED from auto-eviction entirely (Layer 3 protection)
-  // They require explicit user decision via forceEvictWorkspaceWithActiveOperations()
+  // +1000 for active background operations (running timers, etc.)
+  // These should almost never be evicted
+  for (const component of runtime.components.values()) {
+    if (component.isActive) {
+      score += 1000
+      break
+    }
+  }
 
   // +200 for having components with metadata (has state worth preserving)
   for (const component of runtime.components.values()) {
@@ -983,66 +922,21 @@ const calculateEvictionScore = (workspaceId: string, runtime: WorkspaceRuntime):
   return score
 }
 
-// Phase 4: Track workspaces blocked from eviction due to active operations
-// Used to notify user when all candidates have active operations
-type BlockedWorkspaceInfo = {
-  workspaceId: string
-  activeCount: number
-}
-
-/**
- * Check if a workspace has active operations (from new store or legacy runtime).
- * Used by eviction policy to determine if workspace should be protected.
- */
-const checkWorkspaceHasActiveOperations = (workspaceId: string, runtime: WorkspaceRuntime): { hasActive: boolean; count: number } => {
-  // First check new workspace component store (authoritative source)
-  // Import dynamically to avoid circular dependency
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { hasWorkspaceComponentStore, getWorkspaceComponentStore } = require('./workspace-component-store')
-    if (hasWorkspaceComponentStore(workspaceId)) {
-      const store = getWorkspaceComponentStore(workspaceId)
-      if (store.hasActiveOperations()) {
-        const activeIds = store.getActiveIds()
-        return { hasActive: true, count: activeIds.length }
-      }
-    }
-  } catch {
-    // Store module not available, fall back to runtime
-  }
-
-  // Fall back to legacy runtime ledger check
-  let count = 0
-  for (const component of runtime.components.values()) {
-    if (component.isActive) count++
-  }
-  return { hasActive: count > 0, count }
-}
-
 /**
  * Get the workspace to evict using smart scoring.
- *
- * Phase 4: EXPLICIT ACTIVE OPERATIONS PROTECTION
- * - Workspaces with active operations are NEVER auto-evicted
- * - If all candidates have active operations, eviction is BLOCKED
- * - User must explicitly decide to evict active workspaces
- *
  * Excludes:
  * - Currently visible runtime
  * - Shared/placeholder workspace
- * - Pinned workspaces (Layer 2 protection - absolute)
- * - Workspaces with active operations (Layer 3 protection - requires user decision)
+ * - Pinned workspaces (Layer 2 protection - absolute, not scored)
  *
- * Among eligible (inactive) workspaces, selects the one with lowest eviction score.
- *
- * @returns Workspace ID to evict, or null if no eligible workspace (all active)
+ * Among eligible workspaces, selects the one with lowest eviction score.
  */
 export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
   let lowestScoreId: string | null = null
   let lowestScore = Infinity
   let skippedPinnedCount = 0
-  let skippedActiveCount = 0
-  const blockedByActive: BlockedWorkspaceInfo[] = []
+  let protectedDefaultCount = 0
+  let protectedActiveCount = 0
   const candidates: Array<{ id: string; score: number; factors: string[] }> = []
 
   for (const [id, runtime] of runtimes.entries()) {
@@ -1058,32 +952,25 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
       continue
     }
 
-    // Layer 3: Don't auto-evict workspaces with active operations
-    // This requires user decision - active operations MUST NOT be silently killed
-    const activeCheck = checkWorkspaceHasActiveOperations(id, runtime)
-    if (activeCheck.hasActive) {
-      skippedActiveCount++
-      blockedByActive.push({ workspaceId: id, activeCount: activeCheck.count })
-
-      void debugLog({
-        component: "WorkspaceRuntime",
-        action: "eviction_blocked_active_operations",
-        metadata: {
-          workspaceId: id,
-          activeOperationCount: activeCheck.count,
-          reason: "active_operations_require_user_decision",
-        },
-      })
-
-      continue  // SKIP - don't include in candidates
-    }
-
-    // Calculate eviction score for inactive workspaces only
+    // Calculate eviction score
     const score = calculateEvictionScore(id, runtime)
     const factors: string[] = []
 
     if (defaultWorkspaceIds.has(id)) {
       factors.push("default")
+      protectedDefaultCount++
+    }
+
+    let hasActiveOp = false
+    for (const component of runtime.components.values()) {
+      if (component.isActive) {
+        hasActiveOp = true
+        break
+      }
+    }
+    if (hasActiveOp) {
+      factors.push("active_operation")
+      protectedActiveCount++
     }
 
     candidates.push({ id, score, factors })
@@ -1100,13 +987,10 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
     action: "smart_eviction_selection",
     metadata: {
       selectedForEviction: lowestScoreId,
-      selectedScore: lowestScoreId ? Math.round(lowestScore) : null,
+      selectedScore: Math.round(lowestScore),
       skippedPinnedCount,
-      skippedActiveCount,
-      blockedByActive: blockedByActive.map(b => ({
-        id: b.workspaceId.substring(0, 8),
-        activeCount: b.activeCount,
-      })),
+      protectedDefaultCount,
+      protectedActiveCount,
       pinnedWorkspaceIds: Array.from(pinnedWorkspaceIds),
       defaultWorkspaceIds: Array.from(defaultWorkspaceIds),
       totalRuntimes: runtimes.size,
@@ -1118,32 +1002,6 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
       })),
     },
   })
-
-  // If no eligible workspace found and some were blocked due to active operations,
-  // notify callbacks so UI can prompt user
-  if (lowestScoreId === null && blockedByActive.length > 0) {
-    // Pick the one with fewest active operations for user decision
-    const bestCandidate = blockedByActive.reduce((a, b) =>
-      a.activeCount <= b.activeCount ? a : b
-    )
-
-    void debugLog({
-      component: "WorkspaceRuntime",
-      action: "eviction_all_blocked_by_active",
-      metadata: {
-        blockedCount: blockedByActive.length,
-        suggestedForUserDecision: bestCandidate.workspaceId,
-        suggestedActiveCount: bestCandidate.activeCount,
-      },
-    })
-
-    // Notify callbacks - user must decide
-    notifyEvictionBlocked(
-      bestCandidate.workspaceId,
-      bestCandidate.activeCount,
-      "all_candidates_have_active_operations"
-    )
-  }
 
   // Log if we skipped pinned workspaces during eviction selection (legacy log for compatibility)
   if (skippedPinnedCount > 0) {
@@ -1160,114 +1018,6 @@ export const getLeastRecentlyVisibleRuntimeId = (): string | null => {
   }
 
   return lowestScoreId
-}
-
-/**
- * Force evict a workspace with active operations.
- * This is for USER-INITIATED eviction only - active operations will be stopped.
- *
- * Phase 4: This is the ONLY way to evict a workspace with active operations.
- * Auto-eviction will NEVER kill active operations.
- *
- * @param workspaceId Workspace ID to force evict
- * @param reason Reason for forced eviction (for logging)
- * @returns Promise that resolves when eviction is complete
- */
-export const forceEvictWorkspaceWithActiveOperations = async (
-  workspaceId: string,
-  reason: string = "user_initiated_force_eviction"
-): Promise<{ success: boolean; stoppedOperations: number }> => {
-  const runtime = runtimes.get(workspaceId)
-  if (!runtime) {
-    return { success: false, stoppedOperations: 0 }
-  }
-
-  // Count and log active operations being stopped
-  const activeCheck = checkWorkspaceHasActiveOperations(workspaceId, runtime)
-
-  void debugLog({
-    component: "WorkspaceRuntime",
-    action: "force_eviction_start",
-    metadata: {
-      workspaceId,
-      reason,
-      activeOperationCount: activeCheck.count,
-      hasActiveOperations: activeCheck.hasActive,
-    },
-  })
-
-  if (process.env.NODE_ENV === "development") {
-    console.log(`[WorkspaceRuntime] Force evicting workspace with ${activeCheck.count} active operations`, {
-      workspaceId,
-      reason,
-    })
-  }
-
-  // Stop all operations in the new store if it exists
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { hasWorkspaceComponentStore, getWorkspaceComponentStore } = require('./workspace-component-store')
-    if (hasWorkspaceComponentStore(workspaceId)) {
-      const store = getWorkspaceComponentStore(workspaceId)
-      store.stopAllOperations()
-    }
-  } catch {
-    // Store module not available
-  }
-
-  // Mark all legacy runtime components as inactive
-  for (const component of runtime.components.values()) {
-    component.isActive = false
-  }
-
-  // Now perform async eviction (which will persist state first)
-  await removeWorkspaceRuntimeAsync(workspaceId, reason)
-
-  void debugLog({
-    component: "WorkspaceRuntime",
-    action: "force_eviction_complete",
-    metadata: {
-      workspaceId,
-      reason,
-      stoppedOperations: activeCheck.count,
-    },
-  })
-
-  return { success: true, stoppedOperations: activeCheck.count }
-}
-
-/**
- * Get list of workspaces that are blocking eviction due to active operations.
- * Used by UI to show user which workspaces have running operations.
- */
-export const getWorkspacesBlockingEviction = (): Array<{
-  workspaceId: string
-  entryId: string | null
-  activeOperationCount: number
-}> => {
-  const blocking: Array<{
-    workspaceId: string
-    entryId: string | null
-    activeOperationCount: number
-  }> = []
-
-  for (const [id, runtime] of runtimes.entries()) {
-    // Skip visible, shared, and pinned
-    if (runtime.isVisible) continue
-    if (id === SHARED_WORKSPACE_ID_INTERNAL) continue
-    if (pinnedWorkspaceIds.has(id)) continue
-
-    const activeCheck = checkWorkspaceHasActiveOperations(id, runtime)
-    if (activeCheck.hasActive) {
-      blocking.push({
-        workspaceId: id,
-        entryId: workspaceEntryMap.get(id) ?? null,
-        activeOperationCount: activeCheck.count,
-      })
-    }
-  }
-
-  return blocking
 }
 
 // =============================================================================
@@ -1594,17 +1344,6 @@ export const registerRuntimeComponent = (
         { componentId: input.componentId, componentType: input.componentType }
       )
     }
-    // DIAGNOSTIC: Log registration failure
-    void debugLog({
-      component: "RuntimeLedgerDiagnostic",
-      action: "register_failed_no_runtime",
-      metadata: {
-        workspaceId,
-        componentId: input.componentId,
-        componentType: input.componentType,
-        availableRuntimes: Array.from(runtimes.keys()),
-      },
-    })
     return null
   }
 
@@ -1636,20 +1375,7 @@ export const registerRuntimeComponent = (
     })
   }
 
-  // DIAGNOSTIC: Log successful registration with metadata
-  void debugLog({
-    component: "RuntimeLedgerDiagnostic",
-    action: "register_success",
-    metadata: {
-      workspaceId,
-      componentId: input.componentId,
-      componentType: input.componentType,
-      isNew: !existing,
-      metadataKeys: Object.keys(input.metadata ?? {}),
-      metadataSnapshot: input.componentType === "timer" ? input.metadata : undefined,
-      totalComponents: runtime.components.size,
-    },
-  })
+  // NOTE: Removed hot-path debug log (runtime_component_updated) - was causing 300+ DB writes/min
 
   return component
 }
@@ -1669,19 +1395,7 @@ export const updateRuntimeComponent = (
   updates: Partial<Pick<RuntimeComponent, "position" | "size" | "metadata" | "zIndex" | "isActive">>,
 ): RuntimeComponent | null => {
   const runtime = runtimes.get(workspaceId)
-  if (!runtime) {
-    // DIAGNOSTIC: Log update failure - no runtime
-    void debugLog({
-      component: "RuntimeLedgerDiagnostic",
-      action: "update_failed_no_runtime",
-      metadata: {
-        workspaceId,
-        componentId,
-        availableRuntimes: Array.from(runtimes.keys()),
-      },
-    })
-    return null
-  }
+  if (!runtime) return null
 
   const existing = runtime.components.get(componentId)
   if (!existing) {
@@ -1691,16 +1405,6 @@ export const updateRuntimeComponent = (
         { workspaceId }
       )
     }
-    // DIAGNOSTIC: Log update failure - component not found
-    void debugLog({
-      component: "RuntimeLedgerDiagnostic",
-      action: "update_failed_not_found",
-      metadata: {
-        workspaceId,
-        componentId,
-        availableComponents: Array.from(runtime.components.keys()),
-      },
-    })
     return null
   }
 
@@ -1717,26 +1421,6 @@ export const updateRuntimeComponent = (
   }
 
   runtime.components.set(componentId, updated)
-
-  // DIAGNOSTIC: Log successful update for timer components (throttled - only log when isRunning changes or every 10 seconds)
-  if (existing.componentType === "timer" && updates.metadata) {
-    const prevRunning = (existing.metadata as any)?.isRunning
-    const newRunning = (updates.metadata as any)?.isRunning
-    const shouldLog = prevRunning !== newRunning || Math.random() < 0.05 // Log ~5% of updates for sampling
-    if (shouldLog) {
-      void debugLog({
-        component: "RuntimeLedgerDiagnostic",
-        action: "update_success_timer",
-        metadata: {
-          workspaceId,
-          componentId,
-          prevMetadata: existing.metadata,
-          newMetadata: updated.metadata,
-          isRunningChanged: prevRunning !== newRunning,
-        },
-      })
-    }
-  }
 
   return updated
 }

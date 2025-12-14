@@ -1,9 +1,13 @@
 "use client"
 
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useEffect, useCallback } from 'react'
 import { Timer as TimerIcon, Play, Pause, RotateCcw } from 'lucide-react'
 import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
-import { useThrottledComponentState } from '@/lib/hooks/use-throttled-component-state'
+import {
+  useComponentState,
+  useWorkspaceStoreActions,
+} from '@/lib/hooks/use-workspace-component-store'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface TimerProps {
   componentId: string
@@ -17,108 +21,189 @@ interface TimerState {
   minutes: number
   seconds: number
   isRunning: boolean
-  inputMinutes?: string
+  inputMinutes: string
 }
 
+const DEFAULT_TIMER_STATE: TimerState = {
+  minutes: 5,
+  seconds: 0,
+  isRunning: false,
+  inputMinutes: '5',
+}
+
+/**
+ * Timer Component - Phase 5 Migration
+ *
+ * KEY ARCHITECTURAL CHANGE:
+ * - Timer interval now runs in the WORKSPACE STORE, not in React
+ * - When component unmounts (workspace switch), timer keeps ticking in store
+ * - Component just subscribes to store state and dispatches start/stop actions
+ *
+ * This enables:
+ * - Timer keeps running when user switches workspaces (hot workspace)
+ * - Timer properly pauses on cold restore (page reload)
+ * - Single source of truth for timer state
+ */
 export function Timer({ componentId, workspaceId, position, state, onStateUpdate }: TimerProps) {
-  const [minutes, setMinutes] = useState<number>(state?.minutes ?? 5)
-  const [seconds, setSeconds] = useState<number>(state?.seconds ?? 0)
-  const [isRunning, setIsRunning] = useState<boolean>(state?.isRunning ?? false)
-  const [inputMinutes, setInputMinutes] = useState<string>(String(state?.minutes ?? state?.inputMinutes ?? 5))
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  // ==========================================================================
+  // Phase 5: Read state from workspace component store
+  // ==========================================================================
 
-  // FIX: Use ref to access current minutes value in interval callback
-  // This prevents stale closure bug where old interval fires with outdated minutes
-  const minutesRef = useRef(minutes)
+  // Subscribe to component state from store (re-renders only when THIS component's state changes)
+  const storeState = useComponentState<TimerState>(workspaceId, componentId)
 
-  // Combine state for persistence
-  const componentState = useMemo(() => ({
-    minutes,
-    seconds,
-    isRunning,
-    inputMinutes,
-  }), [minutes, seconds, isRunning, inputMinutes])
+  // Get stable action references (don't cause re-renders)
+  const actions = useWorkspaceStoreActions(workspaceId)
 
-  // Throttled persistence to runtime ledger via metadata
-  // Timer ticks every second, but we only persist every 2 seconds
-  // Immediate persist when isRunning changes (start/stop)
-  useThrottledComponentState({
-    state: componentState,
-    throttleMs: 2000,
-    immediateKeys: ['isRunning'],
-    onPersist: (newState) => {
-      onStateUpdate?.(newState)
-    },
-    componentId,
-  })
+  // Resolve effective state: store state > prop state > defaults
+  const minutes = storeState?.minutes ?? state?.minutes ?? DEFAULT_TIMER_STATE.minutes
+  const seconds = storeState?.seconds ?? state?.seconds ?? DEFAULT_TIMER_STATE.seconds
+  const isRunning = storeState?.isRunning ?? state?.isRunning ?? DEFAULT_TIMER_STATE.isRunning
+  const inputMinutes = storeState?.inputMinutes ?? state?.inputMinutes ?? String(state?.minutes ?? DEFAULT_TIMER_STATE.inputMinutes)
 
-  // Register with workspace runtime for lifecycle management
-  // Now includes metadata for state persistence and isActive for smart eviction
+  // ==========================================================================
+  // Phase 5: Initialize store state if not present
+  // ==========================================================================
+
+  useEffect(() => {
+    if (!workspaceId) return
+
+    // If store doesn't have state for this component yet, initialize it
+    if (storeState === null) {
+      const initialState: TimerState = {
+        minutes: state?.minutes ?? DEFAULT_TIMER_STATE.minutes,
+        seconds: state?.seconds ?? DEFAULT_TIMER_STATE.seconds,
+        isRunning: state?.isRunning ?? DEFAULT_TIMER_STATE.isRunning,
+        inputMinutes: state?.inputMinutes ?? String(state?.minutes ?? DEFAULT_TIMER_STATE.inputMinutes),
+      }
+
+      actions.updateComponentState<TimerState>(componentId, initialState)
+
+      void debugLog({
+        component: 'TimerDiagnostic',
+        action: 'timer_store_initialized',
+        metadata: {
+          componentId,
+          workspaceId,
+          initialState,
+          sourcedFrom: state ? 'props' : 'defaults',
+        },
+      })
+    }
+  }, [workspaceId, componentId, storeState, state, actions])
+
+  // ==========================================================================
+  // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)
+  // ==========================================================================
+
+  useEffect(() => {
+    if (storeState && onStateUpdate) {
+      onStateUpdate(storeState)
+    }
+  }, [storeState, onStateUpdate])
+
+  // ==========================================================================
+  // Legacy: Register with runtime ledger (backward compatibility during migration)
+  // ==========================================================================
+
   useComponentRegistration({
     workspaceId,
     componentId,
     componentType: 'timer',
     position,
-    metadata: componentState,
-    isActive: isRunning, // Active when timer is running - protected from eviction
+    metadata: (storeState ?? { minutes, seconds, isRunning, inputMinutes }) as unknown as Record<string, unknown>,
+    isActive: isRunning,
     strict: false,
   })
 
-  // Keep minutesRef synchronized with minutes state
-  useEffect(() => {
-    minutesRef.current = minutes
-  }, [minutes])
+  // ==========================================================================
+  // DIAGNOSTIC: Log Timer state
+  // ==========================================================================
 
   useEffect(() => {
-    if (isRunning) {
-      intervalRef.current = setInterval(() => {
-        setSeconds(prev => {
-          if (prev > 0) {
-            return prev - 1
-          } else if (minutesRef.current > 0) {
-            // FIX: Use ref instead of closure variable to get current minutes
-            // This prevents stale closure where old value causes skips/negative
-            setMinutes(m => m - 1)
-            return 59
-          } else {
-            setIsRunning(false)
-            // Timer complete
-            return 0
-          }
-        })
-      }, 1000)
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_render_state',
+      metadata: {
+        componentId,
+        workspaceId: workspaceId ?? 'NULL',
+        hasStoreState: storeState !== null,
+        effectiveState: { minutes, seconds, isRunning, inputMinutes },
+        storeState: storeState ?? 'NULL',
+        propState: state ?? 'NULL',
+      },
+    })
+  }, [componentId, workspaceId, storeState, minutes, seconds, isRunning, inputMinutes, state])
 
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-  }, [isRunning]) // Removed minutes from deps - using ref instead
+  // ==========================================================================
+  // Action Handlers - dispatch to store
+  // ==========================================================================
 
-  const handleStart = () => {
+  const handleStart = useCallback(() => {
+    if (!workspaceId) return
+
+    // If timer is at 0:00, reset to input minutes first
     if (minutes === 0 && seconds === 0) {
       const mins = parseInt(inputMinutes) || 5
-      setMinutes(mins)
-      setSeconds(0)
+      actions.updateComponentState<TimerState>(componentId, {
+        minutes: mins,
+        seconds: 0,
+        isRunning: true,
+      })
+    } else {
+      actions.updateComponentState<TimerState>(componentId, { isRunning: true })
     }
-    setIsRunning(true)
-  }
 
-  const handlePause = () => {
-    setIsRunning(false)
-  }
+    // Start the headless timer operation in the store
+    // This interval runs in the STORE, not in React - survives unmount!
+    actions.startTimerOperation(componentId)
 
-  const handleReset = () => {
-    setIsRunning(false)
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_started',
+      metadata: { componentId, workspaceId, minutes, seconds },
+    })
+  }, [workspaceId, componentId, minutes, seconds, inputMinutes, actions])
+
+  const handlePause = useCallback(() => {
+    if (!workspaceId) return
+
+    actions.updateComponentState<TimerState>(componentId, { isRunning: false })
+
+    // Stop the headless timer operation in the store
+    actions.stopTimerOperation(componentId)
+
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_paused',
+      metadata: { componentId, workspaceId, minutes, seconds },
+    })
+  }, [workspaceId, componentId, minutes, seconds, actions])
+
+  const handleReset = useCallback(() => {
+    if (!workspaceId) return
+
+    // Stop any running operation first
+    actions.stopTimerOperation(componentId)
+
     const mins = parseInt(inputMinutes) || 5
-    setMinutes(mins)
-    setSeconds(0)
-  }
+    actions.updateComponentState<TimerState>(componentId, {
+      minutes: mins,
+      seconds: 0,
+      isRunning: false,
+    })
+
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_reset',
+      metadata: { componentId, workspaceId, resetTo: mins },
+    })
+  }, [workspaceId, componentId, inputMinutes, actions])
+
+  const handleInputChange = useCallback((value: string) => {
+    if (!workspaceId) return
+    actions.updateComponentState<TimerState>(componentId, { inputMinutes: value })
+  }, [workspaceId, componentId, actions])
 
   const formatTime = (mins: number, secs: number) => {
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
@@ -135,27 +220,31 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
       <div className="flex items-center mb-3">
         <TimerIcon size={16} className="text-green-400 mr-2" />
         <span className="text-xs text-gray-400">Timer</span>
+        {/* Phase 5: Show indicator when timer is running in background (store-driven) */}
+        {isRunning && (
+          <span className="ml-auto text-xs text-green-400 animate-pulse">● Running</span>
+        )}
       </div>
-      
+
       <div className="text-center mb-4">
         <div className="text-4xl font-mono text-white mb-2">
           {formatTime(minutes, seconds)}
         </div>
-        
+
         {/* Progress bar */}
         <div className="w-full bg-gray-800 rounded-full h-2 mb-4">
-          <div 
+          <div
             className="bg-green-500 h-2 rounded-full transition-all duration-300"
             style={{ width: `${progress}%` }}
           />
         </div>
-        
+
         {/* Timer input */}
         <div className="flex items-center justify-center mb-4">
           <input
             type="number"
             value={inputMinutes}
-            onChange={(e) => setInputMinutes(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             disabled={isRunning}
             className="w-20 px-2 py-1 bg-gray-800 text-white rounded text-center"
             min="1"
@@ -163,7 +252,7 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
           />
           <span className="text-gray-400 ml-2">minutes</span>
         </div>
-        
+
         {/* Control buttons */}
         <div className="flex justify-center gap-2">
           {!isRunning ? (
@@ -183,7 +272,7 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
               Pause
             </button>
           )}
-          
+
           <button
             onClick={handleReset}
             className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg flex items-center gap-2 transition-colors"

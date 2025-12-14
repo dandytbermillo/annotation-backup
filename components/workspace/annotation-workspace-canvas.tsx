@@ -34,6 +34,8 @@ export type AnnotationWorkspaceCanvasProps = {
   onComponentChange?: () => void
   /** Callback when a component is deleted - use to clear caches */
   onComponentDeleted?: (workspaceId: string, componentId: string) => void
+  /** When true, pause hydration to prevent fetch loops (for hidden pinned canvases) */
+  isCanvasHidden?: boolean
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
@@ -60,6 +62,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     children,
     onComponentChange,
     onComponentDeleted,
+    isCanvasHidden = false,
   },
   ref,
 ) {
@@ -87,6 +90,7 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       workspaceSnapshotRevision={workspaceSnapshotRevision}
       onComponentChange={onComponentChange}
       onComponentDeleted={onComponentDeleted}
+      isCanvasHidden={isCanvasHidden}
     >
       {children}
     </ModernAnnotationCanvas>

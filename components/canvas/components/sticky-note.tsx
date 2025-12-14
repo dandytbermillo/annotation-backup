@@ -1,11 +1,29 @@
 "use client"
 
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useCallback } from 'react'
+import { useComponentRegistration } from '@/lib/hooks/use-component-registration'
+import {
+  useComponentState,
+  useWorkspaceStoreActions,
+} from '@/lib/hooks/use-workspace-component-store'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface StickyNoteProps {
   componentId: string
-  state?: any
-  onStateUpdate?: (state: any) => void
+  workspaceId?: string | null
+  position?: { x: number; y: number }
+  state?: Partial<StickyNoteState>
+  onStateUpdate?: (state: StickyNoteState) => void
+}
+
+interface StickyNoteState {
+  content: string
+  colorIndex: number
+}
+
+const DEFAULT_STICKY_STATE: StickyNoteState = {
+  content: '',
+  colorIndex: 0,
 }
 
 const STICKY_COLORS = [
@@ -17,14 +35,80 @@ const STICKY_COLORS = [
   { name: 'orange', bg: '#fed7aa', border: '#fdba74', text: '#7c2d12', shadow: 'rgba(254, 215, 170, 0.4)' },
 ]
 
-export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProps) {
-  const [content, setContent] = useState(state?.content || '')
-  const [colorIndex, setColorIndex] = useState(state?.colorIndex || 0)
+/**
+ * Sticky Note Component - Phase 5 Migration
+ *
+ * Migrated to use workspace component store for state management.
+ * Sticky Note has no background operations, but benefits from:
+ * - Single source of truth
+ * - Proper cold restore
+ * - Consistent persistence
+ */
+export function StickyNote({ componentId, workspaceId, position, state, onStateUpdate }: StickyNoteProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  
-  const currentColor = STICKY_COLORS[colorIndex]
 
+  // ==========================================================================
+  // Phase 5: Read state from workspace component store
+  // ==========================================================================
+
+  const storeState = useComponentState<StickyNoteState>(workspaceId, componentId)
+  const actions = useWorkspaceStoreActions(workspaceId)
+
+  // Resolve effective state: store state > prop state > defaults
+  const content = storeState?.content ?? state?.content ?? DEFAULT_STICKY_STATE.content
+  const colorIndex = storeState?.colorIndex ?? state?.colorIndex ?? DEFAULT_STICKY_STATE.colorIndex
+
+  // ==========================================================================
+  // Phase 5: Initialize store state if not present
+  // ==========================================================================
+
+  useEffect(() => {
+    if (!workspaceId) return
+
+    if (storeState === null) {
+      const initialState: StickyNoteState = {
+        content: state?.content ?? DEFAULT_STICKY_STATE.content,
+        colorIndex: state?.colorIndex ?? DEFAULT_STICKY_STATE.colorIndex,
+      }
+
+      actions.updateComponentState<StickyNoteState>(componentId, initialState)
+
+      void debugLog({
+        component: 'StickyNoteDiagnostic',
+        action: 'sticky_note_store_initialized',
+        metadata: { componentId, workspaceId, initialState },
+      })
+    }
+  }, [workspaceId, componentId, storeState, state, actions])
+
+  // ==========================================================================
+  // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)
+  // ==========================================================================
+
+  useEffect(() => {
+    if (storeState && onStateUpdate) {
+      onStateUpdate(storeState)
+    }
+  }, [storeState, onStateUpdate])
+
+  // ==========================================================================
+  // Legacy: Register with runtime ledger (backward compatibility during migration)
+  // ==========================================================================
+
+  useComponentRegistration({
+    workspaceId,
+    componentId,
+    componentType: 'sticky-note',
+    position,
+    metadata: (storeState ?? { content, colorIndex }) as unknown as Record<string, unknown>,
+    isActive: false, // Sticky Note has no background operations
+    strict: false,
+  })
+
+  // ==========================================================================
   // Auto-resize textarea based on content
+  // ==========================================================================
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
@@ -32,20 +116,31 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
     }
   }, [content])
 
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newContent = e.target.value
-    setContent(newContent)
-    onStateUpdate?.({ content: newContent, colorIndex })
-  }
+  // ==========================================================================
+  // Action Handlers - dispatch to store
+  // ==========================================================================
 
-  const cycleColor = () => {
+  const handleContentChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    if (!workspaceId) return
+
+    actions.updateComponentState<StickyNoteState>(componentId, {
+      content: e.target.value,
+    })
+  }, [workspaceId, componentId, actions])
+
+  const cycleColor = useCallback(() => {
+    if (!workspaceId) return
+
     const newIndex = (colorIndex + 1) % STICKY_COLORS.length
-    setColorIndex(newIndex)
-    onStateUpdate?.({ content, colorIndex: newIndex })
-  }
+    actions.updateComponentState<StickyNoteState>(componentId, {
+      colorIndex: newIndex,
+    })
+  }, [workspaceId, componentId, colorIndex, actions])
+
+  const currentColor = STICKY_COLORS[colorIndex]
 
   return (
-    <div 
+    <div
       className="sticky-note-component relative flex flex-col p-4"
       style={{
         backgroundColor: currentColor.bg,
@@ -64,7 +159,7 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
         }}
         title="Change color"
       />
-      
+
       {/* Main textarea - looks like handwritten note */}
       <textarea
         ref={textareaRef}
@@ -80,9 +175,9 @@ export function StickyNote({ componentId, state, onStateUpdate }: StickyNoteProp
         }}
         placeholder="Write a note..."
       />
-      
+
       {/* Character count - subtle, bottom corner */}
-      <div 
+      <div
         className="absolute bottom-2 left-2 text-xs opacity-30"
         style={{ color: currentColor.text }}
       >
