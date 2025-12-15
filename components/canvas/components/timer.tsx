@@ -49,6 +49,20 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
   // Phase 5: Read state from workspace component store
   // ==========================================================================
 
+  // DEBUG: Log workspaceId on every render
+  useEffect(() => {
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_workspaceId_check',
+      metadata: {
+        componentId,
+        workspaceId: workspaceId ?? 'NULL',
+        workspaceIdType: typeof workspaceId,
+        workspaceIdTruthy: !!workspaceId,
+      },
+    })
+  }, [workspaceId, componentId])
+
   // Subscribe to component state from store (re-renders only when THIS component's state changes)
   const storeState = useComponentState<TimerState>(workspaceId, componentId)
 
@@ -68,16 +82,27 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
   useEffect(() => {
     if (!workspaceId) return
 
-    // If store doesn't have state for this component yet, initialize it
+    // If store doesn't have state for this component yet, add it
+    // NOTE: Use addComponent (not updateComponentState) because updateComponentState
+    // requires the component to already exist in the store. For new components,
+    // we need to create the full component entry first.
     if (storeState === null) {
       const initialState: TimerState = {
         minutes: state?.minutes ?? DEFAULT_TIMER_STATE.minutes,
         seconds: state?.seconds ?? DEFAULT_TIMER_STATE.seconds,
-        isRunning: state?.isRunning ?? DEFAULT_TIMER_STATE.isRunning,
+        isRunning: false, // Always false for new components (cold restore invariant)
         inputMinutes: state?.inputMinutes ?? String(state?.minutes ?? DEFAULT_TIMER_STATE.inputMinutes),
       }
 
-      actions.updateComponentState<TimerState>(componentId, initialState)
+      // addComponent is idempotent - safe if component already exists
+      actions.addComponent(componentId, {
+        type: 'timer',
+        schemaVersion: 1,
+        position: position ?? { x: 0, y: 0 },
+        size: null,
+        zIndex: 100,
+        state: initialState as unknown as Record<string, unknown>,
+      })
 
       void debugLog({
         component: 'TimerDiagnostic',
@@ -90,7 +115,7 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
         },
       })
     }
-  }, [workspaceId, componentId, storeState, state, actions])
+  }, [workspaceId, componentId, storeState, state, actions, position])
 
   // ==========================================================================
   // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)
@@ -140,7 +165,19 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
   // ==========================================================================
 
   const handleStart = useCallback(() => {
-    if (!workspaceId) return
+    void debugLog({
+      component: 'TimerDiagnostic',
+      action: 'timer_handleStart_called',
+      metadata: { componentId, workspaceId: workspaceId ?? 'NULL' },
+    })
+    if (!workspaceId) {
+      void debugLog({
+        component: 'TimerDiagnostic',
+        action: 'timer_start_BLOCKED',
+        metadata: { componentId, workspaceId: workspaceId ?? 'NULL', reason: 'workspaceId_falsy' },
+      })
+      return
+    }
 
     // If timer is at 0:00, reset to input minutes first
     if (minutes === 0 && seconds === 0) {
@@ -148,14 +185,15 @@ export function Timer({ componentId, workspaceId, position, state, onStateUpdate
       actions.updateComponentState<TimerState>(componentId, {
         minutes: mins,
         seconds: 0,
-        isRunning: true,
+        // NOTE: Don't set isRunning here - startTimerOperation sets it internally.
+        // Setting it here causes self-blocking: startTimerOperation checks isRunning
+        // and exits early if already true.
       })
-    } else {
-      actions.updateComponentState<TimerState>(componentId, { isRunning: true })
     }
 
     // Start the headless timer operation in the store
     // This interval runs in the STORE, not in React - survives unmount!
+    // startTimerOperation sets isRunning: true internally after starting the interval
     actions.startTimerOperation(componentId)
 
     void debugLog({

@@ -45,6 +45,20 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
   // Phase 5: Read state from workspace component store
   // ==========================================================================
 
+  // DEBUG: Log workspaceId on every render
+  useEffect(() => {
+    void debugLog({
+      component: 'CalculatorDiagnostic',
+      action: 'calculator_workspaceId_check',
+      metadata: {
+        componentId,
+        workspaceId: workspaceId ?? 'NULL',
+        workspaceIdType: typeof workspaceId,
+        workspaceIdTruthy: !!workspaceId,
+      },
+    })
+  }, [workspaceId, componentId])
+
   const storeState = useComponentState<CalculatorState>(workspaceId, componentId)
   const actions = useWorkspaceStoreActions(workspaceId)
 
@@ -61,6 +75,10 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
   useEffect(() => {
     if (!workspaceId) return
 
+    // If store doesn't have state for this component yet, add it
+    // NOTE: Use addComponent (not updateComponentState) because updateComponentState
+    // requires the component to already exist in the store. For new components,
+    // we need to create the full component entry first.
     if (storeState === null) {
       const initialState: CalculatorState = {
         display: state?.display ?? DEFAULT_CALCULATOR_STATE.display,
@@ -69,7 +87,15 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
         waitingForNewValue: state?.waitingForNewValue ?? DEFAULT_CALCULATOR_STATE.waitingForNewValue,
       }
 
-      actions.updateComponentState<CalculatorState>(componentId, initialState)
+      // addComponent is idempotent - safe if component already exists
+      actions.addComponent(componentId, {
+        type: 'calculator',
+        schemaVersion: 1,
+        position: position ?? { x: 0, y: 0 },
+        size: null,
+        zIndex: 100,
+        state: initialState as unknown as Record<string, unknown>,
+      })
 
       void debugLog({
         component: 'CalculatorDiagnostic',
@@ -77,7 +103,7 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
         metadata: { componentId, workspaceId, initialState },
       })
     }
-  }, [workspaceId, componentId, storeState, state, actions])
+  }, [workspaceId, componentId, storeState, state, actions, position])
 
   // ==========================================================================
   // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)
@@ -119,7 +145,19 @@ export function Calculator({ componentId, workspaceId, position, state, onStateU
   }
 
   const inputNumber = useCallback((num: string) => {
-    if (!workspaceId) return
+    void debugLog({
+      component: 'CalculatorDiagnostic',
+      action: 'calculator_inputNumber_called',
+      metadata: { componentId, workspaceId: workspaceId ?? 'NULL', num },
+    })
+    if (!workspaceId) {
+      void debugLog({
+        component: 'CalculatorDiagnostic',
+        action: 'calculator_input_BLOCKED',
+        metadata: { componentId, workspaceId: workspaceId ?? 'NULL', num, reason: 'workspaceId_falsy' },
+      })
+      return
+    }
 
     if (waitingForNewValue) {
       actions.updateComponentState<CalculatorState>(componentId, {

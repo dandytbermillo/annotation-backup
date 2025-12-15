@@ -250,6 +250,22 @@ export const MultiWorkspaceCanvasContainer = forwardRef<any, MultiWorkspaceCanva
           height: "100%",
         }}
       >
+        {/* DEBUG: Log all runtimes being rendered */}
+        {(() => {
+          void debugLog({
+            component: 'MultiWorkspaceContainerDiagnostic',
+            action: 'rendering_canvases',
+            metadata: {
+              canvasCount: canvasesToRender.length,
+              canvases: canvasesToRender.map(r => ({
+                workspaceId: r.workspaceId,
+                isActive: r.isActive,
+                noteCount: r.openNotes.length,
+              })),
+            },
+          })
+          return null
+        })()}
         {canvasesToRender.map((runtime) => {
           const canvasRef = getOrCreateCanvasRef(runtime.workspaceId)
           return (

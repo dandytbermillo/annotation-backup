@@ -187,6 +187,19 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   isCanvasHidden = false,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
+
+  // DEBUG: Log workspaceId received by ModernAnnotationCanvas
+  useEffect(() => {
+    void debugLog({
+      component: 'ModernAnnotationCanvasDiagnostic',
+      action: 'canvas_workspaceId_check',
+      metadata: {
+        workspaceId: workspaceId ?? 'NULL',
+        noteId,
+        workspaceIdTruthy: !!workspaceId,
+      },
+    })
+  }, [workspaceId, noteId])
   const hasNotes = noteIds.length > 0 && noteId.length > 0
 
   // FIX 11: Don't return null early - this causes hook order violations when

@@ -65,13 +65,25 @@ export function StickyNote({ componentId, workspaceId, position, state, onStateU
   useEffect(() => {
     if (!workspaceId) return
 
+    // If store doesn't have state for this component yet, add it
+    // NOTE: Use addComponent (not updateComponentState) because updateComponentState
+    // requires the component to already exist in the store. For new components,
+    // we need to create the full component entry first.
     if (storeState === null) {
       const initialState: StickyNoteState = {
         content: state?.content ?? DEFAULT_STICKY_STATE.content,
         colorIndex: state?.colorIndex ?? DEFAULT_STICKY_STATE.colorIndex,
       }
 
-      actions.updateComponentState<StickyNoteState>(componentId, initialState)
+      // addComponent is idempotent - safe if component already exists
+      actions.addComponent(componentId, {
+        type: 'sticky-note',
+        schemaVersion: 1,
+        position: position ?? { x: 0, y: 0 },
+        size: null,
+        zIndex: 100,
+        state: initialState as unknown as Record<string, unknown>,
+      })
 
       void debugLog({
         component: 'StickyNoteDiagnostic',
@@ -79,7 +91,7 @@ export function StickyNote({ componentId, workspaceId, position, state, onStateU
         metadata: { componentId, workspaceId, initialState },
       })
     }
-  }, [workspaceId, componentId, storeState, state, actions])
+  }, [workspaceId, componentId, storeState, state, actions, position])
 
   // ==========================================================================
   // Phase 5: Sync to legacy onStateUpdate callback (backward compatibility)

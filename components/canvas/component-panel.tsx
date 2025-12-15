@@ -13,6 +13,7 @@ import { Z_INDEX } from '@/lib/constants/z-index'
 import { useCanvasCamera } from '@/lib/hooks/use-canvas-camera'
 import { useLayerManager, useCanvasNode } from '@/lib/hooks/use-layer-manager'
 import type { ComponentType } from '@/types/canvas-items'
+import { debugLog } from '@/lib/utils/debug-logger'
 
 interface ComponentPanelProps {
   id: string
@@ -32,6 +33,21 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
   const [componentState, setComponentState] = useState(initialState ?? {})
+
+  // DEBUG: Log workspaceId received by ComponentPanel
+  useEffect(() => {
+    void debugLog({
+      component: 'ComponentPanelDiagnostic',
+      action: 'component_panel_workspaceId_check',
+      metadata: {
+        id,
+        type,
+        workspaceId: workspaceId ?? 'NULL',
+        workspaceIdTruthy: !!workspaceId,
+      },
+    })
+  }, [id, type, workspaceId])
+
   useEffect(() => {
     setComponentState(initialState ?? {})
   }, [initialState])
@@ -306,7 +322,8 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
         // Phase 3 Unification: Pass position to component for runtime ledger registration
         return <Timer componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'sticky-note':
-        return <StickyNote componentId={id} state={componentState} onStateUpdate={handleStateUpdate} />
+        // Phase 5: Pass workspaceId and position for store integration
+        return <StickyNote componentId={id} workspaceId={workspaceId} position={renderPosition} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'dragtest':
         return <DragTest componentId={id} state={componentState} onStateUpdate={handleStateUpdate} />
       case 'perftest':

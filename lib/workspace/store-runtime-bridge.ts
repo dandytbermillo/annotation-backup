@@ -36,7 +36,8 @@ import {
   type RuntimeComponent,
   type EvictionBlockedCallback,
 } from './runtime-manager'
-import { processComponentStateForRestore } from './component-type-registry'
+// Note: processComponentStateForRestore is called in store.restore(), not here
+// This prevents double-processing which causes state nesting
 import { debugLog } from '@/lib/utils/debug-logger'
 import type { NoteWorkspaceComponentSnapshot } from '@/lib/types/note-workspace'
 import type { DurableComponentState } from './workspace-store-types'
@@ -216,27 +217,19 @@ export function restoreComponentsToWorkspace(
   }
 
   // Convert NoteWorkspaceComponentSnapshot to the format expected by store.restore()
+  // NOTE: Do NOT call processComponentStateForRestore here - store.restore() handles it.
+  // Calling it here AND in store.restore() causes state nesting: {state: {state: {...}}}
   const storeComponents = components
     .filter((c) => c.id && c.type)
-    .map((c) => {
-      // Apply cold restore invariant if needed (e.g., isRunning: false for timers)
-      const processedState = processComponentStateForRestore(
-        c.type,
-        1, // schemaVersion - assume latest for now
-        (c.metadata ?? {}) as Record<string, unknown>,
-        restoreType
-      )
-
-      return {
-        id: c.id,
-        type: c.type,
-        schemaVersion: 1, // Current schema version
-        position: c.position ?? { x: 0, y: 0 },
-        size: c.size ?? null,
-        zIndex: c.zIndex ?? 100,
-        metadata: processedState,
-      }
-    })
+    .map((c) => ({
+      id: c.id,
+      type: c.type,
+      schemaVersion: 1, // Current schema version
+      position: c.position ?? { x: 0, y: 0 },
+      size: c.size ?? null,
+      zIndex: c.zIndex ?? 100,
+      metadata: (c.metadata ?? {}) as Record<string, unknown>, // Pass raw metadata
+    }))
 
   // Restore to store
   store.restore(storeComponents, { restoreType })

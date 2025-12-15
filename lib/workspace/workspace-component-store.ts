@@ -250,6 +250,16 @@ function createWorkspaceComponentStore(
     },
 
     addComponent(componentId: string, component: DurableComponentState): void {
+      // Idempotent: don't overwrite existing components
+      if (components.has(componentId)) {
+        void debugLog({
+          component: 'WorkspaceComponentStore',
+          action: 'component_add_skipped',
+          metadata: { workspaceId, componentId, reason: 'already_exists' },
+        })
+        return
+      }
+
       components.set(componentId, component)
       dirtyIds.add(componentId)
 
