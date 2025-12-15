@@ -9,6 +9,7 @@ import type { LayerManager } from "@/lib/canvas/layer-manager"
 import { markComponentPersistencePending, markComponentPersistenceReady } from "@/lib/note-workspaces/state"
 import { debugLog } from "@/lib/utils/debug-logger"
 import { removeRuntimeComponent, markComponentDeleted } from "@/lib/workspace/runtime-manager"
+import { getWorkspaceComponentStore, hasWorkspaceComponentStore } from "@/lib/workspace/workspace-component-store"
 
 interface UseComponentCreationHandlerOptions {
   canvasState: CanvasViewportState
@@ -154,6 +155,12 @@ export function useComponentCreationHandler({
         removeRuntimeComponent(workspaceKey, id)
       }
 
+      // Phase 5: Remove from workspace component store (authoritative source for persistence)
+      if (workspaceKey && hasWorkspaceComponentStore(workspaceKey)) {
+        const store = getWorkspaceComponentStore(workspaceKey)
+        store.removeComponent(id)
+      }
+
       // Phase 4: Remove from LayerManager to prevent canvas fallback from re-rendering
       if (layerMgr) {
         try {
@@ -171,6 +178,7 @@ export function useComponentCreationHandler({
           workspaceId: workspaceKey ?? "unknown",
           componentId: id,
           removedFromLayerManager: !!layerMgr,
+          removedFromStore: !!(workspaceKey && hasWorkspaceComponentStore(workspaceKey)),
         },
       })
 

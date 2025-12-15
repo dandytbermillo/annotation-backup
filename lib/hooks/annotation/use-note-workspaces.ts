@@ -1715,7 +1715,7 @@ export function useNoteWorkspaces({
     createWorkspace: handleCreateWorkspaceFromHook,
     deleteWorkspace: handleDeleteWorkspaceFromHook,
     renameWorkspace: handleRenameWorkspaceFromHook,
-    scheduleImmediateSave: flushPendingSave,
+    scheduleImmediateSave: (reason?: string) => scheduleSave({ immediate: true, reason }),
     clearDeletedComponentFromCache,
     clearClosedNoteFromCache,
   }
