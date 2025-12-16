@@ -73,6 +73,8 @@ export interface WorkspaceRefs {
   // Retry/loop breakers
   captureRetryAttemptsRef: MutableRefObject<Map<string, number>>
   deferredCachedCaptureCountRef: MutableRefObject<Map<string, number>>
+  /** Track retry attempts for inconsistent persist state (openNotes=0 but panels>0) */
+  inconsistentPersistRetryRef: MutableRefObject<Map<string, number>>
 
   // Function refs (for stable callbacks in pre-eviction)
   persistWorkspaceByIdRef: MutableRefObject<
@@ -154,6 +156,8 @@ export function useWorkspaceRefs(initialEntryId: string | null): WorkspaceRefs {
   // Retry/loop breakers
   const captureRetryAttemptsRef = useRef<Map<string, number>>(new Map())
   const deferredCachedCaptureCountRef = useRef<Map<string, number>>(new Map())
+  /** Track retry attempts for inconsistent persist state (openNotes=0 but panels>0) */
+  const inconsistentPersistRetryRef = useRef<Map<string, number>>(new Map())
 
   // Function refs (for stable callbacks in pre-eviction)
   const persistWorkspaceByIdRef = useRef<
@@ -207,6 +211,7 @@ export function useWorkspaceRefs(initialEntryId: string | null): WorkspaceRefs {
     listedOnceRef,
     captureRetryAttemptsRef,
     deferredCachedCaptureCountRef,
+    inconsistentPersistRetryRef,
     persistWorkspaceByIdRef,
     captureSnapshotRef,
     emitDebugLogRef,

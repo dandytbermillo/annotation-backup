@@ -254,7 +254,12 @@ export function useWorkspacePersistence(
     lastPreviewedSnapshotRef,
     persistWorkspaceByIdRef,
     previousEntryIdRef,
+    inconsistentPersistRetryRef,
   } = refs
+
+  // Constants for durability guard
+  const MAX_INCONSISTENT_PERSIST_RETRIES = 3
+  const INCONSISTENT_PERSIST_RETRY_DELAY_MS = 350
 
   // ---------------------------------------------------------------------------
   // buildPayload
@@ -521,13 +526,47 @@ export function useWorkspacePersistence(
     // This prevents persisting a stale activeNoteId when a note has been closed
     // but the React state hasn't updated yet (e.g., due to effect timing).
     // This is a safety net - the primary fix clears activeNoteId when closing notes.
+    //
+    // DURABILITY GUARD (2025-12-16): Only clear activeNoteId to null when BOTH:
+    // - openNotes is empty, AND
+    // - observedNoteIds.size === 0 (no panels)
+    // If panels exist, keep activeNoteId if it's in observedNoteIds, or fall back to first observed note.
     const openNoteIds = new Set(workspaceOpenNotes.map(n => n.noteId))
-    const validatedActiveNoteId = activeNoteId && openNoteIds.has(activeNoteId)
-      ? activeNoteId
-      : (workspaceOpenNotes[0]?.noteId ?? null)
+    let validatedActiveNoteId: string | null
 
-    // Log if we corrected a stale activeNoteId
-    if (activeNoteId && validatedActiveNoteId !== activeNoteId) {
+    if (activeNoteId && openNoteIds.has(activeNoteId)) {
+      // activeNoteId is valid - use it
+      validatedActiveNoteId = activeNoteId
+    } else if (workspaceOpenNotes.length > 0) {
+      // activeNoteId is stale but we have open notes - use first open note
+      validatedActiveNoteId = workspaceOpenNotes[0]?.noteId ?? null
+    } else if (observedNoteIds.size > 0) {
+      // DURABILITY GUARD: openNotes is empty but panels exist
+      // Don't clear activeNoteId to null - use existing if valid, or first observed note
+      if (activeNoteId && observedNoteIds.has(activeNoteId)) {
+        validatedActiveNoteId = activeNoteId
+      } else {
+        validatedActiveNoteId = Array.from(observedNoteIds)[0] ?? null
+      }
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "build_payload_active_note_preserved_from_panels",
+        metadata: {
+          workspaceId: workspaceIdForComponents,
+          originalActiveNoteId: activeNoteId,
+          preservedActiveNoteId: validatedActiveNoteId,
+          openNoteCount: 0,
+          observedPanelCount: observedNoteIds.size,
+          reason: "panels_exist_but_open_notes_empty",
+        },
+      })
+    } else {
+      // Truly empty workspace - clear activeNoteId
+      validatedActiveNoteId = null
+    }
+
+    // Log if we corrected a stale activeNoteId (only when openNotes has data)
+    if (activeNoteId && validatedActiveNoteId !== activeNoteId && workspaceOpenNotes.length > 0) {
       emitDebugLog({
         component: "NoteWorkspace",
         action: "build_payload_corrected_stale_active_note",
@@ -786,6 +825,107 @@ export function useWorkspacePersistence(
           })
         }
 
+        // -------------------------------------------------------------------------
+        // DURABILITY GUARD: Detect and handle inconsistent state
+        // If openNotes is empty but panels exist, we have a transient mismatch.
+        // This can cause data loss if persisted.
+        // -------------------------------------------------------------------------
+        const isInconsistentState = payload.openNotes.length === 0 && payload.panels.length > 0
+
+        if (isInconsistentState && liveStateEnabled) {
+          const currentRetries = inconsistentPersistRetryRef.current.get(targetWorkspaceId) ?? 0
+
+          if (currentRetries < MAX_INCONSISTENT_PERSIST_RETRIES) {
+            // DEFER: Skip this persist and schedule a retry
+            inconsistentPersistRetryRef.current.set(targetWorkspaceId, currentRetries + 1)
+
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_blocked_inconsistent_open_notes",
+              metadata: {
+                workspaceId: targetWorkspaceId,
+                reason,
+                openNoteCount: payload.openNotes.length,
+                panelCount: payload.panels.length,
+                retryAttempt: currentRetries + 1,
+                maxRetries: MAX_INCONSISTENT_PERSIST_RETRIES,
+                action: "deferring",
+              },
+            })
+
+            // Schedule a retry after a short delay
+            saveInFlightRef.current.set(targetWorkspaceId, false)
+            setTimeout(() => {
+              emitDebugLog({
+                component: "NoteWorkspace",
+                action: "persist_retry_inconsistent_open_notes",
+                metadata: {
+                  workspaceId: targetWorkspaceId,
+                  reason: `${reason}_retry`,
+                  retryAttempt: currentRetries + 1,
+                },
+              })
+              void persistWorkspaceById(targetWorkspaceId, `${reason}_retry`, options)
+            }, INCONSISTENT_PERSIST_RETRY_DELAY_MS)
+
+            return false
+          } else {
+            // REPAIR: Max retries exceeded - seed openNotes from panels
+            const panelNoteIds = Array.from(new Set(
+              payload.panels
+                .map((p) => p.noteId)
+                .filter((id): id is string => typeof id === "string" && id.length > 0)
+            ))
+
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_repaired_open_notes_from_panels",
+              metadata: {
+                workspaceId: targetWorkspaceId,
+                reason,
+                originalOpenNoteCount: payload.openNotes.length,
+                panelCount: payload.panels.length,
+                repairedNoteIds: panelNoteIds,
+                retryAttempts: currentRetries,
+              },
+            })
+
+            // Seed openNotes from panels
+            if (panelNoteIds.length > 0) {
+              const repairedSlots = panelNoteIds.map((noteId) => ({
+                noteId,
+                mainPosition: resolveMainPanelPosition(noteId),
+              }))
+
+              // Commit to runtime so future persists are consistent
+              commitWorkspaceOpenNotes(targetWorkspaceId, repairedSlots, {
+                updateMembership: true,
+                updateCache: true,
+                callSite: "persist_repair_from_panels",
+              })
+
+              // Update payload with repaired openNotes
+              payload = {
+                ...payload,
+                openNotes: repairedSlots.map((slot) => ({
+                  noteId: slot.noteId,
+                  position: slot.mainPosition ?? null,
+                  size: null,
+                  zIndex: null,
+                  isPinned: false,
+                })),
+                activeNoteId: payload.activeNoteId ?? panelNoteIds[0] ?? null,
+              }
+            }
+
+            // Clear retry counter after repair
+            inconsistentPersistRetryRef.current.delete(targetWorkspaceId)
+          }
+        } else if (!isInconsistentState) {
+          // Clear retry counter on successful consistent state
+          inconsistentPersistRetryRef.current.delete(targetWorkspaceId)
+        }
+
         // Compare hash to check for changes
         const payloadHash = serializeWorkspacePayload(payload)
         const previousHash = lastSavedPayloadHashRef.current.get(targetWorkspaceId)
@@ -878,10 +1018,14 @@ export function useWorkspacePersistence(
       buildPayload,
       buildPayloadFromSnapshot,
       captureCurrentWorkspaceSnapshot,
+      commitWorkspaceOpenNotes,
       currentWorkspaceId,
       emitDebugLog,
       getWorkspaceOpenNotes,
       getWorkspaceSnapshot,
+      inconsistentPersistRetryRef,
+      liveStateEnabled,
+      resolveMainPanelPosition,
       setWorkspaceNoteMembership,
       setWorkspaces,
       setStatusHelperText,
@@ -960,7 +1104,108 @@ export function useWorkspacePersistence(
         saveInFlightRef.current.set(workspaceId, false)
         return
       }
-      const payload = buildPayload()
+      let payload = buildPayload()
+
+      // -------------------------------------------------------------------------
+      // DURABILITY GUARD: Detect and handle inconsistent state
+      // If openNotes is empty but panels exist, we have a transient mismatch.
+      // -------------------------------------------------------------------------
+      const isInconsistentState = payload.openNotes.length === 0 && payload.panels.length > 0
+
+      if (isInconsistentState && liveStateEnabled) {
+        const currentRetries = inconsistentPersistRetryRef.current.get(workspaceId) ?? 0
+
+        if (currentRetries < MAX_INCONSISTENT_PERSIST_RETRIES) {
+          // DEFER: Skip this persist and schedule a retry
+          inconsistentPersistRetryRef.current.set(workspaceId, currentRetries + 1)
+
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "persist_blocked_inconsistent_open_notes",
+            metadata: {
+              workspaceId,
+              reason,
+              openNoteCount: payload.openNotes.length,
+              panelCount: payload.panels.length,
+              retryAttempt: currentRetries + 1,
+              maxRetries: MAX_INCONSISTENT_PERSIST_RETRIES,
+              action: "deferring",
+            },
+          })
+
+          // Schedule a retry after a short delay
+          saveInFlightRef.current.set(workspaceId, false)
+          setTimeout(() => {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "persist_retry_inconsistent_open_notes",
+              metadata: {
+                workspaceId,
+                reason: `${reason}_retry`,
+                retryAttempt: currentRetries + 1,
+              },
+            })
+            void persistWorkspaceNow()
+          }, INCONSISTENT_PERSIST_RETRY_DELAY_MS)
+
+          return
+        } else {
+          // REPAIR: Max retries exceeded - seed openNotes from panels
+          const panelNoteIds = Array.from(new Set(
+            payload.panels
+              .map((p) => p.noteId)
+              .filter((id): id is string => typeof id === "string" && id.length > 0)
+          ))
+
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "persist_repaired_open_notes_from_panels",
+            metadata: {
+              workspaceId,
+              reason,
+              originalOpenNoteCount: payload.openNotes.length,
+              panelCount: payload.panels.length,
+              repairedNoteIds: panelNoteIds,
+              retryAttempts: currentRetries,
+            },
+          })
+
+          // Seed openNotes from panels
+          if (panelNoteIds.length > 0) {
+            const repairedSlots = panelNoteIds.map((noteId) => ({
+              noteId,
+              mainPosition: resolveMainPanelPosition(noteId),
+            }))
+
+            // Commit to runtime so future persists are consistent
+            commitWorkspaceOpenNotes(workspaceId, repairedSlots, {
+              updateMembership: true,
+              updateCache: true,
+              callSite: "persist_now_repair_from_panels",
+            })
+
+            // Update payload with repaired openNotes
+            payload = {
+              ...payload,
+              openNotes: repairedSlots.map((slot) => ({
+                noteId: slot.noteId,
+                position: slot.mainPosition ?? null,
+                size: null,
+                zIndex: null,
+                isPinned: false,
+              })),
+              activeNoteId: payload.activeNoteId ?? panelNoteIds[0] ?? null,
+            }
+          }
+
+          // Clear retry counter after repair
+          inconsistentPersistRetryRef.current.delete(workspaceId)
+        }
+      } else if (!isInconsistentState) {
+        // Clear retry counter on successful consistent state
+        inconsistentPersistRetryRef.current.delete(workspaceId)
+      }
+
       const payloadHash = serializeWorkspacePayload(payload)
       const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
       if (previousHash === payloadHash) {
@@ -1031,14 +1276,18 @@ export function useWorkspacePersistence(
   }, [
     adapterRef,
     buildPayload,
+    commitWorkspaceOpenNotes,
     currentWorkspaceSummary,
     emitDebugLog,
     featureEnabled,
     getWorkspaceOpenNotes,
+    inconsistentPersistRetryRef,
     isHydratingRef,
     lastSavedPayloadHashRef,
     lastSaveReasonRef,
+    liveStateEnabled,
     replayingWorkspaceRef,
+    resolveMainPanelPosition,
     saveInFlightRef,
     setStatusHelperText,
     setWorkspaces,
