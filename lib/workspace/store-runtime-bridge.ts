@@ -381,14 +381,8 @@ export function workspaceHasDirtyState(workspaceId: string): boolean {
   const hasStore = hasWorkspaceComponentStore(workspaceId)
   if (hasStore) {
     const store = getWorkspaceComponentStore(workspaceId)
-    const isDirty = store.hasDirtyState()
-    const dirtyIds = store.getDirtyIds()
-    // Console log for offline debugging
-    console.log('[DIRTY STATE CHECK]', { workspaceId, hasStore, isDirty, dirtyIds })
-    return isDirty
+    return store.hasDirtyState()
   }
-  // Console log for offline debugging
-  console.log('[DIRTY STATE CHECK] No store:', { workspaceId, hasStore })
   return false
 }
 
