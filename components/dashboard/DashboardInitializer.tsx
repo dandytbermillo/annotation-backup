@@ -33,7 +33,6 @@ import { updatePinnedWorkspaceIds } from "@/lib/workspace/runtime-manager"
 import {
   initializeStoreRuntimeBridge,
   registerEvictionBlockedListener,
-  unregisterEvictionBlockedListener,
 } from "@/lib/workspace/store-runtime-bridge"
 import { handleEvictionBlockedToast } from "@/lib/workspace/eviction-toast"
 import { DashboardView } from "./DashboardView"
@@ -152,18 +151,26 @@ export function DashboardInitializer({
     }
   }, [])
 
+  // Gap 2 fix: Register eviction blocked listener on mount
+  // No cleanup needed - handleEvictionBlockedToast is a stable module-level function
+  // and Set.add() is idempotent (won't duplicate if already registered)
+  useEffect(() => {
+    registerEvictionBlockedListener(handleEvictionBlockedToast)
+  }, [])
+
   // Initialize PinnedEntryManager and StoreRuntimeBridge on mount
   useEffect(() => {
-    if (pinnedManagerInitRef.current) return
+    console.log('[DashboardInitializer] useEffect running, pinnedManagerInitRef:', pinnedManagerInitRef.current)
+
+    if (pinnedManagerInitRef.current) {
+      console.log('[DashboardInitializer] Skipping init - already initialized')
+      return
+    }
     pinnedManagerInitRef.current = true
 
     // Phase 3: Initialize workspace component store bridge
     // This registers pre-eviction callbacks for persist-before-evict
     initializeStoreRuntimeBridge()
-
-    // Gap 2 fix: Register UI callback for eviction blocked notifications
-    // This shows toasts when eviction fails due to persist failures or active ops
-    registerEvictionBlockedListener(handleEvictionBlockedToast)
 
     initializePinnedEntryManager({
       enabled: pinnedEntriesEnabled,
@@ -184,11 +191,6 @@ export function DashboardInitializer({
         evictionBlockedListenerRegistered: true,
       },
     })
-
-    // Cleanup on unmount
-    return () => {
-      unregisterEvictionBlockedListener(handleEvictionBlockedToast)
-    }
   }, [pinnedEntriesEnabled])
 
   // Debug: log on mount

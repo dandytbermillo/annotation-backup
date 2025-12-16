@@ -183,7 +183,17 @@ const notifyEvictionBlocked = (
   reason: string,
   blockType: EvictionBlockType = "active_operations"
 ): void => {
-  if (evictionBlockedCallbacks.size === 0) return
+  // Console log for debugging callback registration
+  console.log('[EVICTION NOTIFY] notifyEvictionBlocked called:', {
+    workspaceId,
+    blockType,
+    callbackCount: evictionBlockedCallbacks.size
+  })
+
+  if (evictionBlockedCallbacks.size === 0) {
+    console.log('[EVICTION NOTIFY] No callbacks registered - toast will NOT show')
+    return
+  }
 
   const entryId = workspaceEntryMap.get(workspaceId) ?? null
 

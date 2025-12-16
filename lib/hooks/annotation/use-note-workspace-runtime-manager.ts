@@ -14,6 +14,8 @@ import {
 // Gap 4 fix: Shared workspace ID (matches SHARED_WORKSPACE_ID_INTERNAL in runtime-manager)
 const SHARED_WORKSPACE_ID = "__workspace__"
 import { workspaceHasDirtyState } from "@/lib/workspace/store-runtime-bridge"
+import { listWorkspaceComponentStoreIds } from "@/lib/workspace/workspace-component-store"
+import { showDegradedModeToast } from "@/lib/workspace/eviction-toast"
 
 // =============================================================================
 // Types
@@ -143,6 +145,19 @@ export function useNoteWorkspaceRuntimeManager({
       const workspaceLevelDirty = workspaceDirtyRef?.current?.has(targetWorkspaceId) ?? false
       const isDirty = componentStoreDirty || workspaceLevelDirty
 
+      // Console log for offline debugging
+      const allStoreIds = listWorkspaceComponentStoreIds()
+      const allRuntimeIds = listWorkspaceRuntimeIds()
+      console.log('[EVICTION] Start:', {
+        workspaceId: targetWorkspaceId,
+        isDirty,
+        componentStoreDirty,
+        workspaceLevelDirty,
+        reason,
+        workspacesWithStores: allStoreIds,
+        activeRuntimes: allRuntimeIds,
+      })
+
       logFn?.({
         component: "NoteWorkspaceRuntime",
         action: "workspace_runtime_eviction_start",
@@ -167,6 +182,9 @@ export function useNoteWorkspaceRuntimeManager({
       const latestPersistFn = persistSnapshotRef.current
       const persistResult = await latestPersistFn(targetWorkspaceId, reason)
 
+      // Console log for offline debugging
+      console.log('[EVICTION] Persist result:', { workspaceId: targetWorkspaceId, persistResult, isDirty })
+
       // Log persist result for debugging
       emitDebugLogRef.current?.({
         component: "NoteWorkspaceRuntime",
@@ -182,6 +200,9 @@ export function useNoteWorkspaceRuntimeManager({
       // HARD-SAFE EVICTION: Only block if dirty AND persist failed
       // If not dirty, eviction is safe even if persist returned false (nothing to lose)
       if (!persistResult && isDirty) {
+        // Console log for offline debugging
+        console.log('[EVICTION] BLOCKED - persist failed on dirty workspace:', { workspaceId: targetWorkspaceId, persistResult, isDirty })
+
         // Phase 3: Increment consecutive failure counter for bounded backpressure
         setConsecutiveFailures((prev) => {
           const newCount = prev + 1
@@ -217,6 +238,9 @@ export function useNoteWorkspaceRuntimeManager({
       // Phase 3: Reset consecutive failures on successful eviction
       setConsecutiveFailures(0)
 
+      // Console log for offline debugging
+      console.log('[EVICTION] Proceeding - safe to evict:', { workspaceId: targetWorkspaceId, persistResult, isDirty })
+
       // Safe to evict: either persist succeeded or workspace wasn't dirty
       removeWorkspaceRuntime(targetWorkspaceId)
       runtimeAccessRef.current.delete(targetWorkspaceId)
@@ -249,6 +273,12 @@ export function useNoteWorkspaceRuntimeManager({
 
       // Phase 3: Block workspace opening when in degraded mode (too many consecutive persist failures)
       if (isDegradedMode) {
+        console.log('[DEGRADED MODE] Blocking workspace open:', {
+          requestedWorkspaceId: workspaceId,
+          reason,
+          consecutiveFailures,
+          threshold: CONSECUTIVE_FAILURE_THRESHOLD,
+        })
         emitDebugLogRef.current?.({
           component: "NoteWorkspaceRuntime",
           action: "workspace_open_blocked_degraded_mode",
@@ -259,6 +289,8 @@ export function useNoteWorkspaceRuntimeManager({
             threshold: CONSECUTIVE_FAILURE_THRESHOLD,
           },
         })
+        // Show user-facing toast notification
+        showDegradedModeToast()
         // Return blocked with empty workspaceId to indicate degraded mode block (not a specific workspace)
         return { ok: false, blocked: true, blockedWorkspaceId: "" }
       }

@@ -77,7 +77,7 @@ This document summarizes what has been implemented and validated so far for the 
 - Fixes a confirmed failure mode where a transient mismatch (runtime openNotes temporarily 0 while panels still exist) caused the DB to be overwritten with `openNotes: []`, making a workspace appear empty after reload.
 
 **Status**
-- Spec documented and implemented (see fix writeup).
+- Spec documented and implemented (see fix writeup). Implemented in code on **2025-12-16** for traceability.
 
 ## Evidence / Validation Performed
 
@@ -114,4 +114,3 @@ Mapping to `docs/proposal/workspace-state-machine/IMPLEMENTATION_PLAN.md`:
 2. Create many workspaces to force 4-cap eviction → return to an evicted workspace → verify restored state.
 3. Delete a component → reload → verify it does not reappear.
 4. Reproduce the previous “persisted empty openNotes” condition → confirm DB no longer gets overwritten with `openNotes: []` while panels still exist.
-

@@ -70,9 +70,14 @@ export function showDegradedModeToast(): void {
 export const handleEvictionBlockedToast: EvictionBlockedCallback = (payload) => {
   const { workspaceId, activeOperationCount, reason, blockType } = payload
 
+  // Console log for offline debugging
+  console.log('[EVICTION TOAST] Callback triggered:', { workspaceId, blockType, reason, activeOperationCount })
+
   if (blockType === "persist_failed") {
+    console.log('[EVICTION TOAST] Showing persist_failed toast')
     showEvictionBlockedPersistFailedToast(workspaceId, reason)
   } else if (blockType === "active_operations") {
+    console.log('[EVICTION TOAST] Showing active_operations toast')
     showEvictionBlockedActiveOpsToast(workspaceId, activeOperationCount)
   }
 }

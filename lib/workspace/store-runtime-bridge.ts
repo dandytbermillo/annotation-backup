@@ -378,10 +378,17 @@ export function workspaceHasActiveOperations(workspaceId: string): boolean {
  * @returns true if workspace has unsaved changes
  */
 export function workspaceHasDirtyState(workspaceId: string): boolean {
-  if (hasWorkspaceComponentStore(workspaceId)) {
+  const hasStore = hasWorkspaceComponentStore(workspaceId)
+  if (hasStore) {
     const store = getWorkspaceComponentStore(workspaceId)
-    return store.hasDirtyState()
+    const isDirty = store.hasDirtyState()
+    const dirtyIds = store.getDirtyIds()
+    // Console log for offline debugging
+    console.log('[DIRTY STATE CHECK]', { workspaceId, hasStore, isDirty, dirtyIds })
+    return isDirty
   }
+  // Console log for offline debugging
+  console.log('[DIRTY STATE CHECK] No store:', { workspaceId, hasStore })
   return false
 }
 
