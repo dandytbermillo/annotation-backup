@@ -30,7 +30,12 @@ import {
   usePinnedEntriesState,
 } from "@/lib/navigation"
 import { updatePinnedWorkspaceIds } from "@/lib/workspace/runtime-manager"
-import { initializeStoreRuntimeBridge } from "@/lib/workspace/store-runtime-bridge"
+import {
+  initializeStoreRuntimeBridge,
+  registerEvictionBlockedListener,
+  unregisterEvictionBlockedListener,
+} from "@/lib/workspace/store-runtime-bridge"
+import { handleEvictionBlockedToast } from "@/lib/workspace/eviction-toast"
 import { DashboardView } from "./DashboardView"
 
 // Context for navigation handler
@@ -156,6 +161,10 @@ export function DashboardInitializer({
     // This registers pre-eviction callbacks for persist-before-evict
     initializeStoreRuntimeBridge()
 
+    // Gap 2 fix: Register UI callback for eviction blocked notifications
+    // This shows toasts when eviction fails due to persist failures or active ops
+    registerEvictionBlockedListener(handleEvictionBlockedToast)
+
     initializePinnedEntryManager({
       enabled: pinnedEntriesEnabled,
       limits: {
@@ -172,8 +181,14 @@ export function DashboardInitializer({
         maxPinnedEntries: getPinnedEntriesMax(),
         maxWorkspacesPerEntry: getPinnedWorkspacesPerEntryMax(),
         storeRuntimeBridgeInitialized: true,
+        evictionBlockedListenerRegistered: true,
       },
     })
+
+    // Cleanup on unmount
+    return () => {
+      unregisterEvictionBlockedListener(handleEvictionBlockedToast)
+    }
   }, [pinnedEntriesEnabled])
 
   // Debug: log on mount

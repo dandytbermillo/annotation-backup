@@ -112,4 +112,8 @@ export type UseNoteWorkspaceResult = {
   clearDeletedComponentFromCache?: (workspaceId: string, componentId: string) => void
   /** Clear a closed note from cache to prevent stale note restoration */
   clearClosedNoteFromCache?: (workspaceId: string, noteId: string) => void
+  /** Phase 3: Whether the system is in degraded mode due to consecutive persist failures */
+  isDegradedMode: boolean
+  /** Phase 3: Reset degraded mode after user action (e.g., successful retry or force close) */
+  resetDegradedMode: () => void
 }

@@ -4,6 +4,7 @@ import type { LayerContextValue } from "@/components/canvas/layer-provider"
 import {
   useNoteWorkspaceRuntimeManager,
   type NoteWorkspaceDebugLogger,
+  type EnsureRuntimeResult,
 } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { getLayerManager } from "@/lib/canvas/layer-manager"
@@ -244,8 +245,9 @@ export function useNoteWorkspaces({
   // from useWorkspaceSnapshot. By using a ref-forwarding wrapper, useWorkspaceSnapshot can be
   // called before the runtime manager, and the ref is populated afterward.
   const ensureRuntimePreparedViaRef = useCallback(
-    async (workspaceId: string, reason: string): Promise<void> => {
-      await ensureRuntimePreparedRef.current?.(workspaceId, reason)
+    async (workspaceId: string, reason: string): Promise<EnsureRuntimeResult> => {
+      const result = await ensureRuntimePreparedRef.current?.(workspaceId, reason)
+      return result ?? { ok: true }
     },
     [ensureRuntimePreparedRef],
   )
@@ -653,6 +655,8 @@ export function useNoteWorkspaces({
     ensureRuntimePrepared,
     updateRuntimeAccess,
     runtimeAccessRef,
+    isDegradedMode,
+    resetDegradedMode,
   } = useNoteWorkspaceRuntimeManager({
     liveStateEnabled,
     currentWorkspaceId,
@@ -661,6 +665,7 @@ export function useNoteWorkspaces({
     captureSnapshot: captureCurrentWorkspaceSnapshot,
     persistSnapshot: persistWorkspaceSnapshot,
     emitDebugLog,
+    workspaceDirtyRef, // Gap 1 fix: Pass workspace-level dirty tracking
   })
 
   // Populate ensureRuntimePreparedRef after the runtime manager is defined
@@ -1718,5 +1723,8 @@ export function useNoteWorkspaces({
     scheduleImmediateSave: (reason?: string) => scheduleSave({ immediate: true, reason }),
     clearDeletedComponentFromCache,
     clearClosedNoteFromCache,
+    // Gap 3 fix: Expose degraded mode state for UI to display/handle
+    isDegradedMode,
+    resetDegradedMode,
   }
 }

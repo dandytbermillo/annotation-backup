@@ -144,11 +144,15 @@ const preEvictionCallbacks = new Set<PreEvictionCallback>()
 // Phase 4: Eviction blocked callback registry (for active operations protection)
 // Called when auto-eviction is blocked because workspace has active operations
 // This allows UI to notify user and ask for decision
+export type EvictionBlockType = "active_operations" | "persist_failed"
+
 export type EvictionBlockedCallback = (blockedWorkspace: {
   workspaceId: string
   entryId: string | null
   activeOperationCount: number
   reason: string
+  /** Type of block - 'active_operations' for ops in progress, 'persist_failed' for persistence failure */
+  blockType: EvictionBlockType
 }) => void
 const evictionBlockedCallbacks = new Set<EvictionBlockedCallback>()
 
@@ -173,7 +177,12 @@ export const unregisterEvictionBlockedCallback = (cb: EvictionBlockedCallback): 
 }
 
 // Internal helper to notify eviction blocked callbacks
-const notifyEvictionBlocked = (workspaceId: string, activeCount: number, reason: string): void => {
+const notifyEvictionBlocked = (
+  workspaceId: string,
+  activeCount: number,
+  reason: string,
+  blockType: EvictionBlockType = "active_operations"
+): void => {
   if (evictionBlockedCallbacks.size === 0) return
 
   const entryId = workspaceEntryMap.get(workspaceId) ?? null
@@ -186,6 +195,7 @@ const notifyEvictionBlocked = (workspaceId: string, activeCount: number, reason:
       entryId,
       activeOperationCount: activeCount,
       reason,
+      blockType,
       callbackCount: evictionBlockedCallbacks.size,
     },
   })
@@ -197,11 +207,21 @@ const notifyEvictionBlocked = (workspaceId: string, activeCount: number, reason:
         entryId,
         activeOperationCount: activeCount,
         reason,
+        blockType,
       })
     } catch (error) {
       console.warn("[WorkspaceRuntime] Eviction blocked callback error:", error)
     }
   }
+}
+
+/**
+ * Exported notifier for persist_failed blocks (used by 4-cap eviction hook).
+ * This allows the 4-cap eviction path to notify UI when eviction is blocked
+ * due to persistence failure on a dirty workspace.
+ */
+export const notifyEvictionBlockedPersistFailed = (workspaceId: string, reason: string): void => {
+  notifyEvictionBlocked(workspaceId, 0, reason, "persist_failed")
 }
 
 export const registerPreEvictionCallback = (cb: PreEvictionCallback): void => {

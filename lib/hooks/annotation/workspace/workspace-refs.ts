@@ -14,7 +14,7 @@ import type {
 } from "@/lib/types/note-workspace"
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import type { NoteWorkspaceSnapshot } from "@/lib/note-workspaces/state"
-import type { NoteWorkspaceDebugLogger } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
+import type { NoteWorkspaceDebugLogger, EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 import type { DataStore } from "@/lib/data-store"
 import { DEFAULT_CAMERA, type WorkspaceSnapshotCache } from "./workspace-utils"
 
@@ -85,7 +85,7 @@ export interface WorkspaceRefs {
 
   // Ref for ensureRuntimePrepared (resolves circular dependency with useWorkspaceSnapshot)
   ensureRuntimePreparedRef: MutableRefObject<
-    ((workspaceId: string, reason: string) => Promise<void>) | null
+    ((workspaceId: string, reason: string) => Promise<EnsureRuntimeResult>) | null
   >
 
   // Ref for pruneWorkspaceEntries (resolves ordering dependency with useWorkspaceSnapshot)
@@ -166,7 +166,7 @@ export function useWorkspaceRefs(initialEntryId: string | null): WorkspaceRefs {
 
   // Ref for ensureRuntimePrepared (resolves circular dependency with useWorkspaceSnapshot)
   const ensureRuntimePreparedRef = useRef<
-    ((workspaceId: string, reason: string) => Promise<void>) | null
+    ((workspaceId: string, reason: string) => Promise<EnsureRuntimeResult>) | null
   >(null)
 
   // Ref for pruneWorkspaceEntries (resolves ordering dependency with useWorkspaceSnapshot)

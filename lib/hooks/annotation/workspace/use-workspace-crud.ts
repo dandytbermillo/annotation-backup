@@ -15,6 +15,7 @@ import type { NoteWorkspacePayload } from "@/lib/types/note-workspace"
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 
 import { DEFAULT_CAMERA, formatSyncedLabel } from "./workspace-utils"
+import type { EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 
 // ============================================================================
 // Types
@@ -63,7 +64,7 @@ export type UseWorkspaceCrudOptions = {
     options?: CommitOpenNotesOptions
   ) => void
   /** Ensure runtime is prepared for workspace */
-  ensureRuntimePrepared: (workspaceId: string, context: string) => Promise<void>
+  ensureRuntimePrepared: (workspaceId: string, context: string) => Promise<EnsureRuntimeResult>
   /** Flush any pending save operations */
   flushPendingSave: (reason: string) => void
   /** Build payload for current workspace */
@@ -128,7 +129,27 @@ export function useWorkspaceCrud({
         itemId: currentEntryId || undefined,
       })
 
-      await ensureRuntimePrepared(workspace.id, "create_workspace")
+      // Gap 5 fix: Handle blocked result from ensureRuntimePrepared
+      const runtimeResult = await ensureRuntimePrepared(workspace.id, "create_workspace")
+      if (!runtimeResult.ok) {
+        // Runtime creation was blocked - can't switch to new workspace
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "create_blocked",
+          metadata: {
+            workspaceId: workspace.id,
+            blocked: runtimeResult.blocked,
+            blockedWorkspaceId: runtimeResult.blockedWorkspaceId,
+          },
+        })
+        // Delete the newly created workspace since we can't use it
+        try {
+          await adapterRef.current?.deleteWorkspace(workspace.id)
+        } catch (deleteError) {
+          console.error("[NoteWorkspace] failed to cleanup blocked workspace", deleteError)
+        }
+        return
+      }
 
       setWorkspaces((prev) => [...prev, workspace])
       setCurrentWorkspaceId(workspace.id)

@@ -30,6 +30,7 @@ import {
 import { getActiveEntryContext } from "@/lib/entry"
 
 import { DEFAULT_CAMERA, type WorkspaceSnapshotCache } from "./workspace-utils"
+import type { EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 
 // ============================================================================
 // Types
@@ -95,7 +96,7 @@ export type UseWorkspaceSelectionOptions = {
   /** Persist workspace now */
   persistWorkspaceNow: () => Promise<void>
   /** Ensure runtime is prepared for workspace */
-  ensureRuntimePrepared: (workspaceId: string, context: string) => Promise<void>
+  ensureRuntimePrepared: (workspaceId: string, context: string) => Promise<EnsureRuntimeResult>
   /** Last save reason ref */
   lastSaveReasonRef: MutableRefObject<string | null>
   /** Debug logger */
@@ -207,7 +208,23 @@ export function useWorkspaceSelection({
       // COLD SWITCH - Original behavior with snapshot capture/replay
       const run = async () => {
         try {
-          await ensureRuntimePrepared(workspaceId, "select_workspace")
+          // Gap 5 fix: Handle blocked result from ensureRuntimePrepared
+          const runtimeResult = await ensureRuntimePrepared(workspaceId, "select_workspace")
+          if (!runtimeResult.ok) {
+            // Runtime creation was blocked (eviction failed due to dirty state or degraded mode)
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "select_workspace_blocked",
+              metadata: {
+                workspaceId,
+                blocked: runtimeResult.blocked,
+                blockedWorkspaceId: runtimeResult.blockedWorkspaceId,
+              },
+            })
+            // Abort workspace switch - user will see toast notification
+            setPendingWorkspaceId(null)
+            return
+          }
           await captureCurrentWorkspaceSnapshot(undefined, {
             readinessReason: "workspace_switch_capture",
             readinessMaxWaitMs: 1500,

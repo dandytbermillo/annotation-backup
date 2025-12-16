@@ -49,6 +49,7 @@ import {
   mergePanelSnapshots,
   mergeComponentSnapshots,
 } from "./workspace-utils"
+import type { EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
 
 // ============================================================================
 // Types
@@ -161,7 +162,7 @@ export interface UseWorkspaceSnapshotOptions {
     options?: { persist?: boolean; removeWorkspace?: boolean },
   ) => Promise<void>
   /** Ensure runtime is prepared */
-  ensureRuntimePrepared: (workspaceId: string, reason: string) => Promise<void>
+  ensureRuntimePrepared: (workspaceId: string, reason: string) => Promise<EnsureRuntimeResult>
 }
 
 export interface UseWorkspaceSnapshotResult {
@@ -1112,7 +1113,21 @@ export function useWorkspaceSnapshot({
       const force = options?.force ?? false
       const hadRuntimeBeforePrepare = liveStateEnabled && hasWorkspaceRuntime(workspaceId)
       if (liveStateEnabled) {
-        await ensureRuntimePrepared(workspaceId, "preview_snapshot")
+        // Gap 5 fix: Handle blocked result from ensureRuntimePrepared
+        const runtimeResult = await ensureRuntimePrepared(workspaceId, "preview_snapshot")
+        if (!runtimeResult.ok) {
+          // Runtime creation was blocked - can't preview workspace
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "preview_snapshot_blocked",
+            metadata: {
+              workspaceId,
+              blocked: runtimeResult.blocked,
+              blockedWorkspaceId: runtimeResult.blockedWorkspaceId,
+            },
+          })
+          return
+        }
       }
       const lastPreview = lastPreviewedSnapshotRef.current.get(workspaceId)
       if (!force && lastPreview === snapshot) {
