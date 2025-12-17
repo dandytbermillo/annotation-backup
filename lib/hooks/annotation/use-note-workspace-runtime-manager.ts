@@ -14,7 +14,6 @@ import {
 // Gap 4 fix: Shared workspace ID (matches SHARED_WORKSPACE_ID_INTERNAL in runtime-manager)
 const SHARED_WORKSPACE_ID = "__workspace__"
 import { workspaceHasDirtyState } from "@/lib/workspace/store-runtime-bridge"
-import { showDegradedModeToast } from "@/lib/workspace/eviction-toast"
 
 // =============================================================================
 // Types
@@ -260,8 +259,7 @@ export function useNoteWorkspaceRuntimeManager({
             threshold: CONSECUTIVE_FAILURE_THRESHOLD,
           },
         })
-        // Show user-facing toast notification
-        showDegradedModeToast()
+        // UI shows degraded banner via isDegradedMode state (see DegradedModeBanner component)
         // Return blocked with empty workspaceId to indicate degraded mode block (not a specific workspace)
         return { ok: false, blocked: true, blockedWorkspaceId: "" }
       }

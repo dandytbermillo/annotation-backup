@@ -350,20 +350,21 @@ consecutive_persist_failure: { previousFailures: 2, newFailures: 3, threshold: 3
 }
 ```
 
-**Toast:** "Workspace system degraded" (different from previous toasts!)
-- Title: "Workspace system degraded"
-- Description: "Multiple save failures detected. New workspaces cannot be opened until the issue is resolved."
+**Banner:** A persistent banner appears at the top of the screen (different from previous toasts!)
+- Title: "Workspace System Degraded"
+- Description: "Multiple save failures detected. Opening new workspaces is blocked to prevent data loss."
+- Actions: **Retry** button (+ dismiss X button)
 
 **Key validation:** The `[DEGRADED MODE]` log appears WITHOUT any preceding `[EVICTION]` log. This confirms the gate blocks at `ensureRuntimePrepared` level, before eviction is even attempted.
 
 ### Expected Results
 
-| Step | Console Log | Toast | Outcome |
-|------|-------------|-------|---------|
-| 6 | `[EVICTION] BLOCKED` + `newFailures: 1` | "Workspace save failed" | Switch aborted |
-| 7 | `[EVICTION] BLOCKED` + `newFailures: 2` | "Workspace save failed" | Switch aborted |
-| 8 | `[EVICTION] BLOCKED` + `newFailures: 3, isDegradedMode: true` | "Workspace save failed" | Degraded mode entered |
-| 9 | `[DEGRADED MODE] Blocking workspace open` (no `[EVICTION]`) | "Workspace system degraded" | Gate blocks before eviction |
+| Step | Console Log | UI Feedback | Outcome |
+|------|-------------|-------------|---------|
+| 6 | `[EVICTION] BLOCKED` + `newFailures: 1` | Toast: "Workspace save failed" | Switch aborted |
+| 7 | `[EVICTION] BLOCKED` + `newFailures: 2` | Toast: "Workspace save failed" | Switch aborted |
+| 8 | `[EVICTION] BLOCKED` + `newFailures: 3, isDegradedMode: true` | Toast: "Workspace save failed" | Degraded mode entered |
+| 9 | `[DEGRADED MODE] Blocking workspace open` (no `[EVICTION]`) | Banner: "Workspace System Degraded" with Retry | Gate blocks before eviction |
 
 ### Expected Behavior: Multiple `[DEGRADED MODE]` Logs Per Click
 
@@ -385,13 +386,18 @@ While in degraded mode, switching between already-hot workspaces (1, 2, 3, 4) sh
 
 The `consecutiveFailures` counter only resets in these scenarios:
 1. **Successful eviction** - `setConsecutiveFailures(0)` in eviction path
-2. **Explicit reset** - Calling `resetDegradedMode()` (not currently wired to UI)
+2. **Retry button** - Calls `resetDegradedMode()` from the degraded mode banner
 3. **Page reload** - Resets all in-memory state
 
-**For manual testing, recover by:**
-1. **Reload the page** - Simplest method, resets counter to 0
+**Recovery Steps (via Retry button):**
+1. Go online (DevTools → Network → select "No throttling")
+2. Click **Retry** in the degraded mode banner
+3. If online: Banner dismisses, toast shows "Retry enabled"
+4. If offline: Toast shows "You are offline" - banner stays
+5. Try switching workspaces again
 
-**Known integration gap:** `resetDegradedMode()` is exposed by the runtime manager but not currently invoked by any UI action. A future enhancement could add a "Retry" button in the degraded mode toast that calls this function after connectivity is restored.
+**Alternative recovery:**
+- **Reload the page** - Resets counter to 0 (simplest method)
 
 ### Console Log Patterns
 
@@ -430,22 +436,22 @@ This is expected. Degraded mode only blocks cold opens (runtime creation). Switc
 
 ### Implementation References
 
-- **Degraded mode check:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:274-296`
-- **Counter increment:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:206-220`
-- **Counter reset:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:238` (on success)
-- **Reset function:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:85-92`
-- **Toast:** `lib/workspace/eviction-toast.ts:showDegradedModeToast()`
+- **Degraded mode check:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:251-266`
+- **Counter increment:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:186-201`
+- **Counter reset:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:218` (on success)
+- **Reset function:** `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:84-91`
+- **Banner UI:** `components/workspace/degraded-mode-banner.tsx`
 - **Threshold constant:** `CONSECUTIVE_FAILURE_THRESHOLD = 3`
 
 ---
 
-## Summary of Toast Notifications
+## Summary of UI Notifications
 
-| Scenario | Toast Title | Toast Description | Variant |
-|----------|-------------|-------------------|---------|
-| Persist failed (dirty) | "Workspace save failed" | "Unable to switch workspaces..." | Destructive (red) |
-| Active operations | "Workspace has running operations" | "Cannot close workspace - X operation(s)..." | Default |
-| Degraded mode | "Workspace system degraded" | "Multiple save failures detected..." | Destructive (red) |
+| Scenario | Type | Title | Description | Actions |
+|----------|------|-------|-------------|---------|
+| Persist failed (dirty) | Toast | "Workspace save failed" | "Unable to switch workspaces..." | None |
+| Active operations | Toast | "Workspace has running operations" | "Cannot close workspace - X operation(s)..." | None |
+| Degraded mode | **Banner** | "Workspace System Degraded" | "Multiple save failures detected..." | **Retry**, Dismiss |
 
 ---
 

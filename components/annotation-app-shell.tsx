@@ -18,6 +18,7 @@ import { useCanvasCentering } from "@/lib/hooks/annotation/use-canvas-centering"
 import { ConstellationProvider } from "@/components/constellation/constellation-context"
 import type { CanvasSidebarTab } from "@/components/sidebar/canvas-sidebar"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
+import { DegradedModeBanner } from "@/components/workspace/degraded-mode-banner"
 import { AnnotationWorkspaceCanvas } from "@/components/workspace/annotation-workspace-canvas"
 import { MultiWorkspaceCanvasContainer } from "@/components/workspace/multi-workspace-canvas-container"
 import { WorkspaceConstellationLayer } from "@/components/workspace/workspace-constellation-layer"
@@ -1891,6 +1892,10 @@ const initialWorkspaceSyncRef = useRef(false)
   if (useShellView) {
     return (
       <ConstellationProvider>
+        <DegradedModeBanner
+          isDegradedMode={noteWorkspaceState.isDegradedMode}
+          onRetry={noteWorkspaceState.resetDegradedMode}
+        />
         {workspaceView}
       </ConstellationProvider>
     )
@@ -1898,6 +1903,10 @@ const initialWorkspaceSyncRef = useRef(false)
 
   return (
     <ConstellationProvider>
+      <DegradedModeBanner
+        isDegradedMode={noteWorkspaceState.isDegradedMode}
+        onRetry={noteWorkspaceState.resetDegradedMode}
+      />
       {workspaceView}
     </ConstellationProvider>
   )
