@@ -567,3 +567,4 @@ if (isDegradedMode) {
 | 2025-12-16 | Added Steps 10-13 for testing Retry button (offline guardrail, online recovery, workspace switch verification) |
 | 2025-12-17 | Updated degraded mode code example to match current implementation (no toast, UI-driven banner) |
 | 2025-12-17 | Fixed banner re-entry bug by removing dismiss (X) button — user must click Retry to dismiss |
+| 2025-12-18 | Full test re-verified with prune transient mismatch fix in place; Workspace 8 opens with content intact |

@@ -61,6 +61,12 @@ import { isNoteWorkspaceV2Enabled, isNoteWorkspaceLiveStateEnabled } from "@/lib
 import { isOverlayOptimisticHydrationEnabled } from "@/lib/flags/overlay"
 import { HomeNavigationButton } from "@/components/navigation/HomeNavigationButton"
 import { useDashboardNavigation } from "@/components/dashboard/DashboardInitializer"
+import { NotificationBell } from "@/components/notification-center"
+import {
+  getNotificationStore,
+  registerWorkspaceNotificationListeners,
+  emitDegradedModeNotification,
+} from "@/lib/notification-center"
 // Entry context is now managed inside useNoteWorkspaces hook
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -1367,6 +1373,41 @@ const initialWorkspaceSyncRef = useRef(false)
     })
   }, [noteWorkspaceState.currentEntryId, activeNoteId])
 
+  // Initialize notification center for current entry
+  useEffect(() => {
+    const entryId = noteWorkspaceState.currentEntryId
+    if (!entryId) return
+
+    const store = getNotificationStore()
+    store.initialize(entryId).catch((error) => {
+      console.warn('[AnnotationApp] Notification store initialization failed:', error)
+    })
+  }, [noteWorkspaceState.currentEntryId])
+
+  // Register workspace notification listeners once on mount
+  useEffect(() => {
+    registerWorkspaceNotificationListeners()
+    // Note: We don't unregister because the app shell is typically long-lived
+    // and re-registering is a no-op (idempotent)
+  }, [])
+
+  // Emit notification when degraded mode is entered
+  const previousDegradedModeRef = useRef(noteWorkspaceState.isDegradedMode)
+  useEffect(() => {
+    const wasDegraded = previousDegradedModeRef.current
+    const isDegraded = noteWorkspaceState.isDegradedMode
+    previousDegradedModeRef.current = isDegraded
+
+    // Emit notification only when transitioning INTO degraded mode
+    if (!wasDegraded && isDegraded && noteWorkspaceState.currentEntryId) {
+      emitDegradedModeNotification(noteWorkspaceState.currentEntryId, 3).catch(
+        (error) => {
+          console.warn('[AnnotationApp] Failed to emit degraded mode notification:', error)
+        }
+      )
+    }
+  }, [noteWorkspaceState.isDegradedMode, noteWorkspaceState.currentEntryId])
+
   // Center panel when note selection changes
 
   // Handle right-click to show notes widget
@@ -1683,6 +1724,18 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
+  // Notification bell - always visible in top-right
+  const notificationBellNode = (
+    <div
+      className="absolute right-4 top-4 flex items-center"
+      style={{ zIndex: Z_INDEX.DROPDOWN + 12, pointerEvents: 'none' }}
+    >
+      <div className="pointer-events-auto">
+        <NotificationBell entryId={noteWorkspaceState.currentEntryId ?? undefined} />
+      </div>
+    </div>
+  )
+
   // Shared floating toolbar for canvas (rendered as child of the canvas)
   const floatingToolbarChild = showNotesWidget ? (
     <CanvasAwareFloatingToolbar
@@ -1872,6 +1925,7 @@ const initialWorkspaceSyncRef = useRef(false)
         {homeNavigationNode}
         {noteWorkspaceToggleNode}
         {workspaceToggleNode}
+        {notificationBellNode}
       </>
     ),
     canvasProps: workspaceCanvasProps,

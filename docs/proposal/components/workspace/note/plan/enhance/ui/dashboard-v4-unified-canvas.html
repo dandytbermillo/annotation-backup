@@ -209,6 +209,354 @@
       gap: 8px;
     }
 
+    /* ========== NOTIFICATION CENTER ========== */
+    .notification-bell {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+
+    .notification-bell:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .notification-bell.has-unread {
+      border-color: var(--accent);
+    }
+
+    .notification-badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 18px;
+      height: 18px;
+      background: #ef4444;
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+    }
+
+    .notification-panel {
+      position: fixed;
+      top: 52px;
+      right: 16px;
+      width: 400px;
+      max-height: calc(100vh - 80px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .notification-panel.visible {
+      display: flex;
+    }
+
+    .notification-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .notification-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .notification-header-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .notification-header-count {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .notification-header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .notification-header-btn {
+      padding: 5px 10px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .notification-header-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .notification-filters {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 6px;
+    }
+
+    .notification-filter {
+      padding: 5px 12px;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .notification-filter:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+    }
+
+    .notification-filter.active {
+      background: var(--accent-dim);
+      border-color: rgba(99,102,241,0.3);
+      color: var(--accent);
+    }
+
+    .notification-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 500px;
+    }
+
+    .notification-item {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+
+    .notification-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .notification-item.unread {
+      background: rgba(99,102,241,0.05);
+    }
+
+    .notification-item.unread:hover {
+      background: rgba(99,102,241,0.1);
+    }
+
+    .notification-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .notification-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .notification-icon.error {
+      background: rgba(239,68,68,0.15);
+      color: #ef4444;
+    }
+
+    .notification-icon.warning {
+      background: rgba(245,158,11,0.15);
+      color: #f59e0b;
+    }
+
+    .notification-icon.success {
+      background: rgba(34,197,94,0.15);
+      color: #22c55e;
+    }
+
+    .notification-icon.info {
+      background: rgba(59,130,246,0.15);
+      color: #3b82f6;
+    }
+
+    .notification-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .notification-title {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 2px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .notification-title .unread-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+    }
+
+    .notification-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .notification-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .notification-details-toggle {
+      padding: 4px 8px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .notification-details-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .notification-details-toggle.expanded {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .notification-details {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .notification-details.visible {
+      display: block;
+    }
+
+    .notification-details-row {
+      display: flex;
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .notification-details-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .notification-details-label {
+      color: var(--text-muted);
+      width: 120px;
+      flex-shrink: 0;
+    }
+
+    .notification-details-value {
+      color: var(--text-primary);
+      word-break: break-word;
+    }
+
+    .notification-details-value.action {
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .notification-details-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .notification-details-btn {
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .notification-details-btn.primary {
+      background: var(--accent);
+      border: none;
+      color: white;
+    }
+
+    .notification-details-btn.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    .notification-details-btn.secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .notification-details-btn.secondary:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .notification-empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .notification-empty-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    .notification-empty-text {
+      font-size: 13px;
+    }
+
     .btn {
       padding: 7px 14px;
       border-radius: 8px;
@@ -1130,9 +1478,15 @@
     <!-- Demo Banner -->
     <div class="demo-banner" id="demo-banner">
       <span class="demo-banner-text">
-        <strong>Entry-Workspace Hierarchy Demo:</strong> Click a Quick Link to see the expected flow
+        <strong>Notification Center Demo:</strong> Click the 🔔 bell to view notifications, or add new ones →
       </span>
-      <button class="demo-banner-btn" onclick="resetDemo()">Reset Demo</button>
+      <div style="display: flex; gap: 6px;">
+        <button class="demo-banner-btn" style="background: #ef4444;" onclick="addDemoNotification('error')">+ Error</button>
+        <button class="demo-banner-btn" style="background: #f59e0b;" onclick="addDemoNotification('warning')">+ Warning</button>
+        <button class="demo-banner-btn" style="background: #22c55e;" onclick="addDemoNotification('success')">+ Success</button>
+        <button class="demo-banner-btn" style="background: #3b82f6;" onclick="addDemoNotification('info')">+ Info</button>
+        <button class="demo-banner-btn" onclick="resetDemo()">Reset</button>
+      </div>
     </div>
 
     <!-- Top Bar -->
@@ -1147,9 +1501,39 @@
         <!-- Populated by JS -->
       </div>
       <div class="topbar-right">
+        <button class="notification-bell has-unread" id="notification-bell" onclick="toggleNotificationPanel()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          <span class="notification-badge" id="notification-badge">3</span>
+        </button>
         <button class="btn btn-ghost" onclick="showHelp()">?</button>
       </div>
     </nav>
+
+    <!-- Notification Panel -->
+    <div class="notification-panel" id="notification-panel">
+      <div class="notification-header">
+        <div class="notification-header-left">
+          <span class="notification-header-title">🔔 Notifications</span>
+          <span class="notification-header-count" id="notification-count">(3 unread)</span>
+        </div>
+        <div class="notification-header-actions">
+          <button class="notification-header-btn" onclick="markAllRead()">Mark all read</button>
+          <button class="notification-header-btn" onclick="clearAllNotifications()">Clear</button>
+        </div>
+      </div>
+      <div class="notification-filters">
+        <button class="notification-filter active" data-filter="all" onclick="setNotificationFilter('all')">All</button>
+        <button class="notification-filter" data-filter="error" onclick="setNotificationFilter('error')">Errors</button>
+        <button class="notification-filter" data-filter="warning" onclick="setNotificationFilter('warning')">Warnings</button>
+        <button class="notification-filter" data-filter="success" onclick="setNotificationFilter('success')">Success</button>
+      </div>
+      <div class="notification-list" id="notification-list">
+        <!-- Populated by JS -->
+      </div>
+    </div>
 
     <div class="main-content">
       <!-- Entry Sidebar (Knowledge Base hierarchy) -->
@@ -2004,9 +2388,380 @@ KEY UI ELEMENTS:
     // Update minimap on scroll
     document.getElementById('canvas-container').addEventListener('scroll', renderMinimap);
 
+    // ========== NOTIFICATION CENTER ==========
+    let notifications = [
+      {
+        id: 'n1',
+        type: 'error',
+        title: 'Workspace save failed',
+        description: 'Unable to save workspace while offline',
+        time: '2:34 PM',
+        timestamp: Date.now() - 60000,
+        read: false,
+        details: {
+          workspace: 'Project Notes',
+          workspaceId: 'ws-abc-123',
+          error: 'NETWORK_OFFLINE',
+          consecutiveFailures: 3,
+          suggestedAction: 'Go online and click Retry'
+        }
+      },
+      {
+        id: 'n2',
+        type: 'error',
+        title: 'Workspace save failed',
+        description: 'Unable to save workspace while offline',
+        time: '2:33 PM',
+        timestamp: Date.now() - 120000,
+        read: false,
+        details: {
+          workspace: 'Project Notes',
+          workspaceId: 'ws-abc-123',
+          error: 'NETWORK_OFFLINE',
+          consecutiveFailures: 2,
+          suggestedAction: 'Go online and click Retry'
+        }
+      },
+      {
+        id: 'n3',
+        type: 'warning',
+        title: 'Degraded mode entered',
+        description: '3 consecutive save failures detected',
+        time: '2:32 PM',
+        timestamp: Date.now() - 180000,
+        read: false,
+        details: {
+          consecutiveFailures: 3,
+          threshold: 3,
+          suggestedAction: 'Go online and click Retry in the banner'
+        }
+      },
+      {
+        id: 'n4',
+        type: 'success',
+        title: 'Workspace synced successfully',
+        description: 'All changes saved to server',
+        time: '2:15 PM',
+        timestamp: Date.now() - 1200000,
+        read: true,
+        details: {
+          workspace: 'Daily Notes',
+          workspaceId: 'ws-daily-001',
+          panelCount: 4,
+          componentCount: 2
+        }
+      },
+      {
+        id: 'n5',
+        type: 'info',
+        title: 'Timer completed',
+        description: 'Pomodoro timer finished in Workspace 3',
+        time: '2:10 PM',
+        timestamp: Date.now() - 1500000,
+        read: true,
+        details: {
+          workspace: 'Workspace 3',
+          workspaceId: 'ws-003',
+          duration: '25 minutes',
+          timerType: 'Pomodoro'
+        }
+      }
+    ];
+
+    let notificationFilter = 'all';
+    let expandedNotifications = new Set();
+
+    function toggleNotificationPanel() {
+      const panel = document.getElementById('notification-panel');
+      panel.classList.toggle('visible');
+      if (panel.classList.contains('visible')) {
+        renderNotifications();
+      }
+    }
+
+    function closeNotificationPanel() {
+      document.getElementById('notification-panel').classList.remove('visible');
+    }
+
+    function setNotificationFilter(filter) {
+      notificationFilter = filter;
+      document.querySelectorAll('.notification-filter').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+      renderNotifications();
+    }
+
+    function toggleNotificationDetails(notifId) {
+      if (expandedNotifications.has(notifId)) {
+        expandedNotifications.delete(notifId);
+      } else {
+        expandedNotifications.add(notifId);
+      }
+      renderNotifications();
+    }
+
+    function markAsRead(notifId) {
+      const notif = notifications.find(n => n.id === notifId);
+      if (notif) {
+        notif.read = true;
+        updateNotificationBadge();
+        renderNotifications();
+      }
+    }
+
+    function markAllRead() {
+      notifications.forEach(n => n.read = true);
+      updateNotificationBadge();
+      renderNotifications();
+      showToast('All notifications marked as read');
+    }
+
+    function dismissNotification(notifId) {
+      notifications = notifications.filter(n => n.id !== notifId);
+      expandedNotifications.delete(notifId);
+      updateNotificationBadge();
+      renderNotifications();
+    }
+
+    function clearAllNotifications() {
+      notifications = [];
+      expandedNotifications.clear();
+      updateNotificationBadge();
+      renderNotifications();
+      showToast('All notifications cleared');
+    }
+
+    function updateNotificationBadge() {
+      const unreadCount = notifications.filter(n => !n.read).length;
+      const badge = document.getElementById('notification-badge');
+      const bell = document.getElementById('notification-bell');
+      const countEl = document.getElementById('notification-count');
+
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount;
+        badge.style.display = 'flex';
+        bell.classList.add('has-unread');
+        countEl.textContent = `(${unreadCount} unread)`;
+      } else {
+        badge.style.display = 'none';
+        bell.classList.remove('has-unread');
+        countEl.textContent = '';
+      }
+    }
+
+    function getNotificationIcon(type) {
+      const icons = {
+        error: '✕',
+        warning: '⚠',
+        success: '✓',
+        info: 'ℹ'
+      };
+      return icons[type] || 'ℹ';
+    }
+
+    function renderNotifications() {
+      const list = document.getElementById('notification-list');
+
+      let filtered = notifications;
+      if (notificationFilter !== 'all') {
+        filtered = notifications.filter(n => n.type === notificationFilter);
+      }
+
+      if (filtered.length === 0) {
+        list.innerHTML = `
+          <div class="notification-empty">
+            <div class="notification-empty-icon">🔔</div>
+            <div class="notification-empty-text">No notifications</div>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = filtered.map(notif => {
+        const isExpanded = expandedNotifications.has(notif.id);
+        const details = notif.details || {};
+
+        return `
+          <div class="notification-item ${notif.read ? '' : 'unread'}" data-id="${notif.id}">
+            <div class="notification-row">
+              <div class="notification-icon ${notif.type}">${getNotificationIcon(notif.type)}</div>
+              <div class="notification-content">
+                <div class="notification-title">
+                  ${!notif.read ? '<span class="unread-dot"></span>' : ''}
+                  ${notif.title}
+                </div>
+                <div class="notification-desc">${notif.description}</div>
+                <div class="notification-time">${notif.time}</div>
+              </div>
+              <button class="notification-details-toggle ${isExpanded ? 'expanded' : ''}"
+                      onclick="toggleNotificationDetails('${notif.id}')">
+                Details ${isExpanded ? '▼' : '▶'}
+              </button>
+            </div>
+            <div class="notification-details ${isExpanded ? 'visible' : ''}">
+              ${details.workspace ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Workspace:</span>
+                  <span class="notification-details-value">${details.workspace}</span>
+                </div>
+              ` : ''}
+              ${details.workspaceId ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Workspace ID:</span>
+                  <span class="notification-details-value" style="font-family: monospace; font-size: 11px;">${details.workspaceId}</span>
+                </div>
+              ` : ''}
+              ${details.error ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Error:</span>
+                  <span class="notification-details-value" style="color: #ef4444;">${details.error}</span>
+                </div>
+              ` : ''}
+              ${details.consecutiveFailures ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Failures:</span>
+                  <span class="notification-details-value">${details.consecutiveFailures}${details.threshold ? ` / ${details.threshold} (threshold)` : ''}</span>
+                </div>
+              ` : ''}
+              ${details.duration ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Duration:</span>
+                  <span class="notification-details-value">${details.duration}</span>
+                </div>
+              ` : ''}
+              ${details.timerType ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Timer Type:</span>
+                  <span class="notification-details-value">${details.timerType}</span>
+                </div>
+              ` : ''}
+              ${details.panelCount !== undefined ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Panels:</span>
+                  <span class="notification-details-value">${details.panelCount}</span>
+                </div>
+              ` : ''}
+              ${details.suggestedAction ? `
+                <div class="notification-details-row">
+                  <span class="notification-details-label">Suggested Action:</span>
+                  <span class="notification-details-value action">${details.suggestedAction}</span>
+                </div>
+              ` : ''}
+              <div class="notification-details-actions">
+                ${details.workspaceId ? `
+                  <button class="notification-details-btn primary" onclick="goToWorkspaceFromNotif('${details.workspaceId}')">
+                    Go to Workspace
+                  </button>
+                ` : ''}
+                <button class="notification-details-btn secondary" onclick="dismissNotification('${notif.id}')">
+                  Dismiss
+                </button>
+                ${!notif.read ? `
+                  <button class="notification-details-btn secondary" onclick="markAsRead('${notif.id}')">
+                    Mark Read
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function goToWorkspaceFromNotif(workspaceId) {
+      closeNotificationPanel();
+      showToast(`Navigating to workspace ${workspaceId}...`);
+      // In real app, would navigate to the workspace
+    }
+
+    // Add a demo notification button function
+    function addDemoNotification(type) {
+      const types = {
+        error: {
+          title: 'Workspace save failed',
+          description: 'Unable to save workspace while offline',
+          details: {
+            workspace: 'Demo Workspace',
+            workspaceId: 'ws-demo-' + Date.now(),
+            error: 'NETWORK_OFFLINE',
+            consecutiveFailures: 1,
+            suggestedAction: 'Go online and click Retry'
+          }
+        },
+        warning: {
+          title: 'High memory usage',
+          description: '4 workspace runtimes active (at capacity)',
+          details: {
+            activeWorkspaces: 4,
+            capacity: 4,
+            suggestedAction: 'Close unused workspaces to free memory'
+          }
+        },
+        success: {
+          title: 'Workspace synced',
+          description: 'All changes saved successfully',
+          details: {
+            workspace: 'Demo Workspace',
+            workspaceId: 'ws-demo-' + Date.now(),
+            panelCount: 3,
+            componentCount: 1
+          }
+        },
+        info: {
+          title: 'New workspace created',
+          description: 'Workspace "New Project" has been created',
+          details: {
+            workspace: 'New Project',
+            workspaceId: 'ws-new-' + Date.now()
+          }
+        }
+      };
+
+      const template = types[type] || types.info;
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+      const newNotif = {
+        id: 'n-' + Date.now(),
+        type: type,
+        title: template.title,
+        description: template.description,
+        time: timeStr,
+        timestamp: Date.now(),
+        read: false,
+        details: template.details
+      };
+
+      notifications.unshift(newNotif);
+      updateNotificationBadge();
+
+      // Open panel to show new notification
+      const panel = document.getElementById('notification-panel');
+      if (!panel.classList.contains('visible')) {
+        toggleNotificationPanel();
+      } else {
+        renderNotifications();
+      }
+
+      showToast(`New ${type} notification added`, type === 'success' ? 'success' : '');
+    }
+
+    // Close notification panel when clicking outside
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('notification-panel');
+      const bell = document.getElementById('notification-bell');
+      if (panel.classList.contains('visible') &&
+          !e.target.closest('.notification-panel') &&
+          !e.target.closest('.notification-bell')) {
+        closeNotificationPanel();
+      }
+    });
+
     // ========== INIT ==========
     render();
     updateDemoStep();
+    renderNotifications();
+    updateNotificationBadge();
   </script>
 </body>
 </html>
