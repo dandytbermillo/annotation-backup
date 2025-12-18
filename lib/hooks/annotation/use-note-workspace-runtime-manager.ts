@@ -6,6 +6,7 @@ import {
   listWorkspaceRuntimeIds,
   removeWorkspaceRuntime,
   notifyEvictionBlockedPersistFailed,
+  notifyEvictionBlockedAllBusy,
   getLeastRecentlyVisibleRuntimeId,
   getActiveOperationCount,
   isWorkspacePinned,
@@ -165,7 +166,12 @@ export function useNoteWorkspaceRuntimeManager({
 
       // Persist using LATEST function - re-read ref in case it changed during capture await
       const latestPersistFn = persistSnapshotRef.current
-      const persistResult = await latestPersistFn(targetWorkspaceId, reason)
+      let persistResult: boolean
+      try {
+        persistResult = await latestPersistFn(targetWorkspaceId, reason)
+      } catch (err) {
+        persistResult = false
+      }
 
       // Log persist result for debugging
       emitDebugLogRef.current?.({
@@ -315,6 +321,24 @@ export function useNoteWorkspaceRuntimeManager({
                 candidate = id
               }
             })
+          }
+
+          // FIX: If no candidate found but we're at capacity, block workspace opening
+          // This happens when all candidates have active operations (e.g., running timers)
+          if (!candidate) {
+            emitDebugLogRef.current?.({
+              component: "NoteWorkspaceRuntime",
+              action: "workspace_open_blocked_all_busy",
+              metadata: {
+                requestedWorkspaceId: workspaceId,
+                runtimeCount: runtimeIds.length,
+                runtimeCapacity,
+                reason: "all_candidates_have_active_operations",
+              },
+            })
+            // Notify UI - all workspaces have running operations
+            notifyEvictionBlockedAllBusy(workspaceId, "all_workspaces_busy")
+            return { ok: false, blocked: true, blockedWorkspaceId: "" }
           }
 
           if (candidate) {

@@ -1,9 +1,9 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback } from "react"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { AlertTriangle, RefreshCw, X } from "lucide-react"
+import { AlertTriangle, RefreshCw } from "lucide-react"
 import { toast } from "@/hooks/use-toast"
 import { Z_INDEX } from "@/lib/constants/z-index"
 
@@ -22,16 +22,15 @@ export interface DegradedModeBannerProps {
  * degraded mode and attempt workspace operations again.
  *
  * Part of Hard-Safe 4-Cap Eviction - wires resetDegradedMode() to UI.
+ *
+ * Design decision: No dismiss (X) button while in degraded mode.
+ * Degraded mode is a hard gate that blocks cold workspace opens to prevent
+ * data loss. Allowing users to hide the only explanation creates confusion
+ * ("why can't I open workspaces?"). User must click Retry to dismiss.
  */
 export function DegradedModeBanner({ isDegradedMode, onRetry }: DegradedModeBannerProps) {
-  const [isDismissed, setIsDismissed] = useState(false)
-
-  // Reset dismissed state when degraded mode changes
-  // (so banner reappears if we enter degraded mode again)
-  const isVisible = isDegradedMode && !isDismissed
-
   const handleRetry = useCallback(() => {
-    // Phase 3 guardrail: Check online status before retry
+    // Check online status before retry
     if (!navigator.onLine) {
       toast({
         title: "You are offline",
@@ -43,7 +42,6 @@ export function DegradedModeBanner({ isDegradedMode, onRetry }: DegradedModeBann
 
     // Reset degraded mode
     onRetry()
-    setIsDismissed(true)
 
     toast({
       title: "Retry enabled",
@@ -51,11 +49,7 @@ export function DegradedModeBanner({ isDegradedMode, onRetry }: DegradedModeBann
     })
   }, [onRetry])
 
-  const handleDismiss = useCallback(() => {
-    setIsDismissed(true)
-  }, [])
-
-  if (!isVisible) {
+  if (!isDegradedMode) {
     return null
   }
 
@@ -66,18 +60,7 @@ export function DegradedModeBanner({ isDegradedMode, onRetry }: DegradedModeBann
     >
       <Alert variant="destructive" className="shadow-lg border-destructive/50 bg-destructive/10">
         <AlertTriangle className="h-4 w-4" />
-        <AlertTitle className="flex items-center justify-between">
-          <span>Workspace System Degraded</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0 hover:bg-destructive/20"
-            onClick={handleDismiss}
-            aria-label="Dismiss"
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </AlertTitle>
+        <AlertTitle>Workspace System Degraded</AlertTitle>
         <AlertDescription className="mt-2">
           <p className="text-sm mb-3">
             Multiple save failures detected. Opening new workspaces is blocked to prevent data loss.

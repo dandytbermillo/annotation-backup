@@ -226,6 +226,15 @@ export const notifyEvictionBlockedPersistFailed = (workspaceId: string, reason: 
   notifyEvictionBlocked(workspaceId, 0, reason, "persist_failed")
 }
 
+/**
+ * Exported notifier for active_operations blocks (used when all workspaces have running operations).
+ * This allows the 4-cap eviction path to notify UI when eviction is blocked
+ * because all candidate workspaces have active operations (e.g., running timers).
+ */
+export const notifyEvictionBlockedAllBusy = (workspaceId: string, reason: string): void => {
+  notifyEvictionBlocked(workspaceId, 0, reason, "active_operations")
+}
+
 export const registerPreEvictionCallback = (cb: PreEvictionCallback): void => {
   preEvictionCallbacks.add(cb)
   if (process.env.NODE_ENV === "development") {

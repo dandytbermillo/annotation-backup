@@ -232,6 +232,24 @@ This is separate from eviction logic and can confuse the tester. The key validat
 ### Objective
 Verify that after 3 consecutive persist failures during eviction, the system enters "degraded mode" and blocks cold opens (switches that require creating a new runtime).
 
+### Quick Reference (All 13 Steps) — Verified Working 2025-12-18
+
+```
+ 1. Reload the page (clears consecutiveFailures)
+ 2. Visit Workspaces 1 → 2 → 3 → 4 (fills the 4-cap; don't start timers)
+ 3. Go Offline (DevTools Network → Offline)
+ 4. In Workspace 2, create dirty state by moving a panel
+ 5. Visit Workspaces 3 → 4 → 1 (so Workspace 2 becomes LRU)
+ 6. Click Workspace 5 (cold) → eviction BLOCKED (#1)
+ 7. Click Workspace 6 (cold) → BLOCKED (#2)
+ 8. Click Workspace 7 (cold) → BLOCKED (#3), degraded mode = true
+ 9. Click Workspace 8 (cold) → blocked by degraded gate, banner appears
+10. While offline, click Retry → toast "You are offline", banner stays
+11. Go Online (DevTools Network → No throttling)
+12. Click Retry → banner hides, toast "Retry enabled"
+13. Click cold workspace (e.g., WS 8) → should open normally
+```
+
 ### Key Concepts
 
 **Degraded Mode Trigger:**
@@ -261,7 +279,7 @@ Verify that after 3 consecutive persist failures during eviction, the system ent
 
 3. **No running timers** - Running timers create "active operations" which protect workspaces from being selected as eviction candidates. Use panel moves only.
 
-4. **Make dirty workspace LRU** - After creating dirty state, visit other workspaces to push the dirty one to LRU position.
+4. **Fill 4-cap ONLINE first** - Visit workspaces 1-4 while online so they load properly with panels. Then go offline and make one dirty.
 
 ### Test Steps
 
@@ -269,36 +287,33 @@ Verify that after 3 consecutive persist failures during eviction, the system ent
 1. **Reload the page** (resets `consecutiveFailures` to 0)
 2. Clear console for clean logs
 
-#### Step 2: Fill the 4-Cap
-1. Open **Workspace 1** (Note A)
-2. Open **Workspace 2** (Note B)
-3. Open **Workspace 3** (Note C)
-4. Open **Workspace 4** (Note D)
+#### Step 2: Fill the 4-Cap (Online)
+1. Visit **Workspace 1**
+2. Visit **Workspace 2**
+3. Visit **Workspace 3**
+4. Visit **Workspace 4**
 
-All 4 runtime slots are now filled.
+All 4 runtime slots are now filled with properly loaded workspaces.
+
+**Do NOT start any timers** - they create active operations protection.
 
 #### Step 3: Go Offline
 1. Open DevTools → Network tab
 2. Select **"Offline"** from the throttling dropdown
 3. Verify the "No internet" icon appears
 
-**Important:** Go offline BEFORE creating dirty state to ensure the save fails.
-
-#### Step 4: Create Dirty State
-1. Open **Workspace 2**
+#### Step 4: Create Dirty State on Workspace 2
+1. Open **Workspace 2** (if not already there)
 2. **Move a panel** - drag it to a different position
-3. **Checkpoint (recommended, immediate):** Confirm dirty tracking fired.
-   - If workspace debug logging is enabled, you should see a `save_schedule` event (emitted by `use-workspace-persistence.ts`).
-   - If debug logging is not enabled, proceed and confirm in Step 6 that the eviction start log includes `workspaceLevelDirty: true`.
 
-**Do NOT start any timers** - they create active operations protection.
+**Checkpoint:** Console should show `save_schedule` event (persist will fail because offline, but dirty flag is set).
 
 #### Step 5: Make Workspace 2 the LRU
-1. Visit **Workspace 3** (click to open)
-2. Visit **Workspace 4** (click to open)
-3. Visit **Workspace 1** (click to open)
+1. Visit **Workspace 3** (updates its access time)
+2. Visit **Workspace 4** (updates its access time)
+3. Visit **Workspace 1** (updates its access time)
 
-Access order is now: 1 (most recent) → 4 → 3 → **2 (LRU)**
+Now Workspace 2 is the least recently used (LRU) and will be selected for eviction.
 
 #### Step 6: Trigger Blocked Eviction #1
 1. Click **Workspace 5** (must be cold - not visited this session)
@@ -306,13 +321,14 @@ Access order is now: 1 (most recent) → 4 → 3 → **2 (LRU)**
 
 **Console should show:**
 ```
-[EVICTION] BLOCKED - persist failed on dirty workspace:
-  { workspaceId: "...", persistResult: false, isDirty: true }
+workspace_runtime_eviction_start: { isDirty: true, workspaceLevelDirty: true }
+workspace_runtime_eviction_persist_result: { persistResult: false, isDirty: true }
+workspace_runtime_eviction_blocked_persist_failed: { ... }
 consecutive_persist_failure: { previousFailures: 0, newFailures: 1, threshold: 3, isDegradedMode: false }
 ```
 
 **Toast:** "Workspace save failed"
-**Result:** Switch aborted, you stay on Workspace 1
+**Result:** Switch aborted, you stay on Workspace 1 (the last visited)
 
 #### Step 7: Trigger Blocked Eviction #2
 1. Click **Workspace 6** (must be cold)
@@ -330,7 +346,7 @@ consecutive_persist_failure: { previousFailures: 1, newFailures: 2, threshold: 3
 
 **Console should show:**
 ```
-[EVICTION] BLOCKED
+workspace_runtime_eviction_blocked_persist_failed: { ... }
 consecutive_persist_failure: { previousFailures: 2, newFailures: 3, threshold: 3, isDegradedMode: true }
 ```
 
@@ -340,9 +356,9 @@ consecutive_persist_failure: { previousFailures: 2, newFailures: 3, threshold: 3
 #### Step 9: Verify Degraded Mode Gate
 1. Click **Workspace 8** (must be cold)
 
-**Console should show (NO `[EVICTION]` log - gate blocks before eviction):**
+**Console should show (NO eviction logs - gate blocks before eviction):**
 ```
-[DEGRADED MODE] Blocking workspace open: {
+workspace_open_blocked_degraded_mode: {
   requestedWorkspaceId: "...",
   reason: "select_workspace",
   consecutiveFailures: 3,
@@ -353,9 +369,46 @@ consecutive_persist_failure: { previousFailures: 2, newFailures: 3, threshold: 3
 **Banner:** A persistent banner appears at the top of the screen (different from previous toasts!)
 - Title: "Workspace System Degraded"
 - Description: "Multiple save failures detected. Opening new workspaces is blocked to prevent data loss."
-- Actions: **Retry** button (+ dismiss X button)
+- Actions: **Retry** button only (no dismiss X button — user must click Retry to clear)
 
-**Key validation:** The `[DEGRADED MODE]` log appears WITHOUT any preceding `[EVICTION]` log. This confirms the gate blocks at `ensureRuntimePrepared` level, before eviction is even attempted.
+**Key validation:** The `workspace_open_blocked_degraded_mode` log appears WITHOUT any preceding eviction logs. This confirms the gate blocks at `ensureRuntimePrepared` level, before eviction is even attempted.
+
+#### Step 10: Test Offline Retry (Guardrail)
+1. While still **offline**, click the **Retry** button in the degraded mode banner
+
+**Expected behavior:**
+- Toast appears at bottom: "You are offline - Please check your connection and try again." (red/destructive)
+- Banner stays visible (degraded mode NOT reset)
+
+#### Step 11: Go Back Online
+1. Open DevTools → Network tab
+2. Select **"No throttling"** (or any online option)
+3. Verify the "No internet" icon disappears
+
+#### Step 12: Test Online Retry (Success)
+1. Click the **Retry** button in the degraded mode banner
+
+**Expected behavior:**
+- Toast appears at bottom: "Retry enabled - You can now try switching workspaces again."
+- Banner dismisses (disappears)
+- `consecutiveFailures` is reset to 0
+- Console shows: `degraded_mode_reset` action
+
+#### Step 13: Verify Recovery
+1. Click **Workspace 8** (or any cold workspace, e.g., Workspace 9)
+
+**Expected behavior:**
+- Degraded mode gate does NOT block (counter is 0)
+- Eviction proceeds normally
+- If persist succeeds (online): Workspace 8 opens successfully with content
+- If persist fails for other reasons: Blocked with "persist_failed_dirty" (not degraded mode)
+
+**Console should show:**
+```
+workspace_runtime_eviction_start: { workspaceId: "...", ... }
+workspace_runtime_eviction_persist_result: { workspaceId: "...", persistResult: true, ... }
+workspace_runtime_evicted: { ... }
+```
 
 ### Expected Results
 
@@ -364,7 +417,11 @@ consecutive_persist_failure: { previousFailures: 2, newFailures: 3, threshold: 3
 | 6 | `[EVICTION] BLOCKED` + `newFailures: 1` | Toast: "Workspace save failed" | Switch aborted |
 | 7 | `[EVICTION] BLOCKED` + `newFailures: 2` | Toast: "Workspace save failed" | Switch aborted |
 | 8 | `[EVICTION] BLOCKED` + `newFailures: 3, isDegradedMode: true` | Toast: "Workspace save failed" | Degraded mode entered |
-| 9 | `[DEGRADED MODE] Blocking workspace open` (no `[EVICTION]`) | Banner: "Workspace System Degraded" with Retry | Gate blocks before eviction |
+| 9 | `workspace_open_blocked_degraded_mode` (no eviction logs) | Banner: "Workspace System Degraded" | Gate blocks before eviction |
+| 10 | (none) | Toast: "You are offline" (red) | Retry blocked, banner stays |
+| 11 | (none) | (none) | Now online |
+| 12 | `degraded_mode_reset` | Toast: "Retry enabled", banner hides | Degraded mode cleared |
+| 13 | `workspace_runtime_evicted` | (none) | Workspace opens successfully |
 
 ### Expected Behavior: Multiple `[DEGRADED MODE]` Logs Per Click
 
@@ -451,7 +508,7 @@ This is expected. Degraded mode only blocks cold opens (runtime creation). Switc
 |----------|------|-------|-------------|---------|
 | Persist failed (dirty) | Toast | "Workspace save failed" | "Unable to switch workspaces..." | None |
 | Active operations | Toast | "Workspace has running operations" | "Cannot close workspace - X operation(s)..." | None |
-| Degraded mode | **Banner** | "Workspace System Degraded" | "Multiple save failures detected..." | **Retry**, Dismiss |
+| Degraded mode | **Banner** | "Workspace System Degraded" | "Multiple save failures detected..." | **Retry** (no dismiss — user must click Retry) |
 
 ---
 
@@ -477,16 +534,23 @@ if (!persistResult && isDirty) {
 }
 ```
 
-### Degraded Mode Check (`use-note-workspace-runtime-manager.ts:274-296`)
+### Degraded Mode Check (`use-note-workspace-runtime-manager.ts:256-271`)
 ```typescript
 const CONSECUTIVE_FAILURE_THRESHOLD = 3
 const isDegradedMode = consecutiveFailures >= CONSECUTIVE_FAILURE_THRESHOLD
 
 if (isDegradedMode) {
-  showDegradedModeToast()
+  emitDebugLogRef.current?.({
+    component: "NoteWorkspaceRuntime",
+    action: "workspace_open_blocked_degraded_mode",
+    metadata: { requestedWorkspaceId: workspaceId, reason, consecutiveFailures, threshold: CONSECUTIVE_FAILURE_THRESHOLD },
+  })
+  // UI shows degraded banner via isDegradedMode state (see DegradedModeBanner component)
   return { ok: false, blocked: true, blockedWorkspaceId: "" }
 }
 ```
+
+**Note:** Degraded mode notification moved from `showDegradedModeToast()` to UI-driven `DegradedModeBanner` component (2025-12-16). The banner provides a Retry button that calls `resetDegradedMode()`, with online/offline guardrails.
 
 ---
 
@@ -499,3 +563,7 @@ if (isDegradedMode) {
 | 2025-12-16 | Fixed callback registration in DashboardInitializer |
 | 2025-12-16 | Added showDegradedModeToast() call for degraded mode |
 | 2025-12-16 | Clarified degraded mode semantics/recovery; corrected dirty checkpoint event name (`save_schedule`) |
+| 2025-12-16 | Implemented `DegradedModeBanner` component with Retry button; moved degraded UX to UI layer |
+| 2025-12-16 | Added Steps 10-13 for testing Retry button (offline guardrail, online recovery, workspace switch verification) |
+| 2025-12-17 | Updated degraded mode code example to match current implementation (no toast, UI-driven banner) |
+| 2025-12-17 | Fixed banner re-entry bug by removing dismiss (X) button — user must click Retry to dismiss |

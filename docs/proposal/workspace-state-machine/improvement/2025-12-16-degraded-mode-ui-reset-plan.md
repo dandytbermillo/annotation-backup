@@ -1,15 +1,25 @@
 # Implementation Plan: Wire `resetDegradedMode()` to UI (State‑Driven, Safe)
 
+## Status: ✅ COMPLETE (2025-12-16, updated 2025-12-17)
+
+**Implementation verified and tested.** All phases completed successfully.
+
+**2025-12-17 Update:** Removed dismiss (X) button from `DegradedModeBanner`. Degraded mode is a hard gate for data loss prevention — allowing users to hide the only explanation creates confusion. User must click Retry to dismiss the banner.
+
+---
+
 ## Context
 
-Degraded mode is entered after repeated blocked evictions due to persistence failure (offline / adapter error). In degraded mode, `ensureRuntimePrepared(...)` blocks cold opens before eviction is attempted, and shows a degraded toast from inside the runtime manager hook.
+Degraded mode is entered after repeated blocked evictions due to persistence failure (offline / adapter error). In degraded mode, `ensureRuntimePrepared(...)` blocks cold opens before eviction is attempted.
 
-Current known gap:
-- Degraded mode does **not** auto-clear when coming back online.
-- The runtime manager exposes `resetDegradedMode()`, but no UI invokes it.
+~~Current known gap:~~
+- ~~Degraded mode does **not** auto-clear when coming back online.~~
+- ~~The runtime manager exposes `resetDegradedMode()`, but no UI invokes it.~~
+
+**Resolved:** The `DegradedModeBanner` component now provides a Retry button that calls `resetDegradedMode()`.
 
 Manual test reference:
-- `docs/proposal/workspace-state-machine/test/2025-12-16-hard-safe-eviction-manual-tests.md` (Test 3)
+- `docs/proposal/workspace-state-machine/test/2025-12-16-hard-safe-eviction-manual-tests.md` (Test 3, Steps 1-13)
 
 ## Goals
 
@@ -47,7 +57,7 @@ Keep the runtime manager hook responsible only for:
 
 ## Implementation Steps
 
-### Phase 0 — Identify the correct UI host (always visible)
+### Phase 0 — Identify the correct UI host (always visible) ✅
 
 Before writing UI code, identify the exact component that:
 
@@ -61,7 +71,7 @@ Typical candidates in this repo:
 Acceptance:
 - We can point to the specific UI file/component where the degraded indicator will be rendered.
 
-### Phase 1 — Confirm and expose the API at the UI boundary
+### Phase 1 — Confirm and expose the API at the UI boundary ✅
 
 1. Verify `useNoteWorkspaces` already returns:
    - `isDegradedMode`
@@ -71,7 +81,7 @@ Acceptance:
 Acceptance:
 - UI has access to both values without introducing new providers or global singletons.
 
-### Phase 2 — Add a state-driven degraded indicator with “Retry”
+### Phase 2 — Add a state-driven degraded indicator with "Retry" ✅
 
 Implement a small UI element (choose one):
 
@@ -91,7 +101,7 @@ Implement a small UI element (choose one):
 Acceptance:
 - When degraded mode is active, the user can see an obvious recovery affordance without needing DevTools.
 
-### Phase 3 — Guardrails for “Retry”
+### Phase 3 — Guardrails for "Retry" ✅
 
 Implement these rules for the Retry button:
 
@@ -110,7 +120,7 @@ Optional enhancement (safe, but not required):
 Acceptance:
 - Retry does not encourage unsafe behavior while offline; it does not silently clear degraded mode when connectivity is still down (unless explicitly chosen).
 
-### Phase 4 — Reduce duplicate degraded toasts emitted from the hook
+### Phase 4 — Reduce duplicate degraded toasts emitted from the hook ✅
 
 Today, degraded-mode toasting is triggered inside `ensureRuntimePrepared`. After adding UI-driven UX, choose one:
 
@@ -124,7 +134,7 @@ Today, degraded-mode toasting is triggered inside `ensureRuntimePrepared`. After
 Acceptance:
 - Clicking while degraded does not spam multiple toasts per attempt.
 
-### Phase 5 — Update manual tests
+### Phase 5 — Update manual tests ✅
 
 Update Test 3 expectations:
 - After going online, user can click **Retry** to clear the degraded gate without a reload.
@@ -164,3 +174,38 @@ Confirm logs show:
 
 - If the UI affordance causes regressions, revert the UI banner/toast and keep the degraded gate logic unchanged.
 - As a temporary safety fallback, users can still recover by page reload (resets counter).
+
+---
+
+## Implementation Summary (Completed 2025-12-16)
+
+### Files Created
+
+| File | Description |
+|------|-------------|
+| `components/workspace/degraded-mode-banner.tsx` | New component with Retry button, `navigator.onLine` guardrail, dismiss functionality |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `components/annotation-app-shell.tsx` | +1 import, +8 lines to render `DegradedModeBanner` |
+| `lib/hooks/annotation/use-note-workspace-runtime-manager.ts` | Removed `showDegradedModeToast()` call and import |
+| `docs/.../2025-12-16-hard-safe-eviction-manual-tests.md` | Added Steps 10-13 for Retry button testing |
+
+### Choices Made
+
+| Decision Point | Choice | Rationale |
+|----------------|--------|-----------|
+| Phase 0: UI host | `annotation-app-shell.tsx` | Already owns `noteWorkspaceState` |
+| Phase 2: UI element | Option A (persistent banner) | More visible than toast |
+| Phase 3: Offline behavior | Allow click + show "You are offline" toast | Better UX than disabled button |
+| Phase 4: Hook toast | Option A (removed) | UI is sole owner of messaging |
+
+### Test Results
+
+All 13 steps of Test 3 passed:
+- Steps 1-9: Degraded mode entry (existing behavior)
+- Step 10: Offline Retry shows "You are offline" toast ✅
+- Step 12: Online Retry shows "Retry enabled" toast, banner hides ✅
+- Step 13: Cold workspace opens successfully after recovery ✅

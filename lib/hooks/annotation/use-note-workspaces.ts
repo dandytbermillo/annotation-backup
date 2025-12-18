@@ -530,6 +530,24 @@ export function useNoteWorkspaces({
         })
         return false
       }
+      // TRANSIENT MISMATCH GUARD: If canvas is empty but runtime has notes, skip pruning.
+      // This can occur during cold opens, render delays, visibility changes, or snapshot cache gaps.
+      // Pruning here would incorrectly mark runtime notes as "stale" and remove them, causing data loss.
+      // This is safe because when users intentionally close all notes, closeWorkspaceNote updates
+      // the runtime immediately (runtimeNoteIds becomes 0), which is caught by the guard above.
+      if (observedNoteIds.size === 0 && runtimeNoteIds.size > 0) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "workspace_prune_skipped_transient_mismatch",
+          metadata: {
+            workspaceId,
+            reason,
+            observedNoteCount: 0,
+            runtimeOpenCount: runtimeNoteIds.size,
+          },
+        })
+        return false
+      }
       const staleNoteIds = new Set<string>()
       if (runtimeMembership) {
         runtimeMembership.forEach((noteId) => {
@@ -590,7 +608,9 @@ export function useNoteWorkspaces({
 
   const persistWorkspaceSnapshot = useCallback(
     async (workspaceId: string | null | undefined, reason: string) => {
-      if (!workspaceId || !adapterRef.current) return false
+      if (!workspaceId || !adapterRef.current) {
+        return false
+      }
       const snapshot = getWorkspaceSnapshot(workspaceId)
       if (!snapshot) {
         emitDebugLog({
@@ -612,11 +632,87 @@ export function useNoteWorkspaces({
         return true
       }
       const saveStart = Date.now()
+      let revisionToUse = workspaceRevisionRef.current.get(workspaceId) ?? ""
+
+      // FIX: If revision is unknown (e.g., refs reset on entry switch), load it from the workspace
+      // This ensures we have the correct revision for optimistic concurrency
+      if (revisionToUse === "") {
+        try {
+          const currentRecord = await adapterRef.current.loadWorkspace(workspaceId)
+          revisionToUse = currentRecord.revision ?? ""
+          // Cache the revision for future saves
+          workspaceRevisionRef.current.set(workspaceId, revisionToUse)
+
+          // CRITICAL: If we had to load revision, our local snapshot might be stale/empty.
+          // Compare local payload with DB payload - if local is "emptier", skip save to prevent data loss.
+          const dbPanelCount = currentRecord.payload.panels?.length ?? 0
+          const dbOpenNotesCount = currentRecord.payload.openNotes?.length ?? 0
+          const dbComponentCount = currentRecord.payload.components?.length ?? 0
+          const localPanelCount = payload.panels?.length ?? 0
+          const localOpenNotesCount = payload.openNotes?.length ?? 0
+          const localComponentCount = payload.components?.length ?? 0
+
+          // If local snapshot is emptier than DB, skip save (stale data after remount)
+          const localIsEmptier = (
+            (localPanelCount === 0 && dbPanelCount > 0) ||
+            (localOpenNotesCount === 0 && dbOpenNotesCount > 0) ||
+            (localComponentCount === 0 && dbComponentCount > 0)
+          )
+
+          if (localIsEmptier) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "save_skip_local_emptier_than_db",
+              metadata: {
+                workspaceId,
+                reason,
+                localPanelCount,
+                dbPanelCount,
+                localOpenNotesCount,
+                dbOpenNotesCount,
+                localComponentCount,
+                dbComponentCount,
+              },
+            })
+            // Return true - DB has better data, skip save, safe to evict
+            return true
+          }
+
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "save_revision_loaded",
+            metadata: { workspaceId, reason, revision: revisionToUse },
+          })
+        } catch (loadError) {
+          const errorMessage = loadError instanceof Error ? loadError.message : String(loadError)
+
+          // Handle 404 (workspace doesn't exist in DB) - safe to skip persist
+          // This can happen with placeholder workspaces or deleted workspaces
+          if (errorMessage.includes("404")) {
+            emitDebugLog({
+              component: "NoteWorkspace",
+              action: "save_skip_workspace_not_found",
+              metadata: { workspaceId, reason },
+            })
+            // Return true - workspace doesn't exist in DB, nothing to persist, safe to evict
+            return true
+          }
+
+          // For other errors (network, server errors), block eviction
+          emitDebugLog({
+            component: "NoteWorkspace",
+            action: "save_error_revision_load_failed",
+            metadata: { workspaceId, reason, error: errorMessage },
+          })
+          return false
+        }
+      }
+
       try {
         const updated = await adapterRef.current.saveWorkspace({
           id: workspaceId,
           payload,
-          revision: workspaceRevisionRef.current.get(workspaceId) ?? "",
+          revision: revisionToUse,
         })
         workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
         lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)

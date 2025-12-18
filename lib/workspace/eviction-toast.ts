@@ -36,6 +36,17 @@ export function showEvictionBlockedActiveOpsToast(
   workspaceId: string,
   activeOperationCount: number
 ): void {
+  // If activeOperationCount is 0, it means ALL workspaces have active operations
+  // (the "all busy" scenario where no eviction candidate was found)
+  if (activeOperationCount === 0) {
+    toast({
+      title: "All workspaces are busy",
+      description: "Cannot open new workspace - all existing workspaces have running operations (e.g., timers). Stop some timers first.",
+      variant: "default",
+    })
+    return
+  }
+
   toast({
     title: "Workspace has running operations",
     description: `Cannot close workspace - ${activeOperationCount} operation(s) still running (e.g., timers). Stop them first or force close.`,

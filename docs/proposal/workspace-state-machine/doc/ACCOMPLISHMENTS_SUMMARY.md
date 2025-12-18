@@ -13,11 +13,18 @@ This document summarizes what has been implemented and validated so far for the 
 
 **Improvements**
 - `docs/proposal/workspace-state-machine/improvement/2025-12-15-hard-safe-4cap-eviction.md`
+- `docs/proposal/workspace-state-machine/improvement/2025-12-16-degraded-mode-ui-reset-plan.md` ✅ COMPLETE
+
+**Test Documentation**
+- `docs/proposal/workspace-state-machine/test/2025-12-16-hard-safe-eviction-manual-tests.md`
 
 **Fix writeups**
 - `docs/proposal/workspace-state-machine/fixed/2024-12-14-workspace-component-store-bugs-fix.md`
 - `docs/proposal/workspace-state-machine/fixed/2025-12-15-component-deletion-persistence-fix.md`
 - `docs/proposal/workspace-state-machine/fixed/2025-12-16-persisted-empty-open-notes-guard.md`
+- `docs/proposal/workspace-state-machine/fixed/2025-12-17-revision-recovery-on-entry-switch.md`
+- `docs/proposal/workspace-state-machine/fixed/2025-12-17-all-workspaces-busy-capacity-fix.md`
+- `docs/proposal/workspace-state-machine/fixed/2025-12-18-prune-transient-mismatch-fix.md` ✅ NEW
 
 **Reports**
 - `docs/proposal/workspace-state-machine/reports/2025-12-14-phase5-component-migration-report.md`
@@ -67,10 +74,10 @@ This document summarizes what has been implemented and validated so far for the 
 **Status**
 - Implemented (see fix writeup).
 
-### 4) Durability Guard: Prevent “Persisted Empty openNotes While Panels Exist”
+### 4) Durability Guard: Prevent "Persisted Empty openNotes While Panels Exist"
 
 **Result**
-- Added a deferral + bounded retry + repair mechanism to prevent persisting an “empty openNotes” snapshot when panels still exist.
+- Added a deferral + bounded retry + repair mechanism to prevent persisting an "empty openNotes" snapshot when panels still exist.
 - Adjusted `activeNoteId` correction logic so it does not clear focus to `null` when there is panel evidence that notes still exist.
 
 **Why it matters**
@@ -78,6 +85,106 @@ This document summarizes what has been implemented and validated so far for the 
 
 **Status**
 - Spec documented and implemented (see fix writeup). Implemented in code on **2025-12-16** for traceability.
+
+### 5) Degraded Mode UI Reset (User Recovery from Persist Failures)
+
+**Result**
+- When 3+ consecutive eviction persist failures occur (e.g., offline), the system enters "degraded mode" which blocks cold workspace opens to prevent data loss.
+- A **DegradedModeBanner** component provides an explicit **Retry** button that calls `resetDegradedMode()`.
+- `navigator.onLine` guardrail: clicking Retry while offline shows "You are offline" toast; clicking while online resets degraded mode.
+- Moved degraded UX ownership from hook-side toast to UI-driven banner (state-driven, no toast spam).
+
+**Why it matters**
+- Before this fix, the only way to recover from degraded mode was to reload the page.
+- Users now have an explicit recovery action without losing their current session state.
+- Eliminates duplicate toasts from multiple `ensureRuntimePrepared` call sites.
+
+**Status**
+- Implemented and tested on **2025-12-16** (see improvement doc). All 13 test steps passed.
+- **2025-12-17 Update:** Fixed banner re-entry bug by removing dismiss (X) button. Degraded mode is a hard gate for data loss prevention — allowing users to hide the only explanation creates confusion. User must click Retry to dismiss.
+- **2025-12-18 Update:** Full manual test (Test 3, all 13 steps) re-verified successfully with prune fix in place. Workspace 8 opened with content intact after degraded mode recovery.
+
+**Files created/modified**
+- `components/workspace/degraded-mode-banner.tsx` (NEW, updated 2025-12-17 to remove X button)
+- `components/annotation-app-shell.tsx` (+1 import, +8 lines render)
+- `lib/hooks/annotation/use-note-workspace-runtime-manager.ts` (removed hook-side toast)
+
+### 6) Revision Recovery on Entry Switch (Persist 412 Fix)
+
+**Result**
+- When entry switching causes refs to reset, the persist operation now recovers the workspace revision from DB before attempting to save.
+- Eliminates HTTP 412 (Precondition Failed) errors that occurred when `workspaceRevisionRef` was empty after remount.
+
+**Why it matters**
+- Entry switching (annotation → home → annotation) caused component unmount/remount, resetting refs.
+- Component store dirty state (e.g., running timers) persisted across remounts.
+- Eviction tried to persist with empty revision → 412 error → blocked eviction → toast spam.
+- Users experienced "Workspace save failed" toasts during normal navigation.
+
+**Status**
+- Implemented and tested on **2025-12-17** (see fix doc).
+
+**Files modified**
+- `lib/hooks/annotation/use-note-workspaces.ts:619-655` (revision recovery logic)
+
+**Key behaviors:**
+| Scenario | Action | Result |
+|----------|--------|--------|
+| Revision unknown, load succeeds, local has data | Use loaded revision | Save proceeds normally |
+| Revision unknown, load succeeds, local emptier than DB | Skip save, return `true` | Eviction proceeds, DB preserved |
+| Revision unknown, workspace 404 | Skip persist, return `true` | Eviction proceeds (nothing to persist) |
+| Revision unknown, load fails (network) | Return `false` | Eviction blocked (safe) |
+
+**Data loss prevention guard:** When loading revision, also compare local vs DB payload. If local is emptier (panels=0 but DB has panels, etc.), skip save to prevent overwriting good DB data with stale/empty local data.
+
+**Limitations:** This guard only catches zero vs non-zero cases. It does NOT catch partial staleness (e.g., local has 2 panels, DB has 5) or content differences with same counts. It's a guardrail for the remount-empty case, not a complete "no stale overwrite" solution.
+
+**Note on dirty state:** Whether dirty state persists across entry switches depends on whether the entry is truly remounted vs hidden (pinned entries feature) and whether state is store-backed vs ref-backed. It's more accurate to say "dirty state can exist even when revision ref is empty" rather than "dirty state always persists."
+
+### 7) All-Workspaces-Busy Capacity Enforcement Fix
+
+**Result**
+- When all workspaces at 4-cap have active operations (running timers), the system now blocks workspace opening and shows a toast instead of silently exceeding capacity.
+
+**Why it matters**
+- Previously, when all 4 workspaces had running timers and user opened a 5th workspace:
+  - No eviction candidate could be found (all had active operations)
+  - System silently created a 5th runtime, exceeding capacity
+  - No toast was shown
+- Now the system properly blocks the operation and shows "All workspaces are busy" toast.
+
+**Status**
+- Implemented and tested on **2025-12-17** (see fix doc).
+
+**Files modified**
+- `lib/hooks/annotation/use-note-workspace-runtime-manager.ts:325-341` (capacity enforcement check)
+- `lib/workspace/runtime-manager.ts:229-236` (new notification function)
+- `lib/workspace/eviction-toast.ts:39-48` (new toast message)
+
+### 8) Prune Transient Mismatch Guard (Prevents Empty Workspace Bug)
+
+**Result**
+- Added a guard in `pruneWorkspaceEntries` to skip pruning when canvas reports 0 observed notes but runtime has N notes.
+- This prevents incorrect "stale note" removal during transient windows (cold opens, render delays, visibility changes, snapshot cache gaps).
+
+**Why it matters**
+- During transient mismatches, the canvas hasn't caught up to runtime state yet.
+- The existing prune logic would mark all runtime notes as "stale" (not on canvas) and remove them.
+- This caused permanent data loss: `openNotes: []` was persisted to DB.
+
+**Status**
+- Implemented on **2025-12-18** (see fix doc).
+
+**Files modified**
+- `lib/hooks/annotation/use-note-workspaces.ts:533-550` (transient mismatch guard)
+
+**Why this is safe**
+- When users intentionally close all notes, `closeWorkspaceNote` updates runtime immediately → `runtimeNoteIds.size` becomes 0.
+- The existing guard (lines 519-531) catches that case (`runtimeNoteIds.size === 0`).
+- The only time `observed=0 && runtime>0` is during transient mismatches.
+
+**Debug log**
+- New event: `workspace_prune_skipped_transient_mismatch` when guard triggers.
 
 ## Evidence / Validation Performed
 
@@ -101,16 +208,21 @@ Mapping to `docs/proposal/workspace-state-machine/IMPLEMENTATION_PLAN.md`:
 
 ## Remaining Known Risks / Follow-Ups
 
-1. **“Replay skipped / hot misclassification” mode** (DB has data but UI stays empty) can still occur if preview skips replay purely because a runtime is marked “hydrated”, even when runtime is actually empty. Track separately from the persisted-empty fix.
-2. **Persist failure degradation UX**: ensure user messaging and decision flow is consistent across eviction paths (4-cap vs any higher-level caps).
+1. **"Replay skipped / hot misclassification" mode** (DB has data but UI stays empty) can still occur if preview skips replay purely because a runtime is marked "hydrated", even when runtime is actually empty. Track separately from the persisted-empty fix.
+2. ~~**Persist failure degradation UX**: ensure user messaging and decision flow is consistent across eviction paths (4-cap vs any higher-level caps).~~ **RESOLVED** — Implemented `DegradedModeBanner` with Retry button (2025-12-16).
 3. **Test coverage**: expand unit/behavioral tests around:
    - inconsistent state guard (defer/repair path),
    - hot/cold classification correctness,
    - end-to-end switch/reload durability invariants.
 
-## Quick “What To Check Before Calling It Done”
+## Quick "What To Check Before Calling It Done"
 
 1. Create workspace with notes + components → switch away and back → verify state unchanged.
 2. Create many workspaces to force 4-cap eviction → return to an evicted workspace → verify restored state.
 3. Delete a component → reload → verify it does not reappear.
-4. Reproduce the previous “persisted empty openNotes” condition → confirm DB no longer gets overwritten with `openNotes: []` while panels still exist.
+4. Reproduce the previous "persisted empty openNotes" condition → confirm DB no longer gets overwritten with `openNotes: []` while panels still exist.
+5. **Degraded mode recovery (Test 3, Steps 1-13):**
+   - Fill 4-cap → go offline → create dirty state → trigger 3 blocked evictions → enter degraded mode
+   - Click Retry while offline → "You are offline" toast appears, banner stays
+   - Go online → click Retry → banner hides, "Retry enabled" toast appears
+   - Click cold workspace → should open successfully
