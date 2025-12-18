@@ -1,7 +1,7 @@
 # Implementation Plan: Notification Center (Local-First)
 
 **Date:** 2025-12-18
-**Status:** Phase 1-3 Implemented
+**Status:** Implemented (V1), with recommended V1.1 improvements
 **Feature Slug:** `notification-center`
 
 ---
@@ -77,6 +77,27 @@ server routes/migrations to a problem that can be solved client-side first.
 - **Primary (V1):** IndexedDB (durable across reloads, works offline).
 - **In-memory:** For fast render + subscriptions; rehydrated from IndexedDB on app start.
 
+### Storage Adapter Abstraction (Current + Recommended)
+
+V1 already uses a storage adapter, which keeps the system portable. This enables:
+
+- Use SQLite in Electron (main process) via IPC without changing UI/store APIs.
+- Add optional server sync (V2) without changing producer callsites.
+
+Current design notes:
+
+- **Atomic upsert in one transaction:** The adapter performs dedupe inside a single IndexedDB transaction.
+- **Non-unique dedupe index:** The compound index for `(entryId, dedupeKey)` is non-unique; the adapter
+  defends by selecting a non-dismissed match if multiple exist.
+- **Retention today:** Pruning runs on store initialize and entry switch (not necessarily after every emit).
+
+Recommended V1.1 improvements:
+
+- **Uniqueness invariant:** Make `(entryId, dedupeKey)` unique to prevent duplicates under concurrency
+  (and add a one-time cleanup/merge for any existing duplicates).
+- **Upsert + prune batching:** Add an adapter primitive (e.g., `upsertAndPrune(...)` or `writeBatch(...)`)
+  so dedupe + retention can be guaranteed in a single atomic write.
+
 ---
 
 ## Data Model (V1)
@@ -110,6 +131,14 @@ On dedupe hit:
 - Increment `count`
 - Update `lastSeenAt`
 - If previously read, keep `readAt` (do not force unread unless we explicitly decide otherwise)
+
+Dedupe should be implemented with an **entry-scoped uniqueness invariant**:
+
+- If `dedupeKey` is set, treat `(entryId, dedupeKey)` as unique and update the existing record.
+- If not set, always insert a new notification.
+
+Note: V1 works without strict uniqueness by resolving duplicates defensively at read/upsert time, but
+adding uniqueness is the cleanest way to prevent duplicates under multi-tab or concurrent emit scenarios.
 
 ---
 
@@ -163,6 +192,7 @@ The repo already has other “notification” concepts. Use a distinct namespace
 ### Phase 1 — Core Store + IndexedDB
 
 - Define `NotificationEvent` and stored `Notification` shape.
+- Implement a storage adapter (IndexedDB) with transactional upsert + dedupe.
 - Implement a notification store with:
   - `emit(event)`
   - `markRead(id)`
@@ -179,6 +209,7 @@ The repo already has other “notification” concepts. Use a distinct namespace
 **Acceptance:**
 - Reload preserves notifications and unread count.
 - Dedupe produces `count` increments instead of duplicates.
+- Dedupe remains correct under rapid repeats in a single session (no user-visible duplicates).
 
 ### Phase 2 — UI (Bell + Panel)
 
@@ -237,6 +268,8 @@ Only after V1 proves stable:
 - **Over-notification / noise:** Start with a minimal set of producer events; dedupe aggressively.
 - **PII leakage:** Limit `details` to IDs and non-sensitive codes; never store raw user content.
 - **Performance:** Keep retention bounded; lazy-load details panel if needed.
+- **Multi-tab concurrency:** With a non-unique dedupe index, concurrent emits can theoretically create
+  duplicates; mitigate with a `(entryId, dedupeKey)` uniqueness invariant in V1.1.
 
 ---
 
@@ -312,7 +345,7 @@ Only after V1 proves stable:
 ### Acceptance Criteria Status
 
 - [x] Reload preserves notifications and unread count
-- [x] Dedupe produces `count` increments instead of duplicates
+- [x] Dedupe produces `count` increments (no user-visible duplicates in normal usage)
 - [x] User can see history and details after reload
 - [x] Unread count updates correctly
 - [x] When an eviction is blocked, a durable notification appears with workspace context

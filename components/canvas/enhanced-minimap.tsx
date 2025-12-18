@@ -19,15 +19,15 @@ interface MinimapProps {
 }
 
 export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: MinimapProps) {
-  const { state, dataStore, noteId } = useCanvas()
+  const { dataStore, noteId } = useCanvas()
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const minimapSize = 280
-  const minimapPadding = 20
-  
+  const minimapSize = 186  // 2/3 of original 280
+  const minimapPadding = 14
+
   // Minimap state
   const [isDraggingMinimap, setIsDraggingMinimap] = useState(false)
-  const [minimapDragStart, setMinimapDragStart] = useState({ x: 0, y: 0 })
-  const [initialViewportOffset, setInitialViewportOffset] = useState({ x: 0, y: 0 })
+  const [, setMinimapDragStart] = useState({ x: 0, y: 0 })
+  const [, setInitialViewportOffset] = useState({ x: 0, y: 0 })
   const [isExpanded, setIsExpanded] = useState(true)
   const isolatedComponents = useIsolatedIds()
   
@@ -47,31 +47,8 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
   }, [canvasState])
   
   // Status tracking states
-  const [isShiftPressed, setIsShiftPressed] = useState(false)
-  const [isHovering, setIsHovering] = useState(false)
+  const [, setIsHovering] = useState(false)
   const [hoveredComponent, setHoveredComponent] = useState<string | null>(null)
-  const [isInteracting, setIsInteracting] = useState(false)
-  const [isPinned, setIsPinned] = useState(false)
-  const [isPreviewShown, setIsPreviewShown] = useState(false)
-  
-  // Track Shift key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftPressed(true)
-    }
-    
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setIsShiftPressed(false)
-    }
-    
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
-    
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-    }
-  }, [])
   
   // No polling; useIsolatedIds() updates via provider subscription
   
@@ -559,12 +536,12 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
       </div>
       
       {/* Minimap Canvas */}
-      <div className="p-3">
+      <div className="p-2">
         <canvas
           ref={canvasRef}
           width={minimapSize}
           height={minimapSize}
-          className="rounded border border-gray-700"
+          className="rounded"
           onMouseDown={handleMinimapMouseDown}
           onMouseMove={handleMouseMoveOnCanvas}
           onMouseEnter={() => setIsHovering(true)}
@@ -579,27 +556,6 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
             cursor: isDraggingMinimap ? 'grabbing' : 'pointer'
           }}
         />
-      </div>
-      
-      {/* Status Indicators - Disabled per user request */}
-      
-      {/* Instructions */}
-      <div className="bg-gray-800 px-4 py-2 border-t border-gray-700">
-        <div className="text-xs text-center space-y-1">
-          <p className="text-gray-400">Click to focus</p>
-          <p className="text-yellow-400">Hold Shift + hover for preview</p>
-          <button 
-            onClick={() => {
-              setIsInteracting(false)
-              setIsPinned(false)
-              setIsPreviewShown(false)
-              setHoveredComponent(null)
-            }}
-            className="text-red-400 hover:text-red-300 underline text-xs"
-          >
-            Reset Preview
-          </button>
-        </div>
       </div>
     </div>
   )

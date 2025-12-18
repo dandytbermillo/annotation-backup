@@ -7,7 +7,6 @@ export const metadata: Metadata = {
   generator: 'v0.dev',
 }
 
-import { PersistenceMonitor } from '@/components/persistence-monitor'
 import { PlainModeProvider } from './providers/plain-mode-provider'
 import { Toaster } from '@/components/ui/toaster'
 
@@ -26,7 +25,6 @@ export default function RootLayout({
       <body>
         <PlainModeProvider>
           {children}
-          <PersistenceMonitor />
           <Toaster />
         </PlainModeProvider>
       </body>
