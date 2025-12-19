@@ -14,7 +14,6 @@ import type { NoteWorkspacePanelSnapshot, NoteWorkspaceComponentSnapshot } from 
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import type { NoteWorkspaceSnapshot } from "@/lib/note-workspaces/state"
 import {
-  isWorkspaceHydrated,
   listHotRuntimes,
   markWorkspaceHydrated,
   markWorkspaceHydrating,
@@ -287,8 +286,8 @@ export function useWorkspaceSelection({
           await applyCachedSnapshot()
 
           const shouldRestoreFromAdapter = v2Enabled && Boolean(adapterRef.current)
-          const wasHydratedBeforeRestore =
-            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceHydrated(workspaceId) : false
+          const wasReadyBeforeRestore =
+            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceLifecycleReady(workspaceId) : false
           if (liveStateEnabled && shouldRestoreFromAdapter) {
             // Phase 3: Mark lifecycle as restoring before load
             beginWorkspaceRestore(workspaceId, "select_workspace")
@@ -348,7 +347,7 @@ export function useWorkspaceSelection({
               })
             } finally {
               if (liveStateEnabled) {
-                if (adapterPreviewApplied || wasHydratedBeforeRestore) {
+                if (adapterPreviewApplied || wasReadyBeforeRestore) {
                   markWorkspaceHydrated(workspaceId, "select_workspace")
                   // Phase 3: Complete lifecycle transition to ready
                   completeWorkspaceRestore(workspaceId, "select_workspace")

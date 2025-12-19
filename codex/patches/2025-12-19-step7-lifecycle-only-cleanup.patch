@@ -1,0 +1,167 @@
+diff --git a/lib/hooks/annotation/workspace/use-workspace-selection.ts b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+--- a/lib/hooks/annotation/workspace/use-workspace-selection.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-selection.ts
+@@
+-import {
+-  isWorkspaceHydrated,
+-  listHotRuntimes,
++import {
++  listHotRuntimes,
+   markWorkspaceHydrated,
+   markWorkspaceHydrating,
+   markWorkspaceUnhydrated,
+   setRuntimeVisible,
+   setWorkspaceEntry,
+ } from "@/lib/workspace/runtime-manager"
+@@
+-          const wasHydratedBeforeRestore =
+-            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceHydrated(workspaceId) : false
++          const wasReadyBeforeRestore =
++            liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceLifecycleReady(workspaceId) : false
+@@
+-                if (adapterPreviewApplied || wasHydratedBeforeRestore) {
++                if (adapterPreviewApplied || wasReadyBeforeRestore) {
+                   markWorkspaceHydrated(workspaceId, "select_workspace")
+                   // Phase 3: Complete lifecycle transition to ready
+                   completeWorkspaceRestore(workspaceId, "select_workspace")
+                 } else {
+                   // Phase 3: Clear lifecycle on error so next attempt starts fresh
+                   removeWorkspaceLifecycle(workspaceId)
+                   markWorkspaceUnhydrated(workspaceId, "select_workspace_error")
+                 }
+
+diff --git a/lib/hooks/annotation/workspace/use-workspace-hydration.ts b/lib/hooks/annotation/workspace/use-workspace-hydration.ts
+--- a/lib/hooks/annotation/workspace/use-workspace-hydration.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-hydration.ts
+@@
+-import {
+-  isWorkspaceHydrated,
+-  markWorkspaceHydrated,
++import {
++  markWorkspaceHydrated,
+   markWorkspaceHydrating,
+   markWorkspaceUnhydrated,
+   populateRuntimeComponents,
+   setRuntimeVisible,
+   setWorkspaceEntry,
+   markWorkspaceAsDefault,
+ } from "@/lib/workspace/runtime-manager"
+-import {
+-  restoreComponentsToWorkspace,
+-  detectRestoreType,
+-} from "@/lib/workspace/store-runtime-bridge"
++import {
++  restoreComponentsToWorkspace,
++} from "@/lib/workspace/store-runtime-bridge"
+@@
+-      const wasHydratedBeforeLoad = isWorkspaceHydrated(workspaceId)
++      const wasReadyBeforeLoad = isWorkspaceLifecycleReady(workspaceId)
+@@
+-          if (wasHydratedBeforeLoad) {
++          if (wasReadyBeforeLoad) {
+             markWorkspaceHydrated(workspaceId, "hydrate_workspace_error")
+           } else {
+             markWorkspaceUnhydrated(workspaceId, "hydrate_workspace_error")
+           }
+         }
+
+diff --git a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+--- a/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
++++ b/lib/hooks/annotation/workspace/use-workspace-snapshot.ts
+@@
+-import {
+-  hasWorkspaceRuntime,
+-  isWorkspaceHydrated,
++import {
+   getRuntimeMembership,
+   getRuntimeOpenNotes,
+   getRegisteredComponentCount,
+   getRuntimeComponentCount,
+   markWorkspaceHydrated,
+@@
+-      let componentSource = "snapshot"
+-      const hasRuntime = hasWorkspaceRuntime(workspaceId)
+-      if (liveStateEnabled && hasRuntime) {
++      let componentSource = "snapshot"
++      const lifecycleReady = isWorkspaceLifecycleReady(workspaceId)
++      if (liveStateEnabled && lifecycleReady) {
+         const runtimeComponents = listRuntimeComponents(workspaceId)
+         if (runtimeComponents.length > 0) {
+           components = runtimeComponents.map((comp) => ({
+             id: comp.componentId,
+             type: comp.componentType,
+@@
+       emitDebugLog({
+         component: "BuildPayloadDiagnostic",
+         action: "build_payload_components",
+         metadata: {
+           workspaceId,
+           liveStateEnabled,
+-          hasRuntime,
++          lifecycleReady,
+           componentSource,
+           snapshotComponentCount,
+           finalComponentCount: components.length,
+           timerComponents: components
+             .filter((c) => c.type === "timer")
+             .map((c) => ({ id: c.id, metadata: c.metadata })),
+         },
+       })
+@@
+-      const snapshotOpenNotesCount = snapshot.openNotes?.length ?? 0
+-      if (snapshotOpenNotesCount === 0 && liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
+-        const runtimeOpenNotes = getRuntimeOpenNotes(workspaceId)
+-        if (runtimeOpenNotes && runtimeOpenNotes.length > 0) {
+-          emitDebugLog({
+-            component: "NoteWorkspace",
+-            action: "fix8_rejected_empty_snapshot",
+-            metadata: {
+-              workspaceId,
+-              runtimeNoteCount: runtimeOpenNotes.length,
+-              reason: "runtime_has_notes_would_lose_data",
+-            },
+-          })
+-          return
+-        }
+-      }
+@@
+-      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId) && missingOpenNotes.length > 0) {
++      if (liveStateEnabled && isWorkspaceLifecycleReady(workspaceId) && missingOpenNotes.length > 0) {
+         const currentAttempts = captureRetryAttemptsRef.current.get(workspaceId) ?? 0
+         const maxRetries = 3
+         const retryTimeoutMs = 100
+         if (currentAttempts < maxRetries) {
+           captureRetryAttemptsRef.current.set(workspaceId, currentAttempts + 1)
+@@
+-      const wasHydratedBeforeReplay = liveStateEnabled && isWorkspaceHydrated(workspaceId)
++      const wasReadyBeforeReplay = liveStateEnabled && isWorkspaceLifecycleReady(workspaceId)
+       if (liveStateEnabled) {
+         markWorkspaceHydrating(workspaceId, "preview_snapshot")
+       }
+@@
+-        if (liveStateEnabled) {
+-          if (wasHydratedBeforeReplay) {
+-            markWorkspaceHydrated(workspaceId, "preview_snapshot_error")
+-          } else {
+-            markWorkspaceUnhydrated(workspaceId, "preview_snapshot_error")
+-          }
+-        }
++        if (liveStateEnabled) {
++          if (wasReadyBeforeReplay) {
++            markWorkspaceHydrated(workspaceId, "preview_snapshot_error")
++          } else {
++            markWorkspaceUnhydrated(workspaceId, "preview_snapshot_error")
++          }
++        }
+         throw error
+       }
+
+diff --git a/docs/proposal/workspace-state-machine/improvement/2025-12-18-canonical-persist-checklist.md b/docs/proposal/workspace-state-machine/improvement/2025-12-18-canonical-persist-checklist.md
+--- a/docs/proposal/workspace-state-machine/improvement/2025-12-18-canonical-persist-checklist.md
++++ b/docs/proposal/workspace-state-machine/improvement/2025-12-18-canonical-persist-checklist.md
+@@
+ **Change**
+ 
+ - Ensure hot/cold uses lifecycle `ready`, not merely runtime existence.
++- Replace remaining `isWorkspaceHydrated` checks with lifecycle readiness snapshots (selection/hydration/preview error path).
++- Remove runtime-based empty snapshot rejection in preview; lifecycle-only flow decides hot vs cold.

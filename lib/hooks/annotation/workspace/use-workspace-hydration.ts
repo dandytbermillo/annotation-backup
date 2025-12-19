@@ -21,7 +21,6 @@ import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-st
 import { NoteWorkspaceAdapter as NoteWorkspaceAdapterClass } from "@/lib/adapters/note-workspace-adapter"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
-  isWorkspaceHydrated,
   markWorkspaceHydrated,
   markWorkspaceHydrating,
   markWorkspaceUnhydrated,
@@ -32,7 +31,6 @@ import {
 } from "@/lib/workspace/runtime-manager"
 import {
   restoreComponentsToWorkspace,
-  detectRestoreType,
 } from "@/lib/workspace/store-runtime-bridge"
 // Phase 3 Unified Durability: Lifecycle management
 import {
@@ -242,7 +240,7 @@ export function useWorkspaceHydration(
       if (!adapterRef.current) return
       setIsLoading(true)
       const hydrateStart = Date.now()
-      const wasHydratedBeforeLoad = isWorkspaceHydrated(workspaceId)
+      const wasReadyBeforeLoad = isWorkspaceLifecycleReady(workspaceId)
       isHydratingRef.current = true
 
       // Phase 3 Unified Durability: Mark lifecycle as restoring BEFORE load
@@ -436,7 +434,7 @@ export function useWorkspaceHydration(
           // Phase 3: Clear lifecycle state on error so next attempt starts fresh
           // This prevents getting stuck in 'restoring' state
           removeWorkspaceLifecycle(workspaceId)
-          if (wasHydratedBeforeLoad) {
+          if (wasReadyBeforeLoad) {
             markWorkspaceHydrated(workspaceId, "hydrate_workspace_error")
           } else {
             markWorkspaceUnhydrated(workspaceId, "hydrate_workspace_error")

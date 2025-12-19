@@ -188,14 +188,18 @@ This turns today’s “works by convention” into “works by construction.”
 
 ### Step 7 - Hot/Cold Decisions Use Lifecycle (Final Consistency Pass)
 
-**Files:**  
-- `lib/hooks/annotation/workspace/use-workspace-selection.ts`  
-- `lib/hooks/annotation/workspace/use-workspace-hydration.ts`  
-- `lib/workspace/store-runtime-bridge.ts`  
+**Files:**
+- `lib/hooks/annotation/workspace/use-workspace-selection.ts`
+- `lib/hooks/annotation/workspace/use-workspace-hydration.ts`
+- `lib/hooks/annotation/workspace/use-workspace-snapshot.ts`
+- `lib/workspace/store-runtime-bridge.ts`
 
 **Change**
 
 - Ensure hot/cold uses lifecycle `ready`, not merely runtime existence.
+- Replace remaining `isWorkspaceHydrated` checks with lifecycle readiness snapshots (selection/hydration/preview error path).
+- Replace remaining `hasWorkspaceRuntime` checks with lifecycle readiness (buildPayload, preview, capture retry).
+- Remove runtime-based empty snapshot rejection in preview; lifecycle-only flow decides hot vs cold.
 
 **Keep**
 

@@ -20,8 +20,6 @@ import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-st
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
-  hasWorkspaceRuntime,
-  isWorkspaceHydrated,
   getRuntimeMembership,
   getRuntimeOpenNotes,
   getRegisteredComponentCount,
@@ -289,7 +287,7 @@ export function useWorkspaceSnapshot({
         const runtimeState =
           !liveStateEnabled || !activeWorkspaceId
             ? "legacy"
-            : hasWorkspaceRuntime(activeWorkspaceId)
+            : isWorkspaceLifecycleReady(activeWorkspaceId)
               ? "hot"
               : "cold"
 
@@ -709,7 +707,7 @@ export function useWorkspaceSnapshot({
         }
       }
 
-      if (liveStateEnabled && hasWorkspaceRuntime(workspaceId) && missingOpenNotes.length > 0) {
+      if (liveStateEnabled && isWorkspaceLifecycleReady(workspaceId) && missingOpenNotes.length > 0) {
         const currentAttempts = captureRetryAttemptsRef.current.get(workspaceId) ?? 0
         const maxRetries = 3
         const retryTimeoutMs = 100
@@ -1031,8 +1029,8 @@ export function useWorkspaceSnapshot({
       // Safety net: snapshot capture can be deferred/skipped in edge cases; for eviction/background
       // persistence we should prefer the authoritative in-memory runtime ledger when available.
       let componentSource = "snapshot"
-      const hasRuntime = hasWorkspaceRuntime(workspaceId)
-      if (liveStateEnabled && hasRuntime) {
+      const lifecycleReady = isWorkspaceLifecycleReady(workspaceId)
+      if (liveStateEnabled && lifecycleReady) {
         const runtimeComponents = listRuntimeComponents(workspaceId)
         if (runtimeComponents.length > 0) {
           components = runtimeComponents.map((comp) => ({
@@ -1061,7 +1059,7 @@ export function useWorkspaceSnapshot({
         metadata: {
           workspaceId,
           liveStateEnabled,
-          hasRuntime,
+          lifecycleReady,
           componentSource,
           snapshotComponentCount,
           finalComponentCount: components.length,
@@ -1133,23 +1131,6 @@ export function useWorkspaceSnapshot({
       const lastPreview = lastPreviewedSnapshotRef.current.get(workspaceId)
       if (!force && lastPreview === snapshot) {
         return
-      }
-
-      const snapshotOpenNotesCount = snapshot.openNotes?.length ?? 0
-      if (snapshotOpenNotesCount === 0 && liveStateEnabled && hasWorkspaceRuntime(workspaceId)) {
-        const runtimeOpenNotes = getRuntimeOpenNotes(workspaceId)
-        if (runtimeOpenNotes && runtimeOpenNotes.length > 0) {
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "fix8_rejected_empty_snapshot",
-            metadata: {
-              workspaceId,
-              runtimeNoteCount: runtimeOpenNotes.length,
-              reason: "runtime_has_notes_would_lose_data",
-            },
-          })
-          return
-        }
       }
 
       snapshotOwnerWorkspaceIdRef.current = workspaceId
@@ -1225,7 +1206,7 @@ export function useWorkspaceSnapshot({
         return
       }
 
-      const wasHydratedBeforeReplay = liveStateEnabled && isWorkspaceHydrated(workspaceId)
+      const wasReadyBeforeReplay = liveStateEnabled && isWorkspaceLifecycleReady(workspaceId)
       if (liveStateEnabled) {
         markWorkspaceHydrating(workspaceId, "preview_snapshot")
       }
@@ -1329,7 +1310,7 @@ export function useWorkspaceSnapshot({
       bumpSnapshotRevision()
       } catch (error) {
         if (liveStateEnabled) {
-          if (wasHydratedBeforeReplay) {
+          if (wasReadyBeforeReplay) {
             markWorkspaceHydrated(workspaceId, "preview_snapshot_error")
           } else {
             markWorkspaceUnhydrated(workspaceId, "preview_snapshot_error")
