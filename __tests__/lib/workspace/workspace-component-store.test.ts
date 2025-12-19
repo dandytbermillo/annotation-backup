@@ -2,6 +2,7 @@
  * Workspace Component Store Tests
  *
  * Tests for Phase 1 core store functionality.
+ * Updated for Phase 4 lifecycle guards.
  */
 
 import {
@@ -11,6 +12,12 @@ import {
   listWorkspaceComponentStoreIds,
 } from '@/lib/workspace/workspace-component-store'
 import type { DurableComponentState } from '@/lib/workspace/workspace-store-types'
+// Phase 4: Import lifecycle functions for dirty tracking tests
+import {
+  beginWorkspaceRestore,
+  completeWorkspaceRestore,
+  removeWorkspaceLifecycle,
+} from '@/lib/workspace/durability'
 
 // Mock the debug logger
 jest.mock('@/lib/utils/debug-logger', () => ({
@@ -25,11 +32,14 @@ describe('WorkspaceComponentStore', () => {
     for (const id of listWorkspaceComponentStoreIds()) {
       deleteWorkspaceComponentStore(id)
     }
+    // Clean up lifecycle state
+    removeWorkspaceLifecycle(testWorkspaceId)
   })
 
   afterEach(() => {
     // Clean up
     deleteWorkspaceComponentStore(testWorkspaceId)
+    removeWorkspaceLifecycle(testWorkspaceId)
   })
 
   describe('Store Creation and Deletion', () => {
@@ -253,6 +263,13 @@ describe('WorkspaceComponentStore', () => {
   })
 
   describe('Dirty Tracking', () => {
+    // Phase 4: Dirty tracking now requires lifecycle to be 'ready'
+    // Set up lifecycle before each dirty tracking test
+    beforeEach(() => {
+      beginWorkspaceRestore(testWorkspaceId, 'test')
+      completeWorkspaceRestore(testWorkspaceId, 'test')
+    })
+
     it('should mark components as dirty on add', () => {
       const store = getWorkspaceComponentStore(testWorkspaceId)
 

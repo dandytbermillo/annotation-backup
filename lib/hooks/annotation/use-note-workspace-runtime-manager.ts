@@ -14,7 +14,14 @@ import {
 
 // Gap 4 fix: Shared workspace ID (matches SHARED_WORKSPACE_ID_INTERNAL in runtime-manager)
 const SHARED_WORKSPACE_ID = "__workspace__"
-import { workspaceHasDirtyState } from "@/lib/workspace/store-runtime-bridge"
+
+// Phase 2 Unified Durability: Use unified dirty check from durability module
+// Phase 3 Unified Durability: Add lifecycle cleanup for eviction
+import {
+  isWorkspaceDirty,
+  getWorkspaceDirtyState,
+  removeWorkspaceLifecycle,
+} from "@/lib/workspace/durability"
 
 // =============================================================================
 // Types
@@ -139,10 +146,9 @@ export function useNoteWorkspaceRuntimeManager({
       const captureFn = captureSnapshotRef.current
 
       // Check if workspace has dirty (unsaved) state BEFORE eviction attempt
-      // Gap 1 fix: Check BOTH component store dirty state AND workspace-level dirty state
-      const componentStoreDirty = workspaceHasDirtyState(targetWorkspaceId)
-      const workspaceLevelDirty = workspaceDirtyRef?.current?.has(targetWorkspaceId) ?? false
-      const isDirty = componentStoreDirty || workspaceLevelDirty
+      // Phase 2 Unified Durability: Use unified dirty check for both domains
+      const dirtyState = getWorkspaceDirtyState(targetWorkspaceId, workspaceDirtyRef)
+      const isDirty = dirtyState.isDirty
 
       logFn?.({
         component: "NoteWorkspaceRuntime",
@@ -151,8 +157,9 @@ export function useNoteWorkspaceRuntimeManager({
           workspaceId: targetWorkspaceId,
           reason,
           isDirty,
-          componentStoreDirty,
-          workspaceLevelDirty,
+          componentStoreDirty: dirtyState.componentsDirty,
+          workspaceLevelDirty: dirtyState.notesPanelsDirty,
+          componentsDirtyIds: dirtyState.componentsDirtyIds,
           runtimeCount: listWorkspaceRuntimeIds().length,
         },
       })
@@ -225,6 +232,8 @@ export function useNoteWorkspaceRuntimeManager({
 
       // Safe to evict: either persist succeeded or workspace wasn't dirty
       removeWorkspaceRuntime(targetWorkspaceId)
+      // Phase 3: Clean up lifecycle state when workspace is evicted
+      removeWorkspaceLifecycle(targetWorkspaceId)
       runtimeAccessRef.current.delete(targetWorkspaceId)
 
       // Get LATEST logFn for completion log

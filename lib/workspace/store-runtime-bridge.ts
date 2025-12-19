@@ -42,6 +42,9 @@ import { debugLog } from '@/lib/utils/debug-logger'
 import type { NoteWorkspaceComponentSnapshot } from '@/lib/types/note-workspace'
 import type { DurableComponentState } from './workspace-store-types'
 
+// Phase 3 Unified Durability: Use lifecycle manager for hot/cold detection
+import { isWorkspaceLifecycleReady } from './durability'
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -136,18 +139,43 @@ export function getComponentsForPersistence(
 // =============================================================================
 
 /**
- * Determine if this is a hot restore (store already has state) or cold restore.
+ * Determine if this is a hot restore (workspace already restored) or cold restore.
+ *
+ * Phase 3 Unified Durability: Use lifecycle state as the primary check.
+ * Hot = workspace lifecycle is 'ready' (fully restored)
+ * Cold = workspace lifecycle is NOT 'ready' (needs to load from DB)
  *
  * @param workspaceId Workspace ID
- * @returns 'hot' if store has state, 'cold' otherwise
+ * @returns 'hot' if workspace is ready, 'cold' otherwise
  */
 export function detectRestoreType(workspaceId: string): RestoreType {
-  // Hot restore: Store exists AND has components AND workspace is hydrated
+  // Phase 3: Primary check - use unified lifecycle state
+  // If workspace is in 'ready' state, it's fully restored (hot)
+  if (isWorkspaceLifecycleReady(workspaceId)) {
+    // Additional safety: verify store or runtime actually has components
+    // This handles edge case where lifecycle is ready but components were evicted
+    if (hasWorkspaceComponentStore(workspaceId)) {
+      const store = getWorkspaceComponentStore(workspaceId)
+      if (store.getAllComponents().length > 0) {
+        return 'hot'
+      }
+    }
+    // Also check legacy runtime ledger
+    if (hasWorkspaceRuntime(workspaceId)) {
+      const runtimeComponents = listRuntimeComponents(workspaceId)
+      if (runtimeComponents.length > 0) {
+        return 'hot'
+      }
+    }
+    // Lifecycle says ready but no components - still hot (may be empty workspace)
+    return 'hot'
+  }
+
+  // Legacy fallback: Check old hydration state for backward compatibility
+  // during transition period while lifecycle isn't wired everywhere yet
   if (hasWorkspaceComponentStore(workspaceId)) {
     const store = getWorkspaceComponentStore(workspaceId)
     const hasComponents = store.getAllComponents().length > 0
-
-    // Also check if workspace is marked as hydrated in runtime
     const isHydrated = isWorkspaceHydrated(workspaceId)
 
     if (hasComponents && isHydrated) {

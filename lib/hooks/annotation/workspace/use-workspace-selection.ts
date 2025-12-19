@@ -28,6 +28,12 @@ import {
   setActiveWorkspaceContext,
 } from "@/lib/note-workspaces/state"
 import { getActiveEntryContext } from "@/lib/entry"
+// Phase 3 Unified Durability: Lifecycle management for workspace selection
+import {
+  beginWorkspaceRestore,
+  completeWorkspaceRestore,
+  removeWorkspaceLifecycle,
+} from "@/lib/workspace/durability"
 
 import { DEFAULT_CAMERA, type WorkspaceSnapshotCache } from "./workspace-utils"
 import type { EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
@@ -281,6 +287,8 @@ export function useWorkspaceSelection({
           const wasHydratedBeforeRestore =
             liveStateEnabled && shouldRestoreFromAdapter ? isWorkspaceHydrated(workspaceId) : false
           if (liveStateEnabled && shouldRestoreFromAdapter) {
+            // Phase 3: Mark lifecycle as restoring before load
+            beginWorkspaceRestore(workspaceId, "select_workspace")
             markWorkspaceHydrating(workspaceId, "select_workspace")
           }
 
@@ -339,7 +347,11 @@ export function useWorkspaceSelection({
               if (liveStateEnabled) {
                 if (adapterPreviewApplied || wasHydratedBeforeRestore) {
                   markWorkspaceHydrated(workspaceId, "select_workspace")
+                  // Phase 3: Complete lifecycle transition to ready
+                  completeWorkspaceRestore(workspaceId, "select_workspace")
                 } else {
+                  // Phase 3: Clear lifecycle on error so next attempt starts fresh
+                  removeWorkspaceLifecycle(workspaceId)
                   markWorkspaceUnhydrated(workspaceId, "select_workspace_error")
                 }
               }

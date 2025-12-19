@@ -12,6 +12,23 @@
  * - Hot restore: Store already has state, don't overwrite
  * - Cold restore: Load from DB, apply deactivation invariant
  * - Option B: Headless operations (intervals) run in store, not components
+ *
+ * CRITICAL: All canvas components MUST use this store for state management.
+ * ------------------------------------------------------------------------
+ * The unified durability pipeline (dirty tracking, eviction safety, persistence)
+ * relies on components using this store. If a component manages state outside
+ * the store:
+ * - Its dirty state will NOT be detected by `workspaceHasDirtyState()`
+ * - Eviction may proceed without persisting its changes (DATA LOSS)
+ * - The unified dirty aggregation will be incomplete
+ *
+ * When adding new component types:
+ * 1. Register them in lib/workspace/component-type-registry.ts
+ * 2. Use store.addComponent() / store.updateComponentState() for all state
+ * 3. Never manage durable state in component-local useState/useRef
+ *
+ * @see lib/workspace/durability/dirty-tracking.ts (unified dirty aggregation)
+ * @see lib/workspace/store-runtime-bridge.ts (workspaceHasDirtyState)
  */
 
 import { debugLog } from '@/lib/utils/debug-logger'
@@ -21,6 +38,9 @@ import {
   unregisterPersistScheduler,
 } from './persist-scheduler'
 import { processComponentStateForRestore } from './component-type-registry'
+// Phase 4: Import lifecycle check directly to avoid circular dependency
+// (dirty-tracking.ts imports from workspace-component-store.ts)
+import { isWorkspaceLifecycleReady } from './durability/lifecycle-manager'
 import type {
   DurableComponentState,
   WorkspaceLifecycle,
@@ -119,6 +139,25 @@ function createWorkspaceComponentStore(
   // Store-owned intervals - survive component unmount
   const activeOperations = new Map<string, ReturnType<typeof setInterval>>()
 
+  // === Phase 4: Lifecycle Guard for Dirty-Marking ===
+  // Prevents false positives during cold restore and entry re-entry
+  const shouldMarkDirty = (): boolean => {
+    // Check durability lifecycle (workspace-level restoration state)
+    if (!isWorkspaceLifecycleReady(workspaceId)) {
+      void debugLog({
+        component: 'WorkspaceComponentStore',
+        action: 'dirty_blocked_lifecycle',
+        metadata: {
+          workspaceId,
+          reason: 'durability_lifecycle_not_ready',
+          storeLifecycle: lifecycle,
+        },
+      })
+      return false
+    }
+    return true
+  }
+
   // === Persistence Callback ===
   let persistCallback: ((
     components: Array<{ id: string } & DurableComponentState>,
@@ -188,13 +227,17 @@ function createWorkspaceComponentStore(
           : update
 
       component.state = { ...component.state, ...patch }
-      dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
+
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
       notify()
     },
 
@@ -206,13 +249,17 @@ function createWorkspaceComponentStore(
       if (!component) return
 
       component.position = position
-      dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
+
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
       notify()
     },
 
@@ -224,13 +271,17 @@ function createWorkspaceComponentStore(
       if (!component) return
 
       component.size = size
-      dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
+
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
       notify()
     },
 
@@ -239,13 +290,17 @@ function createWorkspaceComponentStore(
       if (!component) return
 
       component.zIndex = zIndex
-      dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
+
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
       notify()
     },
 
@@ -261,13 +316,17 @@ function createWorkspaceComponentStore(
       }
 
       components.set(componentId, component)
-      dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
+
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
 
       void debugLog({
         component: 'WorkspaceComponentStore',
@@ -289,14 +348,17 @@ function createWorkspaceComponentStore(
         activeOperations.delete(componentId)
       }
 
-      // Mark dirty so removal is persisted
-      dirtyIds.add(componentId)
+      // Phase 4: Guard dirty-marking with lifecycle check
+      // Still mark dirty on removal so the deletion is persisted
+      if (shouldMarkDirty()) {
+        dirtyIds.add(componentId)
 
-      if (persistState.inFlight) {
-        persistState.pendingChanges.add(componentId)
+        if (persistState.inFlight) {
+          persistState.pendingChanges.add(componentId)
+        }
+
+        persistScheduler.scheduleDebounced()
       }
-
-      persistScheduler.scheduleDebounced()
 
       if (had) {
         void debugLog({

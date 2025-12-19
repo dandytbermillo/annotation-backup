@@ -1,8 +1,62 @@
 # Implementation Plan: Unified Workspace Durability Pipeline (Notes/Panels + Components)
 
-**Date:** 2025-12-18  
-**Status:** Draft (Design + Implementation Steps)  
-**Scope:** Option A (single-writer; no CRDT/Yjs)  
+**Date:** 2025-12-18
+**Status:** Safety Complete / Architectural Unification In Progress
+**Scope:** Option A (single-writer; no CRDT/Yjs)
+
+---
+
+## Current Status (2025-12-18)
+
+### What's Complete: Safety Outcomes ✅
+
+The **behavioral safety objectives** of this plan are achieved:
+
+| Objective | Status | Implementation |
+|-----------|--------|----------------|
+| No empty overwrites | ✅ | Inline guards in `persistWorkspaceById`/`persistWorkspaceNow` |
+| Eviction blocks on dirty+failed persist | ✅ | Hard-safe eviction in `use-note-workspace-runtime-manager.ts` |
+| Unified dirty aggregation | ✅ | `isWorkspaceDirty()` in `durability/dirty-tracking.ts` |
+| Lifecycle-based restore classification | ✅ | `lifecycle-manager.ts` + hydration integration |
+| Dirty guards during restore/re-entry | ✅ | `shouldAllowDirty()` in Phase 4 |
+| Defer/retry for transient mismatches | ✅ | Inline guards with bounded retries |
+| Degraded mode for repeated failures | ✅ | `consecutiveFailures` tracking in runtime manager |
+
+### What's Incomplete: Architectural Unification ❌
+
+The **"single durability boundary"** architectural goal is NOT yet enforced:
+
+| Goal | Status | Gap |
+|------|--------|-----|
+| One guard function rules all | ❌ | `checkPersistGuards()` exists but isn't called by persistence code |
+| One snapshot builder | ❌ | `buildUnifiedSnapshot()` exists but `buildPayload()` still used |
+| All paths through unified boundary | ❌ | Persistence uses inline guards, not the canonical functions |
+
+**Current architecture:**
+```
+persistWorkspaceById → inline guards → buildPayload() → save
+persistWorkspaceNow  → inline guards → buildPayload() → save
+                       ↑ duplicated    ↑ older builder
+
+checkPersistGuards()   ← exists but NOT called
+buildUnifiedSnapshot() ← exists but NOT called
+```
+
+**Target architecture:**
+```
+ALL persistence paths → checkPersistGuards() → buildUnifiedSnapshot() → save
+```
+
+### Remaining Work
+
+To achieve true architectural unification:
+
+1. **Wire `checkPersistGuards`** into `persistWorkspaceById` and `persistWorkspaceNow`
+2. **Replace `buildPayload()`** with `buildUnifiedSnapshot()`
+3. **Remove inline guards** (they become redundant)
+4. **Enforce** that all future persistence code uses the unified boundary
+
+This is consolidation/refactor work, not safety work. The system is safe today.
 
 ---
 

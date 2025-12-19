@@ -42,6 +42,8 @@ import {
   getLastNonEmptySnapshot,
   formatSyncedLabel,
 } from "./workspace-utils"
+// Phase 4 Unified Dirty Model: Lifecycle-aware dirty guard
+import { shouldAllowDirty } from "@/lib/workspace/durability"
 
 // ============================================================================
 // Types
@@ -1400,6 +1402,21 @@ export function useWorkspacePersistence(
       const { immediate = false, reason = "unspecified" } = options ?? {}
       if (!adapterRef.current) return
       const workspaceId = currentWorkspaceSummary.id
+
+      // Phase 4: Check lifecycle guard before marking dirty
+      // This prevents false positives during cold restore and entry re-entry
+      if (!shouldAllowDirty(workspaceId)) {
+        emitDebugLog({
+          component: "NoteWorkspace",
+          action: "save_schedule_blocked_lifecycle",
+          metadata: {
+            workspaceId,
+            reason,
+            lifecycleNotReady: true,
+          },
+        })
+        return
+      }
 
       // Clear any existing timeout for this workspace
       const existingTimeout = saveTimeoutRef.current.get(workspaceId)

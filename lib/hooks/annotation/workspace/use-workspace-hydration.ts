@@ -38,6 +38,13 @@ import {
   restoreComponentsToWorkspace,
   detectRestoreType,
 } from "@/lib/workspace/store-runtime-bridge"
+// Phase 3 Unified Durability: Lifecycle management
+import {
+  beginWorkspaceRestore,
+  completeWorkspaceRestore,
+  isWorkspaceLifecycleReady,
+  removeWorkspaceLifecycle,
+} from "@/lib/workspace/durability"
 import {
   cacheWorkspaceSnapshot,
   subscribeToWorkspaceListRefresh,
@@ -241,7 +248,11 @@ export function useWorkspaceHydration(
       const hydrateStart = Date.now()
       const wasHydratedBeforeLoad = isWorkspaceHydrated(workspaceId)
       isHydratingRef.current = true
+
+      // Phase 3 Unified Durability: Mark lifecycle as restoring BEFORE load
+      // This blocks persistence during hydration and enables proper hot/cold detection
       if (liveStateEnabled) {
+        beginWorkspaceRestore(workspaceId, "hydrate_workspace")
         markWorkspaceHydrating(workspaceId, "hydrate_workspace")
       }
       try {
@@ -388,6 +399,10 @@ export function useWorkspaceHydration(
         })
         if (liveStateEnabled) {
           markWorkspaceHydrated(workspaceId, "hydrate_workspace")
+          // Phase 3 Unified Durability: Complete lifecycle transition to 'ready'
+          // This happens AFTER both notes/panels AND components are restored
+          // (restoreComponentsToWorkspace was called earlier, now lifecycle is complete)
+          completeWorkspaceRestore(workspaceId, "hydrate_workspace")
         }
         bumpSnapshotRevision()
 
@@ -422,6 +437,9 @@ export function useWorkspaceHydration(
           },
         })
         if (liveStateEnabled) {
+          // Phase 3: Clear lifecycle state on error so next attempt starts fresh
+          // This prevents getting stuck in 'restoring' state
+          removeWorkspaceLifecycle(workspaceId)
           if (wasHydratedBeforeLoad) {
             markWorkspaceHydrated(workspaceId, "hydrate_workspace_error")
           } else {
@@ -604,6 +622,21 @@ export function useWorkspaceHydration(
   useEffect(() => {
     if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return
     if (lastHydratedWorkspaceIdRef.current === currentWorkspaceId) return
+
+    // Phase 3 Unified Durability: Check lifecycle state as PRIMARY hot/cold discriminator
+    // If lifecycle is 'ready', workspace is fully restored (hot) - skip hydration
+    if (liveStateEnabled && isWorkspaceLifecycleReady(currentWorkspaceId)) {
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "hydrate_skipped_lifecycle_ready",
+        metadata: {
+          workspaceId: currentWorkspaceId,
+          reason: "workspace_lifecycle_is_ready",
+        },
+      })
+      return
+    }
+
     // FIX: Skip hydration for HOT runtimes that have actual notes.
     // When a workspace has a hot runtime WITH notes, calling hydrateWorkspace would:
     // 1. Load potentially stale data from DB
@@ -617,6 +650,10 @@ export function useWorkspaceHydration(
     // for empty runtimes, the workspace would never load its saved state from the DB.
     // We do NOT update lastHydratedWorkspaceIdRef here so that if the runtime gets
     // evicted later, we will properly hydrate from DB on next switch.
+    //
+    // Phase 3 Note: This is the legacy fallback. The lifecycle check above should catch
+    // hot runtimes during normal operation. This fallback handles edge cases during
+    // the transition period while lifecycle isn't wired everywhere yet.
     if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
       if (!isWorkspaceHydrated(currentWorkspaceId)) {
         emitDebugLog({
