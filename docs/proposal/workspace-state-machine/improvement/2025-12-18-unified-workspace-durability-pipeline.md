@@ -412,6 +412,14 @@ References:
 
 ---
 
+## Execution Checklist
+
+For a sequenced, file-by-file execution order with risk notes, see:
+
+- `docs/proposal/workspace-state-machine/improvement/2025-12-18-canonical-persist-checklist.md`
+
+---
+
 ## Open Decisions
 
 1. **Dedupe semantics for notifications/logging** (if unified pipeline emits events):

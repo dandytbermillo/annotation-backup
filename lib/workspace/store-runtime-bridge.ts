@@ -24,7 +24,6 @@ import {
   listRuntimeComponents,
   populateRuntimeComponents,
   hasWorkspaceRuntime,
-  isWorkspaceHydrated,
   hasActiveBackgroundOperation,
   getWorkspaceHydrationState,
   registerPreEvictionCallback,
@@ -44,6 +43,124 @@ import type { DurableComponentState } from './workspace-store-types'
 
 // Phase 3 Unified Durability: Use lifecycle manager for hot/cold detection
 import { isWorkspaceLifecycleReady } from './durability'
+
+// =============================================================================
+// Workspace Persist Requester Registry (Step 5)
+// =============================================================================
+
+/**
+ * Type for workspace persist request function.
+ * This is the canonical persist function from use-workspace-persistence.ts.
+ */
+export type WorkspacePersistRequester = (
+  workspaceId: string,
+  reason: string,
+  options?: { isBackground?: boolean }
+) => Promise<boolean>
+
+/**
+ * Registry of workspace persist requesters.
+ * Maps workspaceId to the persist function provided by the persistence hook.
+ */
+const persistRequesters = new Map<string, WorkspacePersistRequester>()
+
+/**
+ * Global fallback persist requester (used when workspace-specific is not registered).
+ * This is set by the persistence provider and handles any workspace.
+ */
+let globalPersistRequester: WorkspacePersistRequester | null = null
+
+/**
+ * Register the global persist requester.
+ * Called by use-workspace-persistence.ts when the hook mounts.
+ *
+ * Step 5: This allows the component store to request workspace persists
+ * via the canonical persistWorkspaceById path.
+ *
+ * @param requester The persist function from the persistence hook
+ */
+export function registerGlobalPersistRequester(
+  requester: WorkspacePersistRequester
+): void {
+  globalPersistRequester = requester
+
+  void debugLog({
+    component: 'StoreRuntimeBridge',
+    action: 'global_persist_requester_registered',
+    metadata: {},
+  })
+}
+
+/**
+ * Unregister the global persist requester.
+ * Called when the persistence hook unmounts.
+ */
+export function unregisterGlobalPersistRequester(): void {
+  globalPersistRequester = null
+
+  void debugLog({
+    component: 'StoreRuntimeBridge',
+    action: 'global_persist_requester_unregistered',
+    metadata: {},
+  })
+}
+
+/**
+ * Request a workspace persist via the canonical path.
+ * Used by the component store's persist callback.
+ *
+ * Step 5: This routes component persistence through persistWorkspaceById
+ * instead of writing components directly to DB.
+ *
+ * @param workspaceId Workspace to persist
+ * @param reason Persist reason (e.g., 'components_changed')
+ * @returns Promise resolving to success/failure
+ */
+export async function requestWorkspacePersist(
+  workspaceId: string,
+  reason: string
+): Promise<boolean> {
+  // Try workspace-specific requester first, then global
+  const requester = persistRequesters.get(workspaceId) ?? globalPersistRequester
+
+  if (!requester) {
+    void debugLog({
+      component: 'StoreRuntimeBridge',
+      action: 'persist_request_no_requester',
+      metadata: { workspaceId, reason },
+    })
+    return false
+  }
+
+  void debugLog({
+    component: 'StoreRuntimeBridge',
+    action: 'persist_request_forwarding',
+    metadata: { workspaceId, reason },
+  })
+
+  try {
+    const result = await requester(workspaceId, reason)
+
+    void debugLog({
+      component: 'StoreRuntimeBridge',
+      action: 'persist_request_result',
+      metadata: { workspaceId, reason, success: result },
+    })
+
+    return result
+  } catch (error) {
+    void debugLog({
+      component: 'StoreRuntimeBridge',
+      action: 'persist_request_error',
+      metadata: {
+        workspaceId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    })
+    return false
+  }
+}
 
 // =============================================================================
 // Types
@@ -149,49 +266,10 @@ export function getComponentsForPersistence(
  * @returns 'hot' if workspace is ready, 'cold' otherwise
  */
 export function detectRestoreType(workspaceId: string): RestoreType {
-  // Phase 3: Primary check - use unified lifecycle state
-  // If workspace is in 'ready' state, it's fully restored (hot)
-  if (isWorkspaceLifecycleReady(workspaceId)) {
-    // Additional safety: verify store or runtime actually has components
-    // This handles edge case where lifecycle is ready but components were evicted
-    if (hasWorkspaceComponentStore(workspaceId)) {
-      const store = getWorkspaceComponentStore(workspaceId)
-      if (store.getAllComponents().length > 0) {
-        return 'hot'
-      }
-    }
-    // Also check legacy runtime ledger
-    if (hasWorkspaceRuntime(workspaceId)) {
-      const runtimeComponents = listRuntimeComponents(workspaceId)
-      if (runtimeComponents.length > 0) {
-        return 'hot'
-      }
-    }
-    // Lifecycle says ready but no components - still hot (may be empty workspace)
-    return 'hot'
-  }
-
-  // Legacy fallback: Check old hydration state for backward compatibility
-  // during transition period while lifecycle isn't wired everywhere yet
-  if (hasWorkspaceComponentStore(workspaceId)) {
-    const store = getWorkspaceComponentStore(workspaceId)
-    const hasComponents = store.getAllComponents().length > 0
-    const isHydrated = isWorkspaceHydrated(workspaceId)
-
-    if (hasComponents && isHydrated) {
-      return 'hot'
-    }
-  }
-
-  // Also check legacy runtime ledger for backward compatibility
-  if (hasWorkspaceRuntime(workspaceId) && isWorkspaceHydrated(workspaceId)) {
-    const runtimeComponents = listRuntimeComponents(workspaceId)
-    if (runtimeComponents.length > 0) {
-      return 'hot'
-    }
-  }
-
-  return 'cold'
+  // Step 7 COMPLETE: Use lifecycle state as SOLE hot/cold discriminator
+  // Hot = workspace lifecycle is 'ready' (fully restored from DB)
+  // Cold = workspace lifecycle is NOT 'ready' (needs to load from DB)
+  return isWorkspaceLifecycleReady(workspaceId) ? 'hot' : 'cold'
 }
 
 /**
@@ -226,6 +304,23 @@ export function restoreComponentsToWorkspace(
   // Get or create the store
   const store = getWorkspaceComponentStore(workspaceId)
 
+  // Step 5: Always set up persist callback to route through canonical path.
+  // This must happen for BOTH hot and cold restores to ensure any future
+  // component changes are persisted via the unified snapshot builder.
+  // When the store's persist scheduler triggers persist(), it will call
+  // requestWorkspacePersist which forwards to persistWorkspaceById.
+  store.setPersistCallback(async (_components, _meta) => {
+    // Note: We don't use the components parameter - the canonical persist path
+    // uses getComponentsForPersistence() which reads from the store directly.
+    // The meta.revision is also managed by the unified snapshot builder.
+    const success = await requestWorkspacePersist(workspaceId, 'components_changed')
+    if (!success) {
+      // Throw to signal failure to the store's persist mechanism
+      // This will trigger retry logic in workspace-component-store.ts
+      throw new Error(`Workspace persist request failed for ${workspaceId}`)
+    }
+  })
+
   // For hot restore, check if we should skip (store already has state)
   if (restoreType === 'hot') {
     const existingComponents = store.getAllComponents()
@@ -238,6 +333,7 @@ export function restoreComponentsToWorkspace(
           existingCount: existingComponents.length,
           incomingCount: components.length,
           reason: 'store_has_state',
+          persistCallbackWired: true,
         },
       })
       return
@@ -269,6 +365,7 @@ export function restoreComponentsToWorkspace(
       workspaceId,
       componentCount: storeComponents.length,
       restoreType,
+      persistCallbackWired: true,
     },
   })
 
@@ -471,8 +568,20 @@ export function cleanupWorkspaceStore(workspaceId: string): void {
 // =============================================================================
 
 /**
- * Pre-eviction callback for persist-before-evict.
- * Registered with runtime-manager to persist dirty state before eviction.
+ * Pre-eviction callback for cleanup before eviction.
+ * Registered with runtime-manager to clean up component store before eviction.
+ *
+ * STEP 4.5: Removed flushWorkspaceState() call.
+ * Previously, this callback flushed component state via store.persist() before eviction.
+ * This created a race condition with persistWorkspaceById which also persists components
+ * via the unified snapshot builder (buildUnifiedSnapshot).
+ *
+ * Now that Step 2 is complete (unified snapshot builder is canonical), components are
+ * included in the unified workspace payload, so the separate component flush is redundant.
+ *
+ * The use-note-workspaces.ts pre-eviction callback handles persistence via the canonical
+ * persistWorkspaceById path. This callback now only handles store cleanup (stopping
+ * operations and deleting the store).
  *
  * @param workspaceId Workspace ID being evicted
  * @param reason Eviction reason
@@ -483,26 +592,27 @@ export async function preEvictionPersistCallback(
 ): Promise<void> {
   void debugLog({
     component: 'StoreRuntimeBridge',
-    action: 'pre_eviction_persist_start',
+    action: 'pre_eviction_cleanup_start',
     metadata: { workspaceId, reason },
   })
 
   try {
-    // Flush any dirty state
-    await flushWorkspaceState(workspaceId)
+    // STEP 4.5: Removed flushWorkspaceState() - component persistence is now handled
+    // by the unified snapshot builder in persistWorkspaceById. Keeping this call
+    // would cause a race condition (double-write) with the canonical persist path.
 
-    // Clean up the store
+    // Clean up the store (stop operations, delete store)
     cleanupWorkspaceStore(workspaceId)
 
     void debugLog({
       component: 'StoreRuntimeBridge',
-      action: 'pre_eviction_persist_complete',
+      action: 'pre_eviction_cleanup_complete',
       metadata: { workspaceId, reason },
     })
   } catch (error) {
     void debugLog({
       component: 'StoreRuntimeBridge',
-      action: 'pre_eviction_persist_error',
+      action: 'pre_eviction_cleanup_error',
       metadata: {
         workspaceId,
         reason,

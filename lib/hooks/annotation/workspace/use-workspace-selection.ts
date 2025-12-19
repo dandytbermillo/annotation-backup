@@ -14,7 +14,6 @@ import type { NoteWorkspacePanelSnapshot, NoteWorkspaceComponentSnapshot } from 
 import type { NoteWorkspaceSlot } from "@/lib/workspace/types"
 import type { NoteWorkspaceSnapshot } from "@/lib/note-workspaces/state"
 import {
-  hasWorkspaceRuntime,
   isWorkspaceHydrated,
   listHotRuntimes,
   markWorkspaceHydrated,
@@ -29,10 +28,12 @@ import {
 } from "@/lib/note-workspaces/state"
 import { getActiveEntryContext } from "@/lib/entry"
 // Phase 3 Unified Durability: Lifecycle management for workspace selection
+// Step 7: Hot/cold decisions use lifecycle state, not runtime existence
 import {
   beginWorkspaceRestore,
   completeWorkspaceRestore,
   removeWorkspaceLifecycle,
+  isWorkspaceLifecycleReady,
 } from "@/lib/workspace/durability"
 
 import { DEFAULT_CAMERA, type WorkspaceSnapshotCache } from "./workspace-utils"
@@ -151,8 +152,10 @@ export function useWorkspaceSelection({
       setPendingWorkspaceId(workspaceId)
       setActiveWorkspaceContext(workspaceId)
 
-      // Phase 2: Check if target workspace has a hot runtime
-      const targetRuntimeState = hasWorkspaceRuntime(workspaceId) && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+      // Step 7 COMPLETE: Use lifecycle state as SOLE hot/cold discriminator
+      // Hot = workspace lifecycle is 'ready' (fully restored from DB)
+      // Cold = workspace lifecycle is NOT 'ready' (needs to load from DB)
+      const targetRuntimeState = isWorkspaceLifecycleReady(workspaceId) ? "hot" : "cold"
 
       emitDebugLog({
         component: "NoteWorkspace",

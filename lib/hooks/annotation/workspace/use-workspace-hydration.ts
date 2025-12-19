@@ -21,11 +21,7 @@ import type { CanvasState } from "@/lib/hooks/annotation/use-workspace-canvas-st
 import { NoteWorkspaceAdapter as NoteWorkspaceAdapterClass } from "@/lib/adapters/note-workspace-adapter"
 import { getWorkspaceLayerManager } from "@/lib/workspace/workspace-layer-manager-registry"
 import {
-  hasWorkspaceRuntime,
   isWorkspaceHydrated,
-  getRuntimeOpenNotes,
-  getRegisteredComponentCount,
-  getRuntimeComponentCount,
   markWorkspaceHydrated,
   markWorkspaceHydrating,
   markWorkspaceUnhydrated,
@@ -623,8 +619,9 @@ export function useWorkspaceHydration(
     if (!featureEnabled || !isWorkspaceReady || !currentWorkspaceId) return
     if (lastHydratedWorkspaceIdRef.current === currentWorkspaceId) return
 
-    // Phase 3 Unified Durability: Check lifecycle state as PRIMARY hot/cold discriminator
+    // Step 7 COMPLETE: Use lifecycle state as SOLE hot/cold discriminator
     // If lifecycle is 'ready', workspace is fully restored (hot) - skip hydration
+    // If lifecycle is NOT 'ready', proceed with cold hydration from DB
     if (liveStateEnabled && isWorkspaceLifecycleReady(currentWorkspaceId)) {
       emitDebugLog({
         component: "NoteWorkspace",
@@ -637,134 +634,7 @@ export function useWorkspaceHydration(
       return
     }
 
-    // FIX: Skip hydration for HOT runtimes that have actual notes.
-    // When a workspace has a hot runtime WITH notes, calling hydrateWorkspace would:
-    // 1. Load potentially stale data from DB
-    // 2. Call updatePanelSnapshotMap with allowEmpty:true, clearing panel caches
-    // 3. Conflict with the hot runtime's in-memory state
-    // This caused notes to "appear and instantly disappear" because the cache clearing
-    // destroyed the panel data that the hot runtime was relying on.
-    //
-    // IMPORTANT: We only skip hydration if the runtime has actual notes (openNotes.length > 0).
-    // On app reload, runtimes are created EMPTY before hydration runs. If we skip hydration
-    // for empty runtimes, the workspace would never load its saved state from the DB.
-    // We do NOT update lastHydratedWorkspaceIdRef here so that if the runtime gets
-    // evicted later, we will properly hydrate from DB on next switch.
-    //
-    // Phase 3 Note: This is the legacy fallback. The lifecycle check above should catch
-    // hot runtimes during normal operation. This fallback handles edge cases during
-    // the transition period while lifecycle isn't wired everywhere yet.
-    if (liveStateEnabled && hasWorkspaceRuntime(currentWorkspaceId)) {
-      if (!isWorkspaceHydrated(currentWorkspaceId)) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "hydrate_unhydrated_runtime",
-          metadata: {
-            workspaceId: currentWorkspaceId,
-            reason: "runtime_exists_but_not_restored_will_hydrate",
-          },
-        })
-      } else {
-      const runtimeOpenNotes = getRuntimeOpenNotes(currentWorkspaceId)
-      const runtimeComponentCount = getRegisteredComponentCount(currentWorkspaceId)
-      // Skip hydration if runtime has notes OR components (either indicates meaningful state)
-      if (runtimeOpenNotes.length > 0 || runtimeComponentCount > 0) {
-        // Phase 1 Unification: Check runtime ledger first (authoritative source)
-        const runtimeLedgerCount = getRuntimeComponentCount(currentWorkspaceId)
-
-        // FIX 6 + Phase 1 Unification: When skipping hydration due to hot runtime, check if
-        // components need restoration. React components deregister on unmount, so
-        // runtimeComponentCount may be 0 even though component DATA exists in cache or ledger.
-        if (runtimeComponentCount === 0) {
-          // Try to get components from: runtime ledger > cache > snapshot
-          const cachedComponents = lastComponentsSnapshotRef.current.get(currentWorkspaceId)
-          const snapshotComponents = workspaceSnapshotsRef.current.get(currentWorkspaceId)?.components
-          const componentsToRestore = cachedComponents ?? snapshotComponents
-
-          if (componentsToRestore && componentsToRestore.length > 0) {
-            // Phase 1 Unification: Always populate runtime ledger first (authoritative source)
-            // FIX: Capture the return value to check if any components were actually populated
-            let actuallyPopulatedCount = 0
-            if (runtimeLedgerCount === 0) {
-              const result = populateRuntimeComponents(currentWorkspaceId, componentsToRestore)
-              actuallyPopulatedCount = result.populatedCount
-            }
-
-            // Also register to LayerManager for rendering
-            const layerMgr = getWorkspaceLayerManager(currentWorkspaceId)
-            if (layerMgr) {
-              componentsToRestore.forEach((component) => {
-                if (!component.id || !component.type) return
-                const componentMetadata = {
-                  ...(component.metadata ?? {}),
-                  componentType: component.type,
-                } as Record<string, unknown>
-                layerMgr.registerNode({
-                  id: component.id,
-                  type: "component",
-                  position: component.position ?? { x: 0, y: 0 },
-                  dimensions: component.size ?? undefined,
-                  zIndex: component.zIndex ?? undefined,
-                  metadata: componentMetadata,
-                } as any)
-              })
-              emitDebugLog({
-                component: "NoteWorkspace",
-                action: "hydrate_hot_runtime_component_restore",
-                metadata: {
-                  workspaceId: currentWorkspaceId,
-                  componentCount: componentsToRestore.length,
-                  actuallyPopulatedCount,
-                  runtimeLedgerCount,
-                  source: cachedComponents ? "lastComponentsSnapshotRef" : "workspaceSnapshotsRef",
-                },
-              })
-              // FIX: Only bump revision if components were actually populated.
-              // If all components were skipped (e.g., marked as deleted), don't bump revision
-              // to prevent infinite loop where hydration keeps trying to restore deleted components.
-              if (actuallyPopulatedCount > 0 || runtimeLedgerCount > 0) {
-                // Bump revision to trigger canvas useEffect that reads from LayerManager.
-                // This is safe for hot runtimes because the canvas's FIX 11 only sets
-                // workspaceRestorationInProgressRef on first mount, not on revision bumps.
-                bumpSnapshotRevision()
-              } else {
-                emitDebugLog({
-                  component: "NoteWorkspace",
-                  action: "hydrate_skipped_revision_bump",
-                  metadata: {
-                    workspaceId: currentWorkspaceId,
-                    reason: "no_components_actually_populated",
-                    componentCount: componentsToRestore.length,
-                    actuallyPopulatedCount,
-                  },
-                })
-              }
-            }
-          }
-        }
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "hydrate_skipped_hot_runtime",
-          metadata: {
-            workspaceId: currentWorkspaceId,
-            reason: "workspace_has_hot_runtime_with_state",
-            runtimeNoteCount: runtimeOpenNotes.length,
-            runtimeComponentCount,
-          },
-        })
-        return
-      }
-      // Runtime exists but is empty (no notes, no components) - fall through to hydration
-      emitDebugLog({
-        component: "NoteWorkspace",
-        action: "hydrate_empty_runtime",
-        metadata: {
-          workspaceId: currentWorkspaceId,
-          reason: "runtime_exists_but_empty_will_hydrate",
-        },
-      })
-      }
-    }
+    // Lifecycle is NOT ready - proceed with cold hydration
     lastHydratedWorkspaceIdRef.current = currentWorkspaceId
     emitDebugLog({
       component: "NoteWorkspace",
@@ -776,16 +646,13 @@ export function useWorkspaceHydration(
     })
     hydrateWorkspace(currentWorkspaceId)
   }, [
-    bumpSnapshotRevision,
     currentWorkspaceId,
     emitDebugLog,
     featureEnabled,
     hydrateWorkspace,
     isWorkspaceReady,
-    lastComponentsSnapshotRef,
     lastHydratedWorkspaceIdRef,
     liveStateEnabled,
-    workspaceSnapshotsRef,
   ])
 
   return {

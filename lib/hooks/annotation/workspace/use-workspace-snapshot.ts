@@ -50,6 +50,8 @@ import {
   mergeComponentSnapshots,
 } from "./workspace-utils"
 import type { EnsureRuntimeResult } from "@/lib/hooks/annotation/use-note-workspace-runtime-manager"
+// Step 7: Hot/cold decisions use lifecycle state
+import { isWorkspaceLifecycleReady } from "@/lib/workspace/durability"
 
 // ============================================================================
 // Types
@@ -1111,7 +1113,6 @@ export function useWorkspaceSnapshot({
   const previewWorkspaceFromSnapshot = useCallback(
     async (workspaceId: string, snapshot: NoteWorkspaceSnapshot, options?: { force?: boolean }) => {
       const force = options?.force ?? false
-      const hadRuntimeBeforePrepare = liveStateEnabled && hasWorkspaceRuntime(workspaceId)
       if (liveStateEnabled) {
         // Gap 5 fix: Handle blocked result from ensureRuntimePrepared
         const runtimeResult = await ensureRuntimePrepared(workspaceId, "preview_snapshot")
@@ -1163,8 +1164,10 @@ export function useWorkspaceSnapshot({
           }
         })
       }
-      const runtimeState =
-        liveStateEnabled && hadRuntimeBeforePrepare && isWorkspaceHydrated(workspaceId) ? "hot" : "cold"
+      // Step 7 COMPLETE: Use lifecycle state as SOLE hot/cold discriminator
+      // Hot = workspace lifecycle is 'ready' (fully restored from DB)
+      // Cold = workspace lifecycle is NOT 'ready' (needs to load from DB)
+      const runtimeState = isWorkspaceLifecycleReady(workspaceId) ? "hot" : "cold"
 
       if (runtimeState === "hot") {
         const runtimeLedgerCount = getRuntimeComponentCount(workspaceId)

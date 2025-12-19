@@ -40,7 +40,6 @@ import {
   getRuntimeComponentCount,
   // Phase 4: Deleted component tracking
   getDeletedComponents,
-  clearDeletedComponents,
   // Phase 5: Entry-workspace tracking
   setWorkspaceEntry,
   markWorkspaceAsDefault,
@@ -85,7 +84,6 @@ import {
   CAPTURE_DEFER_DELAY_MS,
   type WorkspaceSnapshotCache,
   detectRuntimeCapacity,
-  serializeWorkspacePayload,
   serializePanelSnapshots,
   ensureWorkspaceSnapshotCache,
   getLastNonEmptySnapshot,
@@ -606,149 +604,44 @@ export function useNoteWorkspaces({
   captureSnapshotRef.current = captureCurrentWorkspaceSnapshot
 
 
+  // ---------------------------------------------------------------------------
+  // persistWorkspaceSnapshot - STEP 4: Thin wrapper for eviction
+  // ---------------------------------------------------------------------------
+  // This is now a thin wrapper that delegates to persistWorkspaceById (the canonical path).
+  // All persistence logic (guards, snapshot building, retry/repair, save) is handled by
+  // the canonical persistWorkspaceById function.
+  //
+  // The wrapper uses persistWorkspaceByIdRef to access the latest version of the function,
+  // avoiding stale closure issues during eviction.
+  // ---------------------------------------------------------------------------
   const persistWorkspaceSnapshot = useCallback(
     async (workspaceId: string | null | undefined, reason: string) => {
-      if (!workspaceId || !adapterRef.current) {
+      if (!workspaceId) {
         return false
       }
-      const snapshot = getWorkspaceSnapshot(workspaceId)
-      if (!snapshot) {
+
+      // Use the ref to get the latest persistWorkspaceById function
+      const persistFn = persistWorkspaceByIdRef.current
+      if (!persistFn) {
         emitDebugLog({
           component: "NoteWorkspace",
-          action: "save_skip_no_snapshot",
+          action: "persist_snapshot_skip_no_persist_fn",
           metadata: { workspaceId, reason },
         })
         return false
       }
-      const payload = buildPayloadFromSnapshot(workspaceId, snapshot)
-      const payloadHash = serializeWorkspacePayload(payload)
-      const previousHash = lastSavedPayloadHashRef.current.get(workspaceId)
-      if (previousHash === payloadHash) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_skip_no_changes",
-          metadata: { workspaceId, reason },
-        })
-        return true
-      }
-      const saveStart = Date.now()
-      let revisionToUse = workspaceRevisionRef.current.get(workspaceId) ?? ""
 
-      // FIX: If revision is unknown (e.g., refs reset on entry switch), load it from the workspace
-      // This ensures we have the correct revision for optimistic concurrency
-      if (revisionToUse === "") {
-        try {
-          const currentRecord = await adapterRef.current.loadWorkspace(workspaceId)
-          revisionToUse = currentRecord.revision ?? ""
-          // Cache the revision for future saves
-          workspaceRevisionRef.current.set(workspaceId, revisionToUse)
+      emitDebugLog({
+        component: "NoteWorkspace",
+        action: "persist_snapshot_delegate",
+        metadata: { workspaceId, reason },
+      })
 
-          // CRITICAL: If we had to load revision, our local snapshot might be stale/empty.
-          // Compare local payload with DB payload - if local is "emptier", skip save to prevent data loss.
-          const dbPanelCount = currentRecord.payload.panels?.length ?? 0
-          const dbOpenNotesCount = currentRecord.payload.openNotes?.length ?? 0
-          const dbComponentCount = currentRecord.payload.components?.length ?? 0
-          const localPanelCount = payload.panels?.length ?? 0
-          const localOpenNotesCount = payload.openNotes?.length ?? 0
-          const localComponentCount = payload.components?.length ?? 0
-
-          // If local snapshot is emptier than DB, skip save (stale data after remount)
-          const localIsEmptier = (
-            (localPanelCount === 0 && dbPanelCount > 0) ||
-            (localOpenNotesCount === 0 && dbOpenNotesCount > 0) ||
-            (localComponentCount === 0 && dbComponentCount > 0)
-          )
-
-          if (localIsEmptier) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "save_skip_local_emptier_than_db",
-              metadata: {
-                workspaceId,
-                reason,
-                localPanelCount,
-                dbPanelCount,
-                localOpenNotesCount,
-                dbOpenNotesCount,
-                localComponentCount,
-                dbComponentCount,
-              },
-            })
-            // Return true - DB has better data, skip save, safe to evict
-            return true
-          }
-
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "save_revision_loaded",
-            metadata: { workspaceId, reason, revision: revisionToUse },
-          })
-        } catch (loadError) {
-          const errorMessage = loadError instanceof Error ? loadError.message : String(loadError)
-
-          // Handle 404 (workspace doesn't exist in DB) - safe to skip persist
-          // This can happen with placeholder workspaces or deleted workspaces
-          if (errorMessage.includes("404")) {
-            emitDebugLog({
-              component: "NoteWorkspace",
-              action: "save_skip_workspace_not_found",
-              metadata: { workspaceId, reason },
-            })
-            // Return true - workspace doesn't exist in DB, nothing to persist, safe to evict
-            return true
-          }
-
-          // For other errors (network, server errors), block eviction
-          emitDebugLog({
-            component: "NoteWorkspace",
-            action: "save_error_revision_load_failed",
-            metadata: { workspaceId, reason, error: errorMessage },
-          })
-          return false
-        }
-      }
-
-      try {
-        const updated = await adapterRef.current.saveWorkspace({
-          id: workspaceId,
-          payload,
-          revision: revisionToUse,
-        })
-        workspaceRevisionRef.current.set(workspaceId, updated.revision ?? null)
-        lastSavedPayloadHashRef.current.set(workspaceId, payloadHash)
-
-        // Phase 4: Clear deleted component tracking after successful save.
-        // Deleted components are now persisted (excluded from payload), so we can
-        // clear the tracking to avoid stale entries accumulating.
-        clearDeletedComponents(workspaceId)
-
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_success",
-          metadata: {
-            workspaceId,
-            reason,
-            panelCount: payload.panels.length,
-            openCount: payload.openNotes.length,
-            durationMs: Date.now() - saveStart,
-          },
-        })
-        return true
-      } catch (error) {
-        emitDebugLog({
-          component: "NoteWorkspace",
-          action: "save_error",
-          metadata: {
-            workspaceId,
-            reason,
-            error: error instanceof Error ? error.message : String(error),
-            durationMs: Date.now() - saveStart,
-          },
-        })
-        return false
-      }
+      // Delegate to the canonical persist function
+      // Use isBackground: true since this is called for background workspaces during eviction
+      return persistFn(workspaceId, reason, { isBackground: true })
     },
-    [adapterRef, buildPayloadFromSnapshot, emitDebugLog],
+    [emitDebugLog, persistWorkspaceByIdRef],
   )
 
   const {
