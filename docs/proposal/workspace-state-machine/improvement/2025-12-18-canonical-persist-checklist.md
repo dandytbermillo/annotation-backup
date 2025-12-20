@@ -1,7 +1,7 @@
 # Canonical Persist Wiring - Sequenced Checklist
 
-**Date:** 2025-12-18  
-**Status:** Draft (Ready to Execute)  
+**Date:** 2025-12-18
+**Status:** COMPLETE (All 7 Steps Implemented)  
 **Scope:** Wire policy layer (durability/) into execution layer (persistence hooks)  
 
 ---
@@ -211,9 +211,26 @@ This turns today’s “works by convention” into “works by construction.”
 
 ---
 
+## Implementation Status
+
+| Step | Description | Status | Completed |
+|------|-------------|--------|-----------|
+| 1 | Canonical Guard Wiring | ✅ DONE | 2025-12-18 |
+| 2 | Unified Snapshot Builder | ✅ DONE | 2025-12-18 |
+| 3 | persistWorkspaceNow Thin Wrapper | ✅ DONE | 2025-12-18 |
+| 4 | Eviction Uses Canonical Path | ✅ DONE | 2025-12-18 |
+| 4.5 | Retire Pre-Eviction Flush | ✅ DONE | 2025-12-18 |
+| 5 | Component Store Routes Through Canonical | ✅ DONE | 2025-12-18 |
+| 6 | Unify Dirty Set/Clear | ✅ DONE | 2025-12-18 |
+| 7 | Hot/Cold Uses Lifecycle Only | ✅ DONE | 2025-12-19 |
+
+---
+
 ## Post-Implementation Verification
 
-- Offline eviction (dirty) blocks with toast + no data loss.
-- Cold restore never skips DB replay for placeholder runtimes.
-- No persisted-empty payloads during transient mismatch.
-- Components and notes/panels always persist together.
+- [x] Offline eviction (dirty) blocks with toast + no data loss.
+- [x] Cold restore never skips DB replay for placeholder runtimes.
+- [x] No persisted-empty payloads during transient mismatch.
+- [x] Components and notes/panels always persist together.
+
+**Manual Test Report:** `docs/proposal/workspace-state-machine/test/2025-12-19-step7-lifecycle-only-manual-tests.md`

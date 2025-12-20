@@ -2,7 +2,8 @@
 
 **Date:** 2025-12-16
 **Feature:** Hard-Safe 4-Cap Eviction (No Silent Data Loss)
-**Spec:** `docs/proposal/workspace-state-machine/improvement/2025-12-15-hard-safe-4cap-eviction.md`
+**Status:** COMPLETE
+**Parent Plan:** [`2025-12-15-hard-safe-4cap-eviction.md`](../improvement/2025-12-15-hard-safe-4cap-eviction.md)
 
 ---
 

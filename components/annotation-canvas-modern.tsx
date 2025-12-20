@@ -12,6 +12,7 @@ import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 // import { CanvasControls } from "./canvas/canvas-controls" // Removed per user request
 import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
+import { CanvasControlCenter, type CanvasTool } from "./canvas/canvas-control-center"
 import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
@@ -110,6 +111,15 @@ interface ModernAnnotationCanvasProps {
   onComponentChange?: () => void
   /** When true, pause hydration to prevent fetch loops (for hidden pinned canvases) */
   isCanvasHidden?: boolean
+  // Control Center integration - callbacks from floating toolbar
+  /** Callback to create a new note */
+  onCreateNote?: () => void
+  /** Callback to open recent notes panel */
+  onOpenRecent?: () => void
+  /** Callback to toggle constellation/canvas view */
+  onToggleCanvas?: () => void
+  /** Whether constellation panel is currently visible */
+  showConstellationPanel?: boolean
 }
 
 interface CanvasImperativeHandle {
@@ -185,6 +195,11 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onComponentChange,
   onComponentDeleted,
   isCanvasHidden = false,
+  // Control Center integration
+  onCreateNote,
+  onOpenRecent,
+  onToggleCanvas,
+  showConstellationPanel: showConstellationPanelProp,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
 
@@ -338,6 +353,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const autoSaveTimerRef = useRef<number | null>(null)
   const [showControlPanel, setShowControlPanel] = useState(false)
+  const [showMinimap, setShowMinimap] = useState(true)
+  const [canvasTool, setCanvasTool] = useState<CanvasTool>('select')
   // FIX 7: Track non-main panel hydration completions to trigger re-renders.
   // When hydration completes, the hydrationInProgressRef is cleared, but refs
   // don't trigger re-renders. This counter is incremented after hydration
@@ -663,6 +680,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     handleCanvasMouseMove,
     handleCanvasMouseUp,
     handleWheel,
+    canPan,
   } = useCanvasPointerHandlers({
     captureInteractionPoint,
     setCanvasState,
@@ -671,6 +689,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     enableSelectionGuards,
     disableSelectionGuards,
     canvasState,
+    canvasTool,
   })
 
   useCanvasDragListeners({
@@ -1024,10 +1043,33 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         {/* Isolation Debug now integrated into Control Panel */}
 
         {/* Enhanced Minimap */}
-        <EnhancedMinimap
-          canvasItems={canvasItems}
-          canvasState={canvasState}
-          onNavigate={handleMinimapNavigate}
+        {showMinimap && (
+          <EnhancedMinimap
+            canvasItems={canvasItems}
+            canvasState={canvasState}
+            onNavigate={handleMinimapNavigate}
+          />
+        )}
+
+        {/* iOS Control Center - Canvas Controls */}
+        <CanvasControlCenter
+          activeTool={canvasTool}
+          onToolChange={setCanvasTool}
+          zoom={canvasState.zoom}
+          minZoom={0.25}
+          maxZoom={2}
+          onZoomChange={(newZoom) => setCanvasState(prev => ({ ...prev, zoom: newZoom }))}
+          minimapEnabled={showMinimap}
+          onMinimapToggle={() => setShowMinimap(prev => !prev)}
+          onAddComponent={handleAddComponent}
+          onAddPanel={toggleAddComponentMenu}
+          onToggleOrganize={() => setShowControlPanel(prev => !prev)}
+          // Floating toolbar integration
+          onCreateNote={onCreateNote}
+          onOpenRecent={onOpenRecent}
+          onToggleCanvas={onToggleCanvas}
+          showConstellationPanel={showConstellationPanelProp}
+          onOpenComponentPicker={toggleAddComponentMenu}
         />
         
         {/* Add Components Menu */}
@@ -1040,7 +1082,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         {/* Canvas Container */}
         <div
           id="canvas-container"
-          className={`relative w-full h-full cursor-grab overflow-hidden ${canvasState.isDragging ? 'cursor-grabbing' : ''}`}
+          className={`relative w-full h-full overflow-hidden ${
+            canvasState.isDragging
+              ? 'cursor-grabbing'
+              : canPan
+                ? 'cursor-grab'
+                : 'cursor-default'
+          }`}
           style={{
             // Isolate canvas painting to avoid cross-layer re-rasterization while dragging
             contain: 'layout paint',

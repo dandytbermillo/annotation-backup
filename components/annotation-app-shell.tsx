@@ -1737,7 +1737,9 @@ const initialWorkspaceSyncRef = useRef(false)
   )
 
   // Shared floating toolbar for canvas (rendered as child of the canvas)
-  const floatingToolbarChild = showNotesWidget ? (
+  // DISABLED: Floating toolbar replaced by iOS Control Center (canvas-control-center.tsx)
+  // Keeping code intact for reference. To re-enable, change `false &&` back to `showNotesWidget ?`
+  const floatingToolbarChild = false && showNotesWidget ? (
     <CanvasAwareFloatingToolbar
       x={notesWidgetPosition.x}
       y={notesWidgetPosition.y}
@@ -1792,6 +1794,11 @@ const initialWorkspaceSyncRef = useRef(false)
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
       onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
       onComponentDeleted={noteWorkspaceState.clearDeletedComponentFromCache}
+      // Control Center integration
+      onCreateNote={handleNewNoteFromToolbar}
+      onOpenRecent={() => setToolbarActivePanel("recents")}
+      onToggleCanvas={toggleConstellationView}
+      showConstellationPanel={showConstellationPanel}
     >
       {floatingToolbarChild}
     </MultiWorkspaceCanvasContainer>
@@ -1821,6 +1828,11 @@ const initialWorkspaceSyncRef = useRef(false)
       workspaceSnapshotRevision={noteWorkspaceState.snapshotRevision}
       onComponentChange={() => noteWorkspaceState.scheduleImmediateSave?.("components_changed")}
       onComponentDeleted={noteWorkspaceState.clearDeletedComponentFromCache}
+      // Control Center integration
+      onCreateNote={handleNewNoteFromToolbar}
+      onOpenRecent={() => setToolbarActivePanel("recents")}
+      onToggleCanvas={toggleConstellationView}
+      showConstellationPanel={showConstellationPanel}
     >
       {floatingToolbarChild}
     </AnnotationWorkspaceCanvas>

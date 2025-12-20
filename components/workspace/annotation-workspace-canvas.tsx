@@ -36,6 +36,15 @@ export type AnnotationWorkspaceCanvasProps = {
   onComponentDeleted?: (workspaceId: string, componentId: string) => void
   /** When true, pause hydration to prevent fetch loops (for hidden pinned canvases) */
   isCanvasHidden?: boolean
+  // Control Center integration - callbacks from floating toolbar
+  /** Callback to create a new note */
+  onCreateNote?: () => void
+  /** Callback to open recent notes panel */
+  onOpenRecent?: () => void
+  /** Callback to toggle constellation/canvas view */
+  onToggleCanvas?: () => void
+  /** Whether constellation panel is currently visible */
+  showConstellationPanel?: boolean
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
@@ -63,6 +72,11 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     onComponentChange,
     onComponentDeleted,
     isCanvasHidden = false,
+    // Control Center integration
+    onCreateNote,
+    onOpenRecent,
+    onToggleCanvas,
+    showConstellationPanel,
   },
   ref,
 ) {
@@ -91,6 +105,11 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       onComponentChange={onComponentChange}
       onComponentDeleted={onComponentDeleted}
       isCanvasHidden={isCanvasHidden}
+      // Control Center integration
+      onCreateNote={onCreateNote}
+      onOpenRecent={onOpenRecent}
+      onToggleCanvas={onToggleCanvas}
+      showConstellationPanel={showConstellationPanel}
     >
       {children}
     </ModernAnnotationCanvas>

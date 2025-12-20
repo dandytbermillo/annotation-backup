@@ -1233,20 +1233,306 @@
       color: var(--text-muted);
     }
 
-    /* ========== FLOATING TOOLBAR ========== */
-    .floating-toolbar {
+    /* ========== iOS CONTROL CENTER FLOATING TOOLBAR ========== */
+
+    /* Toolbar Toggle Button (bottom center) */
+    .control-center-toggle {
       position: fixed;
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%);
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 8px 12px;
+      width: 48px;
+      height: 48px;
+      background: rgba(30, 34, 42, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 50%;
       display: flex;
-      gap: 4px;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-primary);
+      font-size: 20px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.4);
       z-index: 100;
+      transition: all 0.2s ease;
+    }
+
+    .control-center-toggle:hover {
+      background: rgba(40, 44, 52, 0.95);
+      transform: translateX(-50%) scale(1.05);
+    }
+
+    .control-center-toggle.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* Control Center Container */
+    .control-center {
+      position: fixed;
+      bottom: 90px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: rgba(20, 23, 30, 0.75);
+      backdrop-filter: blur(40px) saturate(180%);
+      -webkit-backdrop-filter: blur(40px) saturate(180%);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 24px;
+      padding: 16px;
+      box-shadow:
+        0 8px 40px rgba(0,0,0,0.5),
+        0 0 0 1px rgba(255,255,255,0.05) inset;
+      z-index: 99;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .control-center.visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Grid Layout */
+    .cc-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 70px);
+      grid-template-rows: repeat(3, 70px);
+      gap: 12px;
+    }
+
+    /* Base Tile */
+    .cc-tile {
+      background: rgba(45, 50, 60, 0.6);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cc-tile::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, transparent 50%);
+      border-radius: 16px;
+      pointer-events: none;
+    }
+
+    .cc-tile:hover {
+      background: rgba(60, 65, 80, 0.7);
+      transform: scale(1.02);
+    }
+
+    .cc-tile:active {
+      transform: scale(0.98);
+    }
+
+    .cc-tile.active {
+      background: var(--accent);
+      border-color: rgba(99,102,241,0.3);
+      box-shadow: 0 0 20px rgba(99,102,241,0.3);
+    }
+
+    .cc-tile.active .cc-icon,
+    .cc-tile.active .cc-label {
+      color: white;
+    }
+
+    /* Tile Sizes */
+    .cc-tile.size-2x1 {
+      grid-column: span 2;
+    }
+
+    .cc-tile.size-1x2 {
+      grid-row: span 2;
+    }
+
+    .cc-tile.size-2x2 {
+      grid-column: span 2;
+      grid-row: span 2;
+    }
+
+    /* Tile Content */
+    .cc-icon {
+      font-size: 24px;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+      transition: color 0.15s;
+    }
+
+    .cc-label {
+      font-size: 10px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      transition: color 0.15s;
+    }
+
+    /* Group Tiles (2x2 with internal grid) */
+    .cc-tile.group-tile {
+      padding: 10px;
+    }
+
+    .cc-group-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 8px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .cc-group-item {
+      background: rgba(60, 65, 80, 0.5);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-size: 18px;
+    }
+
+    .cc-group-item:hover {
+      background: rgba(80, 85, 100, 0.7);
+      transform: scale(1.05);
+    }
+
+    .cc-group-item.active {
+      background: var(--accent);
+    }
+
+    /* Slider Tile (for zoom) */
+    .cc-slider-tile {
+      padding: 12px;
+      justify-content: space-between;
+    }
+
+    .cc-slider-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .cc-slider-value {
+      font-size: 12px;
+      color: var(--text-primary);
+      font-weight: 600;
+      margin-left: auto;
+    }
+
+    .cc-slider-track {
+      width: 100%;
+      height: 6px;
+      background: rgba(80, 85, 100, 0.5);
+      border-radius: 3px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .cc-slider-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.1s;
+    }
+
+    .cc-slider-thumb {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      cursor: grab;
+    }
+
+    .cc-slider-thumb:active {
+      cursor: grabbing;
+      transform: translate(-50%, -50%) scale(1.1);
+    }
+
+    /* Toggle Tile */
+    .cc-toggle-track {
+      width: 44px;
+      height: 24px;
+      background: rgba(80, 85, 100, 0.5);
+      border-radius: 12px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .cc-toggle-track.on {
+      background: var(--success);
+    }
+
+    .cc-toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: left 0.2s;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+
+    .cc-toggle-track.on .cc-toggle-thumb {
+      left: 22px;
+    }
+
+    /* Brightness/Volume style slider (vertical) */
+    .cc-vertical-slider-tile {
+      padding: 12px 0;
+    }
+
+    .cc-vertical-slider {
+      width: 8px;
+      height: 80%;
+      background: rgba(80, 85, 100, 0.5);
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .cc-vertical-slider-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: height 0.1s;
+    }
+
+    /* Section Separator */
+    .cc-separator {
+      grid-column: span 4;
+      height: 1px;
+      background: rgba(255,255,255,0.06);
+      margin: 4px 0;
+    }
+
+    /* Legacy toolbar support (hidden but kept for compatibility) */
+    .floating-toolbar {
+      display: none;
     }
 
     .toolbar-btn {
@@ -1471,6 +1757,646 @@
       background: var(--accent);
       color: white;
     }
+
+    /* ========== WORKSPACE SWITCHER POPOVER ========== */
+    .workspace-switcher-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .workspace-switcher-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-panel);
+    }
+
+    .workspace-switcher-btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .workspace-switcher-btn .ws-icon {
+      font-size: 14px;
+    }
+
+    .workspace-switcher-btn .ws-name {
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-switcher-btn .ws-count {
+      background: var(--bg-hover);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .workspace-switcher-btn .ws-chevron {
+      font-size: 10px;
+      transition: transform 0.15s;
+    }
+
+    .workspace-switcher-btn.open .ws-chevron {
+      transform: rotate(180deg);
+    }
+
+    .workspace-switcher-panel {
+      position: fixed;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 320px;
+      max-height: calc(100vh - 80px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      z-index: 1000;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .workspace-switcher-panel.visible {
+      display: flex;
+    }
+
+    .workspace-switcher-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .workspace-switcher-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .workspace-switcher-close {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+
+    .workspace-switcher-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .workspace-switcher-search {
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .workspace-switcher-search input {
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 13px;
+    }
+
+    .workspace-switcher-search input:focus {
+      outline: none;
+      border-color: var(--border-focus);
+    }
+
+    .workspace-switcher-search input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .workspace-switcher-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 400px;
+    }
+
+    .workspace-switcher-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .workspace-switcher-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .workspace-switcher-item.active {
+      background: var(--accent-dim);
+    }
+
+    .workspace-switcher-item.active:hover {
+      background: rgba(99,102,241,0.2);
+    }
+
+    .workspace-switcher-item-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--bg-hover);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .workspace-switcher-item.active .workspace-switcher-item-icon {
+      background: var(--accent);
+      color: white;
+    }
+
+    .workspace-switcher-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .workspace-switcher-item-name {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 2px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .workspace-switcher-item-name .default-badge {
+      font-size: 10px;
+      padding: 1px 5px;
+      background: var(--success-dim);
+      color: var(--success);
+      border-radius: 4px;
+    }
+
+    .workspace-switcher-item-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .workspace-switcher-item-status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .workspace-switcher-item-status .hot-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: rgba(34,197,94,0.15);
+      color: #22c55e;
+      border-radius: 4px;
+    }
+
+    .workspace-switcher-item-status .dirty-indicator {
+      width: 8px;
+      height: 8px;
+      background: var(--warning);
+      border-radius: 50%;
+    }
+
+    .workspace-switcher-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .workspace-switcher-footer-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .workspace-switcher-footer-btn {
+      padding: 6px 12px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: var(--accent);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .workspace-switcher-footer-btn:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    /* ========== NOTE TOOLBAR & SWITCHER ========== */
+    .note-toolbar {
+      height: 44px;
+      background: rgba(15,17,23,0.95);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .note-toolbar-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 4px 10px;
+      background: var(--bg-hover);
+      border-radius: 4px;
+    }
+
+    .note-toolbar-label .ws-num {
+      background: var(--accent-dim);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+    }
+
+    .note-switcher-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      max-width: 250px;
+    }
+
+    .note-switcher-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-panel);
+    }
+
+    .note-switcher-btn.open {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .note-switcher-btn .note-icon {
+      font-size: 14px;
+    }
+
+    .note-switcher-btn .note-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+
+    .note-switcher-btn .note-count {
+      background: var(--bg-hover);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .note-switcher-btn .note-chevron {
+      font-size: 10px;
+      transition: transform 0.15s;
+      flex-shrink: 0;
+    }
+
+    .note-switcher-btn.open .note-chevron {
+      transform: rotate(180deg);
+    }
+
+    .note-toolbar-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .note-toolbar-btn {
+      padding: 6px 12px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+
+    .note-toolbar-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .note-switcher-panel {
+      position: fixed;
+      top: 96px; /* Below topbar (52px) + note-toolbar (44px) */
+      left: 270px; /* After sidebar (260px) + some padding */
+      width: 340px;
+      max-height: calc(100vh - 120px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      z-index: 2000;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .note-switcher-panel.visible {
+      display: flex;
+    }
+
+    .note-switcher-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .note-switcher-title {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .note-switcher-close {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      transition: all 0.15s;
+    }
+
+    .note-switcher-close:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .note-switcher-list {
+      flex: 1;
+      overflow-y: auto;
+      max-height: 400px;
+    }
+
+    .note-switcher-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .note-switcher-item:hover {
+      background: var(--bg-hover);
+    }
+
+    .note-switcher-item.active {
+      background: var(--accent-dim);
+    }
+
+    .note-switcher-item.active:hover {
+      background: rgba(99,102,241,0.2);
+    }
+
+    .note-switcher-item-color {
+      width: 4px;
+      height: 32px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .note-switcher-item-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .note-switcher-item-name {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .note-switcher-item-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .note-switcher-item-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .note-switcher-item:hover .note-switcher-item-actions {
+      opacity: 1;
+    }
+
+    .note-switcher-item-action {
+      width: 24px;
+      height: 24px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+
+    .note-switcher-item-action:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+
+    .note-switcher-item-action.close:hover {
+      background: rgba(239,68,68,0.15);
+      color: #ef4444;
+      border-color: rgba(239,68,68,0.3);
+    }
+
+    .note-switcher-item-status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .note-switcher-item-status .unsaved-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--warning);
+      border-radius: 50%;
+    }
+
+    .note-switcher-item-status .syncing-icon {
+      font-size: 12px;
+      color: var(--accent);
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .note-switcher-footer {
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .note-switcher-footer-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .note-switcher-footer-btn {
+      padding: 6px 12px;
+      background: var(--accent-dim);
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      color: var(--accent);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .note-switcher-footer-btn:hover {
+      background: var(--accent);
+      color: white;
+    }
+
+    .note-switcher-empty {
+      padding: 40px 20px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+
+    .note-switcher-empty-icon {
+      font-size: 32px;
+      margin-bottom: 12px;
+    }
+
+    /* Compact Icon Buttons for Note Toolbar */
+    .note-icon-btn {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .note-icon-btn:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-panel);
+    }
+
+    .note-icon-btn.open,
+    .note-icon-btn:active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+    }
+
+    .note-icon-btn .icon-emoji {
+      font-size: 16px;
+    }
+
+    .note-icon-btn .icon-badge {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      min-width: 18px;
+      height: 18px;
+      background: var(--accent);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+    }
   </style>
 </head>
 <body>
@@ -1497,8 +2423,14 @@
           <!-- Populated by JS -->
         </div>
       </div>
-      <div class="topbar-center" id="workspace-tabs">
-        <!-- Populated by JS -->
+      <div class="topbar-center">
+        <!-- Workspace Switcher Button (replaces horizontal tabs) -->
+        <button class="workspace-switcher-btn" id="workspace-switcher-btn" onclick="toggleWorkspaceSwitcher()">
+          <span class="ws-icon">📋</span>
+          <span class="ws-name" id="ws-current-name">Dashboard</span>
+          <span class="ws-count" id="ws-count">4</span>
+          <span class="ws-chevron">▼</span>
+        </button>
       </div>
       <div class="topbar-right">
         <button class="notification-bell has-unread" id="notification-bell" onclick="toggleNotificationPanel()">
@@ -1532,6 +2464,26 @@
       </div>
       <div class="notification-list" id="notification-list">
         <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- Workspace Switcher Panel -->
+    <div class="workspace-switcher-panel" id="workspace-switcher-panel">
+      <div class="workspace-switcher-header">
+        <div class="workspace-switcher-title">
+          <span>📋</span> Workspaces
+        </div>
+        <button class="workspace-switcher-close" onclick="closeWorkspaceSwitcher()">✕</button>
+      </div>
+      <div class="workspace-switcher-search">
+        <input type="text" placeholder="Search workspaces..." id="workspace-search" oninput="filterWorkspaces(this.value)">
+      </div>
+      <div class="workspace-switcher-list" id="workspace-switcher-list">
+        <!-- Populated by JS -->
+      </div>
+      <div class="workspace-switcher-footer">
+        <span class="workspace-switcher-footer-hint">↑↓ Navigate · Enter Select · Esc Close</span>
+        <button class="workspace-switcher-footer-btn" onclick="createNewWorkspace()">+ New</button>
       </div>
     </div>
 
@@ -1589,16 +2541,120 @@
         </div>
       </aside>
 
-      <!-- Canvas -->
-      <div class="canvas-container" id="canvas-container">
-        <div class="canvas-surface" id="canvas-surface">
-          <!-- Panels rendered by JS -->
+      <!-- Canvas Area with Note Toolbar -->
+      <div style="display: flex; flex-direction: column; flex: 1; min-width: 0;">
+        <!-- Note Toolbar (Single Icon Mode) -->
+        <div class="note-toolbar" style="height: 36px; padding: 0 8px; gap: 8px;">
+          <!-- Single Note Switcher Icon -->
+          <button class="note-icon-btn" id="note-switcher-btn" onclick="event.stopPropagation(); toggleNoteSwitcher()" title="Open Notes">
+            <span class="icon-emoji">📄</span>
+            <span class="icon-badge" id="note-count">5</span>
+          </button>
+        </div>
+
+        <!-- Canvas -->
+        <div class="canvas-container" id="canvas-container">
+          <div class="canvas-surface" id="canvas-surface">
+            <!-- Panels rendered by JS -->
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Floating Toolbar -->
-    <div class="floating-toolbar">
+    <!-- Note Switcher Panel -->
+    <div class="note-switcher-panel" id="note-switcher-panel">
+      <div class="note-switcher-header">
+        <div class="note-switcher-title">
+          <span>📄</span> Open Notes
+        </div>
+        <button class="note-switcher-close" onclick="closeNoteSwitcher()">✕</button>
+      </div>
+      <div class="note-switcher-list" id="note-switcher-list">
+        <!-- Populated by JS -->
+      </div>
+      <div class="note-switcher-footer">
+        <span class="note-switcher-footer-hint">Click to switch · × to close</span>
+        <button class="note-switcher-footer-btn" onclick="createNewNote()">+ New Note</button>
+      </div>
+    </div>
+
+    <!-- iOS Control Center Toggle Button -->
+    <button class="control-center-toggle" id="cc-toggle" onclick="toggleControlCenter()" title="Canvas Controls">
+      <span>⚡</span>
+    </button>
+
+    <!-- iOS Control Center Panel -->
+    <div class="control-center" id="control-center">
+      <div class="cc-grid">
+        <!-- Row 1: Select/Pan (2x1), Add (1x1), Components (2x2 spans row 1&2) -->
+
+        <!-- Select Tool (1x1) -->
+        <div class="cc-tile active" id="cc-select" onclick="selectTool('select')">
+          <span class="cc-icon">👆</span>
+          <span class="cc-label">Select</span>
+        </div>
+
+        <!-- Pan Tool (1x1) -->
+        <div class="cc-tile" id="cc-pan" onclick="selectTool('pan')">
+          <span class="cc-icon">✋</span>
+          <span class="cc-label">Pan</span>
+        </div>
+
+        <!-- Components Group (2x2) -->
+        <div class="cc-tile size-2x2 group-tile" id="cc-components">
+          <div class="cc-group-grid">
+            <div class="cc-group-item" onclick="event.stopPropagation(); addComponent('calculator')" title="Calculator">🧮</div>
+            <div class="cc-group-item" onclick="event.stopPropagation(); addComponent('timer')" title="Timer">⏱️</div>
+            <div class="cc-group-item" onclick="event.stopPropagation(); addComponent('sticky')" title="Sticky Note">📝</div>
+            <div class="cc-group-item" onclick="event.stopPropagation(); addComponent('counter')" title="Counter">🔢</div>
+          </div>
+        </div>
+
+        <!-- Row 2: Add Panel (1x1), Org (1x1) -->
+
+        <!-- Add Panel (1x1) -->
+        <div class="cc-tile" id="cc-add-panel" onclick="showPanelPicker()">
+          <span class="cc-icon">➕</span>
+          <span class="cc-label">Panel</span>
+        </div>
+
+        <!-- Organization (1x1) -->
+        <div class="cc-tile" id="cc-org" onclick="toggleOrg()">
+          <span class="cc-icon">📁</span>
+          <span class="cc-label">Organize</span>
+        </div>
+
+        <!-- Row 3: Zoom (2x1 with slider), View toggles -->
+
+        <!-- Zoom Slider (2x1) -->
+        <div class="cc-tile size-2x1 cc-slider-tile" id="cc-zoom">
+          <div class="cc-slider-header">
+            <span class="cc-icon" style="font-size: 16px; margin: 0;">🔍</span>
+            <span class="cc-label" style="margin: 0;">Zoom</span>
+            <span class="cc-slider-value" id="zoom-value">100%</span>
+          </div>
+          <div class="cc-slider-track" id="zoom-track" onclick="handleZoomClick(event)">
+            <div class="cc-slider-fill" id="zoom-fill" style="width: 50%;"></div>
+            <div class="cc-slider-thumb" id="zoom-thumb" style="left: 50%;"></div>
+          </div>
+        </div>
+
+        <!-- Grid Toggle (1x1) -->
+        <div class="cc-tile" id="cc-grid" onclick="toggleGrid()">
+          <span class="cc-icon">⊞</span>
+          <span class="cc-label">Grid</span>
+        </div>
+
+        <!-- Minimap Toggle (1x1) -->
+        <div class="cc-tile active" id="cc-minimap" onclick="toggleMinimap()">
+          <span class="cc-icon">🗺️</span>
+          <span class="cc-label">Map</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legacy Floating Toolbar (hidden, kept for compatibility) -->
+    <div class="floating-toolbar" style="display: none;">
       <button class="toolbar-btn" title="Select (V)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
@@ -1937,7 +2993,7 @@
     // ========== RENDER ==========
 function render() {
   renderBreadcrumb();
-  renderTabs();
+  updateWorkspaceSwitcherButton(); // Replaced renderTabs() with workspace switcher
   renderPanels();
   renderSidebar();
   renderMinimap();
@@ -2754,6 +3810,519 @@ KEY UI ELEMENTS:
           !e.target.closest('.notification-panel') &&
           !e.target.closest('.notification-bell')) {
         closeNotificationPanel();
+      }
+    });
+
+    // ========== WORKSPACE SWITCHER ==========
+    let workspaceSwitcherOpen = false;
+    let workspaceSearchFilter = '';
+
+    // Mock workspace data with hot/dirty states
+    function getAllWorkspaces() {
+      const allWs = [];
+      entries.forEach(entry => {
+        entry.workspaces.forEach(ws => {
+          allWs.push({
+            ...ws,
+            entryId: entry.id,
+            entryName: entry.name,
+            entryIcon: entry.icon,
+            isHot: Math.random() > 0.5, // Demo: random hot state
+            isDirty: Math.random() > 0.8, // Demo: random dirty state
+            lastAccessed: Date.now() - Math.floor(Math.random() * 3600000)
+          });
+        });
+      });
+      return allWs;
+    }
+
+    function toggleWorkspaceSwitcher() {
+      const panel = document.getElementById('workspace-switcher-panel');
+      const btn = document.getElementById('workspace-switcher-btn');
+
+      workspaceSwitcherOpen = !workspaceSwitcherOpen;
+
+      if (workspaceSwitcherOpen) {
+        panel.classList.add('visible');
+        btn.classList.add('open');
+        renderWorkspaceSwitcherList();
+        // Focus search input
+        setTimeout(() => {
+          document.getElementById('workspace-search').focus();
+        }, 50);
+      } else {
+        panel.classList.remove('visible');
+        btn.classList.remove('open');
+        // Clear search
+        document.getElementById('workspace-search').value = '';
+        workspaceSearchFilter = '';
+      }
+    }
+
+    function closeWorkspaceSwitcher() {
+      const panel = document.getElementById('workspace-switcher-panel');
+      const btn = document.getElementById('workspace-switcher-btn');
+      panel.classList.remove('visible');
+      btn.classList.remove('open');
+      workspaceSwitcherOpen = false;
+      document.getElementById('workspace-search').value = '';
+      workspaceSearchFilter = '';
+    }
+
+    function filterWorkspaces(query) {
+      workspaceSearchFilter = query.toLowerCase();
+      renderWorkspaceSwitcherList();
+    }
+
+    function renderWorkspaceSwitcherList() {
+      const list = document.getElementById('workspace-switcher-list');
+      let workspaces = getAllWorkspaces();
+
+      // Filter by search
+      if (workspaceSearchFilter) {
+        workspaces = workspaces.filter(ws =>
+          ws.name.toLowerCase().includes(workspaceSearchFilter) ||
+          ws.entryName.toLowerCase().includes(workspaceSearchFilter)
+        );
+      }
+
+      // Sort: current first, then by last accessed
+      workspaces.sort((a, b) => {
+        const aIsCurrent = a.id === currentWorkspace.id;
+        const bIsCurrent = b.id === currentWorkspace.id;
+        if (aIsCurrent) return -1;
+        if (bIsCurrent) return 1;
+        return b.lastAccessed - a.lastAccessed;
+      });
+
+      if (workspaces.length === 0) {
+        list.innerHTML = `
+          <div style="padding: 40px 20px; text-align: center; color: var(--text-muted);">
+            <div style="font-size: 24px; margin-bottom: 8px;">🔍</div>
+            <div>No workspaces found</div>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = workspaces.map(ws => {
+        const isCurrent = ws.id === currentWorkspace.id;
+        const timeAgo = getTimeAgo(ws.lastAccessed);
+
+        return `
+          <div class="workspace-switcher-item ${isCurrent ? 'active' : ''}"
+               onclick="selectWorkspaceFromSwitcher('${ws.entryId}', '${ws.id}')">
+            <div class="workspace-switcher-item-icon">${ws.entryIcon || '📋'}</div>
+            <div class="workspace-switcher-item-info">
+              <div class="workspace-switcher-item-name">
+                ${ws.name}
+                ${ws.isDefault ? '<span class="default-badge">default</span>' : ''}
+              </div>
+              <div class="workspace-switcher-item-meta">
+                ${ws.entryName} · ${timeAgo}
+              </div>
+            </div>
+            <div class="workspace-switcher-item-status">
+              ${ws.isDirty ? '<div class="dirty-indicator" title="Unsaved changes"></div>' : ''}
+              ${ws.isHot ? '<span class="hot-badge">hot</span>' : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function getTimeAgo(timestamp) {
+      const diff = Date.now() - timestamp;
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 1) return 'Just now';
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      return `${Math.floor(hours / 24)}d ago`;
+    }
+
+    function selectWorkspaceFromSwitcher(entryId, workspaceId) {
+      closeWorkspaceSwitcher();
+      navigateTo(entryId, workspaceId);
+    }
+
+    function updateWorkspaceSwitcherButton() {
+      const nameEl = document.getElementById('ws-current-name');
+      const countEl = document.getElementById('ws-count');
+
+      if (nameEl) nameEl.textContent = currentWorkspace.name;
+      if (countEl) countEl.textContent = currentEntry.workspaces.length;
+    }
+
+    function createNewWorkspace() {
+      closeWorkspaceSwitcher();
+      showToast('Create workspace dialog would open here');
+    }
+
+    // Close workspace switcher when clicking outside
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('workspace-switcher-panel');
+      const btn = document.getElementById('workspace-switcher-btn');
+      if (workspaceSwitcherOpen &&
+          !e.target.closest('.workspace-switcher-panel') &&
+          !e.target.closest('.workspace-switcher-btn')) {
+        closeWorkspaceSwitcher();
+      }
+    });
+
+    // Keyboard navigation for workspace switcher
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && workspaceSwitcherOpen) {
+        closeWorkspaceSwitcher();
+      }
+      if (e.key === 'Escape' && noteSwitcherOpen) {
+        closeNoteSwitcher();
+      }
+    });
+
+    // ========== NOTE SWITCHER ==========
+    let noteSwitcherOpen = false;
+    let currentNoteId = 'note-1';
+
+    // Mock open notes data
+    const openNotes = [
+      { id: 'note-1', name: 'New Note - Dec 19, 1:16 PM', color: '#6366f1', lastEdited: Date.now() - 60000, isUnsaved: true, isSyncing: false },
+      { id: 'note-2', name: 'New Note - Dec 19, 1:16 PM 1 - Dec 19, 1:20 PM', color: '#22c55e', lastEdited: Date.now() - 300000, isUnsaved: false, isSyncing: false },
+      { id: 'note-3', name: 'Project Planning Notes - Q1 2025 Roadmap', color: '#f59e0b', lastEdited: Date.now() - 600000, isUnsaved: false, isSyncing: true },
+      { id: 'note-4', name: 'Meeting Notes - Team Standup Dec 19', color: '#ef4444', lastEdited: Date.now() - 1200000, isUnsaved: true, isSyncing: false },
+      { id: 'note-5', name: 'Research - Workspace State Machine Architecture', color: '#8b5cf6', lastEdited: Date.now() - 1800000, isUnsaved: false, isSyncing: false },
+    ];
+
+    function toggleNoteSwitcher() {
+      const panel = document.getElementById('note-switcher-panel');
+      const btn = document.getElementById('note-switcher-btn');
+
+      // Close workspace switcher if open
+      if (workspaceSwitcherOpen) {
+        closeWorkspaceSwitcher();
+      }
+
+      noteSwitcherOpen = !noteSwitcherOpen;
+
+      if (noteSwitcherOpen) {
+        panel.classList.add('visible');
+        btn.classList.add('open');
+        renderNoteSwitcherList();
+      } else {
+        panel.classList.remove('visible');
+        btn.classList.remove('open');
+      }
+    }
+
+    function closeNoteSwitcher() {
+      const panel = document.getElementById('note-switcher-panel');
+      const btn = document.getElementById('note-switcher-btn');
+      panel.classList.remove('visible');
+      btn.classList.remove('open');
+      noteSwitcherOpen = false;
+    }
+
+    // Also update workspace switcher to close note switcher and toggle both buttons
+    const originalToggleWorkspaceSwitcher = toggleWorkspaceSwitcher;
+    toggleWorkspaceSwitcher = function() {
+      // Close note switcher if open
+      if (noteSwitcherOpen) {
+        closeNoteSwitcher();
+      }
+
+      const wsIconBtn = document.getElementById('workspace-icon-btn');
+
+      originalToggleWorkspaceSwitcher();
+
+      // Sync the icon button state
+      if (wsIconBtn) {
+        if (workspaceSwitcherOpen) {
+          wsIconBtn.classList.add('open');
+        } else {
+          wsIconBtn.classList.remove('open');
+        }
+      }
+    };
+
+    const originalCloseWorkspaceSwitcher = closeWorkspaceSwitcher;
+    closeWorkspaceSwitcher = function() {
+      originalCloseWorkspaceSwitcher();
+      const wsIconBtn = document.getElementById('workspace-icon-btn');
+      if (wsIconBtn) {
+        wsIconBtn.classList.remove('open');
+      }
+    };
+
+    function renderNoteSwitcherList() {
+      const list = document.getElementById('note-switcher-list');
+
+      if (openNotes.length === 0) {
+        list.innerHTML = `
+          <div class="note-switcher-empty">
+            <div class="note-switcher-empty-icon">📄</div>
+            <div>No notes open</div>
+            <div style="margin-top: 8px; font-size: 12px;">Click "+ New Note" to create one</div>
+          </div>
+        `;
+        return;
+      }
+
+      // Sort: current first, then by last edited
+      const sortedNotes = [...openNotes].sort((a, b) => {
+        if (a.id === currentNoteId) return -1;
+        if (b.id === currentNoteId) return 1;
+        return b.lastEdited - a.lastEdited;
+      });
+
+      list.innerHTML = sortedNotes.map(note => {
+        const isCurrent = note.id === currentNoteId;
+        const timeAgo = getTimeAgo(note.lastEdited);
+
+        return `
+          <div class="note-switcher-item ${isCurrent ? 'active' : ''}"
+               onclick="selectNote('${note.id}')">
+            <div class="note-switcher-item-color" style="background: ${note.color}"></div>
+            <div class="note-switcher-item-info">
+              <div class="note-switcher-item-name">${note.name}</div>
+              <div class="note-switcher-item-meta">
+                <span>Edited ${timeAgo}</span>
+              </div>
+            </div>
+            <div class="note-switcher-item-status">
+              ${note.isUnsaved ? '<div class="unsaved-dot" title="Unsaved changes"></div>' : ''}
+              ${note.isSyncing ? '<span class="syncing-icon" title="Syncing...">↻</span>' : ''}
+            </div>
+            <div class="note-switcher-item-actions">
+              <button class="note-switcher-item-action" onclick="event.stopPropagation(); reloadNote('${note.id}')" title="Reload">↻</button>
+              <button class="note-switcher-item-action close" onclick="event.stopPropagation(); closeNote('${note.id}')" title="Close">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectNote(noteId) {
+      currentNoteId = noteId;
+      const note = openNotes.find(n => n.id === noteId);
+      if (note) {
+        document.getElementById('note-current-name').textContent = note.name;
+        showToast(`Switched to "${note.name}"`);
+      }
+      closeNoteSwitcher();
+      renderNoteSwitcherList();
+    }
+
+    function closeNote(noteId) {
+      const idx = openNotes.findIndex(n => n.id === noteId);
+      if (idx !== -1) {
+        const note = openNotes[idx];
+        openNotes.splice(idx, 1);
+        updateNoteCount();
+        renderNoteSwitcherList();
+        showToast(`Closed "${note.name}"`);
+
+        // If we closed the current note, switch to another
+        if (noteId === currentNoteId && openNotes.length > 0) {
+          selectNote(openNotes[0].id);
+        }
+      }
+    }
+
+    function reloadNote(noteId) {
+      const note = openNotes.find(n => n.id === noteId);
+      if (note) {
+        showToast(`Reloading "${note.name}"...`);
+      }
+    }
+
+    function createNewNote() {
+      const newNote = {
+        id: 'note-' + Date.now(),
+        name: 'New Note - ' + new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+        color: ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'][Math.floor(Math.random() * 5)],
+        lastEdited: Date.now(),
+        isUnsaved: true,
+        isSyncing: false
+      };
+      openNotes.unshift(newNote);
+      currentNoteId = newNote.id;
+      document.getElementById('note-current-name').textContent = newNote.name;
+      updateNoteCount();
+      closeNoteSwitcher();
+      showToast(`Created "${newNote.name}"`);
+    }
+
+    function updateNoteCount() {
+      document.getElementById('note-count').textContent = openNotes.length;
+    }
+
+    function updateNoteSwitcherButton() {
+      const note = openNotes.find(n => n.id === currentNoteId);
+      if (note) {
+        document.getElementById('note-current-name').textContent = note.name;
+      }
+      updateNoteCount();
+    }
+
+    // Close note switcher when clicking outside
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('note-switcher-panel');
+      const btn = document.getElementById('note-switcher-btn');
+      if (noteSwitcherOpen &&
+          !e.target.closest('.note-switcher-panel') &&
+          !e.target.closest('#note-switcher-btn')) {
+        closeNoteSwitcher();
+      }
+    });
+
+    // ========== iOS CONTROL CENTER ==========
+
+    let controlCenterOpen = false;
+    let currentTool = 'select';
+    let zoomLevel = 100;
+    let gridEnabled = false;
+    let minimapEnabled = true;
+
+    function toggleControlCenter() {
+      const cc = document.getElementById('control-center');
+      const toggle = document.getElementById('cc-toggle');
+      controlCenterOpen = !controlCenterOpen;
+
+      if (controlCenterOpen) {
+        cc.classList.add('visible');
+        toggle.classList.add('active');
+      } else {
+        cc.classList.remove('visible');
+        toggle.classList.remove('active');
+      }
+    }
+
+    function closeControlCenter() {
+      const cc = document.getElementById('control-center');
+      const toggle = document.getElementById('cc-toggle');
+      controlCenterOpen = false;
+      cc.classList.remove('visible');
+      toggle.classList.remove('active');
+    }
+
+    function selectTool(tool) {
+      currentTool = tool;
+
+      // Update tile states
+      document.getElementById('cc-select').classList.toggle('active', tool === 'select');
+      document.getElementById('cc-pan').classList.toggle('active', tool === 'pan');
+
+      // Show feedback
+      const toolNames = { select: 'Select', pan: 'Pan' };
+      showToast(`${toolNames[tool]} tool activated`);
+
+      // Close control center after selection
+      setTimeout(closeControlCenter, 200);
+    }
+
+    function addComponent(type) {
+      const componentNames = {
+        calculator: 'Calculator',
+        timer: 'Timer',
+        sticky: 'Sticky Note',
+        counter: 'Counter'
+      };
+      showToast(`Adding ${componentNames[type]}...`);
+      setTimeout(closeControlCenter, 200);
+    }
+
+    function showPanelPicker() {
+      showToast('Panel picker would open here');
+      setTimeout(closeControlCenter, 200);
+    }
+
+    function toggleOrg() {
+      showToast('Organization panel would toggle');
+      setTimeout(closeControlCenter, 200);
+    }
+
+    function handleZoomClick(event) {
+      const track = document.getElementById('zoom-track');
+      const rect = track.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
+
+      // Map percentage to zoom (25% to 200%)
+      zoomLevel = Math.round(25 + (percentage / 100) * 175);
+      updateZoomUI();
+    }
+
+    function updateZoomUI() {
+      // Map zoom level to percentage (25-200 -> 0-100%)
+      const percentage = ((zoomLevel - 25) / 175) * 100;
+
+      document.getElementById('zoom-fill').style.width = percentage + '%';
+      document.getElementById('zoom-thumb').style.left = percentage + '%';
+      document.getElementById('zoom-value').textContent = zoomLevel + '%';
+    }
+
+    function toggleGrid() {
+      gridEnabled = !gridEnabled;
+      document.getElementById('cc-grid').classList.toggle('active', gridEnabled);
+      showToast(gridEnabled ? 'Grid enabled' : 'Grid disabled');
+    }
+
+    function toggleMinimap() {
+      minimapEnabled = !minimapEnabled;
+      document.getElementById('cc-minimap').classList.toggle('active', minimapEnabled);
+
+      // Actually hide/show the minimap
+      const minimap = document.getElementById('minimap');
+      if (minimap) {
+        minimap.style.display = minimapEnabled ? 'block' : 'none';
+      }
+
+      showToast(minimapEnabled ? 'Minimap shown' : 'Minimap hidden');
+    }
+
+    // Make zoom slider draggable
+    let isDraggingZoom = false;
+
+    document.getElementById('zoom-thumb')?.addEventListener('mousedown', (e) => {
+      isDraggingZoom = true;
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (isDraggingZoom) {
+        const track = document.getElementById('zoom-track');
+        const rect = track.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const percentage = Math.max(0, Math.min(100, (x / rect.width) * 100));
+        zoomLevel = Math.round(25 + (percentage / 100) * 175);
+        updateZoomUI();
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isDraggingZoom) {
+        isDraggingZoom = false;
+        showToast(`Zoom: ${zoomLevel}%`);
+      }
+    });
+
+    // Close control center when clicking outside
+    document.addEventListener('click', (e) => {
+      if (controlCenterOpen &&
+          !e.target.closest('.control-center') &&
+          !e.target.closest('#cc-toggle')) {
+        closeControlCenter();
+      }
+    });
+
+    // Keyboard shortcut to toggle Control Center
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && controlCenterOpen) {
+        closeControlCenter();
+      }
+      // Optional: Use backtick to toggle
+      if (e.key === '`' && !e.target.matches('input, textarea')) {
+        toggleControlCenter();
       }
     });
 
