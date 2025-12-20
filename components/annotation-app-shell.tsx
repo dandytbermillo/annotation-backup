@@ -225,6 +225,8 @@ function AnnotationAppContent({
     return null
   })
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
+  // Shared state for note switcher popover (controlled by both dock and workspace toolbar)
+  const [isNoteSwitcherOpen, setIsNoteSwitcherOpen] = useState(false)
   const layerContext = useLayer()
   const {
     activeSidebarTab,
@@ -1282,6 +1284,11 @@ const initialWorkspaceSyncRef = useRef(false)
     clearClosedNoteFromCache: noteWorkspaceState.clearClosedNoteFromCache,
   })
 
+  // Toggle callback for note switcher popover (used by both dock and workspace toolbar)
+  const toggleNoteSwitcher = useCallback(() => {
+    setIsNoteSwitcherOpen(prev => !prev)
+  }, [])
+
   const handleSnapshotSettled = useCallback((noteId: string) => {
     setSkipSnapshotForNote(current => (current === noteId ? null : current))
   }, [])
@@ -1635,12 +1642,16 @@ const initialWorkspaceSyncRef = useRef(false)
     onCloseNote: handleCloseNote,
     onNewNote: handleNewNoteFromToolbar,
     onSettings: handleSettingsFromToolbar,
+    // Controlled popover state (shared with dock)
+    isPopoverOpen: isNoteSwitcherOpen,
+    onPopoverOpenChange: setIsNoteSwitcherOpen,
   })
 
   const workspaceToolbarStripProps = useMemo(
     () => ({
-      // Hide toolbar when in embedded hidden mode (dashboard mode) or when constellation/popup is active
-      isVisible: !isHidden && !showConstellationPanel && !isPopupLayerActive,
+      // DISABLED: Toolbar replaced by iOS Control Center dock (canvas-control-center.tsx)
+      // The dock's Notes button now handles note switching via the popover
+      isVisible: false,
       // Position toolbar below dashboard header when embedded
       topOffset: toolbarTopOffset,
       // Disable edge detection when embedded (topOffset > 0) - toolbar stays visible
@@ -1799,6 +1810,14 @@ const initialWorkspaceSyncRef = useRef(false)
       onOpenRecent={() => setToolbarActivePanel("recents")}
       onToggleCanvas={toggleConstellationView}
       showConstellationPanel={showConstellationPanel}
+      // Note Switcher integration (for dock badge + toggle)
+      openNotesForSwitcher={sortedOpenNotes}
+      isNoteSwitcherOpen={isNoteSwitcherOpen}
+      onToggleNoteSwitcher={toggleNoteSwitcher}
+      onSelectNote={(noteId) => handleNoteSelect(noteId, { source: 'toolbar-open' })}
+      onCloseNote={handleCloseNote}
+      onCenterNote={handleCenterNote}
+      isNotesLoading={isWorkspaceLoading || noteWorkspaceBusy}
     >
       {floatingToolbarChild}
     </MultiWorkspaceCanvasContainer>
@@ -1833,6 +1852,14 @@ const initialWorkspaceSyncRef = useRef(false)
       onOpenRecent={() => setToolbarActivePanel("recents")}
       onToggleCanvas={toggleConstellationView}
       showConstellationPanel={showConstellationPanel}
+      // Note Switcher integration (for dock badge + toggle)
+      openNotesForSwitcher={sortedOpenNotes}
+      isNoteSwitcherOpen={isNoteSwitcherOpen}
+      onToggleNoteSwitcher={toggleNoteSwitcher}
+      onSelectNote={(noteId) => handleNoteSelect(noteId, { source: 'toolbar-open' })}
+      onCloseNote={handleCloseNote}
+      onCenterNote={handleCenterNote}
+      isNotesLoading={isWorkspaceLoading || noteWorkspaceBusy}
     >
       {floatingToolbarChild}
     </AnnotationWorkspaceCanvas>

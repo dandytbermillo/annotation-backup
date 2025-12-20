@@ -16,6 +16,9 @@ type UseWorkspaceToolbarPropsOptions = {
   onCloseNote: (noteId: string) => void
   onNewNote: () => void
   onSettings: () => void
+  // Controlled popover state (shared with dock)
+  isPopoverOpen?: boolean
+  onPopoverOpenChange?: (open: boolean) => void
 }
 
 export function useWorkspaceToolbarProps({
@@ -29,6 +32,8 @@ export function useWorkspaceToolbarProps({
   onCloseNote,
   onNewNote,
   onSettings,
+  isPopoverOpen,
+  onPopoverOpenChange,
 }: UseWorkspaceToolbarPropsOptions) {
   return useMemo(
     () => ({
@@ -41,6 +46,8 @@ export function useWorkspaceToolbarProps({
       onCloseNote,
       onNewNote,
       onSettings,
+      isPopoverOpen,
+      onPopoverOpenChange,
     }),
     [
       notes,
@@ -53,6 +60,8 @@ export function useWorkspaceToolbarProps({
       onCloseNote,
       onNewNote,
       onSettings,
+      isPopoverOpen,
+      onPopoverOpenChange,
     ],
   )
 }

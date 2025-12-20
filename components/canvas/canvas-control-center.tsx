@@ -3,6 +3,8 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
 import type { CanvasToolType } from '@/lib/hooks/annotation/use-canvas-pointer-handlers';
+import { NoteSwitcherPopover } from './note-switcher-popover';
+import type { OpenNoteItem } from './note-switcher-item';
 
 // ============================================================================
 // TYPES
@@ -39,6 +41,22 @@ export interface CanvasControlCenterProps {
   showConstellationPanel?: boolean;
   /** Callback to open component picker panel (different from direct add) */
   onOpenComponentPicker?: () => void;
+
+  // Note switcher integration (for dock Notes button)
+  /** Open notes for the switcher popover */
+  openNotes?: OpenNoteItem[];
+  /** Whether the note switcher popover is currently open */
+  isNoteSwitcherOpen?: boolean;
+  /** Callback to toggle the note switcher popover */
+  onToggleNoteSwitcher?: () => void;
+  /** Callback when a note is selected in the switcher */
+  onSelectNote?: (noteId: string) => void;
+  /** Callback when a note is closed from the switcher */
+  onCloseNote?: (noteId: string) => void;
+  /** Callback to center on a note */
+  onCenterNote?: (noteId: string) => void;
+  /** Whether notes are currently loading */
+  isNotesLoading?: boolean;
 }
 
 // ============================================================================
@@ -76,6 +94,14 @@ export function CanvasControlCenter({
   onToggleCanvas,
   showConstellationPanel,
   onOpenComponentPicker,
+  // Note switcher integration
+  openNotes = [],
+  isNoteSwitcherOpen = false,
+  onToggleNoteSwitcher,
+  onSelectNote,
+  onCloseNote,
+  onCenterNote,
+  isNotesLoading = false,
 }: CanvasControlCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isDraggingZoom, setIsDraggingZoom] = useState(false);
@@ -151,14 +177,17 @@ export function CanvasControlCenter({
     }
   }, [isDraggingZoom, handleZoomDrag, handleZoomDragEnd]);
 
-  // Click outside to close
+  // Click outside to close Control Center
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+
+      // Close Control Center if clicking outside
       if (
         isOpen &&
         controlCenterRef.current &&
-        !controlCenterRef.current.contains(e.target as Node) &&
-        !(e.target as HTMLElement).closest('[data-cc-toggle]')
+        !controlCenterRef.current.contains(target) &&
+        !target.closest('[data-cc-toggle]')
       ) {
         close();
       }
@@ -170,7 +199,11 @@ export function CanvasControlCenter({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) close();
+      // Escape closes Control Center
+      if (e.key === 'Escape' && isOpen) {
+        close();
+      }
+      // Backtick toggles Control Center (when not in input)
       if (
         e.key === '`' &&
         !(e.target as HTMLElement).matches('input, textarea, [contenteditable]')
@@ -182,42 +215,146 @@ export function CanvasControlCenter({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, close, toggleOpen]);
 
+  // Handler for notes button click - toggles workspace toolbar's popover
+  const handleNotesClick = useCallback(() => {
+    onToggleNoteSwitcher?.();
+    // Close Control Center if open
+    if (isOpen) close();
+  }, [isOpen, close, onToggleNoteSwitcher]);
+
   if (!visible) return null;
 
   return (
     <>
-      {/* Toggle Button */}
-      <button
-        data-cc-toggle
-        onClick={toggleOpen}
-        title="Canvas Controls (`)"
+      {/* Dock Container */}
+      <div
         className={className}
         style={{
           position: 'fixed',
           bottom: 24,
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 48,
-          height: 48,
-          borderRadius: '50%',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
+          gap: 8,
+          padding: 8,
+          borderRadius: 28,
           zIndex: Z_INDEX_TOGGLE,
-          transition: 'all 0.2s ease-out',
+          background: 'rgba(18, 18, 22, 0.85)',
+          backdropFilter: 'blur(30px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(30px) saturate(180%)',
           border: '1px solid rgba(255,255,255,0.1)',
-          background: isOpen
-            ? 'rgb(99, 102, 241)'
-            : 'rgba(99, 102, 241, 0.9)',
-          color: 'white',
-          boxShadow: isOpen
-            ? '0 4px 30px rgba(99,102,241,0.5)'
-            : '0 4px 24px rgba(99,102,241,0.4)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         }}
       >
-        <span style={{ fontSize: 20 }}>⚡</span>
-      </button>
+        {/* Notes Button */}
+        <button
+          data-notes-toggle
+          onClick={handleNotesClick}
+          title="Open Notes"
+          style={{
+            position: 'relative',
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: isNoteSwitcherOpen
+              ? 'rgb(99, 102, 241)'
+              : 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+            boxShadow: isNoteSwitcherOpen
+              ? '0 4px 20px rgba(99,102,241,0.4)'
+              : 'none',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>📄</span>
+          {/* Badge */}
+          {openNotes.length > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                minWidth: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 10,
+                padding: '0 6px',
+                fontSize: 11,
+                fontWeight: 700,
+                background: isNoteSwitcherOpen ? 'white' : 'rgb(99, 102, 241)',
+                color: isNoteSwitcherOpen ? 'rgb(99, 102, 241)' : 'white',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              {openNotes.length > 99 ? '99+' : openNotes.length}
+            </span>
+          )}
+        </button>
+
+        {/* Control Center Button */}
+        <button
+          data-cc-toggle
+          onClick={toggleOpen}
+          title="Canvas Controls (`)"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: isOpen
+              ? 'rgb(99, 102, 241)'
+              : 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+            boxShadow: isOpen
+              ? '0 4px 20px rgba(99,102,241,0.4)'
+              : 'none',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>⚡</span>
+        </button>
+      </div>
+
+      {/* Note Switcher Popover */}
+      {isNoteSwitcherOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 100,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: Z_INDEX_PANEL + 1,
+          }}
+        >
+          <NoteSwitcherPopover
+            notes={openNotes}
+            onSelectNote={(noteId) => {
+              onSelectNote?.(noteId);
+              onToggleNoteSwitcher?.();
+            }}
+            onCloseNote={(noteId) => onCloseNote?.(noteId)}
+            onCenterNote={onCenterNote ? (noteId) => onCenterNote(noteId) : undefined}
+            onCreateNote={() => {
+              onCreateNote?.();
+              onToggleNoteSwitcher?.();
+            }}
+            onClose={() => onToggleNoteSwitcher?.()}
+            isLoading={isNotesLoading}
+          />
+        </div>
+      )}
 
       {/* Control Center Panel */}
       <div

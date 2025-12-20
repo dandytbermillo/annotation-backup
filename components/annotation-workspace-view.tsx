@@ -9,6 +9,7 @@ import { WorkspaceOverlay } from "@/components/workspace/workspace-overlay"
 import { WorkspaceFloatingToolbar } from "@/components/workspace/workspace-floating-toolbar"
 import { WorkspaceConstellationLayer } from "@/components/workspace/workspace-constellation-layer"
 import { WorkspaceSidebar } from "@/components/workspace/workspace-sidebar"
+import { WorkspaceControlCenterToggle } from "@/components/workspace/workspace-control-center-toggle"
 import type {
   AnnotationWorkspaceViewProps,
   WorkspaceCanvasViewProps,
@@ -31,6 +32,7 @@ export function AnnotationWorkspaceView({
   constellationPanel,
   constellationPanelProps,
   onMainAreaContextMenu,
+  controlCenterProps,
 }: AnnotationWorkspaceViewProps) {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-neutral-950/80">
@@ -79,6 +81,10 @@ export function AnnotationWorkspaceView({
               : constellationPanelProps
               ? <WorkspaceConstellationLayer {...constellationPanelProps} />
               : null}
+            {/* Control Center toggle - always visible at workspace level */}
+            {controlCenterProps && (
+              <WorkspaceControlCenterToggle {...controlCenterProps} />
+            )}
           </div>
         </div>
       </div>

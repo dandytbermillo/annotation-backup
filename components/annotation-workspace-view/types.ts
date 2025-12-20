@@ -18,6 +18,21 @@ export type WorkspaceCanvasViewProps = {
   canvas: ReactNode | null
 }
 
+export type ControlCenterToggleProps = {
+  /** Callback to create a new note */
+  onCreateNote?: () => void
+  /** Callback to open recent notes panel */
+  onOpenRecent?: () => void
+  /** Callback to toggle constellation/canvas view */
+  onToggleCanvas?: () => void
+  /** Whether constellation panel is currently visible */
+  showConstellationPanel?: boolean
+  /** Callback to open component picker */
+  onOpenComponentPicker?: () => void
+  /** Whether to show the toggle */
+  visible?: boolean
+}
+
 export type AnnotationWorkspaceViewProps = {
   sidebar?: ReactNode
   sidebarProps?: WorkspaceSidebarProps
@@ -35,4 +50,6 @@ export type AnnotationWorkspaceViewProps = {
   constellationPanel?: ReactNode
   constellationPanelProps?: ConstellationPanelProps
   onMainAreaContextMenu?: MouseEventHandler<HTMLDivElement>
+  /** Control Center toggle props - shows when canvas isn't rendering its own */
+  controlCenterProps?: ControlCenterToggleProps
 }

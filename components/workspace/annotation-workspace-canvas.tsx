@@ -45,6 +45,21 @@ export type AnnotationWorkspaceCanvasProps = {
   onToggleCanvas?: () => void
   /** Whether constellation panel is currently visible */
   showConstellationPanel?: boolean
+  // Note Switcher integration - for dock panel (controlled by parent)
+  /** Open notes count for badge display */
+  openNotesForSwitcher?: Array<{ noteId: string; updatedAt?: string | null }>
+  /** Whether the note switcher popover is open (controlled by parent) */
+  isNoteSwitcherOpen?: boolean
+  /** Callback to toggle the note switcher popover */
+  onToggleNoteSwitcher?: () => void
+  /** Callback when a note is selected in the switcher */
+  onSelectNote?: (noteId: string) => void
+  /** Callback when a note is closed from the switcher */
+  onCloseNote?: (noteId: string) => void
+  /** Callback to center on a note */
+  onCenterNote?: (noteId: string) => void
+  /** Whether notes are currently loading */
+  isNotesLoading?: boolean
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
@@ -77,6 +92,14 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     onOpenRecent,
     onToggleCanvas,
     showConstellationPanel,
+    // Note Switcher integration
+    openNotesForSwitcher,
+    isNoteSwitcherOpen,
+    onToggleNoteSwitcher,
+    onSelectNote,
+    onCloseNote,
+    onCenterNote,
+    isNotesLoading,
   },
   ref,
 ) {
@@ -110,6 +133,14 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       onOpenRecent={onOpenRecent}
       onToggleCanvas={onToggleCanvas}
       showConstellationPanel={showConstellationPanel}
+      // Note Switcher integration
+      openNotesForSwitcher={openNotesForSwitcher}
+      isNoteSwitcherOpen={isNoteSwitcherOpen}
+      onToggleNoteSwitcher={onToggleNoteSwitcher}
+      onSelectNote={onSelectNote}
+      onCloseNote={onCloseNote}
+      onCenterNote={onCenterNote}
+      isNotesLoading={isNotesLoading}
     >
       {children}
     </ModernAnnotationCanvas>

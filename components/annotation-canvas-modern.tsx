@@ -13,6 +13,7 @@ import { PopupStateAdapter } from "@/lib/adapters/popup-state-adapter"
 import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
 import { CanvasControlCenter, type CanvasTool } from "./canvas/canvas-control-center"
+import type { OpenNoteItem } from "./canvas/note-switcher-item"
 import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 import { Settings } from "lucide-react"
 import { AddComponentMenu } from "./canvas/add-component-menu"
@@ -120,6 +121,21 @@ interface ModernAnnotationCanvasProps {
   onToggleCanvas?: () => void
   /** Whether constellation panel is currently visible */
   showConstellationPanel?: boolean
+  // Note Switcher integration - for dock panel (controlled by parent)
+  /** Open notes count for badge display */
+  openNotesForSwitcher?: Array<{ noteId: string; updatedAt?: string | null }>
+  /** Whether the note switcher popover is open (controlled by parent) */
+  isNoteSwitcherOpen?: boolean
+  /** Callback to toggle the note switcher popover */
+  onToggleNoteSwitcher?: () => void
+  /** Callback when a note is selected in the switcher */
+  onSelectNote?: (noteId: string) => void
+  /** Callback when a note is closed from the switcher */
+  onCloseNote?: (noteId: string) => void
+  /** Callback to center on a note */
+  onCenterNote?: (noteId: string) => void
+  /** Whether notes are currently loading */
+  isNotesLoading?: boolean
 }
 
 interface CanvasImperativeHandle {
@@ -200,6 +216,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onOpenRecent,
   onToggleCanvas,
   showConstellationPanel: showConstellationPanelProp,
+  // Note Switcher integration
+  openNotesForSwitcher,
+  isNoteSwitcherOpen,
+  onToggleNoteSwitcher,
+  onSelectNote,
+  onCloseNote,
+  onCenterNote,
+  isNotesLoading,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
 
@@ -921,6 +945,18 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }
   }), [onCanvasStateChange, canvasState, updateCanvasTransform, panBy, handleAddComponent, resolveWorkspacePosition, dataStore, noteId])
 
+  // Transform open notes for the note switcher popover
+  const transformedOpenNotes = useMemo((): OpenNoteItem[] => {
+    if (!openNotesForSwitcher) return []
+    return openNotesForSwitcher.map((note) => ({
+      id: note.noteId,
+      title: noteTitleMap?.get(note.noteId) || `Note ${note.noteId.slice(0, 6)}...`,
+      lastEditedAt: note.updatedAt ? new Date(note.updatedAt).getTime() : Date.now(),
+      isActive: note.noteId === noteId,
+      workspaceId: workspaceId ?? '',
+    }))
+  }, [openNotesForSwitcher, noteTitleMap, noteId, workspaceId])
+
   useCanvasOutlineDebug()
 
   // FIX 11: Check hasNotes AFTER all hooks have run (moved from top of component).
@@ -1070,6 +1106,14 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           onToggleCanvas={onToggleCanvas}
           showConstellationPanel={showConstellationPanelProp}
           onOpenComponentPicker={toggleAddComponentMenu}
+          // Note Switcher integration
+          openNotes={transformedOpenNotes}
+          isNoteSwitcherOpen={isNoteSwitcherOpen}
+          onToggleNoteSwitcher={onToggleNoteSwitcher}
+          onSelectNote={onSelectNote}
+          onCloseNote={onCloseNote}
+          onCenterNote={onCenterNote}
+          isNotesLoading={isNotesLoading}
         />
         
         {/* Add Components Menu */}
