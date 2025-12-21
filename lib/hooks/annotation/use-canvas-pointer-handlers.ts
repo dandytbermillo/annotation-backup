@@ -6,7 +6,7 @@ import type React from "react"
 
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
-import { clampTranslateX } from "@/lib/canvas/directional-scroll-origin"
+import { clampTranslateX, clampTranslateY } from "@/lib/canvas/directional-scroll-origin"
 
 export type CanvasToolType = 'select' | 'pan'
 
@@ -22,6 +22,8 @@ type UseCanvasPointerHandlersOptions = {
   canvasTool?: CanvasToolType
   /** Workspace ID for directional scroll clamping */
   workspaceId?: string | null
+  /** Ref to canvas container element (for wheel handler bounding rect) */
+  canvasContainerRef?: MutableRefObject<HTMLDivElement | null>
 }
 
 export function useCanvasPointerHandlers({
@@ -34,6 +36,7 @@ export function useCanvasPointerHandlers({
   canvasState,
   canvasTool = 'select',
   workspaceId,
+  canvasContainerRef,
 }: UseCanvasPointerHandlersOptions) {
   // Track if space key is held for temporary pan mode
   const [isSpaceHeld, setIsSpaceHeld] = useState(false)
@@ -131,8 +134,9 @@ export function useCanvasPointerHandlers({
     disableSelectionGuards()
   }, [disableSelectionGuards, setCanvasState])
 
+  // Native wheel handler for Safari compatibility (passive: false)
   const handleWheel = useCallback(
-    (event: React.WheelEvent) => {
+    (event: WheelEvent) => {
       captureInteractionPoint(event)
       event.preventDefault()
 
@@ -147,10 +151,11 @@ export function useCanvasPointerHandlers({
 
       if (event.shiftKey) {
         // Shift+Wheel: Zoom
-        const multiplier = getWheelZoomMultiplier(event.nativeEvent)
+        const multiplier = getWheelZoomMultiplier(event)
         const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * multiplier))
 
-        const rect = event.currentTarget.getBoundingClientRect()
+        const container = canvasContainerRef?.current
+        const rect = container?.getBoundingClientRect() ?? { left: 0, top: 0 }
         const mouseX = event.clientX - rect.left
         const mouseY = event.clientY - rect.top
         const zoomChange = newZoom / canvasState.zoom
@@ -170,27 +175,42 @@ export function useCanvasPointerHandlers({
 
         updateCanvasTransform(prev => {
           const newTranslateX = prev.translateX + panX
-          // Apply directional scroll clamp (prevents panning left past origin)
+          const newTranslateY = prev.translateY + panY
+          // Apply directional scroll clamp (prevents panning left/up past origin)
           const clampedTranslateX = workspaceId
             ? clampTranslateX(workspaceId, newTranslateX)
             : newTranslateX
+          const clampedTranslateY = workspaceId
+            ? clampTranslateY(workspaceId, newTranslateY)
+            : newTranslateY
 
           return {
             ...prev,
             translateX: clampedTranslateX,
-            translateY: prev.translateY + panY,
+            translateY: clampedTranslateY,
           }
         })
       }
     },
-    [canvasState.zoom, captureInteractionPoint, updateCanvasTransform, workspaceId],
+    [canvasState.zoom, captureInteractionPoint, updateCanvasTransform, workspaceId, canvasContainerRef],
   )
+
+  // Attach wheel listener with {passive: false} for Safari compatibility
+  useEffect(() => {
+    const container = canvasContainerRef?.current
+    if (!container) return
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
+    }
+  }, [canvasContainerRef, handleWheel])
 
   return {
     handleCanvasMouseDown,
     handleCanvasMouseMove,
     handleCanvasMouseUp,
-    handleWheel,
+    // Note: handleWheel is attached via useEffect with {passive: false} for Safari
     /** Whether space key is currently held (enables temporary pan mode) */
     isSpaceHeld,
     /** Whether panning is currently allowed (pan tool active or space held) */

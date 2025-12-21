@@ -27,7 +27,7 @@ import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { worldToScreen } from "@/lib/canvas/coordinate-utils"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
-import { clampTranslateX, updateOrigin } from "@/lib/canvas/directional-scroll-origin"
+import { clampTranslateX, clampTranslateY, updateOrigin } from "@/lib/canvas/directional-scroll-origin"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
@@ -741,11 +741,13 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
   const { enableSelectionGuards, disableSelectionGuards } = useSelectionGuards()
 
+  // Ref for canvas container (used by wheel handler for {passive: false} Safari fix)
+  const canvasContainerRef = useRef<HTMLDivElement | null>(null)
+
   const {
     handleCanvasMouseDown,
     handleCanvasMouseMove,
     handleCanvasMouseUp,
-    handleWheel,
     canPan,
     isWheelScrolling,
   } = useCanvasPointerHandlers({
@@ -758,6 +760,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     canvasState,
     canvasTool,
     workspaceId,
+    canvasContainerRef,
   })
 
   useCanvasDragListeners({
@@ -972,7 +975,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       })
       if (workspaceId) {
         const clampedX = clampTranslateX(workspaceId, targetX)
-        updateOrigin(workspaceId, clampedX)
+        const clampedY = clampTranslateY(workspaceId, targetY)
+        updateOrigin(workspaceId, clampedX, clampedY)
       }
     },
     getCameraState: () => {
@@ -1194,6 +1198,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
 
         {/* Canvas Container */}
         <div
+          ref={canvasContainerRef}
           id="canvas-container"
           className={`relative w-full h-full overflow-hidden ${
             canvasState.isDragging
@@ -1214,7 +1219,6 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             outlineOffset: '6px',
           }}
           onMouseDown={handleCanvasMouseDown}
-          onWheel={handleWheel}
           onMouseMoveCapture={handleCanvasMouseMoveCapture}
           onWheelCapture={handleCanvasWheelCapture}
           onContextMenu={(e) => e.preventDefault()}

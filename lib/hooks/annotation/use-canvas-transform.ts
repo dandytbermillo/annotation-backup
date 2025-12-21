@@ -116,9 +116,10 @@ export function useCanvasTransform({
       if (originCapturedRef.current === currentWorkspaceId || hasOrigin(currentWorkspaceId)) {
         return false
       }
-      // Use ref to get current translateX (not stale closure value)
+      // Use ref to get current translate values (not stale closure value)
       const currentTranslateX = canvasStateRef.current.translateX
-      const captured = captureOrigin(currentWorkspaceId, currentTranslateX)
+      const currentTranslateY = canvasStateRef.current.translateY
+      const captured = captureOrigin(currentWorkspaceId, currentTranslateX, currentTranslateY)
       if (captured) {
         originCapturedRef.current = currentWorkspaceId
         debugLog({
@@ -127,6 +128,7 @@ export function useCanvasTransform({
           metadata: {
             workspaceId: currentWorkspaceId,
             originTranslateX: currentTranslateX,
+            originTranslateY: currentTranslateY,
           },
         })
       }

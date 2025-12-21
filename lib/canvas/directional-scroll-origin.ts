@@ -17,6 +17,8 @@ import { debugLog } from "@/lib/utils/debug-logger"
 interface OriginState {
   /** The baseline translateX value captured when workspace became ready */
   originTranslateX: number
+  /** The baseline translateY value captured when workspace became ready */
+  originTranslateY: number
   /** Timestamp when origin was captured */
   capturedAt: number
 }
@@ -32,14 +34,15 @@ const workspaceOrigins = new Map<string, OriginState>()
 // =============================================================================
 
 /**
- * Capture the origin translateX for a workspace.
+ * Capture the origin translateX and translateY for a workspace.
  * Should be called once when the workspace lifecycle transitions to "ready".
  *
  * @param workspaceId - The workspace ID
  * @param translateX - The current translateX to set as origin
+ * @param translateY - The current translateY to set as origin
  * @returns true if origin was captured, false if already captured
  */
-export function captureOrigin(workspaceId: string, translateX: number): boolean {
+export function captureOrigin(workspaceId: string, translateX: number, translateY: number): boolean {
   if (!workspaceId) return false
 
   // Don't recapture if already set (hot switch protection)
@@ -50,8 +53,10 @@ export function captureOrigin(workspaceId: string, translateX: number): boolean 
       metadata: {
         workspaceId,
         reason: "already_captured",
-        existingOrigin: workspaceOrigins.get(workspaceId)?.originTranslateX,
-        attemptedOrigin: translateX,
+        existingOriginX: workspaceOrigins.get(workspaceId)?.originTranslateX,
+        existingOriginY: workspaceOrigins.get(workspaceId)?.originTranslateY,
+        attemptedOriginX: translateX,
+        attemptedOriginY: translateY,
       },
     })
     return false
@@ -59,6 +64,7 @@ export function captureOrigin(workspaceId: string, translateX: number): boolean 
 
   workspaceOrigins.set(workspaceId, {
     originTranslateX: translateX,
+    originTranslateY: translateY,
     capturedAt: Date.now(),
   })
 
@@ -68,6 +74,7 @@ export function captureOrigin(workspaceId: string, translateX: number): boolean 
     metadata: {
       workspaceId,
       originTranslateX: translateX,
+      originTranslateY: translateY,
     },
   })
 
@@ -75,19 +82,21 @@ export function captureOrigin(workspaceId: string, translateX: number): boolean 
 }
 
 /**
- * Update the origin translateX for a workspace.
+ * Update the origin translateX and translateY for a workspace.
  * Used when the user explicitly resets the view or centers a note.
  *
  * @param workspaceId - The workspace ID
  * @param translateX - The new translateX to set as origin
+ * @param translateY - The new translateY to set as origin
  */
-export function updateOrigin(workspaceId: string, translateX: number): void {
+export function updateOrigin(workspaceId: string, translateX: number, translateY: number): void {
   if (!workspaceId) return
 
   const previous = workspaceOrigins.get(workspaceId)
 
   workspaceOrigins.set(workspaceId, {
     originTranslateX: translateX,
+    originTranslateY: translateY,
     capturedAt: Date.now(),
   })
 
@@ -96,8 +105,10 @@ export function updateOrigin(workspaceId: string, translateX: number): void {
     action: "origin_updated",
     metadata: {
       workspaceId,
-      previousOrigin: previous?.originTranslateX,
-      newOrigin: translateX,
+      previousOriginX: previous?.originTranslateX,
+      previousOriginY: previous?.originTranslateY,
+      newOriginX: translateX,
+      newOriginY: translateY,
       reason: "programmatic_update",
     },
   })
@@ -137,6 +148,17 @@ export function clearOrigin(workspaceId: string): void {
 export function getOrigin(workspaceId: string): number | null {
   if (!workspaceId) return null
   return workspaceOrigins.get(workspaceId)?.originTranslateX ?? null
+}
+
+/**
+ * Get the origin translateY for a workspace.
+ *
+ * @param workspaceId - The workspace ID
+ * @returns The origin translateY, or null if not captured
+ */
+export function getOriginY(workspaceId: string): number | null {
+  if (!workspaceId) return null
+  return workspaceOrigins.get(workspaceId)?.originTranslateY ?? null
 }
 
 /**
@@ -189,6 +211,44 @@ export function clampTranslateX(workspaceId: string, translateX: number): number
   }
 
   return translateX
+}
+
+/**
+ * Clamp translateY to enforce the directional scroll rule:
+ * - Can move down freely (translateY decreases)
+ * - Can move up only until origin is reached (translateY cannot exceed origin)
+ *
+ * @param workspaceId - The workspace ID
+ * @param translateY - The proposed translateY value
+ * @returns The clamped translateY value
+ */
+export function clampTranslateY(workspaceId: string, translateY: number): number {
+  const origin = getOriginY(workspaceId)
+
+  // If no origin captured yet, allow all movement
+  if (origin === null) {
+    return translateY
+  }
+
+  // Clamp: translateY cannot be greater than origin (blocks up movement past origin)
+  // Since moving up = translateY increases, and moving down = translateY decreases:
+  // - translateY > origin means we've moved up past origin → clamp to origin
+  // - translateY <= origin means we're at or below origin → allowed
+  if (translateY > origin) {
+    debugLog({
+      component: "DirectionalScroll",
+      action: "clamp_y_applied",
+      metadata: {
+        workspaceId,
+        proposedTranslateY: translateY,
+        origin,
+        clampedTo: origin,
+      },
+    })
+    return origin
+  }
+
+  return translateY
 }
 
 /**

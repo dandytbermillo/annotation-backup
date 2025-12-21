@@ -184,10 +184,10 @@ export function usePanelCentering({
         })
 
         // Directional Scroll: Update origin to the new centered position
-        // This allows users to pan left back to this new baseline
+        // This allows users to pan back to this new baseline
         const workspaceId = getActiveWorkspaceContext()
         if (workspaceId) {
-          updateOrigin(workspaceId, targetX)
+          updateOrigin(workspaceId, targetX, targetY)
         }
 
         if (canvasEl) {
