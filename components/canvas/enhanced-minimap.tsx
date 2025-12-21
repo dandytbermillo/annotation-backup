@@ -16,9 +16,11 @@ interface MinimapProps {
     translateY: number
   }
   onNavigate: (x: number, y: number) => void
+  /** When true, skip redrawing to improve performance during rapid updates (e.g., wheel scroll) */
+  pauseUpdates?: boolean
 }
 
-export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: MinimapProps) {
+export function EnhancedMinimap({ canvasItems, canvasState, onNavigate, pauseUpdates = false }: MinimapProps) {
   const { dataStore, noteId } = useCanvas()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const minimapSize = 186  // 2/3 of original 280
@@ -335,10 +337,11 @@ export function EnhancedMinimap({ canvasItems, canvasState, onNavigate }: Minima
     ctx.fillRect(viewportMinimap.x, viewportMinimap.y, viewportSize.width, viewportSize.height)
   }, [canvasItems, panels, components, dataStore, worldToMinimap, scale, viewport, hoveredComponent, isolatedComponents])
   
-  // Redraw when dependencies change
+  // Redraw when dependencies change (skip during pauseUpdates for performance)
   useEffect(() => {
+    if (pauseUpdates) return
     drawMinimap()
-  }, [drawMinimap])
+  }, [drawMinimap, pauseUpdates])
   
   // Remove any existing listeners when component unmounts or dependencies change
   useEffect(() => {

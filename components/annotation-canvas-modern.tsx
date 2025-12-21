@@ -747,6 +747,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     handleCanvasMouseUp,
     handleWheel,
     canPan,
+    isWheelScrolling,
   } = useCanvasPointerHandlers({
     captureInteractionPoint,
     setCanvasState,
@@ -756,6 +757,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     disableSelectionGuards,
     canvasState,
     canvasTool,
+    workspaceId,
   })
 
   useCanvasDragListeners({
@@ -1058,7 +1060,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         />
       ))}
       <div
-        className="w-screen h-screen overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500"
+        className="w-full h-full overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500"
         style={{
           opacity: canvasOpacity,
           transition: 'opacity 0.3s ease',
@@ -1137,6 +1139,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
             canvasItems={canvasItems}
             canvasState={canvasState}
             onNavigate={handleMinimapNavigate}
+            pauseUpdates={isWheelScrolling}
           />
         )}
 

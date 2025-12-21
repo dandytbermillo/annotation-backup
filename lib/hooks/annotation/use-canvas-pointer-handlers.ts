@@ -1,11 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, useRef } from "react"
 import type { MutableRefObject, SetStateAction, Dispatch } from "react"
 import type React from "react"
 
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { getWheelZoomMultiplier } from "@/lib/canvas/zoom-utils"
+import { clampTranslateX } from "@/lib/canvas/directional-scroll-origin"
 
 export type CanvasToolType = 'select' | 'pan'
 
@@ -19,6 +20,8 @@ type UseCanvasPointerHandlersOptions = {
   canvasState: CanvasViewportState
   /** Current canvas tool - 'select' or 'pan'. When 'select', panning requires holding Space. */
   canvasTool?: CanvasToolType
+  /** Workspace ID for directional scroll clamping */
+  workspaceId?: string | null
 }
 
 export function useCanvasPointerHandlers({
@@ -30,9 +33,14 @@ export function useCanvasPointerHandlers({
   disableSelectionGuards,
   canvasState,
   canvasTool = 'select',
+  workspaceId,
 }: UseCanvasPointerHandlersOptions) {
   // Track if space key is held for temporary pan mode
   const [isSpaceHeld, setIsSpaceHeld] = useState(false)
+
+  // Track if wheel is actively scrolling (for pausing minimap updates)
+  const [isWheelScrolling, setIsWheelScrolling] = useState(false)
+  const wheelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -126,27 +134,56 @@ export function useCanvasPointerHandlers({
   const handleWheel = useCallback(
     (event: React.WheelEvent) => {
       captureInteractionPoint(event)
-      if (!event.shiftKey) {
-        return
-      }
       event.preventDefault()
 
-      const multiplier = getWheelZoomMultiplier(event.nativeEvent)
-      const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * multiplier))
+      // Mark wheel as active and reset timeout
+      setIsWheelScrolling(true)
+      if (wheelTimeoutRef.current) {
+        clearTimeout(wheelTimeoutRef.current)
+      }
+      wheelTimeoutRef.current = setTimeout(() => {
+        setIsWheelScrolling(false)
+      }, 150)
 
-      const rect = event.currentTarget.getBoundingClientRect()
-      const mouseX = event.clientX - rect.left
-      const mouseY = event.clientY - rect.top
-      const zoomChange = newZoom / canvasState.zoom
+      if (event.shiftKey) {
+        // Shift+Wheel: Zoom
+        const multiplier = getWheelZoomMultiplier(event.nativeEvent)
+        const newZoom = Math.max(0.3, Math.min(2, canvasState.zoom * multiplier))
 
-      updateCanvasTransform(prev => ({
-        ...prev,
-        zoom: newZoom,
-        translateX: mouseX - (mouseX - prev.translateX) * zoomChange,
-        translateY: mouseY - (mouseY - prev.translateY) * zoomChange,
-      }))
+        const rect = event.currentTarget.getBoundingClientRect()
+        const mouseX = event.clientX - rect.left
+        const mouseY = event.clientY - rect.top
+        const zoomChange = newZoom / canvasState.zoom
+
+        updateCanvasTransform(prev => ({
+          ...prev,
+          zoom: newZoom,
+          translateX: mouseX - (mouseX - prev.translateX) * zoomChange,
+          translateY: mouseY - (mouseY - prev.translateY) * zoomChange,
+        }))
+      } else {
+        // Regular Wheel: Pan canvas
+        // deltaY controls vertical pan, deltaX controls horizontal pan
+        // Negate because wheel delta is inverted relative to pan direction
+        const panX = -event.deltaX
+        const panY = -event.deltaY
+
+        updateCanvasTransform(prev => {
+          const newTranslateX = prev.translateX + panX
+          // Apply directional scroll clamp (prevents panning left past origin)
+          const clampedTranslateX = workspaceId
+            ? clampTranslateX(workspaceId, newTranslateX)
+            : newTranslateX
+
+          return {
+            ...prev,
+            translateX: clampedTranslateX,
+            translateY: prev.translateY + panY,
+          }
+        })
+      }
     },
-    [canvasState.zoom, captureInteractionPoint, updateCanvasTransform],
+    [canvasState.zoom, captureInteractionPoint, updateCanvasTransform, workspaceId],
   )
 
   return {
@@ -158,5 +195,7 @@ export function useCanvasPointerHandlers({
     isSpaceHeld,
     /** Whether panning is currently allowed (pan tool active or space held) */
     canPan,
+    /** Whether wheel is actively scrolling (for pausing minimap) */
+    isWheelScrolling,
   }
 }

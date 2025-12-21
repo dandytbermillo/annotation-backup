@@ -1323,7 +1323,7 @@ export function DashboardView({
       {/* Scrollable container - BELOW the fixed header */}
       <div
         ref={dashboardContainerRef}
-        className="flex-1 relative overflow-auto"
+        className={`flex-1 relative ${viewMode === 'workspace' ? 'overflow-hidden' : 'overflow-auto'}`}
         style={{
           background: '#0a0c10',
         }}
