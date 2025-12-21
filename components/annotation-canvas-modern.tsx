@@ -14,6 +14,7 @@ import { EnhancedControlPanelV2 } from "./canvas/enhanced-control-panel-v2"
 import { EnhancedMinimap } from "./canvas/enhanced-minimap"
 import { CanvasControlCenter, type CanvasTool } from "./canvas/canvas-control-center"
 import type { OpenNoteItem } from "./canvas/note-switcher-item"
+import type { WorkspaceItem } from "./canvas/workspace-switcher-item"
 import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 // Settings icon removed - Control Panel now accessed via Control Center
 import { AddComponentMenu } from "./canvas/add-component-menu"
@@ -136,6 +137,31 @@ interface ModernAnnotationCanvasProps {
   onCenterNote?: (noteId: string) => void
   /** Whether notes are currently loading */
   isNotesLoading?: boolean
+  // Workspace Switcher integration - for dock panel (controlled by parent)
+  /** Workspaces for the switcher popover */
+  workspacesForSwitcher?: Array<{ id: string; name: string; noteCount?: number; updatedAt?: string | null; isDefault?: boolean }>
+  /** Current workspace ID (to mark as active) */
+  currentWorkspaceIdForSwitcher?: string | null
+  /** Whether the workspace switcher popover is open */
+  isWorkspaceSwitcherOpen?: boolean
+  /** Callback to toggle the workspace switcher popover */
+  onToggleWorkspaceSwitcher?: () => void
+  /** Callback when a workspace is selected */
+  onSelectWorkspace?: (workspaceId: string) => void
+  /** Callback when a workspace is deleted */
+  onDeleteWorkspace?: (workspaceId: string) => void
+  /** Callback when a workspace is renamed */
+  onRenameWorkspace?: (workspaceId: string, newName: string) => void
+  /** Callback to create a new workspace */
+  onCreateWorkspace?: () => void
+  /** Whether workspaces are loading */
+  isWorkspacesLoading?: boolean
+  /** ID of workspace currently being deleted */
+  deletingWorkspaceId?: string | null
+  /** Current workspace name for display */
+  currentWorkspaceName?: string
+  /** Callback to return to dashboard (passed to canvas dock) */
+  onReturnToDashboard?: () => void
 }
 
 interface CanvasImperativeHandle {
@@ -224,6 +250,20 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
   onCloseNote,
   onCenterNote,
   isNotesLoading,
+  // Workspace Switcher integration
+  workspacesForSwitcher,
+  currentWorkspaceIdForSwitcher,
+  isWorkspaceSwitcherOpen,
+  onToggleWorkspaceSwitcher,
+  onSelectWorkspace,
+  onDeleteWorkspace,
+  onRenameWorkspace,
+  onCreateWorkspace,
+  isWorkspacesLoading,
+  deletingWorkspaceId,
+  currentWorkspaceName,
+  // Dashboard integration
+  onReturnToDashboard,
 }, ref) => {
   const noteId = primaryNoteId ?? noteIds[0] ?? ""
 
@@ -957,6 +997,19 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     }))
   }, [openNotesForSwitcher, noteTitleMap, noteId, workspaceId])
 
+  // Transform workspaces for the workspace switcher popover
+  const transformedWorkspaces = useMemo((): WorkspaceItem[] => {
+    if (!workspacesForSwitcher) return []
+    return workspacesForSwitcher.map((ws) => ({
+      id: ws.id,
+      name: ws.name,
+      noteCount: ws.noteCount,
+      updatedAt: ws.updatedAt,
+      isDefault: ws.isDefault,
+      isActive: ws.id === currentWorkspaceIdForSwitcher,
+    }))
+  }, [workspacesForSwitcher, currentWorkspaceIdForSwitcher])
+
   useCanvasOutlineDebug()
 
   // FIX 11: Check hasNotes AFTER all hooks have run (moved from top of component).
@@ -1106,6 +1159,19 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           onCloseNote={onCloseNote}
           onCenterNote={onCenterNote}
           isNotesLoading={isNotesLoading}
+          // Workspace Switcher integration
+          workspaces={transformedWorkspaces}
+          isWorkspaceSwitcherOpen={isWorkspaceSwitcherOpen}
+          onToggleWorkspaceSwitcher={onToggleWorkspaceSwitcher}
+          onSelectWorkspace={onSelectWorkspace}
+          onDeleteWorkspace={onDeleteWorkspace}
+          onRenameWorkspace={onRenameWorkspace}
+          onCreateWorkspace={onCreateWorkspace}
+          isWorkspacesLoading={isWorkspacesLoading}
+          deletingWorkspaceId={deletingWorkspaceId}
+          currentWorkspaceName={currentWorkspaceName}
+          // Dashboard integration
+          onReturnToDashboard={onReturnToDashboard}
         />
         
         {/* Add Components Menu */}

@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { cn } from '@/lib/utils';
+import { LayoutDashboard } from 'lucide-react';
 import type { CanvasToolType } from '@/lib/hooks/annotation/use-canvas-pointer-handlers';
 import { NoteSwitcherPopover } from './note-switcher-popover';
 import type { OpenNoteItem } from './note-switcher-item';
@@ -59,6 +60,32 @@ export interface CanvasControlCenterProps {
   onCenterNote?: (noteId: string) => void;
   /** Whether notes are currently loading */
   isNotesLoading?: boolean;
+
+  // Workspace switcher integration (for dock Workspace button)
+  /** Workspaces for the workspace count badge */
+  workspaces?: Array<{ id: string; name: string; noteCount?: number; updatedAt?: string | null; isDefault?: boolean }>;
+  /** Whether the workspace switcher popover is currently open */
+  isWorkspaceSwitcherOpen?: boolean;
+  /** Callback to toggle the workspace switcher popover */
+  onToggleWorkspaceSwitcher?: () => void;
+  /** Callback when a workspace is selected in the switcher */
+  onSelectWorkspace?: (workspaceId: string) => void;
+  /** Callback when a workspace is deleted from the switcher */
+  onDeleteWorkspace?: (workspaceId: string) => void;
+  /** Callback when a workspace is renamed */
+  onRenameWorkspace?: (workspaceId: string, newName: string) => void;
+  /** Callback to create a new workspace */
+  onCreateWorkspace?: () => void;
+  /** Whether workspaces are currently loading */
+  isWorkspacesLoading?: boolean;
+  /** ID of workspace currently being deleted */
+  deletingWorkspaceId?: string | null;
+  /** Current workspace name (for button display) */
+  currentWorkspaceName?: string;
+
+  // Dashboard integration (for returning to dashboard from workspace)
+  /** Callback to return to dashboard view */
+  onReturnToDashboard?: () => void;
 }
 
 // ============================================================================
@@ -104,6 +131,19 @@ export function CanvasControlCenter({
   onCloseNote,
   onCenterNote,
   isNotesLoading = false,
+  // Workspace switcher integration
+  workspaces = [],
+  isWorkspaceSwitcherOpen = false,
+  onToggleWorkspaceSwitcher,
+  onSelectWorkspace,
+  onDeleteWorkspace,
+  onRenameWorkspace,
+  onCreateWorkspace,
+  isWorkspacesLoading = false,
+  deletingWorkspaceId = null,
+  currentWorkspaceName = 'Workspace',
+  // Dashboard integration
+  onReturnToDashboard,
 }: CanvasControlCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isDraggingZoom, setIsDraggingZoom] = useState(false);
@@ -251,6 +291,31 @@ export function CanvasControlCenter({
           boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         }}
       >
+        {/* Dashboard Button - returns to entry dashboard */}
+        {onReturnToDashboard && (
+          <button
+            data-dashboard-toggle
+            onClick={onReturnToDashboard}
+            title="Return to Dashboard"
+            style={{
+              position: 'relative',
+              width: 48,
+              height: 48,
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease-out',
+              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'rgba(39, 39, 42, 0.8)',
+              color: 'white',
+            }}
+          >
+            <LayoutDashboard size={20} />
+          </button>
+        )}
+
         {/* Notes Button */}
         <button
           data-notes-toggle
@@ -299,6 +364,61 @@ export function CanvasControlCenter({
               }}
             >
               {openNotes.length > 99 ? '99+' : openNotes.length}
+            </span>
+          )}
+        </button>
+
+        {/* Workspace Button */}
+        <button
+          data-workspace-toggle
+          onClick={() => {
+            onToggleWorkspaceSwitcher?.();
+            if (isOpen) close();
+          }}
+          title={`Workspace: ${currentWorkspaceName}`}
+          style={{
+            position: 'relative',
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: isWorkspaceSwitcherOpen
+              ? 'rgb(99, 102, 241)'
+              : 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+            boxShadow: isWorkspaceSwitcherOpen
+              ? '0 4px 20px rgba(99,102,241,0.4)'
+              : 'none',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>🗂️</span>
+          {/* Badge showing workspace count */}
+          {workspaces.length > 1 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                minWidth: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 10,
+                padding: '0 6px',
+                fontSize: 11,
+                fontWeight: 700,
+                background: isWorkspaceSwitcherOpen ? 'white' : 'rgb(99, 102, 241)',
+                color: isWorkspaceSwitcherOpen ? 'rgb(99, 102, 241)' : 'white',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              {workspaces.length > 99 ? '99+' : workspaces.length}
             </span>
           )}
         </button>

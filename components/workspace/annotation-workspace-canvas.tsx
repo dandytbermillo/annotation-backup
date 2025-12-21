@@ -60,6 +60,31 @@ export type AnnotationWorkspaceCanvasProps = {
   onCenterNote?: (noteId: string) => void
   /** Whether notes are currently loading */
   isNotesLoading?: boolean
+  // Workspace Switcher integration - for dock panel (controlled by parent)
+  /** Workspaces for the switcher popover */
+  workspacesForSwitcher?: Array<{ id: string; name: string; noteCount?: number; updatedAt?: string | null; isDefault?: boolean }>
+  /** Current workspace ID (to mark as active) */
+  currentWorkspaceIdForSwitcher?: string | null
+  /** Whether the workspace switcher popover is open */
+  isWorkspaceSwitcherOpen?: boolean
+  /** Callback to toggle the workspace switcher popover */
+  onToggleWorkspaceSwitcher?: () => void
+  /** Callback when a workspace is selected */
+  onSelectWorkspace?: (workspaceId: string) => void
+  /** Callback when a workspace is deleted */
+  onDeleteWorkspace?: (workspaceId: string) => void
+  /** Callback when a workspace is renamed */
+  onRenameWorkspace?: (workspaceId: string, newName: string) => void
+  /** Callback to create a new workspace */
+  onCreateWorkspace?: () => void
+  /** Whether workspaces are loading */
+  isWorkspacesLoading?: boolean
+  /** ID of workspace currently being deleted */
+  deletingWorkspaceId?: string | null
+  /** Current workspace name for display */
+  currentWorkspaceName?: string
+  /** Callback to return to dashboard (passed to canvas dock) */
+  onReturnToDashboard?: () => void
 }
 
 export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanvasProps>(function AnnotationWorkspaceCanvas(
@@ -100,6 +125,20 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
     onCloseNote,
     onCenterNote,
     isNotesLoading,
+    // Workspace Switcher integration
+    workspacesForSwitcher,
+    currentWorkspaceIdForSwitcher,
+    isWorkspaceSwitcherOpen,
+    onToggleWorkspaceSwitcher,
+    onSelectWorkspace,
+    onDeleteWorkspace,
+    onRenameWorkspace,
+    onCreateWorkspace,
+    isWorkspacesLoading,
+    deletingWorkspaceId,
+    currentWorkspaceName,
+    // Dashboard integration
+    onReturnToDashboard,
   },
   ref,
 ) {
@@ -141,6 +180,20 @@ export const AnnotationWorkspaceCanvas = forwardRef<any, AnnotationWorkspaceCanv
       onCloseNote={onCloseNote}
       onCenterNote={onCenterNote}
       isNotesLoading={isNotesLoading}
+      // Workspace Switcher integration
+      workspacesForSwitcher={workspacesForSwitcher}
+      currentWorkspaceIdForSwitcher={currentWorkspaceIdForSwitcher}
+      isWorkspaceSwitcherOpen={isWorkspaceSwitcherOpen}
+      onToggleWorkspaceSwitcher={onToggleWorkspaceSwitcher}
+      onSelectWorkspace={onSelectWorkspace}
+      onDeleteWorkspace={onDeleteWorkspace}
+      onRenameWorkspace={onRenameWorkspace}
+      onCreateWorkspace={onCreateWorkspace}
+      isWorkspacesLoading={isWorkspacesLoading}
+      deletingWorkspaceId={deletingWorkspaceId}
+      currentWorkspaceName={currentWorkspaceName}
+      // Dashboard integration
+      onReturnToDashboard={onReturnToDashboard}
     >
       {children}
     </ModernAnnotationCanvas>

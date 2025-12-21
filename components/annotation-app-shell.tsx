@@ -153,6 +153,8 @@ type AnnotationAppContentProps = {
   pinnedWorkspaceIds?: string[]
   /** Whether the parent entry is currently active/visible (vs hidden behind another entry) */
   isEntryActive?: boolean
+  /** Callback to return to dashboard (passed to canvas dock) */
+  onReturnToDashboard?: () => void
 }
 
 function AnnotationAppContent({
@@ -164,6 +166,7 @@ function AnnotationAppContent({
   controlledWorkspaceId,
   pinnedWorkspaceIds,
   isEntryActive = true,
+  onReturnToDashboard,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -229,6 +232,7 @@ function AnnotationAppContent({
   const [skipSnapshotForNote, setSkipSnapshotForNote] = useState<string | null>(null)
   // Shared state for note switcher popover (controlled by both dock and workspace toolbar)
   const [isNoteSwitcherOpen, setIsNoteSwitcherOpen] = useState(false)
+  // Note: Workspace switcher uses noteWorkspaceMenuOpen (line ~1200) which controls the existing WorkspaceToggleMenu
   const layerContext = useLayer()
   const {
     activeSidebarTab,
@@ -1196,6 +1200,24 @@ const initialWorkspaceSyncRef = useRef(false)
   })
 
   const [noteWorkspaceMenuOpen, setNoteWorkspaceMenuOpen] = useState(false)
+  const noteWorkspacePanelRef = useRef<HTMLDivElement>(null)
+
+  // Click-outside handler to close workspace panel
+  useEffect(() => {
+    if (!noteWorkspaceMenuOpen) return
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      // Don't close if clicking the dock workspace button
+      if (target.closest('[data-workspace-toggle]')) return
+      // Don't close if clicking inside the panel
+      if (noteWorkspacePanelRef.current?.contains(target)) return
+      setNoteWorkspaceMenuOpen(false)
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [noteWorkspaceMenuOpen])
 
   // Entry context is now managed inside useNoteWorkspaces hook
   // Use noteWorkspaceState.currentEntryId and noteWorkspaceState.workspacesForCurrentEntry
@@ -1296,6 +1318,8 @@ const initialWorkspaceSyncRef = useRef(false)
   const toggleNoteSwitcher = useCallback(() => {
     setIsNoteSwitcherOpen(prev => !prev)
   }, [])
+
+  // Note: Workspace switcher uses setNoteWorkspaceMenuOpen directly (toggles existing WorkspaceToggleMenu)
 
   const handleSnapshotSettled = useCallback((noteId: string) => {
     setSkipSnapshotForNote(current => (current === noteId ? null : current))
@@ -1687,14 +1711,16 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  // Note workspace toggle - hidden when hideWorkspaceToggle is true (parent provides workspace switching)
-  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled && !hideWorkspaceToggle ? (
+  // Note workspace toggle - panel only (header hidden), positioned above dock
+  // The dock 🗂️ button controls noteWorkspaceMenuOpen state
+  const noteWorkspaceToggleNode = noteWorkspaceState.featureEnabled && noteWorkspaceMenuOpen ? (
     <div
-      className="absolute left-4 top-4 flex justify-start"
-      style={{ zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'none', marginLeft: dashboardNavigation && !hideHomeButton ? 48 : 0 }}
+      ref={noteWorkspacePanelRef}
+      className="fixed left-1/2 -translate-x-1/2 flex justify-center"
+      style={{ bottom: 100, zIndex: Z_INDEX.DROPDOWN + 11, pointerEvents: 'auto' }}
     >
       <WorkspaceToggleMenu
-        className="pointer-events-auto"
+        hideHeader
         labelTitle="Note Workspace"
         statusLabel={noteWorkspaceStatusLabel}
         statusHelperText={noteWorkspaceState.statusHelperText}
@@ -1829,6 +1855,19 @@ const initialWorkspaceSyncRef = useRef(false)
       onCloseNote={handleCloseNote}
       onCenterNote={handleCenterNote}
       isNotesLoading={isWorkspaceLoading || noteWorkspaceBusy}
+      // Workspace Switcher integration (for dock - toggles existing WorkspaceToggleMenu)
+      workspacesForSwitcher={noteWorkspaceState.workspacesForCurrentEntry}
+      currentWorkspaceIdForSwitcher={noteWorkspaceState.currentWorkspaceId}
+      isWorkspaceSwitcherOpen={noteWorkspaceMenuOpen}
+      onToggleWorkspaceSwitcher={() => setNoteWorkspaceMenuOpen(prev => !prev)}
+      onSelectWorkspace={(workspaceId) => noteWorkspaceState.selectWorkspace(workspaceId)}
+      onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
+      onRenameWorkspace={noteWorkspaceState.renameWorkspace}
+      onCreateWorkspace={noteWorkspaceState.createWorkspace}
+      isWorkspacesLoading={noteWorkspaceState.isLoading}
+      deletingWorkspaceId={null}
+      currentWorkspaceName={noteWorkspaceStatusLabel}
+      onReturnToDashboard={onReturnToDashboard}
     >
       {floatingToolbarChild}
     </MultiWorkspaceCanvasContainer>
@@ -1871,6 +1910,19 @@ const initialWorkspaceSyncRef = useRef(false)
       onCloseNote={handleCloseNote}
       onCenterNote={handleCenterNote}
       isNotesLoading={isWorkspaceLoading || noteWorkspaceBusy}
+      // Workspace Switcher integration (for dock - toggles existing WorkspaceToggleMenu)
+      workspacesForSwitcher={noteWorkspaceState.workspacesForCurrentEntry}
+      currentWorkspaceIdForSwitcher={noteWorkspaceState.currentWorkspaceId}
+      isWorkspaceSwitcherOpen={noteWorkspaceMenuOpen}
+      onToggleWorkspaceSwitcher={() => setNoteWorkspaceMenuOpen(prev => !prev)}
+      onSelectWorkspace={(workspaceId) => noteWorkspaceState.selectWorkspace(workspaceId)}
+      onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
+      onRenameWorkspace={noteWorkspaceState.renameWorkspace}
+      onCreateWorkspace={noteWorkspaceState.createWorkspace}
+      isWorkspacesLoading={noteWorkspaceState.isLoading}
+      deletingWorkspaceId={null}
+      currentWorkspaceName={noteWorkspaceStatusLabel}
+      onReturnToDashboard={onReturnToDashboard}
     >
       {floatingToolbarChild}
     </AnnotationWorkspaceCanvas>
@@ -2031,6 +2083,8 @@ export interface AnnotationAppShellProps {
   pinnedWorkspaceIds?: string[]
   /** Whether the parent entry is currently active/visible (vs hidden behind another entry) */
   isEntryActive?: boolean
+  /** Callback to return to dashboard (passed to canvas dock) */
+  onReturnToDashboard?: () => void
 }
 
 export function AnnotationAppShell({
@@ -2041,6 +2095,7 @@ export function AnnotationAppShell({
   controlledWorkspaceId,
   pinnedWorkspaceIds,
   isEntryActive = true,
+  onReturnToDashboard,
 }: AnnotationAppShellProps = {}) {
   return (
     <WorkspaceToastProvider>
@@ -2055,6 +2110,7 @@ export function AnnotationAppShell({
             controlledWorkspaceId={controlledWorkspaceId}
             pinnedWorkspaceIds={pinnedWorkspaceIds}
             isEntryActive={isEntryActive}
+            onReturnToDashboard={onReturnToDashboard}
           />
         </CanvasWorkspaceProvider>
       </LayerProvider>

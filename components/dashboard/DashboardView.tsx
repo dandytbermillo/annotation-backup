@@ -11,10 +11,11 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { DashboardPanelRenderer } from "./DashboardPanelRenderer"
 import { DashboardWelcomeTooltip, useDashboardWelcome } from "./DashboardWelcomeTooltip"
-import { AddPanelButton } from "./PanelCatalog"
+import { AddPanelButton, PanelCatalog } from "./PanelCatalog"
 import { DashboardBreadcrumb } from "./DashboardBreadcrumb"
 import { PinEntryButton } from "./PinEntryButton"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
+import { DashboardDock } from "./DashboardDock"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
 import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh } from "@/lib/note-workspaces/state"
 import { requestDashboardPanelRefresh } from "@/lib/dashboard/category-store"
@@ -402,20 +403,46 @@ export function DashboardView({
 
   // Ref for outside click handling
   const workspaceMenuRef = useRef<HTMLDivElement>(null)
+  const workspacePanelRef = useRef<HTMLDivElement>(null)
 
-  // Close menu when clicking outside
+  // Panel catalog state (for Add Panel button in dock)
+  const [isPanelCatalogOpen, setIsPanelCatalogOpen] = useState(false)
+
+  // Close workspace panel when clicking outside (for dock-triggered panel)
   useEffect(() => {
     if (!workspaceMenuOpen) return
 
     const handleClickOutside = (e: MouseEvent) => {
-      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
-        setWorkspaceMenuOpen(false)
-      }
+      const target = e.target as HTMLElement
+      // Don't close if clicking the dock workspace button
+      if (target.closest('[data-workspace-toggle]')) return
+      // Don't close if clicking inside the panel
+      if (workspacePanelRef.current?.contains(target)) return
+      // Don't close if clicking the old menu ref (for header dropdown if present)
+      if (workspaceMenuRef.current?.contains(target)) return
+      setWorkspaceMenuOpen(false)
     }
 
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [workspaceMenuOpen])
+
+  // Close panel catalog when clicking outside
+  useEffect(() => {
+    if (!isPanelCatalogOpen) return
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      // Don't close if clicking the dock add panel button
+      if (target.closest('[data-add-panel-toggle]')) return
+      // Don't close if clicking inside the catalog
+      if (target.closest('[data-panel-catalog]')) return
+      setIsPanelCatalogOpen(false)
+    }
+
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [isPanelCatalogOpen])
 
   // Handle workspace selection from dropdown (receives just workspaceId)
   // Phase 2: Sets viewMode to 'workspace' instead of navigating away
@@ -1251,74 +1278,8 @@ export function DashboardView({
             )}
           </div>
 
-          {/* Right side: Dashboard button + Workspace dropdown + Add Panel + Reset */}
+          {/* Right side: Reset button only (other controls moved to dock) */}
           <div className="flex items-center gap-2">
-            {/* Dashboard button - highlighted when in dashboard mode, clickable when in workspace mode */}
-            <button
-              onClick={viewMode === 'workspace' ? handleReturnToDashboard : undefined}
-              style={{
-                padding: '7px 14px',
-                borderRadius: '8px',
-                background: viewMode === 'dashboard'
-                  ? 'rgba(99, 102, 241, 0.15)'
-                  : 'transparent',
-                color: viewMode === 'dashboard'
-                  ? '#818cf8'
-                  : '#f0f0f0',
-                border: viewMode === 'dashboard'
-                  ? '1px solid rgba(99, 102, 241, 0.3)'
-                  : '1px solid rgba(255, 255, 255, 0.08)',
-                cursor: viewMode === 'workspace' ? 'pointer' : 'default',
-                fontSize: '13px',
-                fontWeight: 500,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                if (viewMode === 'workspace') {
-                  e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (viewMode === 'workspace') {
-                  e.currentTarget.style.background = 'transparent'
-                }
-              }}
-            >
-              <LayoutDashboard size={14} />
-              Dashboard
-            </button>
-
-            {/* Workspace dropdown - using WorkspaceToggleMenu */}
-            <WorkspaceToggleMenu
-              ref={workspaceMenuRef}
-              className="pointer-events-auto"
-              labelTitle="NOTE WORKSPACE"
-              statusLabel={
-                viewMode === 'workspace' && activeWorkspaceId
-                  ? workspaces.find(ws => ws.id === activeWorkspaceId)?.name || "Workspace"
-                  : workspaces.find(ws => ws.isDefault)?.name || "Workspace"
-              }
-              isOpen={workspaceMenuOpen}
-              onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
-              onCreateWorkspace={handleCreateWorkspace}
-              disableCreate={isWorkspacesLoading}
-              isListLoading={isWorkspacesLoading}
-              workspaces={workspaces}
-              currentWorkspaceId={viewMode === 'workspace' ? activeWorkspaceId : null}
-              deletingWorkspaceId={deletingWorkspaceId}
-              onSelectWorkspace={handleWorkspaceSelectById}
-              onDeleteWorkspace={handleDeleteWorkspace}
-              onRenameWorkspace={handleRenameWorkspace}
-              entryId={entryId}
-            />
-
-            <AddPanelButton
-              workspaceId={workspaceId}
-              onPanelAdded={() => fetchPanels()}
-            />
             <button
               onClick={handleResetLayout}
               style={{
@@ -1531,6 +1492,7 @@ export function DashboardView({
               controlledWorkspaceId={activeWorkspaceId ?? undefined}
               pinnedWorkspaceIds={pinnedWorkspaceIds}
               isEntryActive={isEntryActive}
+              onReturnToDashboard={handleReturnToDashboard}
             />
           </div>
         )}
@@ -1538,6 +1500,75 @@ export function DashboardView({
         {/* End of canvas surface */}
       </div>
       {/* End of scrollable container */}
+
+      {/* Dashboard Dock - iOS Control Center style (only shown in dashboard mode) */}
+      {viewMode === 'dashboard' && (
+        <>
+          <DashboardDock
+            onWorkspaceClick={() => setWorkspaceMenuOpen(prev => !prev)}
+            isWorkspacePanelOpen={workspaceMenuOpen}
+            currentWorkspaceName={workspaces.find(ws => ws.isDefault)?.name || "Workspace"}
+            workspaceCount={workspaces.length}
+            onAddPanelClick={() => setIsPanelCatalogOpen(prev => !prev)}
+            addPanelDisabled={isWorkspacesLoading}
+          />
+
+          {/* Workspace Panel - appears above dock when workspace button clicked */}
+          {workspaceMenuOpen && (
+        <div
+          ref={workspacePanelRef}
+          style={{
+            position: 'fixed',
+            bottom: 100,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 99998,
+          }}
+        >
+          <WorkspaceToggleMenu
+            hideHeader
+            labelTitle="NOTE WORKSPACE"
+            statusLabel={workspaces.find(ws => ws.isDefault)?.name || "Workspace"}
+            isOpen={workspaceMenuOpen}
+            onToggleMenu={() => setWorkspaceMenuOpen(prev => !prev)}
+            onCreateWorkspace={handleCreateWorkspace}
+            disableCreate={isWorkspacesLoading}
+            isListLoading={isWorkspacesLoading}
+            workspaces={workspaces}
+            currentWorkspaceId={null}
+            deletingWorkspaceId={deletingWorkspaceId}
+            onSelectWorkspace={handleWorkspaceSelectById}
+            onDeleteWorkspace={handleDeleteWorkspace}
+            onRenameWorkspace={handleRenameWorkspace}
+            entryId={entryId}
+          />
+          </div>
+          )}
+
+          {/* Panel Catalog - appears above dock when add panel button clicked */}
+          {isPanelCatalogOpen && (
+            <div
+              data-panel-catalog
+              style={{
+                position: 'fixed',
+                bottom: 100,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 99998,
+              }}
+            >
+              <PanelCatalog
+                workspaceId={workspaceId}
+                onPanelAdded={() => {
+                  fetchPanels()
+                  setIsPanelCatalogOpen(false)
+                }}
+                onClose={() => setIsPanelCatalogOpen(false)}
+              />
+            </div>
+          )}
+        </>
+      )}
     </div>
     </>
   )
