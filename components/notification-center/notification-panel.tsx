@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { CheckCheck, Trash2 } from 'lucide-react';
+import { CheckCheck, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
@@ -34,7 +34,7 @@ const FILTERS: { value: NotificationFilter; label: string }[] = [
  */
 export function NotificationPanel({
   entryId: _entryId,
-  onClose: _onClose,
+  onClose,
   className,
 }: NotificationPanelProps) {
   const [filter, setFilter] = React.useState<NotificationFilter>('all');
@@ -88,11 +88,24 @@ export function NotificationPanel({
       {/* Header */}
       <div className="flex items-center justify-between border-b px-4 py-3">
         <h3 className="font-semibold">Notifications</h3>
-        {unreadCount > 0 && (
-          <span className="text-xs text-muted-foreground">
-            {unreadCount} unread
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {unreadCount > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {unreadCount} unread
+            </span>
+          )}
+          {onClose && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 rounded-full"
+              onClick={onClose}
+              aria-label="Close notifications"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Filter tabs */}

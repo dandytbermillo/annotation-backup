@@ -67,6 +67,7 @@ import {
   registerWorkspaceNotificationListeners,
   emitDegradedModeNotification,
 } from "@/lib/notification-center"
+import { WorkspaceToastProvider, useWorkspaceToast } from "@/components/canvas/workspace-toast"
 // Entry context is now managed inside useNoteWorkspaces hook
 
 const FOLDER_CACHE_MAX_AGE_MS = 30000
@@ -166,6 +167,7 @@ function AnnotationAppContent({
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
+  const workspaceToast = useWorkspaceToast()
   const {
     openNotes,
     openNotesWorkspaceId,
@@ -1258,7 +1260,7 @@ const initialWorkspaceSyncRef = useRef(false)
     return `${noteId.slice(0, 4)}…${noteId.slice(-3)}`
   }, [])
 
-  const { handleNoteSelect, handleCloseNote, handleCenterNote } = useWorkspaceNoteSelection({
+  const { handleNoteSelect, handleCloseNote: handleCloseNoteBase, handleCenterNote } = useWorkspaceNoteSelection({
     activeNoteId,
     openNotes,
     openWorkspaceNote,
@@ -1283,6 +1285,12 @@ const initialWorkspaceSyncRef = useRef(false)
     debugLog,
     clearClosedNoteFromCache: noteWorkspaceState.clearClosedNoteFromCache,
   })
+
+  // Wrap handleCloseNote to show workspace toast
+  const handleCloseNote = useCallback((noteId: string) => {
+    handleCloseNoteBase(noteId)
+    workspaceToast.info('Note closed')
+  }, [handleCloseNoteBase, workspaceToast])
 
   // Toggle callback for note switcher popover (used by both dock and workspace toolbar)
   const toggleNoteSwitcher = useCallback(() => {
@@ -1552,8 +1560,10 @@ const initialWorkspaceSyncRef = useRef(false)
         handleNoteSelect(result.noteId, {
           source: 'toolbar-create'
         })
+        workspaceToast.success('Note created')
       } else {
         console.error('[AnnotationApp] Failed to create note:', result.error)
+        workspaceToast.error('Failed to create note')
       }
     } catch (error) {
       console.error('[AnnotationApp] Error creating note:', error)
@@ -1735,7 +1745,8 @@ const initialWorkspaceSyncRef = useRef(false)
     </div>
   ) : null
 
-  // Notification bell - always visible in top-right
+  // Global notification bell - top right (for global notifications)
+  // Dock also has a notification badge (for workspace-specific context)
   const notificationBellNode = (
     <div
       className="absolute right-4 top-4 flex items-center"
@@ -2032,19 +2043,21 @@ export function AnnotationAppShell({
   isEntryActive = true,
 }: AnnotationAppShellProps = {}) {
   return (
-    <LayerProvider initialPopupCount={0}>
-      <CanvasWorkspaceProvider>
-        <AnnotationAppContent
-          useShellView
-          isHidden={isHidden}
-          hideHomeButton={hideHomeButton}
-          hideWorkspaceToggle={hideWorkspaceToggle}
-          toolbarTopOffset={toolbarTopOffset}
-          controlledWorkspaceId={controlledWorkspaceId}
-          pinnedWorkspaceIds={pinnedWorkspaceIds}
-          isEntryActive={isEntryActive}
-        />
-      </CanvasWorkspaceProvider>
-    </LayerProvider>
+    <WorkspaceToastProvider>
+      <LayerProvider initialPopupCount={0}>
+        <CanvasWorkspaceProvider>
+          <AnnotationAppContent
+            useShellView
+            isHidden={isHidden}
+            hideHomeButton={hideHomeButton}
+            hideWorkspaceToggle={hideWorkspaceToggle}
+            toolbarTopOffset={toolbarTopOffset}
+            controlledWorkspaceId={controlledWorkspaceId}
+            pinnedWorkspaceIds={pinnedWorkspaceIds}
+            isEntryActive={isEntryActive}
+          />
+        </CanvasWorkspaceProvider>
+      </LayerProvider>
+    </WorkspaceToastProvider>
   )
 }

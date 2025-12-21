@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 import type { CanvasToolType } from '@/lib/hooks/annotation/use-canvas-pointer-handlers';
 import { NoteSwitcherPopover } from './note-switcher-popover';
 import type { OpenNoteItem } from './note-switcher-item';
+import { useNotificationUnreadCount } from '@/lib/hooks/use-notification-center';
+import { NotificationPanel } from '@/components/notification-center/notification-panel';
 
 // ============================================================================
 // TYPES
@@ -105,8 +107,10 @@ export function CanvasControlCenter({
 }: CanvasControlCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isDraggingZoom, setIsDraggingZoom] = useState(false);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const controlCenterRef = useRef<HTMLDivElement>(null);
+  const notificationUnreadCount = useNotificationUnreadCount();
 
   const zoomPercent = Math.round(zoom * 100);
 
@@ -299,6 +303,58 @@ export function CanvasControlCenter({
           )}
         </button>
 
+        {/* Notification Bell Button */}
+        <button
+          data-notification-toggle
+          onClick={() => setIsNotificationPanelOpen(prev => !prev)}
+          title={notificationUnreadCount > 0 ? `${notificationUnreadCount} unread notification${notificationUnreadCount > 1 ? 's' : ''}` : 'Notifications'}
+          style={{
+            position: 'relative',
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: isNotificationPanelOpen
+              ? 'rgb(99, 102, 241)'
+              : 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+            boxShadow: isNotificationPanelOpen
+              ? '0 4px 20px rgba(99,102,241,0.4)'
+              : 'none',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>🔔</span>
+          {/* Badge */}
+          {notificationUnreadCount > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: -4,
+                right: -4,
+                minWidth: 20,
+                height: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 10,
+                padding: '0 6px',
+                fontSize: 11,
+                fontWeight: 700,
+                background: isNotificationPanelOpen ? 'white' : 'rgb(239, 68, 68)',
+                color: isNotificationPanelOpen ? 'rgb(99, 102, 241)' : 'white',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              }}
+            >
+              {notificationUnreadCount > 99 ? '99+' : notificationUnreadCount}
+            </span>
+          )}
+        </button>
+
         {/* Control Center Button */}
         <button
           data-cc-toggle
@@ -353,6 +409,33 @@ export function CanvasControlCenter({
             onClose={() => onToggleNoteSwitcher?.()}
             isLoading={isNotesLoading}
           />
+        </div>
+      )}
+
+      {/* Notification Panel */}
+      {isNotificationPanelOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: 100,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: Z_INDEX_PANEL + 2,
+          }}
+        >
+          <div
+            style={{
+              width: 380,
+              background: 'rgba(255, 255, 255, 0.98)',
+              borderRadius: 16,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            <NotificationPanel
+              onClose={() => setIsNotificationPanelOpen(false)}
+            />
+          </div>
         </div>
       )}
 
@@ -474,14 +557,14 @@ export function CanvasControlCenter({
             label="Component"
           />
 
-          {/* Organize */}
+          {/* Settings - Opens Control Panel */}
           <Tile
             onClick={() => {
               onToggleOrganize?.();
               setTimeout(close, 150);
             }}
-            icon="📁"
-            label="Organize"
+            icon="⚙️"
+            label="Settings"
           />
 
           {/* Add Panel */}

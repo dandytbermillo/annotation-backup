@@ -15,7 +15,7 @@ import { EnhancedMinimap } from "./canvas/enhanced-minimap"
 import { CanvasControlCenter, type CanvasTool } from "./canvas/canvas-control-center"
 import type { OpenNoteItem } from "./canvas/note-switcher-item"
 import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
-import { Settings } from "lucide-react"
+// Settings icon removed - Control Panel now accessed via Control Center
 import { AddComponentMenu } from "./canvas/add-component-menu"
 import { ComponentPanel } from "./canvas/component-panel"
 import { PanelsRenderer } from "./canvas/panels-renderer"
@@ -40,7 +40,7 @@ import { useCanvasWorkspace, SHARED_WORKSPACE_ID, type OpenWorkspaceNote } from 
 import { useCameraUserId } from "@/lib/hooks/use-camera-scope"
 import { dedupeCanvasItems } from "@/lib/canvas/dedupe-canvas-items"
 import { scheduleCanvasSnapshotDedupeMigration } from "@/lib/migrations/dedupe-snapshots-v1"
-import { Z_INDEX } from "@/lib/constants/z-index"
+// Z_INDEX import removed - was only used for floating settings button
 import { useCanvasHydrationSync } from "@/lib/hooks/annotation/use-canvas-hydration-sync"
 import { useWorkspaceHydrationSeed } from "@/lib/hooks/annotation/use-workspace-hydration-seed"
 import { useDefaultMainPanelPersistence } from "@/lib/hooks/annotation/use-default-main-panel-persistence"
@@ -1055,16 +1055,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           />
         )} */}
         
-        {/* Control Panel Toggle Button - Always visible */}
-        <button
-          onClick={() => setShowControlPanel(!showControlPanel)}
-          className="fixed top-16 right-4 p-3 bg-gray-900 hover:bg-gray-800 text-white rounded-lg shadow-lg transition-all duration-200 hover:scale-110"
-          style={{ zIndex: Z_INDEX.CANVAS_MINIMAP }}
-          title="Toggle Control Panel"
-        >
-          <Settings size={20} />
-        </button>
-        
+        {/* Control Panel Toggle Button - REMOVED: Now accessible via Control Center "Organize" button */}
+
         {/* Add Components Button - Moved to sidebar */}
 
         {/* Enhanced Control Panel V2 - Wider with always-visible metrics */}

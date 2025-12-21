@@ -39,10 +39,11 @@ export function AnnotationWorkspaceView({
       <div className="flex h-full w-full">
         {sidebar ?? (sidebarProps ? <WorkspaceSidebar {...sidebarProps} /> : null)}
         <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Workspace toggle container - height: 0 since all children are absolutely positioned */}
           {workspaceToggle ? (
             <div
               className="relative flex-none"
-              style={{ minHeight: "64px", pointerEvents: "none" }}
+              style={{ height: 0, pointerEvents: "none" }}
             >
               {workspaceToggle}
             </div>

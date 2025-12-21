@@ -249,9 +249,133 @@ isVisible: false,
 isVisible: !isHidden && !showConstellationPanel && !isPopupLayerActive,
 ```
 
+## Additional Change: Control Panel Button Migration
+
+### Date: 2025-12-20
+
+Migrated the floating control panel toggle button (⚙️ gear icon with badge) into the Control Center panel.
+
+**Changes:**
+
+1. **Removed floating gear button** from `annotation-canvas-modern.tsx` (lines 1058-1066)
+2. **Renamed "Organize" to "Settings"** in the Control Center grid with ⚙️ icon
+3. **Removed unused imports**: `Settings` from lucide-react, `Z_INDEX` constant
+
+**Files affected:**
+- `components/annotation-canvas-modern.tsx` - Removed floating button and unused imports
+- `components/canvas/canvas-control-center.tsx` - Changed "Organize" (📁) to "Settings" (⚙️)
+
+**Result:**
+The Control Panel (EnhancedControlPanelV2) is now only accessible via the "Settings" button in the Control Center panel, reducing UI clutter.
+
+---
+
 ## Future Considerations
 
 1. **Keyboard Navigation**: Add arrow key navigation in the popover
 2. **Search/Filter**: Add search box for many open notes
 3. **Drag Reorder**: Allow reordering notes in the popover
 4. **Persist Popover Position**: Remember if user prefers it open
+5. **Remove "Panel" button**: Consider removing since it duplicates "Component" functionality
+
+---
+
+## Workspace Toast System
+
+### Date: 2025-12-20
+
+Added a workspace-specific toast notification system that appears above the dock for entry/workspace-related notifications.
+
+**Visual:**
+```
+┌─────────────────────────────────────────────┐
+│                                             │
+│              ┌─────────────────┐            │
+│              │ ✓ Note created  │ ← Toast    │
+│              └─────────────────┘            │
+│              ┌───────────────┐              │
+│              │  📄②   ⚡    │ ← Dock       │
+│              └───────────────┘              │
+└─────────────────────────────────────────────┘
+```
+
+**Files Created:**
+- `components/canvas/workspace-toast.tsx` - Toast component and provider
+
+**Files Modified:**
+- `components/annotation-app-shell.tsx` - Added WorkspaceToastProvider wrapper and toast calls
+
+**Usage:**
+```tsx
+// Inside a component wrapped by WorkspaceToastProvider
+const workspaceToast = useWorkspaceToast();
+
+workspaceToast.success('Note created');
+workspaceToast.info('Note closed');
+workspaceToast.warning('Workspace busy');
+workspaceToast.error('Failed to save');
+```
+
+**Toast Types:**
+| Type | Color | Icon | Use Case |
+|------|-------|------|----------|
+| success | Green | ✓ | Note/component created |
+| info | Indigo | ℹ | Note closed, switched |
+| warning | Yellow | ⚠ | Workspace busy |
+| error | Red | ✕ | Failed operations |
+
+**Currently Shows Toast For:**
+- Note created (success)
+- Note creation failed (error)
+- Note closed (info)
+
+**Features:**
+- Auto-dismiss after 2.5s
+- Click to dismiss
+- Max 3 toasts visible
+- Smooth CSS animations (no framer-motion dependency)
+- Z-index above dock popovers (100001)
+
+---
+
+## Notification Bell Button on Dock
+
+### Date: 2025-12-20
+
+Added a dedicated notification bell button (🔔) to the dock, positioned between the Notes button and Control Center button. This provides a consistent button-based interaction pattern matching the dock's design.
+
+**Visual:**
+```
+┌─────────────────────────┐
+│  📄③  🔔②  ⚡         │
+└─────────────────────────┘
+   Notes  Notif  Control
+```
+
+**Files Modified:**
+- `components/canvas/canvas-control-center.tsx` - Added notification bell button to dock
+
+**Implementation:**
+- Uses `useNotificationUnreadCount` hook to get unread count
+- Bell button always visible (consistent with Notes/Control Center buttons)
+- Red badge with count appears on button when `unreadCount > 0`
+- Clicking button toggles notification panel
+- Panel appears above dock (same position as other popovers)
+
+**Button Styling:**
+- Same 48x48 circular button style as Notes and Control Center
+- Indigo background when panel is open
+- Red badge with white text when notifications exist
+- Badge inverts colors when panel is open (white bg, indigo text)
+
+**Behavior:**
+- Button always clickable (shows "Notifications" tooltip when no unread)
+- Badge only shows when `unreadCount > 0`
+- Click opens `NotificationPanel` component
+- Panel styled with white background and rounded corners
+- Same z-index pattern as other dock popovers
+
+**Dual Notification System:**
+- **Global notification bell (top-right)**: `NotificationBell` component in breadcrumb area
+- **Dock notification bell (bottom center)**: Button in the dock for workspace context
+- Both show the same notifications and use the same notification store
