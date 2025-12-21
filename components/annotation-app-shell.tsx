@@ -2085,6 +2085,8 @@ export interface AnnotationAppShellProps {
   isEntryActive?: boolean
   /** Callback to return to dashboard (passed to canvas dock) */
   onReturnToDashboard?: () => void
+  /** Callback when workspace changes internally (allows parent to sync controlled state) */
+  onWorkspaceChange?: (workspaceId: string) => void
 }
 
 export function AnnotationAppShell({
