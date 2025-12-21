@@ -50,6 +50,8 @@ interface DashboardBreadcrumbProps {
   showHomeIcon?: boolean
   /** Whether to show loading state */
   showLoading?: boolean
+  /** Whether to hide the workspace segment (show only entry hierarchy) */
+  hideWorkspaceSegment?: boolean
 }
 
 export function DashboardBreadcrumb({
@@ -60,6 +62,7 @@ export function DashboardBreadcrumb({
   className,
   showHomeIcon = true,
   showLoading = true,
+  hideWorkspaceSegment = false,
 }: DashboardBreadcrumbProps) {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(
     propWorkspaceId ?? getActiveWorkspaceContext()
@@ -247,24 +250,28 @@ export function DashboardBreadcrumb({
             <span className="font-medium">{currentEntry.entryName}</span>
           </button>
 
-          {/* Separator */}
-          <ChevronRight size={14} className="text-muted-foreground/50" />
+          {/* Separator - only show if workspace segment follows */}
+          {!hideWorkspaceSegment && (
+            <ChevronRight size={14} className="text-muted-foreground/50" />
+          )}
         </>
       )}
 
-      {/* Workspace segment */}
-      <button
-        onClick={() => onWorkspaceClick?.(breadcrumbInfo.workspaceId)}
-        className={cn(
-          'flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors',
-          'text-white font-medium',
-          onWorkspaceClick ? 'hover:bg-muted cursor-pointer' : 'cursor-default'
-        )}
-        disabled={!onWorkspaceClick}
-        aria-current="page"
-      >
-        <span>{breadcrumbInfo.workspaceName}</span>
-      </button>
+      {/* Workspace segment - hidden when hideWorkspaceSegment is true */}
+      {!hideWorkspaceSegment && (
+        <button
+          onClick={() => onWorkspaceClick?.(breadcrumbInfo.workspaceId)}
+          className={cn(
+            'flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors',
+            'text-white font-medium',
+            onWorkspaceClick ? 'hover:bg-muted cursor-pointer' : 'cursor-default'
+          )}
+          disabled={!onWorkspaceClick}
+          aria-current="page"
+        >
+          <span>{breadcrumbInfo.workspaceName}</span>
+        </button>
+      )}
 
       {/* Keyboard shortcut hint for Home */}
       {isHomeDashboard && (

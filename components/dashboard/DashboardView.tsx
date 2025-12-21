@@ -1235,21 +1235,15 @@ export function DashboardView({
 
       {/* Dashboard header - OUTSIDE scrollable container so it doesn't scroll horizontally */}
       <div
-        className="flex-shrink-0 z-10 px-4 py-3 flex items-center justify-between"
+        className="flex-shrink-0 z-10 px-4 py-1.5 flex items-center justify-between"
         style={{
           background: 'rgba(15, 17, 23, 0.95)',
           backdropFilter: 'blur(12px)',
           borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
         }}
       >
-          {/* Left side: Logo + Breadcrumb */}
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-              style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' }}
-            >
-              A
-            </div>
+          {/* Left side: Breadcrumb */}
+          <div className="flex items-center gap-2">
             {/* Breadcrumb - shows full ancestor hierarchy */}
             <div className="flex items-center gap-1.5 text-sm">
               <DashboardBreadcrumb
@@ -1273,16 +1267,8 @@ export function DashboardView({
                 }}
                 showHomeIcon={true}
                 showLoading={false}
+                hideWorkspaceSegment={true}
               />
-              {/* Show workspace name when in workspace mode */}
-              {viewMode === 'workspace' && activeWorkspaceId && (
-                <>
-                  <ChevronRight size={14} style={{ color: '#5c6070' }} />
-                  <span style={{ color: '#8b8fa3' }}>
-                    {workspaces.find(ws => ws.id === activeWorkspaceId)?.name || "Workspace"}
-                  </span>
-                </>
-              )}
             </div>
 
             {/* Pin Entry Button - allows pinning this entry for state preservation */}
@@ -1301,20 +1287,20 @@ export function DashboardView({
             <button
               onClick={handleResetLayout}
               style={{
-                padding: '7px 14px',
-                borderRadius: '8px',
+                padding: '4px 10px',
+                borderRadius: '6px',
                 background: 'transparent',
                 color: '#8b8fa3',
                 border: '1px solid rgba(255, 255, 255, 0.08)',
                 cursor: 'pointer',
-                fontSize: '13px',
+                fontSize: '12px',
                 fontWeight: 500,
                 display: 'flex',
                 alignItems: 'center',
-                gap: '6px',
+                gap: '4px',
               }}
             >
-              <RefreshCw className="h-4 w-4" />
+              <RefreshCw className="h-3.5 w-3.5" />
               Reset
             </button>
           </div>
@@ -1328,6 +1314,31 @@ export function DashboardView({
           background: '#0a0c10',
         }}
       >
+        {/* Context Indicator - shows current view (Dashboard or Workspace name) */}
+        {/* Subtle, centered, fades on hover, doesn't block interactions */}
+        <div
+          className="absolute top-2 left-0 right-0 flex justify-center pointer-events-none z-10 transition-opacity duration-200 hover:opacity-0"
+          style={{ pointerEvents: 'none' }}
+        >
+          <span
+            className="text-xs font-medium transition-opacity duration-200"
+            style={{
+              color: 'rgba(255, 255, 255, 0.35)',
+              pointerEvents: 'auto',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.opacity = '0'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '1'
+            }}
+          >
+            {viewMode === 'dashboard'
+              ? 'Dashboard'
+              : (workspaces.find(ws => ws.id === activeWorkspaceId)?.name || 'Workspace')
+            }
+          </span>
+        </div>
         {/* Canvas surface with grid pattern - dynamically sized based on panel positions */}
         <div
           style={{
