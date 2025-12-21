@@ -155,6 +155,8 @@ type AnnotationAppContentProps = {
   isEntryActive?: boolean
   /** Callback to return to dashboard (passed to canvas dock) */
   onReturnToDashboard?: () => void
+  /** Callback when workspace changes internally (allows parent to sync controlled state) */
+  onWorkspaceChange?: (workspaceId: string) => void
 }
 
 function AnnotationAppContent({
@@ -167,6 +169,7 @@ function AnnotationAppContent({
   pinnedWorkspaceIds,
   isEntryActive = true,
   onReturnToDashboard,
+  onWorkspaceChange,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -1739,6 +1742,8 @@ const initialWorkspaceSyncRef = useRef(false)
             metadata: { workspaceId },
           })
           noteWorkspaceState.selectWorkspace(workspaceId)
+          // Notify parent (DashboardView) so it can sync its controlled state
+          onWorkspaceChange?.(workspaceId)
         }}
         onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
         onRenameWorkspace={noteWorkspaceState.renameWorkspace}
@@ -1860,7 +1865,11 @@ const initialWorkspaceSyncRef = useRef(false)
       currentWorkspaceIdForSwitcher={noteWorkspaceState.currentWorkspaceId}
       isWorkspaceSwitcherOpen={noteWorkspaceMenuOpen}
       onToggleWorkspaceSwitcher={() => setNoteWorkspaceMenuOpen(prev => !prev)}
-      onSelectWorkspace={(workspaceId) => noteWorkspaceState.selectWorkspace(workspaceId)}
+      onSelectWorkspace={(workspaceId) => {
+        noteWorkspaceState.selectWorkspace(workspaceId)
+        // Notify parent (DashboardView) so it can sync its controlled state
+        onWorkspaceChange?.(workspaceId)
+      }}
       onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
       onRenameWorkspace={noteWorkspaceState.renameWorkspace}
       onCreateWorkspace={noteWorkspaceState.createWorkspace}
@@ -1915,7 +1924,11 @@ const initialWorkspaceSyncRef = useRef(false)
       currentWorkspaceIdForSwitcher={noteWorkspaceState.currentWorkspaceId}
       isWorkspaceSwitcherOpen={noteWorkspaceMenuOpen}
       onToggleWorkspaceSwitcher={() => setNoteWorkspaceMenuOpen(prev => !prev)}
-      onSelectWorkspace={(workspaceId) => noteWorkspaceState.selectWorkspace(workspaceId)}
+      onSelectWorkspace={(workspaceId) => {
+        noteWorkspaceState.selectWorkspace(workspaceId)
+        // Notify parent (DashboardView) so it can sync its controlled state
+        onWorkspaceChange?.(workspaceId)
+      }}
       onDeleteWorkspace={noteWorkspaceState.deleteWorkspace}
       onRenameWorkspace={noteWorkspaceState.renameWorkspace}
       onCreateWorkspace={noteWorkspaceState.createWorkspace}
@@ -2098,6 +2111,7 @@ export function AnnotationAppShell({
   pinnedWorkspaceIds,
   isEntryActive = true,
   onReturnToDashboard,
+  onWorkspaceChange,
 }: AnnotationAppShellProps = {}) {
   return (
     <WorkspaceToastProvider>
@@ -2113,6 +2127,7 @@ export function AnnotationAppShell({
             pinnedWorkspaceIds={pinnedWorkspaceIds}
             isEntryActive={isEntryActive}
             onReturnToDashboard={onReturnToDashboard}
+            onWorkspaceChange={onWorkspaceChange}
           />
         </CanvasWorkspaceProvider>
       </LayerProvider>

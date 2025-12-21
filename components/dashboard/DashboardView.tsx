@@ -520,6 +520,24 @@ export function DashboardView({
     }
   }, [homeEntryId, onNavigate])
 
+  // Handle workspace change from canvas dock (when user switches workspaces inside workspace view)
+  // This syncs the DashboardView's activeWorkspaceId with the internal workspace change
+  const handleWorkspaceChangeFromCanvas = useCallback((workspaceId: string) => {
+    void debugLog({
+      component: "DashboardView",
+      action: "workspace_changed_from_canvas",
+      metadata: { workspaceId, previousActiveWorkspaceId: activeWorkspaceId, entryId },
+    })
+    console.log("[DashboardView] Workspace changed from canvas dock:", workspaceId)
+
+    // Update local state so controlledWorkspaceId stays in sync
+    setActiveWorkspaceId(workspaceId)
+    // Also update the global context
+    setActiveWorkspaceContext(workspaceId)
+    // Notify parent for URL updates
+    onViewModeChange?.('workspace', workspaceId)
+  }, [activeWorkspaceId, entryId, onViewModeChange])
+
   // Handle returning to dashboard mode (Phase 2)
   // Phase 4: Calls onViewModeChange for navigation tracking and URL updates
   // Phase 5: Adds debouncing for rapid mode switching and loading state
@@ -1493,6 +1511,7 @@ export function DashboardView({
               pinnedWorkspaceIds={pinnedWorkspaceIds}
               isEntryActive={isEntryActive}
               onReturnToDashboard={handleReturnToDashboard}
+              onWorkspaceChange={handleWorkspaceChangeFromCanvas}
             />
           </div>
         )}
