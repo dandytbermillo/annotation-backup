@@ -20,6 +20,7 @@ import type {
   WorkspaceLifecycleState,
 } from './types'
 import { debugLog } from '@/lib/utils/debug-logger'
+import { clearOrigin } from '@/lib/canvas/directional-scroll-origin'
 
 // =============================================================================
 // State Storage
@@ -30,6 +31,68 @@ import { debugLog } from '@/lib/utils/debug-logger'
  * Key: workspaceId, Value: lifecycle state with metadata
  */
 const workspaceLifecycles = new Map<string, WorkspaceLifecycleState>()
+
+// =============================================================================
+// Lifecycle Subscriptions
+// =============================================================================
+
+/**
+ * Listener type for lifecycle change notifications.
+ * Called whenever a workspace transitions to a new lifecycle state.
+ */
+export type LifecycleChangeListener = (
+  workspaceId: string,
+  lifecycle: WorkspaceDurabilityLifecycle,
+  prevLifecycle: WorkspaceDurabilityLifecycle
+) => void
+
+/**
+ * Set of registered lifecycle change listeners.
+ */
+const lifecycleListeners = new Set<LifecycleChangeListener>()
+
+/**
+ * Subscribe to lifecycle state changes.
+ * Useful for reacting to workspace ready/restoring transitions.
+ *
+ * @param listener Callback invoked on lifecycle transitions
+ * @returns Unsubscribe function - call to remove the listener
+ */
+export function subscribeToLifecycleChanges(
+  listener: LifecycleChangeListener
+): () => void {
+  lifecycleListeners.add(listener)
+  return () => {
+    lifecycleListeners.delete(listener)
+  }
+}
+
+/**
+ * Notify all listeners of a lifecycle state change.
+ * Called internally after state transitions.
+ */
+function notifyLifecycleListeners(
+  workspaceId: string,
+  lifecycle: WorkspaceDurabilityLifecycle,
+  prevLifecycle: WorkspaceDurabilityLifecycle
+): void {
+  lifecycleListeners.forEach(listener => {
+    try {
+      listener(workspaceId, lifecycle, prevLifecycle)
+    } catch (error) {
+      // Don't let listener errors break the lifecycle manager
+      void debugLog({
+        component: 'DurabilityLifecycle',
+        action: 'listener_error',
+        metadata: {
+          workspaceId,
+          lifecycle,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      })
+    }
+  })
+}
 
 // =============================================================================
 // Lifecycle State Access
@@ -158,6 +221,9 @@ export function setWorkspaceLifecycle(
       ...metadata,
     },
   })
+
+  // Notify subscribers of the lifecycle change
+  notifyLifecycleListeners(workspaceId, lifecycle, prevLifecycle)
 }
 
 /**
@@ -301,6 +367,7 @@ export function removeWorkspaceLifecycle(workspaceId: string): void {
       },
     })
   }
+  clearOrigin(workspaceId)
 }
 
 /**

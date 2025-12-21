@@ -27,6 +27,7 @@ import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
 import { getPlainProvider } from "@/lib/provider-switcher"
 import { worldToScreen } from "@/lib/canvas/coordinate-utils"
 import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
+import { clampTranslateX, updateOrigin } from "@/lib/canvas/directional-scroll-origin"
 import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
 import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
 import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
@@ -361,6 +362,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
     lastCanvasEventRef,
   } = useCanvasTransform({
     noteId,
+    workspaceId,
     layerContext,
     onCanvasStateChange,
     initialStateFactory: getInitialCanvasState,
@@ -961,9 +963,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
       })
     },
     resetView: () => {
+      const targetX = 0
+      const targetY = 0
       updateCanvasTransform(prev => {
-        return { ...prev, zoom: 1, translateX: 0, translateY: 0 }
+        return { ...prev, zoom: 1, translateX: targetX, translateY: targetY }
       })
+      if (workspaceId) {
+        const clampedX = clampTranslateX(workspaceId, targetX)
+        updateOrigin(workspaceId, clampedX)
+      }
     },
     getCameraState: () => {
       // Use ref to get current value, not stale closure value

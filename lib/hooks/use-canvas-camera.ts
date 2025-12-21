@@ -1,12 +1,14 @@
 /**
  * Canvas Camera Hook
- * 
+ *
  * Provides camera-based panning functionality for the unified canvas system.
  * Replaces direct DOM manipulation with a shared camera transform.
  */
 
 import { useCallback, useRef } from 'react'
 import { useCanvas } from '@/components/canvas/canvas-context'
+import { clampTranslateX } from '@/lib/canvas/directional-scroll-origin'
+import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
 
 export interface CameraState {
   translateX: number
@@ -46,8 +48,14 @@ export function useCanvasCamera() {
 
     const oldX = state.canvasState?.translateX || 0
     const oldY = state.canvasState?.translateY || 0
-    const newX = oldX - dxWorld
+    let newX = oldX - dxWorld
     const newY = oldY - dyWorld
+
+    // Directional Scroll: Apply horizontal clamp
+    const workspaceId = getActiveWorkspaceContext()
+    if (workspaceId) {
+      newX = clampTranslateX(workspaceId, newX)
+    }
 
     // NOTE: Removed hot-path debug log (panCameraBy_dispatch) - was causing 250+ DB writes/min
 

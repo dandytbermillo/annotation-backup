@@ -10,6 +10,8 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
 import { isPlainModeActive } from "@/lib/collab-mode"
 import { UnifiedProvider } from "@/lib/provider-switcher"
 import type { DataStore } from "@/lib/data-store"
+import { updateOrigin } from "@/lib/canvas/directional-scroll-origin"
+import { getActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 
 type Position = { x: number; y: number }
 
@@ -180,6 +182,13 @@ export function usePanelCentering({
             translateY: targetY,
           },
         })
+
+        // Directional Scroll: Update origin to the new centered position
+        // This allows users to pan left back to this new baseline
+        const workspaceId = getActiveWorkspaceContext()
+        if (workspaceId) {
+          updateOrigin(workspaceId, targetX)
+        }
 
         if (canvasEl) {
           setTimeout(() => {

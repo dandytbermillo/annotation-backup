@@ -1,0 +1,441 @@
+diff --git a/components/annotation-canvas-modern.tsx b/components/annotation-canvas-modern.tsx
+index 5e9e72aa..a601bd6e 100644
+--- a/components/annotation-canvas-modern.tsx
++++ b/components/annotation-canvas-modern.tsx
+@@ -27,6 +27,7 @@ import { loadStateFromStorage } from "@/lib/canvas/canvas-storage"
+ import { getPlainProvider } from "@/lib/provider-switcher"
+ import { worldToScreen } from "@/lib/canvas/coordinate-utils"
+ import { debugLog, isDebugEnabled } from "@/lib/utils/debug-logger"
++import { clampTranslateX, updateOrigin } from "@/lib/canvas/directional-scroll-origin"
+ import { useCanvasHydration } from "@/lib/hooks/use-canvas-hydration"
+ import { useCameraPersistence } from "@/lib/hooks/use-camera-persistence"
+ import { usePanelPersistence } from "@/lib/hooks/use-panel-persistence"
+@@ -361,6 +362,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
+     lastCanvasEventRef,
+   } = useCanvasTransform({
+     noteId,
++    workspaceId,
+     layerContext,
+     onCanvasStateChange,
+     initialStateFactory: getInitialCanvasState,
+@@ -961,9 +963,15 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
+       })
+     },
+     resetView: () => {
++      const targetX = 0
++      const targetY = 0
+       updateCanvasTransform(prev => {
+-        return { ...prev, zoom: 1, translateX: 0, translateY: 0 }
++        return { ...prev, zoom: 1, translateX: targetX, translateY: targetY }
+       })
++      if (workspaceId) {
++        const clampedX = clampTranslateX(workspaceId, targetX)
++        updateOrigin(workspaceId, clampedX)
++      }
+     },
+     getCameraState: () => {
+       // Use ref to get current value, not stale closure value
+diff --git a/lib/hooks/annotation/use-canvas-transform.ts b/lib/hooks/annotation/use-canvas-transform.ts
+index e6396062..f894dd4e 100644
+--- a/lib/hooks/annotation/use-canvas-transform.ts
++++ b/lib/hooks/annotation/use-canvas-transform.ts
+@@ -6,11 +6,20 @@ import { useCanvas } from "@/components/canvas/canvas-context"
+ import { debugLog } from "@/lib/utils/debug-logger"
+ import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
+ import { createDefaultCanvasState } from "@/lib/canvas/canvas-defaults"
++import {
++  captureOrigin,
++  clearOrigin,
++  clampTranslateX,
++  hasOrigin,
++} from "@/lib/canvas/directional-scroll-origin"
++import { isWorkspaceLifecycleReady } from "@/lib/workspace/durability/lifecycle-manager"
+ 
+ type ViewportState = CanvasViewportState
+ 
+ type UseCanvasTransformOptions = {
+   noteId: string
++  /** Workspace ID for directional scroll origin tracking */
++  workspaceId?: string | null
+   layerContext: LayerContextValue | null
+   onCanvasStateChange?: (state: {
+     zoom: number
+@@ -20,6 +29,8 @@ type UseCanvasTransformOptions = {
+     lastInteraction?: { x: number; y: number } | null
+   }) => void
+   initialStateFactory?: () => ViewportState
++  /** When true, skip directional scroll clamping (for programmatic camera changes) */
++  bypassDirectionalClamp?: boolean
+ }
+ 
+ type UseCanvasTransformResult = {
+@@ -35,9 +46,11 @@ type UseCanvasTransformResult = {
+ 
+ export function useCanvasTransform({
+   noteId,
++  workspaceId,
+   layerContext,
+   onCanvasStateChange,
+   initialStateFactory,
++  bypassDirectionalClamp = false,
+ }: UseCanvasTransformOptions): UseCanvasTransformResult {
+   const [canvasState, _setCanvasState] = useState<ViewportState>(() => {
+     try {
+@@ -87,6 +100,35 @@ export function useCanvasTransform({
+     onCanvasStateChange,
+   ])
+ 
++  // Directional Scroll: Capture origin when workspace lifecycle becomes ready
++  // This sets the baseline translateX that the user cannot pan left beyond
++  const originCapturedRef = useRef<string | null>(null)
++
++  useEffect(() => {
++    if (!workspaceId) return
++
++    // Check if workspace is ready and origin not yet captured for this workspace
++    const isReady = isWorkspaceLifecycleReady(workspaceId)
++    const alreadyCaptured = originCapturedRef.current === workspaceId || hasOrigin(workspaceId)
++
++    if (isReady && !alreadyCaptured) {
++      // Capture origin on first ready transition
++      const captured = captureOrigin(workspaceId, canvasState.translateX)
++      if (captured) {
++        originCapturedRef.current = workspaceId
++      }
++    }
++  }, [workspaceId, canvasState.translateX])
++
++  // Clear origin tracking ref when workspace changes
++  useEffect(() => {
++    return () => {
++      // Note: We don't clear the origin from storage here because the workspace
++      // might be hot-switched back. The origin is cleared by eviction logic.
++      originCapturedRef.current = null
++    }
++  }, [workspaceId])
++
+   const setCanvasState: typeof _setCanvasState = useCallback((update) => {
+     const stack = new Error().stack
+     const caller = stack?.split("\n").slice(2, 6).join(" | ") || "unknown"
+@@ -109,7 +151,16 @@ export function useCanvasTransform({
+   const updateCanvasTransform = useCallback(
+     (updater: (prev: ViewportState) => ViewportState) => {
+       setCanvasState(prev => {
+-        const next = updater(prev)
++        let next = updater(prev)
++
++        // Directional Scroll: Apply horizontal clamp if enabled
++        if (!bypassDirectionalClamp && workspaceId) {
++          const clampedX = clampTranslateX(workspaceId, next.translateX)
++          if (clampedX !== next.translateX) {
++            next = { ...next, translateX: clampedX }
++          }
++        }
++
+         if (
+           next.translateX !== prev.translateX ||
+           next.translateY !== prev.translateY ||
+@@ -124,7 +175,7 @@ export function useCanvasTransform({
+         return next
+       })
+     },
+-    [scheduleDispatch, setCanvasState],
++    [scheduleDispatch, setCanvasState, bypassDirectionalClamp, workspaceId],
+   )
+ 
+   const panBy = useCallback(
+diff --git a/lib/hooks/annotation/use-panel-centering.ts b/lib/hooks/annotation/use-panel-centering.ts
+index 9c1b833d..7dda5bb4 100644
+--- a/lib/hooks/annotation/use-panel-centering.ts
++++ b/lib/hooks/annotation/use-panel-centering.ts
+@@ -10,6 +10,8 @@ import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
+ import { isPlainModeActive } from "@/lib/collab-mode"
+ import { UnifiedProvider } from "@/lib/provider-switcher"
+ import type { DataStore } from "@/lib/data-store"
++import { updateOrigin } from "@/lib/canvas/directional-scroll-origin"
++import { getActiveWorkspaceContext } from "@/lib/note-workspaces/state"
+ 
+ type Position = { x: number; y: number }
+ 
+@@ -181,6 +183,13 @@ export function usePanelCentering({
+           },
+         })
+ 
++        // Directional Scroll: Update origin to the new centered position
++        // This allows users to pan left back to this new baseline
++        const workspaceId = getActiveWorkspaceContext()
++        if (workspaceId) {
++          updateOrigin(workspaceId, targetX)
++        }
++
+         if (canvasEl) {
+           setTimeout(() => {
+             canvasEl.style.transition = ""
+diff --git a/lib/hooks/use-canvas-camera.ts b/lib/hooks/use-canvas-camera.ts
+index cddfefc4..3019cd45 100644
+--- a/lib/hooks/use-canvas-camera.ts
++++ b/lib/hooks/use-canvas-camera.ts
+@@ -1,12 +1,14 @@
+ /**
+  * Canvas Camera Hook
+- * 
++ *
+  * Provides camera-based panning functionality for the unified canvas system.
+  * Replaces direct DOM manipulation with a shared camera transform.
+  */
+ 
+ import { useCallback, useRef } from 'react'
+ import { useCanvas } from '@/components/canvas/canvas-context'
++import { clampTranslateX } from '@/lib/canvas/directional-scroll-origin'
++import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
+ 
+ export interface CameraState {
+   translateX: number
+@@ -46,9 +48,15 @@ export function useCanvasCamera() {
+ 
+     const oldX = state.canvasState?.translateX || 0
+     const oldY = state.canvasState?.translateY || 0
+-    const newX = oldX - dxWorld
++    let newX = oldX - dxWorld
+     const newY = oldY - dyWorld
+ 
++    // Directional Scroll: Apply horizontal clamp
++    const workspaceId = getActiveWorkspaceContext()
++    if (workspaceId) {
++      newX = clampTranslateX(workspaceId, newX)
++    }
++
+     // NOTE: Removed hot-path debug log (panCameraBy_dispatch) - was causing 250+ DB writes/min
+ 
+     // Update canvas state with new camera position. Subtracting moves the
+diff --git a/lib/workspace/durability/lifecycle-manager.ts b/lib/workspace/durability/lifecycle-manager.ts
+index 064b60eb..1204f7f0 100644
+--- a/lib/workspace/durability/lifecycle-manager.ts
++++ b/lib/workspace/durability/lifecycle-manager.ts
+@@ -20,6 +20,7 @@ import type {
+   WorkspaceLifecycleState,
+ } from './types'
+ import { debugLog } from '@/lib/utils/debug-logger'
++import { clearOrigin } from '@/lib/canvas/directional-scroll-origin'
+ 
+ // =============================================================================
+ // State Storage
+@@ -301,6 +302,7 @@ export function removeWorkspaceLifecycle(workspaceId: string): void {
+       },
+     })
+   }
++  clearOrigin(workspaceId)
+ }
+ 
+ /**
+diff --git a/lib/canvas/directional-scroll-origin.ts b/lib/canvas/directional-scroll-origin.ts
+new file mode 100644
+index 00000000..5064b922
+--- /dev/null
++++ b/lib/canvas/directional-scroll-origin.ts
+@@ -0,0 +1,205 @@
++/**
++ * Directional Scroll Origin Manager
++ *
++ * Manages the baseline translateX (origin) for the directional scroll feature.
++ * The origin is captured once per workspace when the workspace lifecycle becomes "ready".
++ * This prevents users from panning left beyond the origin position.
++ *
++ * @see docs/proposal/components/entry_workspace/2025-12-21-directional-transform-scroll-plan.md
++ */
++
++import { debugLog } from "@/lib/utils/debug-logger"
++
++// =============================================================================
++// Types
++// =============================================================================
++
++interface OriginState {
++  /** The baseline translateX value captured when workspace became ready */
++  originTranslateX: number
++  /** Timestamp when origin was captured */
++  capturedAt: number
++}
++
++// =============================================================================
++// State Storage (Module-level, keyed by workspaceId)
++// =============================================================================
++
++const workspaceOrigins = new Map<string, OriginState>()
++
++// =============================================================================
++// Origin Capture
++// =============================================================================
++
++/**
++ * Capture the origin translateX for a workspace.
++ * Should be called once when the workspace lifecycle transitions to "ready".
++ *
++ * @param workspaceId - The workspace ID
++ * @param translateX - The current translateX to set as origin
++ * @returns true if origin was captured, false if already captured
++ */
++export function captureOrigin(workspaceId: string, translateX: number): boolean {
++  if (!workspaceId) return false
++
++  // Don't recapture if already set (hot switch protection)
++  if (workspaceOrigins.has(workspaceId)) {
++    debugLog({
++      component: "DirectionalScroll",
++      action: "origin_capture_skipped",
++      metadata: {
++        workspaceId,
++        reason: "already_captured",
++        existingOrigin: workspaceOrigins.get(workspaceId)?.originTranslateX,
++        attemptedOrigin: translateX,
++      },
++    })
++    return false
++  }
++
++  workspaceOrigins.set(workspaceId, {
++    originTranslateX: translateX,
++    capturedAt: Date.now(),
++  })
++
++  debugLog({
++    component: "DirectionalScroll",
++    action: "origin_captured",
++    metadata: {
++      workspaceId,
++      originTranslateX: translateX,
++    },
++  })
++
++  return true
++}
++
++/**
++ * Update the origin translateX for a workspace.
++ * Used when the user explicitly resets the view or centers a note.
++ *
++ * @param workspaceId - The workspace ID
++ * @param translateX - The new translateX to set as origin
++ */
++export function updateOrigin(workspaceId: string, translateX: number): void {
++  if (!workspaceId) return
++
++  const previous = workspaceOrigins.get(workspaceId)
++
++  workspaceOrigins.set(workspaceId, {
++    originTranslateX: translateX,
++    capturedAt: Date.now(),
++  })
++
++  debugLog({
++    component: "DirectionalScroll",
++    action: "origin_updated",
++    metadata: {
++      workspaceId,
++      previousOrigin: previous?.originTranslateX,
++      newOrigin: translateX,
++      reason: "programmatic_update",
++    },
++  })
++}
++
++/**
++ * Clear the origin for a workspace.
++ * Called when workspace is unmounted or evicted.
++ *
++ * @param workspaceId - The workspace ID
++ */
++export function clearOrigin(workspaceId: string): void {
++  if (!workspaceId) return
++
++  const had = workspaceOrigins.has(workspaceId)
++  workspaceOrigins.delete(workspaceId)
++
++  if (had) {
++    debugLog({
++      component: "DirectionalScroll",
++      action: "origin_cleared",
++      metadata: { workspaceId },
++    })
++  }
++}
++
++// =============================================================================
++// Origin Access
++// =============================================================================
++
++/**
++ * Get the origin translateX for a workspace.
++ *
++ * @param workspaceId - The workspace ID
++ * @returns The origin translateX, or null if not captured
++ */
++export function getOrigin(workspaceId: string): number | null {
++  if (!workspaceId) return null
++  return workspaceOrigins.get(workspaceId)?.originTranslateX ?? null
++}
++
++/**
++ * Check if origin has been captured for a workspace.
++ *
++ * @param workspaceId - The workspace ID
++ * @returns true if origin exists
++ */
++export function hasOrigin(workspaceId: string): boolean {
++  return workspaceOrigins.has(workspaceId)
++}
++
++// =============================================================================
++// Directional Clamp
++// =============================================================================
++
++/**
++ * Clamp translateX to enforce the directional scroll rule:
++ * - Can move right freely (translateX decreases)
++ * - Can move left only until origin is reached (translateX cannot exceed origin)
++ *
++ * @param workspaceId - The workspace ID
++ * @param translateX - The proposed translateX value
++ * @returns The clamped translateX value
++ */
++export function clampTranslateX(workspaceId: string, translateX: number): number {
++  const origin = getOrigin(workspaceId)
++
++  // If no origin captured yet, allow all movement
++  if (origin === null) {
++    return translateX
++  }
++
++  // Clamp: translateX cannot be greater than origin (blocks left movement past origin)
++  // Since moving left = translateX increases, and moving right = translateX decreases:
++  // - translateX > origin means we've moved left of origin → clamp to origin
++  // - translateX <= origin means we're at or right of origin → allowed
++  if (translateX > origin) {
++    debugLog({
++      component: "DirectionalScroll",
++      action: "clamp_applied",
++      metadata: {
++        workspaceId,
++        proposedTranslateX: translateX,
++        origin,
++        clampedTo: origin,
++      },
++    })
++    return origin
++  }
++
++  return translateX
++}
++
++/**
++ * Check if a proposed translateX would be clamped.
++ *
++ * @param workspaceId - The workspace ID
++ * @param translateX - The proposed translateX value
++ * @returns true if the value would be clamped
++ */
++export function wouldClamp(workspaceId: string, translateX: number): boolean {
++  const origin = getOrigin(workspaceId)
++  if (origin === null) return false
++  return translateX > origin
++}

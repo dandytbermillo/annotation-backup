@@ -6,11 +6,22 @@ import { useCanvas } from "@/components/canvas/canvas-context"
 import { debugLog } from "@/lib/utils/debug-logger"
 import type { CanvasViewportState } from "@/lib/canvas/canvas-defaults"
 import { createDefaultCanvasState } from "@/lib/canvas/canvas-defaults"
+import {
+  captureOrigin,
+  clampTranslateX,
+  hasOrigin,
+} from "@/lib/canvas/directional-scroll-origin"
+import {
+  isWorkspaceLifecycleReady,
+  subscribeToLifecycleChanges,
+} from "@/lib/workspace/durability/lifecycle-manager"
 
 type ViewportState = CanvasViewportState
 
 type UseCanvasTransformOptions = {
   noteId: string
+  /** Workspace ID for directional scroll origin tracking */
+  workspaceId?: string | null
   layerContext: LayerContextValue | null
   onCanvasStateChange?: (state: {
     zoom: number
@@ -20,6 +31,8 @@ type UseCanvasTransformOptions = {
     lastInteraction?: { x: number; y: number } | null
   }) => void
   initialStateFactory?: () => ViewportState
+  /** When true, skip directional scroll clamping (for programmatic camera changes) */
+  bypassDirectionalClamp?: boolean
 }
 
 type UseCanvasTransformResult = {
@@ -35,9 +48,11 @@ type UseCanvasTransformResult = {
 
 export function useCanvasTransform({
   noteId,
+  workspaceId,
   layerContext,
   onCanvasStateChange,
   initialStateFactory,
+  bypassDirectionalClamp = false,
 }: UseCanvasTransformOptions): UseCanvasTransformResult {
   const [canvasState, _setCanvasState] = useState<ViewportState>(() => {
     try {
@@ -87,6 +102,59 @@ export function useCanvasTransform({
     onCanvasStateChange,
   ])
 
+  // Directional Scroll: Capture origin when workspace lifecycle becomes ready
+  // This sets the baseline translateX that the user cannot pan left beyond
+  // We subscribe to lifecycle changes to capture at the exact moment of 'ready' transition
+  const originCapturedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!workspaceId) return
+
+    // Helper to attempt origin capture with double-capture guard
+    const attemptCapture = (currentWorkspaceId: string): boolean => {
+      // Guard: check both ref and storage to prevent double capture
+      if (originCapturedRef.current === currentWorkspaceId || hasOrigin(currentWorkspaceId)) {
+        return false
+      }
+      // Use ref to get current translateX (not stale closure value)
+      const currentTranslateX = canvasStateRef.current.translateX
+      const captured = captureOrigin(currentWorkspaceId, currentTranslateX)
+      if (captured) {
+        originCapturedRef.current = currentWorkspaceId
+        debugLog({
+          component: "DirectionalScroll",
+          action: "origin_captured_on_ready",
+          metadata: {
+            workspaceId: currentWorkspaceId,
+            originTranslateX: currentTranslateX,
+          },
+        })
+      }
+      return captured
+    }
+
+    // If already ready, capture immediately
+    if (isWorkspaceLifecycleReady(workspaceId)) {
+      attemptCapture(workspaceId)
+      return // No need to subscribe if already ready
+    }
+
+    // Subscribe to lifecycle changes to capture when 'ready' transition occurs
+    const unsubscribe = subscribeToLifecycleChanges((changedWorkspaceId, lifecycle) => {
+      // Only react to 'ready' transitions for our workspace
+      if (changedWorkspaceId === workspaceId && lifecycle === 'ready') {
+        attemptCapture(workspaceId)
+      }
+    })
+
+    // Cleanup subscription on unmount or workspace change
+    return () => {
+      unsubscribe()
+      // Clear ref on workspace change (storage cleared by eviction logic)
+      originCapturedRef.current = null
+    }
+  }, [workspaceId])
+
   const setCanvasState: typeof _setCanvasState = useCallback((update) => {
     const stack = new Error().stack
     const caller = stack?.split("\n").slice(2, 6).join(" | ") || "unknown"
@@ -109,7 +177,16 @@ export function useCanvasTransform({
   const updateCanvasTransform = useCallback(
     (updater: (prev: ViewportState) => ViewportState) => {
       setCanvasState(prev => {
-        const next = updater(prev)
+        let next = updater(prev)
+
+        // Directional Scroll: Apply horizontal clamp if enabled
+        if (!bypassDirectionalClamp && workspaceId) {
+          const clampedX = clampTranslateX(workspaceId, next.translateX)
+          if (clampedX !== next.translateX) {
+            next = { ...next, translateX: clampedX }
+          }
+        }
+
         if (
           next.translateX !== prev.translateX ||
           next.translateY !== prev.translateY ||
@@ -124,7 +201,7 @@ export function useCanvasTransform({
         return next
       })
     },
-    [scheduleDispatch, setCanvasState],
+    [scheduleDispatch, setCanvasState, bypassDirectionalClamp, workspaceId],
   )
 
   const panBy = useCallback(
