@@ -1201,7 +1201,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           ref={canvasContainerRef}
           id="canvas-container"
           className={`relative w-full h-full overflow-hidden ${
-            canvasState.isDragging
+            (canvasState.isDragging || canvasContextState.canvasState.isDragging)
               ? 'cursor-grabbing'
               : canPan
                 ? 'cursor-grab'
@@ -1232,9 +1232,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
               transform: `translate3d(${canvasState.translateX}px, ${canvasState.translateY}px, 0) scale(${canvasState.zoom})`,
               transformOrigin: '0 0',
               // Critical: NO transition during drag to prevent text blinking
-              transition: canvasState.isDragging ? 'none' : 'transform 0.3s ease',
+              // Check both local state (canvas panning) and context state (component/panel dragging)
+              transition: (canvasState.isDragging || canvasContextState.canvasState.isDragging) ? 'none' : 'transform 0.3s ease',
               // Optimize GPU layers only during active drag
-              willChange: canvasState.isDragging ? 'transform' : 'auto',
+              willChange: (canvasState.isDragging || canvasContextState.canvasState.isDragging) ? 'transform' : 'auto',
               // Force stable GPU layer composition
               backfaceVisibility: 'hidden' as const,
               transformStyle: 'preserve-3d' as const,

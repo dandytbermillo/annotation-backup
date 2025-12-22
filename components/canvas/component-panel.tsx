@@ -8,6 +8,7 @@ import { StickyNote } from './components/sticky-note'
 import { DragTest } from './components/drag-test'
 import { PerformanceTest } from './components/performance-test'
 import { useAutoScroll } from './use-auto-scroll'
+import { useCanvas } from './canvas-context'
 import { useIsolation, useRegisterWithIsolation } from '@/lib/isolation/context'
 import { Z_INDEX } from '@/lib/constants/z-index'
 import { useCanvasCamera } from '@/lib/hooks/use-canvas-camera'
@@ -92,12 +93,15 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
     }
   }, [position, canvasNode?.position])
   
+  // Canvas context for disabling transition during drag
+  const { dispatch } = useCanvas()
+
   // Camera-based panning
-  const { 
-    panCameraBy, 
-    resetPanAccumulation, 
-    getPanAccumulation, 
-    isCameraEnabled 
+  const {
+    panCameraBy,
+    resetPanAccumulation,
+    getPanAccumulation,
+    isCameraEnabled
   } = useCanvasCamera()
   
   
@@ -196,6 +200,9 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
       
       dragState.current.isDragging = true
       globalDraggingComponentId = id
+
+      // Disable canvas transition during component drag for snappy auto-scroll
+      dispatch({ type: 'SET_CANVAS_STATE', payload: { isDragging: true } })
       
       const currentLeft = parseInt(panel.style.left || position.x.toString(), 10)
       const currentTop = parseInt(panel.style.top || position.y.toString(), 10)
@@ -264,7 +271,10 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
       stopAutoScroll()
       
       dragState.current.isDragging = false
-      
+
+      // Re-enable canvas transition after drag ends
+      dispatch({ type: 'SET_CANVAS_STATE', payload: { isDragging: false } })
+
       // Get final position from current style
       const finalX = parseInt(panel.style.left, 10)
       const finalY = parseInt(panel.style.top, 10)
@@ -311,7 +321,7 @@ export function ComponentPanel({ id, type, position, workspaceId, initialState, 
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [position, onPositionChange, id, checkAutoScroll, stopAutoScroll, isCameraEnabled, resetPanAccumulation])
+  }, [position, onPositionChange, id, checkAutoScroll, stopAutoScroll, isCameraEnabled, resetPanAccumulation, dispatch])
   
   const renderComponent = () => {
     switch (type) {
