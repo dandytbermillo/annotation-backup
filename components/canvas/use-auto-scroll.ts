@@ -122,11 +122,11 @@ export const useAutoScroll = ({
       directionY = 1 - (distanceFromTop / threshold) // Direction increases as we get closer to edge (0 to 1)
     } else if (distanceFromBottom < threshold && distanceFromBottom >= 0) {
       // Near bottom edge - scroll up (negative direction)
-      // Apply 1.3x multiplier to compensate for perceptual asymmetry:
-      // When user drags UP toward bottom edge, their hand motion masks the scroll speed,
-      // making it feel slower than top edge. This boost makes it feel balanced.
+      // Apply 5.0x multiplier to compensate for significant perceptual asymmetry:
+      // When dragging DOWN toward bottom edge, the upward canvas motion (opposite to hand)
+      // feels much slower than other edges. This larger boost makes it feel balanced.
       const baseDirection = -(1 - (distanceFromBottom / threshold))
-      directionY = baseDirection * 1.3 // 30% faster to feel symmetric
+      directionY = baseDirection * 5.0 // 400% faster to feel symmetric with other edges
     }
 
     const nearEdge = directionX !== 0 || directionY !== 0

@@ -18,7 +18,7 @@ import type { WorkspaceItem } from "./canvas/workspace-switcher-item"
 import { WidgetStudioConnections } from "./canvas/widget-studio-connections"
 // Settings icon removed - Control Panel now accessed via Control Center
 import { AddComponentMenu } from "./canvas/add-component-menu"
-import { ComponentPanel } from "./canvas/component-panel"
+import { ComponentPanel, isAnyComponentDragging } from "./canvas/component-panel"
 import { PanelsRenderer } from "./canvas/panels-renderer"
 import { CanvasItem, createPanelItem } from "@/types/canvas-items"
 import { ensurePanelKey, parsePanelKey } from "@/lib/canvas/composite-id"
@@ -1137,8 +1137,8 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
         {/* Isolation Debug Panel - Only in development */}
         {/* Isolation Debug now integrated into Control Panel */}
 
-        {/* Enhanced Minimap */}
-        {showMinimap && (
+        {/* Enhanced Minimap - TEMPORARILY DISABLED for testing */}
+        {false && showMinimap && (
           <EnhancedMinimap
             canvasItems={canvasItems}
             canvasState={canvasState}
@@ -1201,7 +1201,7 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
           ref={canvasContainerRef}
           id="canvas-container"
           className={`relative w-full h-full overflow-hidden ${
-            (canvasState.isDragging || canvasContextState.canvasState.isDragging)
+            (canvasState.isDragging || canvasContextState.canvasState.isDragging || isAnyComponentDragging())
               ? 'cursor-grabbing'
               : canPan
                 ? 'cursor-grab'
@@ -1231,11 +1231,10 @@ const ModernAnnotationCanvasInner = forwardRef<CanvasImperativeHandle, ModernAnn
               // Use translate3d without rounding for smooth motion (infinite-canvas approach)
               transform: `translate3d(${canvasState.translateX}px, ${canvasState.translateY}px, 0) scale(${canvasState.zoom})`,
               transformOrigin: '0 0',
-              // Critical: NO transition during drag to prevent text blinking
-              // Check both local state (canvas panning) and context state (component/panel dragging)
-              transition: (canvasState.isDragging || canvasContextState.canvasState.isDragging) ? 'none' : 'transform 0.3s ease',
+              // DISABLED: transition completely removed to test if it's the cause of slow bottom edge
+              transition: 'none',
               // Optimize GPU layers only during active drag
-              willChange: (canvasState.isDragging || canvasContextState.canvasState.isDragging) ? 'transform' : 'auto',
+              willChange: (canvasState.isDragging || canvasContextState.canvasState.isDragging || isAnyComponentDragging()) ? 'transform' : 'auto',
               // Force stable GPU layer composition
               backfaceVisibility: 'hidden' as const,
               transformStyle: 'preserve-3d' as const,

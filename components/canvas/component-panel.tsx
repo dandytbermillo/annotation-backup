@@ -30,6 +30,14 @@ interface ComponentPanelProps {
 // Global variable to track which component is currently being dragged
 let globalDraggingComponentId: string | null = null
 
+/**
+ * Check if any component panel is currently being dragged.
+ * Used by the canvas to disable CSS transitions during component drag.
+ */
+export function isAnyComponentDragging(): boolean {
+  return globalDraggingComponentId !== null
+}
+
 export function ComponentPanel({ id, type, position, workspaceId, initialState, onClose, onPositionChange, onStateChange }: ComponentPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [isMinimized, setIsMinimized] = useState(false)
