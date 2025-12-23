@@ -8,6 +8,7 @@ import { NoteSwitcherPopover } from './note-switcher-popover';
 import type { OpenNoteItem } from './note-switcher-item';
 import { useNotificationUnreadCount } from '@/lib/hooks/use-notification-center';
 import { NotificationPanel } from '@/components/notification-center/notification-panel';
+import { ChatNavigationPanel } from '@/components/chat';
 
 // ============================================================================
 // TYPES
@@ -86,6 +87,12 @@ export interface CanvasControlCenterProps {
   // Dashboard integration (for returning to dashboard from workspace)
   /** Callback to return to dashboard view */
   onReturnToDashboard?: () => void;
+
+  // Chat navigation context
+  /** Current entry ID for chat navigation */
+  currentEntryId?: string;
+  /** Current workspace ID for chat navigation */
+  currentWorkspaceId?: string;
 }
 
 // ============================================================================
@@ -144,6 +151,9 @@ export function CanvasControlCenter({
   currentWorkspaceName = 'Workspace',
   // Dashboard integration
   onReturnToDashboard,
+  // Chat navigation context
+  currentEntryId,
+  currentWorkspaceId,
 }: CanvasControlCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isDraggingZoom, setIsDraggingZoom] = useState(false);
@@ -474,6 +484,34 @@ export function CanvasControlCenter({
             </span>
           )}
         </button>
+
+        {/* Chat Navigation Button */}
+        <ChatNavigationPanel
+          currentEntryId={currentEntryId}
+          currentWorkspaceId={currentWorkspaceId}
+          trigger={
+            <button
+              data-chat-toggle
+              title="Chat Navigation"
+              style={{
+                position: 'relative',
+                width: 48,
+                height: 48,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease-out',
+                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'rgba(39, 39, 42, 0.8)',
+                color: 'white',
+              }}
+            >
+              <span style={{ fontSize: 20 }}>💬</span>
+            </button>
+          }
+        />
 
         {/* Control Center Button */}
         <button

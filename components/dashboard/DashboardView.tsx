@@ -17,7 +17,7 @@ import { PinEntryButton } from "./PinEntryButton"
 import { WorkspaceToggleMenu } from "@/components/workspace/workspace-toggle-menu"
 import { DashboardDock } from "./DashboardDock"
 import { AnnotationAppShell } from "@/components/annotation-app-shell"
-import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh } from "@/lib/note-workspaces/state"
+import { setActiveWorkspaceContext, subscribeToWorkspaceListRefresh, requestWorkspaceListRefresh, subscribeToActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import { requestDashboardPanelRefresh } from "@/lib/dashboard/category-store"
 import type { WorkspacePanel, PanelConfig } from "@/lib/dashboard/panel-registry"
 import { cn } from "@/lib/utils"
@@ -80,6 +80,11 @@ export function DashboardView({
   // Phase 3: Lazy mounting - only mount workspace canvas after first visit
   // Initialize to true if starting in workspace mode (from URL)
   const [hasVisitedWorkspace, setHasVisitedWorkspace] = useState(initialViewMode === 'workspace' && !!initialActiveWorkspaceId)
+
+  // Chat Navigation Fix 2: Pending note to open after workspace switches
+  // When chat says "open note X in workspace Y", we store the pending note here
+  // and pass it to AnnotationAppShell which opens it after mounting
+  const [pendingNoteOpen, setPendingNoteOpen] = useState<{ noteId: string; workspaceId: string } | null>(null)
 
   // Phase 5: Loading state for mode switching transitions
   const [isModeSwitching, setIsModeSwitching] = useState(false)
@@ -1104,6 +1109,90 @@ export function DashboardView({
     return () => unsubscribe()
   }, [entryId, refetchWorkspaces])
 
+  // Chat Navigation Fix 1: Subscribe to active workspace context changes
+  // This handles "open workspace" commands from chat navigation
+  useEffect(() => {
+    const unsubscribe = subscribeToActiveWorkspaceContext((workspaceId) => {
+      if (!workspaceId) return
+
+      // Only handle when in dashboard mode - workspace mode handles its own context
+      if (viewMode !== 'dashboard') {
+        void debugLog({
+          component: "DashboardView",
+          action: "workspace_context_change_ignored",
+          metadata: { workspaceId, viewMode, reason: "not_in_dashboard_mode" },
+        })
+        return
+      }
+
+      // Verify the workspace belongs to this entry before switching
+      const workspaceExists = workspaces.some(ws => ws.id === workspaceId)
+      if (!workspaceExists) {
+        void debugLog({
+          component: "DashboardView",
+          action: "workspace_context_change_ignored",
+          metadata: { workspaceId, viewMode, reason: "workspace_not_in_entry", availableWorkspaces: workspaces.map(ws => ws.id) },
+        })
+        return
+      }
+
+      void debugLog({
+        component: "DashboardView",
+        action: "workspace_context_change_handling",
+        metadata: { workspaceId, viewMode, entryId },
+      })
+
+      // Switch to workspace mode
+      handleWorkspaceSelectById(workspaceId)
+    })
+    return () => unsubscribe()
+  }, [viewMode, workspaces, entryId, handleWorkspaceSelectById])
+
+  // Chat Navigation Fix 2: Listen for chat-navigate-note events
+  // This handles "open note X" commands from chat navigation
+  // When AnnotationAppShell is not yet mounted (hasVisitedWorkspace === false),
+  // we need to handle the event here and pass pendingNoteOpen to the shell
+  useEffect(() => {
+    const handleChatNavigateNote = (event: CustomEvent<{ noteId: string; workspaceId?: string; entryId?: string }>) => {
+      const { noteId, workspaceId } = event.detail
+
+      void debugLog({
+        component: "DashboardView",
+        action: "chat_navigate_note_received",
+        metadata: { noteId, workspaceId, hasVisitedWorkspace, viewMode, entryId },
+      })
+
+      if (!noteId) return
+
+      // Determine which workspace to open
+      const targetWorkspaceId = workspaceId || activeWorkspaceId || workspaces.find(ws => ws.isDefault)?.id || workspaces[0]?.id
+      if (!targetWorkspaceId) {
+        void debugLog({
+          component: "DashboardView",
+          action: "chat_navigate_note_no_workspace",
+          metadata: { noteId, workspaceId, availableWorkspaces: workspaces.length },
+        })
+        return
+      }
+
+      // Store the pending note - AnnotationAppShell will open it after mounting
+      setPendingNoteOpen({ noteId, workspaceId: targetWorkspaceId })
+
+      // Switch to workspace mode if not already there
+      if (viewMode === 'dashboard') {
+        handleWorkspaceSelectById(targetWorkspaceId)
+      } else if (activeWorkspaceId !== targetWorkspaceId) {
+        // Already in workspace mode but different workspace
+        handleWorkspaceSelectById(targetWorkspaceId)
+      }
+    }
+
+    window.addEventListener('chat-navigate-note', handleChatNavigateNote as EventListener)
+    return () => {
+      window.removeEventListener('chat-navigate-note', handleChatNavigateNote as EventListener)
+    }
+  }, [viewMode, activeWorkspaceId, workspaces, hasVisitedWorkspace, entryId, handleWorkspaceSelectById])
+
   // Phase 5: Detect workspace deletion while viewing
   // If activeWorkspaceId is no longer in the workspaces list, return to dashboard
   useEffect(() => {
@@ -1523,6 +1612,8 @@ export function DashboardView({
               isEntryActive={isEntryActive}
               onReturnToDashboard={handleReturnToDashboard}
               onWorkspaceChange={handleWorkspaceChangeFromCanvas}
+              pendingNoteOpen={pendingNoteOpen}
+              onPendingNoteHandled={() => setPendingNoteOpen(null)}
             />
           </div>
         )}
@@ -1541,6 +1632,8 @@ export function DashboardView({
             workspaceCount={workspaces.length}
             onAddPanelClick={() => setIsPanelCatalogOpen(prev => !prev)}
             addPanelDisabled={isWorkspacesLoading}
+            currentEntryId={entryId}
+            currentWorkspaceId={activeWorkspaceId ?? undefined}
           />
 
           {/* Workspace Panel - appears above dock when workspace button clicked */}

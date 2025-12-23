@@ -48,6 +48,7 @@ import { useOverlayDragHandlers } from "@/lib/hooks/annotation/use-overlay-drag-
 import { useWorkspaceOverlayPersistence } from "@/lib/hooks/annotation/use-workspace-overlay-persistence"
 import { useWorkspaceOverlayInteractions } from "@/lib/hooks/annotation/use-workspace-overlay-interactions"
 import { useWorkspaceSidebarState } from "@/lib/hooks/annotation/use-workspace-sidebar-state"
+import { useChatNavigationListener } from "@/lib/chat"
 import { AnnotationWorkspaceView } from "@/components/annotation-workspace-view"
 import { getActiveWorkspaceContext, subscribeToActiveWorkspaceContext, setActiveWorkspaceContext } from "@/lib/note-workspaces/state"
 import type { AnnotationWorkspaceViewProps } from "@/components/annotation-workspace-view/types"
@@ -157,6 +158,10 @@ type AnnotationAppContentProps = {
   onReturnToDashboard?: () => void
   /** Callback when workspace changes internally (allows parent to sync controlled state) */
   onWorkspaceChange?: (workspaceId: string) => void
+  /** Pending note to open after workspace is ready (from chat navigation) */
+  pendingNoteOpen?: { noteId: string; workspaceId: string } | null
+  /** Callback when pending note has been handled */
+  onPendingNoteHandled?: () => void
 }
 
 function AnnotationAppContent({
@@ -170,6 +175,8 @@ function AnnotationAppContent({
   isEntryActive = true,
   onReturnToDashboard,
   onWorkspaceChange,
+  pendingNoteOpen,
+  onPendingNoteHandled,
 }: AnnotationAppContentProps) {
   const noteWorkspaceV2Enabled = isNoteWorkspaceV2Enabled()
   const liveStateEnabled = isNoteWorkspaceLiveStateEnabled()
@@ -188,6 +195,9 @@ function AnnotationAppContent({
     getCachedPosition,
     getWorkspace
   } = useCanvasWorkspace()
+
+  // Chat navigation listener - handles 'chat-navigate-note' events from ChatNavigationPanel
+  useChatNavigationListener({ enabled: true })
 
   // DEBUG: Trace when openNotes changes in component
   useEffect(() => {
@@ -1317,6 +1327,42 @@ const initialWorkspaceSyncRef = useRef(false)
     workspaceToast.info('Note closed')
   }, [handleCloseNoteBase, workspaceToast])
 
+  // Chat Navigation Fix 2: Handle pending note open from parent (DashboardView)
+  // When user says "open note X" in chat and AnnotationAppShell wasn't mounted yet,
+  // DashboardView stores the pending note and passes it here after mounting
+  useEffect(() => {
+    if (!pendingNoteOpen) return
+    if (!isWorkspaceReady) return
+
+    const { noteId, workspaceId } = pendingNoteOpen
+
+    // Verify we're on the correct workspace
+    if (noteWorkspaceState.currentWorkspaceId !== workspaceId) {
+      void debugLog({
+        component: "AnnotationAppShell",
+        action: "pending_note_workspace_mismatch",
+        metadata: {
+          pendingNoteId: noteId,
+          pendingWorkspaceId: workspaceId,
+          currentWorkspaceId: noteWorkspaceState.currentWorkspaceId,
+        },
+      })
+      return
+    }
+
+    void debugLog({
+      component: "AnnotationAppShell",
+      action: "handling_pending_note_open",
+      metadata: { noteId, workspaceId },
+    })
+
+    // Open the note (use 'popup' source as it behaves similarly to clicking from a popup)
+    handleNoteSelect(noteId, { source: 'popup' })
+
+    // Notify parent that we've handled the pending note
+    onPendingNoteHandled?.()
+  }, [pendingNoteOpen, isWorkspaceReady, noteWorkspaceState.currentWorkspaceId, handleNoteSelect, onPendingNoteHandled])
+
   // Toggle callback for note switcher popover (used by both dock and workspace toolbar)
   const toggleNoteSwitcher = useCallback(() => {
     setIsNoteSwitcherOpen(prev => !prev)
@@ -2100,6 +2146,10 @@ export interface AnnotationAppShellProps {
   onReturnToDashboard?: () => void
   /** Callback when workspace changes internally (allows parent to sync controlled state) */
   onWorkspaceChange?: (workspaceId: string) => void
+  /** Pending note to open after workspace is ready (from chat navigation) */
+  pendingNoteOpen?: { noteId: string; workspaceId: string } | null
+  /** Callback when pending note has been handled */
+  onPendingNoteHandled?: () => void
 }
 
 export function AnnotationAppShell({
@@ -2112,6 +2162,8 @@ export function AnnotationAppShell({
   isEntryActive = true,
   onReturnToDashboard,
   onWorkspaceChange,
+  pendingNoteOpen,
+  onPendingNoteHandled,
 }: AnnotationAppShellProps = {}) {
   return (
     <WorkspaceToastProvider>
@@ -2128,6 +2180,8 @@ export function AnnotationAppShell({
             isEntryActive={isEntryActive}
             onReturnToDashboard={onReturnToDashboard}
             onWorkspaceChange={onWorkspaceChange}
+            pendingNoteOpen={pendingNoteOpen}
+            onPendingNoteHandled={onPendingNoteHandled}
           />
         </CanvasWorkspaceProvider>
       </LayerProvider>
