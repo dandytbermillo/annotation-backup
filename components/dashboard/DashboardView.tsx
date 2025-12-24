@@ -86,6 +86,9 @@ export function DashboardView({
   // and pass it to AnnotationAppShell which opens it after mounting
   const [pendingNoteOpen, setPendingNoteOpen] = useState<{ noteId: string; workspaceId: string } | null>(null)
 
+  // Chat Navigation: Pending workspace ID when workspace was just created and list hasn't refreshed yet
+  const [pendingWorkspaceSwitch, setPendingWorkspaceSwitch] = useState<string | null>(null)
+
   // Phase 5: Loading state for mode switching transitions
   const [isModeSwitching, setIsModeSwitching] = useState(false)
   const modeSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -1115,24 +1118,46 @@ export function DashboardView({
     const unsubscribe = subscribeToActiveWorkspaceContext((workspaceId) => {
       if (!workspaceId) return
 
-      // Only handle when in dashboard mode - workspace mode handles its own context
-      if (viewMode !== 'dashboard') {
-        void debugLog({
-          component: "DashboardView",
-          action: "workspace_context_change_ignored",
-          metadata: { workspaceId, viewMode, reason: "not_in_dashboard_mode" },
-        })
+      // Check if workspace is in our list (belongs to this entry)
+      const workspaceExists = workspaces.some(ws => ws.id === workspaceId)
+
+      // If in workspace mode and workspace exists, just update activeWorkspaceId
+      // This passes to AnnotationAppShell as controlledWorkspaceId
+      if (viewMode === 'workspace') {
+        if (workspaceExists) {
+          void debugLog({
+            component: "DashboardView",
+            action: "workspace_context_change_in_workspace_mode",
+            metadata: { workspaceId, viewMode, activeWorkspaceId },
+          })
+          // Update the controlled workspace ID for AnnotationAppShell
+          if (activeWorkspaceId !== workspaceId) {
+            setActiveWorkspaceId(workspaceId)
+          }
+        } else {
+          // Workspace not in this entry - might need to switch entries
+          // Store as pending and refetch to see if it appears
+          void debugLog({
+            component: "DashboardView",
+            action: "workspace_context_change_pending_in_workspace_mode",
+            metadata: { workspaceId, viewMode, reason: "workspace_not_in_entry" },
+          })
+          setPendingWorkspaceSwitch(workspaceId)
+          refetchWorkspaces()
+        }
         return
       }
 
-      // Verify the workspace belongs to this entry before switching
-      const workspaceExists = workspaces.some(ws => ws.id === workspaceId)
+      // Dashboard mode handling
       if (!workspaceExists) {
         void debugLog({
           component: "DashboardView",
-          action: "workspace_context_change_ignored",
-          metadata: { workspaceId, viewMode, reason: "workspace_not_in_entry", availableWorkspaces: workspaces.map(ws => ws.id) },
+          action: "workspace_context_change_pending",
+          metadata: { workspaceId, viewMode, reason: "workspace_not_in_list_yet", availableWorkspaces: workspaces.map(ws => ws.id) },
         })
+        // Workspace not in list yet (probably just created) - store pending and refetch
+        setPendingWorkspaceSwitch(workspaceId)
+        refetchWorkspaces()
         return
       }
 
@@ -1146,7 +1171,25 @@ export function DashboardView({
       handleWorkspaceSelectById(workspaceId)
     })
     return () => unsubscribe()
-  }, [viewMode, workspaces, entryId, handleWorkspaceSelectById])
+  }, [viewMode, workspaces, entryId, activeWorkspaceId, handleWorkspaceSelectById, refetchWorkspaces])
+
+  // Chat Navigation: Handle pending workspace switch after workspaces list updates
+  useEffect(() => {
+    if (!pendingWorkspaceSwitch) return
+
+    const workspaceExists = workspaces.some(ws => ws.id === pendingWorkspaceSwitch)
+    if (workspaceExists) {
+      void debugLog({
+        component: "DashboardView",
+        action: "pending_workspace_switch_resolved",
+        metadata: { workspaceId: pendingWorkspaceSwitch, viewMode, entryId },
+      })
+
+      const workspaceId = pendingWorkspaceSwitch
+      setPendingWorkspaceSwitch(null)
+      handleWorkspaceSelectById(workspaceId)
+    }
+  }, [workspaces, pendingWorkspaceSwitch, viewMode, entryId, handleWorkspaceSelectById])
 
   // Chat Navigation Fix 2: Listen for chat-navigate-note events
   // This handles "open note X" commands from chat navigation

@@ -23,33 +23,13 @@ import {
 import { cn } from '@/lib/utils'
 import {
   useChatNavigation,
+  useChatNavigationContext,
   type IntentResolutionResult,
-  type WorkspaceMatch,
-  type NoteMatch,
+  type ChatMessage,
+  type SelectionOption,
 } from '@/lib/chat'
 import { getActiveEntryContext } from '@/lib/entry/entry-context'
 import { getActiveWorkspaceContext } from '@/lib/note-workspaces/state'
-
-// =============================================================================
-// Types
-// =============================================================================
-
-interface ChatMessage {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  options?: SelectionOption[]
-  isError?: boolean
-}
-
-interface SelectionOption {
-  type: 'workspace' | 'note'
-  id: string
-  label: string
-  sublabel?: string
-  data: WorkspaceMatch | NoteMatch
-}
 
 export interface ChatNavigationPanelProps {
   /** Current entry ID for context */
@@ -62,6 +42,94 @@ export interface ChatNavigationPanelProps {
   trigger?: React.ReactNode
   /** Additional class name for the panel */
   className?: string
+  /** Hide the trigger button when panel is mounted globally */
+  showTrigger?: boolean
+  /** Optional override for the hidden anchor position */
+  anchorClassName?: string
+}
+
+// =============================================================================
+// Normalization Helper
+// =============================================================================
+
+/**
+ * Normalize user input before sending to LLM.
+ * - Strip filler phrases ("how about", "please", "can you", etc.)
+ * - Collapse duplicate tokens ("workspace workspace 5" → "workspace 5")
+ * - Trim whitespace
+ *
+ * Note: Preserves "create" and "new" keywords to distinguish open vs create intent.
+ * Note: Uses case-insensitive matching but preserves original casing in output.
+ */
+function normalizeUserMessage(input: string): string {
+  let normalized = input.trim()
+
+  // Strip common filler phrases (but preserve "create" and "new")
+  const fillerPatterns = [
+    /^(hey|hi|hello|please|can you|could you|would you|i want to|i'd like to|let's|let me|how about|what about)\s+/i,
+    /\s+(please|thanks|thank you)$/i,
+  ]
+  for (const pattern of fillerPatterns) {
+    normalized = normalized.replace(pattern, '')
+  }
+
+  // Collapse duplicate consecutive words ("workspace workspace 5" → "workspace 5")
+  normalized = normalized.replace(/\b(\w+)\s+\1\b/gi, '$1')
+
+  // Collapse multiple spaces
+  normalized = normalized.replace(/\s+/g, ' ').trim()
+
+  return normalized
+}
+
+// Context assembly limits
+const MAX_RECENT_USER_MESSAGES = 6
+const SUMMARY_MAX_CHARS = 400
+
+/**
+ * Create a compact summary from older user messages.
+ */
+function summarizeUserMessages(messages: string[]): string | undefined {
+  const trimmed = messages.map((m) => m.trim()).filter(Boolean)
+  if (trimmed.length === 0) return undefined
+
+  let summary = `Earlier user requests: ${trimmed.join(' | ')}`
+  if (summary.length > SUMMARY_MAX_CHARS) {
+    summary = `${summary.slice(0, SUMMARY_MAX_CHARS - 3)}...`
+  }
+
+  return summary
+}
+
+/**
+ * Build context payload from message history.
+ * Returns recent user messages and last assistant question (if any).
+ */
+function buildContextPayload(messages: ChatMessage[]): {
+  summary?: string
+  recentUserMessages: string[]
+  lastAssistantQuestion?: string
+} {
+  const allUserMessages = messages
+    .filter((m) => m.role === 'user')
+    .map((m) => m.content)
+
+  // Get last N user messages
+  const recentUserMessages = allUserMessages.slice(-MAX_RECENT_USER_MESSAGES)
+  const olderUserMessages = allUserMessages.slice(0, -MAX_RECENT_USER_MESSAGES)
+  const summary = summarizeUserMessages(olderUserMessages)
+
+  // Check if last assistant message was a question (has options or ends with ?)
+  const lastAssistant = messages.filter((m) => m.role === 'assistant').slice(-1)[0]
+  const lastAssistantQuestion =
+    lastAssistant && !lastAssistant.isError
+      ? lastAssistant.content.trim().endsWith('?') ||
+        (lastAssistant.options && lastAssistant.options.length > 0)
+        ? lastAssistant.content
+        : undefined
+      : undefined
+
+  return { summary, recentUserMessages, lastAssistantQuestion }
 }
 
 // =============================================================================
@@ -74,13 +142,23 @@ export function ChatNavigationPanel({
   onNavigationComplete,
   trigger,
   className,
+  showTrigger = true,
+  anchorClassName,
 }: ChatNavigationPanelProps) {
-  const [open, setOpen] = useState(false)
-  const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Use shared context for messages, input, and open state (persists across mode switches)
+  const {
+    messages,
+    addMessage,
+    clearMessages,
+    input,
+    setInput,
+    isOpen,
+    setOpen,
+  } = useChatNavigationContext()
 
   const { executeAction, selectOption } = useChatNavigation({
     onNavigationComplete: () => {
@@ -91,10 +169,10 @@ export function ChatNavigationPanel({
 
   // Auto-focus input when popover opens
   useEffect(() => {
-    if (open) {
+    if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [open])
+  }, [isOpen])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -118,7 +196,7 @@ export function ChatNavigationPanel({
       content: trimmedInput,
       timestamp: new Date(),
     }
-    setMessages((prev) => [...prev, userMessage])
+    addMessage(userMessage)
     setInput('')
     setIsLoading(true)
 
@@ -127,14 +205,23 @@ export function ChatNavigationPanel({
       const entryId = currentEntryId ?? getActiveEntryContext() ?? undefined
       const workspaceId = currentWorkspaceId ?? getActiveWorkspaceContext() ?? undefined
 
-      // Call the navigate API
+      // Normalize the input message before sending to LLM
+      const normalizedMessage = normalizeUserMessage(trimmedInput)
+
+      // Build conversation context from message history
+      const context = buildContextPayload(messages)
+
+      // Call the navigate API with normalized message and context
       const response = await fetch('/api/chat/navigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: trimmedInput,
+          message: normalizedMessage,
           currentEntryId: entryId,
           currentWorkspaceId: workspaceId,
+          context: context.summary || context.recentUserMessages.length > 0 || context.lastAssistantQuestion
+            ? context
+            : undefined,
         }),
       })
 
@@ -167,7 +254,7 @@ export function ChatNavigationPanel({
               }))
             : undefined,
       }
-      setMessages((prev) => [...prev, assistantMessage])
+      addMessage(assistantMessage)
     } catch (error) {
       const errorMessage: ChatMessage = {
         id: `error-${Date.now()}`,
@@ -176,11 +263,11 @@ export function ChatNavigationPanel({
         timestamp: new Date(),
         isError: true,
       }
-      setMessages((prev) => [...prev, errorMessage])
+      addMessage(errorMessage)
     } finally {
       setIsLoading(false)
     }
-  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction])
+  }, [input, isLoading, currentEntryId, currentWorkspaceId, executeAction, messages, addMessage, setInput])
 
   // ---------------------------------------------------------------------------
   // Handle Selection
@@ -204,7 +291,7 @@ export function ChatNavigationPanel({
           timestamp: new Date(),
           isError: !result.success,
         }
-        setMessages((prev) => [...prev, assistantMessage])
+        addMessage(assistantMessage)
       } catch {
         const errorMessage: ChatMessage = {
           id: `error-${Date.now()}`,
@@ -213,12 +300,12 @@ export function ChatNavigationPanel({
           timestamp: new Date(),
           isError: true,
         }
-        setMessages((prev) => [...prev, errorMessage])
+        addMessage(errorMessage)
       } finally {
         setIsLoading(false)
       }
     },
-    [selectOption]
+    [selectOption, addMessage]
   )
 
   // ---------------------------------------------------------------------------
@@ -240,23 +327,36 @@ export function ChatNavigationPanel({
   // ---------------------------------------------------------------------------
 
   const clearChat = useCallback(() => {
-    setMessages([])
-    setInput('')
-  }, [])
+    clearMessages()
+  }, [clearMessages])
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
+  const triggerNode = showTrigger ? (
+    trigger || (
+      <Button variant="ghost" size="icon" className="h-8 w-8">
+        <MessageSquare className="h-4 w-4" />
+        <span className="sr-only">Open chat navigation</span>
+      </Button>
+    )
+  ) : (
+    <button
+      type="button"
+      aria-hidden="true"
+      tabIndex={-1}
+      className={cn(
+        'fixed bottom-24 left-1/2 -translate-x-1/2 h-0 w-0 opacity-0 pointer-events-none',
+        anchorClassName
+      )}
+    />
+  )
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={isOpen} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        {trigger || (
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <MessageSquare className="h-4 w-4" />
-            <span className="sr-only">Open chat navigation</span>
-          </Button>
-        )}
+        {triggerNode}
       </PopoverTrigger>
 
       <PopoverContent

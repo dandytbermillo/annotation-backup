@@ -1,0 +1,346 @@
+diff --git a/lib/chat/chat-navigation-context.tsx b/lib/chat/chat-navigation-context.tsx
+--- a/lib/chat/chat-navigation-context.tsx
++++ b/lib/chat/chat-navigation-context.tsx
+@@
+ interface ChatNavigationContextValue {
+   messages: ChatMessage[]
+   addMessage: (message: ChatMessage) => void
+   clearMessages: () => void
+   input: string
+   setInput: (input: string) => void
++  isOpen: boolean
++  setOpen: (open: boolean) => void
++  openChat: () => void
++  closeChat: () => void
+ }
+@@
+ export function ChatNavigationProvider({ children }: { children: ReactNode }) {
+   const [messages, setMessages] = useState<ChatMessage[]>([])
+   const [input, setInput] = useState('')
++  const [isOpen, setOpen] = useState(false)
+@@
+   const clearMessages = useCallback(() => {
+     setMessages([])
+     setInput('')
+   }, [])
++
++  const openChat = useCallback(() => {
++    setOpen(true)
++  }, [])
++
++  const closeChat = useCallback(() => {
++    setOpen(false)
++  }, [])
+ 
+   return (
+-    <ChatNavigationContext.Provider value={{ messages, addMessage, clearMessages, input, setInput }}>
++    <ChatNavigationContext.Provider
++      value={{
++        messages,
++        addMessage,
++        clearMessages,
++        input,
++        setInput,
++        isOpen,
++        setOpen,
++        openChat,
++        closeChat,
++      }}
++    >
+       {children}
+     </ChatNavigationContext.Provider>
+   )
+ }
+
+diff --git a/components/chat/chat-navigation-panel.tsx b/components/chat/chat-navigation-panel.tsx
+--- a/components/chat/chat-navigation-panel.tsx
++++ b/components/chat/chat-navigation-panel.tsx
+@@
+ export interface ChatNavigationPanelProps {
+   /** Current entry ID for context */
+   currentEntryId?: string
+   /** Current workspace ID for context */
+   currentWorkspaceId?: string
+   /** Callback when navigation completes */
+   onNavigationComplete?: () => void
+   /** Custom trigger element */
+   trigger?: React.ReactNode
+   /** Additional class name for the panel */
+   className?: string
++  /** Hide the trigger button when panel is mounted globally */
++  showTrigger?: boolean
++  /** Optional override for the hidden anchor position */
++  anchorClassName?: string
+ }
+@@
+ export function ChatNavigationPanel({
+   currentEntryId,
+   currentWorkspaceId,
+   onNavigationComplete,
+   trigger,
+   className,
++  showTrigger = true,
++  anchorClassName,
+ }: ChatNavigationPanelProps) {
+-  const [open, setOpen] = useState(false)
+   const [isLoading, setIsLoading] = useState(false)
+   const inputRef = useRef<HTMLInputElement>(null)
+   const scrollRef = useRef<HTMLDivElement>(null)
+ 
+   // Use shared context for messages and input (persists across mode switches)
+-  const { messages, addMessage, clearMessages, input, setInput } = useChatNavigationContext()
++  const {
++    messages,
++    addMessage,
++    clearMessages,
++    input,
++    setInput,
++    isOpen,
++    setOpen,
++  } = useChatNavigationContext()
+@@
+   useEffect(() => {
+-    if (open) {
++    if (isOpen) {
+       setTimeout(() => inputRef.current?.focus(), 100)
+     }
+-  }, [open])
++  }, [isOpen])
+@@
+   // ---------------------------------------------------------------------------
+   // Render
+   // ---------------------------------------------------------------------------
++  const triggerNode = showTrigger ? (
++    trigger || (
++      <Button variant="ghost" size="icon" className="h-8 w-8">
++        <MessageSquare className="h-4 w-4" />
++        <span className="sr-only">Open chat navigation</span>
++      </Button>
++    )
++  ) : (
++    <button
++      type="button"
++      aria-hidden="true"
++      tabIndex={-1}
++      className={cn(
++        'fixed bottom-24 left-1/2 -translate-x-1/2 h-0 w-0 opacity-0 pointer-events-none',
++        anchorClassName
++      )}
++    />
++  )
+ 
+   return (
+-    <Popover open={open} onOpenChange={setOpen}>
++    <Popover open={isOpen} onOpenChange={setOpen}>
+       <PopoverTrigger asChild>
+-        {trigger || (
+-          <Button variant="ghost" size="icon" className="h-8 w-8">
+-            <MessageSquare className="h-4 w-4" />
+-            <span className="sr-only">Open chat navigation</span>
+-          </Button>
+-        )}
++        {triggerNode}
+       </PopoverTrigger>
+@@
+       <PopoverContent
+         className={cn('w-80 p-0', className)}
+         align="end"
+         sideOffset={8}
+       >
+@@
+ }
+
+diff --git a/components/chat/chat-navigation-root.tsx b/components/chat/chat-navigation-root.tsx
+new file mode 100644
+--- /dev/null
++++ b/components/chat/chat-navigation-root.tsx
+@@
++'use client'
++
++import { ChatNavigationPanel } from './chat-navigation-panel'
++
++export function ChatNavigationRoot() {
++  return <ChatNavigationPanel showTrigger={false} />
++}
++
+diff --git a/components/chat/index.ts b/components/chat/index.ts
+--- a/components/chat/index.ts
++++ b/components/chat/index.ts
+@@
+ export { ChatNavigationPanel } from './chat-navigation-panel'
+ export type { ChatNavigationPanelProps } from './chat-navigation-panel'
++export { ChatNavigationRoot } from './chat-navigation-root'
+
+diff --git a/components/annotation-app.tsx b/components/annotation-app.tsx
+--- a/components/annotation-app.tsx
++++ b/components/annotation-app.tsx
+@@
+-import { AnnotationAppShell } from "@/components/annotation-app-shell"
+-import { DashboardInitializer } from "@/components/dashboard"
++import { AnnotationAppShell } from "@/components/annotation-app-shell"
++import { ChatNavigationRoot } from "@/components/chat"
++import { DashboardInitializer } from "@/components/dashboard"
++import { ChatNavigationProvider } from "@/lib/chat"
+@@
+ export function AnnotationApp() {
+   return (
+-    <DashboardInitializer>
+-      <AnnotationAppShell />
+-    </DashboardInitializer>
++    <ChatNavigationProvider>
++      <DashboardInitializer>
++        <AnnotationAppShell />
++      </DashboardInitializer>
++      <ChatNavigationRoot />
++    </ChatNavigationProvider>
+   )
+ }
+
+diff --git a/components/dashboard/DashboardView.tsx b/components/dashboard/DashboardView.tsx
+--- a/components/dashboard/DashboardView.tsx
++++ b/components/dashboard/DashboardView.tsx
+@@
+-import { ChatNavigationProvider } from "@/lib/chat"
+@@
+-  return (
+-    <ChatNavigationProvider>
+-    <>
++  return (
++    <>
+@@
+-    </>
+-    </ChatNavigationProvider>
+-  )
++    </>
++  )
+
+diff --git a/components/dashboard/DashboardDock.tsx b/components/dashboard/DashboardDock.tsx
+--- a/components/dashboard/DashboardDock.tsx
++++ b/components/dashboard/DashboardDock.tsx
+@@
+-import { ChatNavigationPanel } from "@/components/chat"
++import { useChatNavigationContext } from "@/lib/chat"
+@@
+       onAddPanelClick,
+       addPanelDisabled = false,
+-      currentEntryId,
+-      currentWorkspaceId,
++      currentEntryId: _currentEntryId,
++      currentWorkspaceId: _currentWorkspaceId,
+       className,
+     },
+     ref
+   ) {
++    const { openChat } = useChatNavigationContext()
+     return (
+@@
+-        <ChatNavigationPanel
+-          currentEntryId={currentEntryId}
+-          currentWorkspaceId={currentWorkspaceId}
+-          trigger={
+-            <button
+-              data-chat-toggle
+-              title="Chat Navigation"
+-              style={{
+-                position: 'relative',
+-                width: 48,
+-                height: 48,
+-                borderRadius: '50%',
+-                display: 'flex',
+-                alignItems: 'center',
+-                justifyContent: 'center',
+-                cursor: 'pointer',
+-                transition: 'all 0.2s ease-out',
+-                border: '1px solid rgba(255,255,255,0.1)',
+-                background: 'rgba(39, 39, 42, 0.8)',
+-                color: 'white',
+-              }}
+-            >
+-              <span style={{ fontSize: 20 }}>💬</span>
+-            </button>
+-          }
+-        />
++        <button
++          data-chat-toggle
++          title="Chat Navigation"
++          onClick={openChat}
++          style={{
++            position: 'relative',
++            width: 48,
++            height: 48,
++            borderRadius: '50%',
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'center',
++            cursor: 'pointer',
++            transition: 'all 0.2s ease-out',
++            border: '1px solid rgba(255,255,255,0.1)',
++            background: 'rgba(39, 39, 42, 0.8)',
++            color: 'white',
++          }}
++        >
++          <span style={{ fontSize: 20 }}>💬</span>
++        </button>
+
+diff --git a/components/canvas/canvas-control-center.tsx b/components/canvas/canvas-control-center.tsx
+--- a/components/canvas/canvas-control-center.tsx
++++ b/components/canvas/canvas-control-center.tsx
+@@
+-import { ChatNavigationPanel } from '@/components/chat';
++import { useChatNavigationContext } from '@/lib/chat';
+@@
+-  currentEntryId,
+-  currentWorkspaceId,
++  currentEntryId: _currentEntryId,
++  currentWorkspaceId: _currentWorkspaceId,
+ }: CanvasControlCenterProps) {
++  const { openChat } = useChatNavigationContext();
+   const [isOpen, setIsOpen] = useState(false);
+@@
+-        <ChatNavigationPanel
+-          currentEntryId={currentEntryId}
+-          currentWorkspaceId={currentWorkspaceId}
+-          trigger={
+-            <button
+-              data-chat-toggle
+-              title="Chat Navigation"
+-              style={{
+-                position: 'relative',
+-                width: 48,
+-                height: 48,
+-                borderRadius: '50%',
+-                display: 'flex',
+-                alignItems: 'center',
+-                justifyContent: 'center',
+-                cursor: 'pointer',
+-                transition: 'all 0.2s ease-out',
+-                border: '1px solid rgba(255,255,255,0.1)',
+-                background: 'rgba(39, 39, 42, 0.8)',
+-                color: 'white',
+-              }}
+-            >
+-              <span style={{ fontSize: 20 }}>💬</span>
+-            </button>
+-          }
+-        />
++        <button
++          data-chat-toggle
++          title="Chat Navigation"
++          onClick={openChat}
++          style={{
++            position: 'relative',
++            width: 48,
++            height: 48,
++            borderRadius: '50%',
++            display: 'flex',
++            alignItems: 'center',
++            justifyContent: 'center',
++            cursor: 'pointer',
++            transition: 'all 0.2s ease-out',
++            border: '1px solid rgba(255,255,255,0.1)',
++            background: 'rgba(39, 39, 42, 0.8)',
++            color: 'white',
++          }}
++        >
++          <span style={{ fontSize: 20 }}>💬</span>
++        </button>

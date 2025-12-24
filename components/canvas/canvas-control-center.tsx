@@ -8,7 +8,7 @@ import { NoteSwitcherPopover } from './note-switcher-popover';
 import type { OpenNoteItem } from './note-switcher-item';
 import { useNotificationUnreadCount } from '@/lib/hooks/use-notification-center';
 import { NotificationPanel } from '@/components/notification-center/notification-panel';
-import { ChatNavigationPanel } from '@/components/chat';
+import { useChatNavigationContext } from '@/lib/chat';
 
 // ============================================================================
 // TYPES
@@ -161,6 +161,7 @@ export function CanvasControlCenter({
   const zoomTrackRef = useRef<HTMLDivElement>(null);
   const controlCenterRef = useRef<HTMLDivElement>(null);
   const notificationUnreadCount = useNotificationUnreadCount();
+  const { openChat } = useChatNavigationContext();
 
   const zoomPercent = Math.round(zoom * 100);
 
@@ -486,32 +487,27 @@ export function CanvasControlCenter({
         </button>
 
         {/* Chat Navigation Button */}
-        <ChatNavigationPanel
-          currentEntryId={currentEntryId}
-          currentWorkspaceId={currentWorkspaceId}
-          trigger={
-            <button
-              data-chat-toggle
-              title="Chat Navigation"
-              style={{
-                position: 'relative',
-                width: 48,
-                height: 48,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease-out',
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(39, 39, 42, 0.8)',
-                color: 'white',
-              }}
-            >
-              <span style={{ fontSize: 20 }}>💬</span>
-            </button>
-          }
-        />
+        <button
+          data-chat-toggle
+          onClick={openChat}
+          title="Chat Navigation"
+          style={{
+            position: 'relative',
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>💬</span>
+        </button>
 
         {/* Control Center Button */}
         <button

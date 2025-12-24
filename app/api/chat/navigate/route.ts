@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import OpenAI from 'openai'
+import { readFileSync, existsSync } from 'fs'
+import { join } from 'path'
 
 import { debugLog } from '@/lib/utils/debug-logger'
 import { buildIntentMessages } from '@/lib/chat/intent-prompt'
@@ -15,11 +17,40 @@ import { resolveNoteWorkspaceUserId } from '@/app/api/note-workspaces/user-id'
 // OpenAI Client
 // =============================================================================
 
-// Hardcoded API key for development - bypasses all environment issues
-const OPENAI_API_KEY_HARDCODED = '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'
+/**
+ * Get OpenAI API key from multiple sources (in priority order):
+ * 1. Environment variable (process.env.OPENAI_API_KEY)
+ * 2. Config file (config/secrets.json) - gitignored, for local dev
+ */
+function getOpenAIApiKey(): string | null {
+  // Try environment variable first (but validate it's a real key, not a placeholder)
+  const envKey = process.env.OPENAI_API_KEY
+  if (envKey && envKey.startsWith('sk-') && envKey.length > 40 && !envKey.includes('paste')) {
+    return envKey
+  }
+
+  // Fallback to config file (for when env vars don't load properly or are placeholders)
+  try {
+    const secretsPath = join(process.cwd(), 'config', 'secrets.json')
+    if (existsSync(secretsPath)) {
+      const secrets = JSON.parse(readFileSync(secretsPath, 'utf-8'))
+      if (secrets.OPENAI_API_KEY) {
+        return secrets.OPENAI_API_KEY
+      }
+    }
+  } catch {
+    // Ignore file read errors
+  }
+
+  return null
+}
 
 function getOpenAIClient(): OpenAI {
-  return new OpenAI({ apiKey: OPENAI_API_KEY_HARDCODED })
+  const apiKey = getOpenAIApiKey()
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY not found in env or config/secrets.json')
+  }
+  return new OpenAI({ apiKey })
 }
 
 // =============================================================================
@@ -51,7 +82,7 @@ export async function POST(request: NextRequest) {
 
     // Parse request body
     const body = await request.json()
-    const { message, currentEntryId, currentWorkspaceId } = body
+    const { message, currentEntryId, currentWorkspaceId, context } = body
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json(
@@ -62,15 +93,23 @@ export async function POST(request: NextRequest) {
 
     const userMessage = message.trim()
 
+    // Extract conversation context (optional)
+    const conversationContext = context as {
+      summary?: string
+      recentUserMessages?: string[]
+      lastAssistantQuestion?: string
+    } | undefined
+
     // Check if OpenAI is configured
-    if (!process.env.OPENAI_API_KEY) {
+    const apiKey = getOpenAIApiKey()
+    if (!apiKey) {
       return NextResponse.json(
         {
           error: 'Chat navigation is not configured',
           resolution: {
             success: false,
             action: 'error',
-            message: 'Chat navigation is not configured. Please set OPENAI_API_KEY.',
+            message: 'Chat navigation is not configured. Please set OPENAI_API_KEY in .env.local or config/secrets.json.',
           } satisfies IntentResolutionResult,
         },
         { status: 503 }
@@ -79,7 +118,7 @@ export async function POST(request: NextRequest) {
 
     // Step 1: Parse intent with LLM
     const client = getOpenAIClient()
-    const messages = buildIntentMessages(userMessage)
+    const messages = buildIntentMessages(userMessage, conversationContext)
 
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
@@ -135,13 +174,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 2: Resolve intent to actionable data
-    const context = {
+    const resolutionContext = {
       userId,
       currentEntryId: currentEntryId || undefined,
       currentWorkspaceId: currentWorkspaceId || undefined,
     }
 
-    const resolution = await resolveIntent(intent, context)
+    const resolution = await resolveIntent(intent, resolutionContext)
 
     // Add supported actions hint if unsupported
     if (!resolution.success && resolution.action === 'error') {

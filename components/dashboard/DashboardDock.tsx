@@ -9,7 +9,7 @@
 
 import React, { forwardRef } from "react"
 import { Plus } from "lucide-react"
-import { ChatNavigationPanel } from "@/components/chat"
+import { useChatNavigationContext } from "@/lib/chat"
 
 const Z_INDEX_DOCK = 99999
 
@@ -42,12 +42,14 @@ export const DashboardDock = forwardRef<HTMLDivElement, DashboardDockProps>(
       workspaceCount = 0,
       onAddPanelClick,
       addPanelDisabled = false,
-      currentEntryId,
-      currentWorkspaceId,
+      currentEntryId: _currentEntryId,
+      currentWorkspaceId: _currentWorkspaceId,
       className,
     },
     ref
   ) {
+    const { openChat } = useChatNavigationContext()
+
     return (
       <div
         ref={ref}
@@ -123,32 +125,27 @@ export const DashboardDock = forwardRef<HTMLDivElement, DashboardDockProps>(
         </button>
 
         {/* Chat Navigation Button */}
-        <ChatNavigationPanel
-          currentEntryId={currentEntryId}
-          currentWorkspaceId={currentWorkspaceId}
-          trigger={
-            <button
-              data-chat-toggle
-              title="Chat Navigation"
-              style={{
-                position: 'relative',
-                width: 48,
-                height: 48,
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease-out',
-                border: '1px solid rgba(255,255,255,0.1)',
-                background: 'rgba(39, 39, 42, 0.8)',
-                color: 'white',
-              }}
-            >
-              <span style={{ fontSize: 20 }}>💬</span>
-            </button>
-          }
-        />
+        <button
+          data-chat-toggle
+          title="Chat Navigation"
+          onClick={openChat}
+          style={{
+            position: 'relative',
+            width: 48,
+            height: 48,
+            borderRadius: '50%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease-out',
+            border: '1px solid rgba(255,255,255,0.1)',
+            background: 'rgba(39, 39, 42, 0.8)',
+            color: 'white',
+          }}
+        >
+          <span style={{ fontSize: 20 }}>💬</span>
+        </button>
 
         {/* Add Panel Button */}
         <button

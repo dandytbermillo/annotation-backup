@@ -1,0 +1,259 @@
+*** Begin Patch
+*** Update File: lib/chat/workspace-resolver.ts
+@@
+ export async function resolveWorkspace(
+   workspaceName: string,
+   context: ResolutionContext,
+   entryName?: string
+ ): Promise<WorkspaceResolutionResult> {
+   try {
+     // Normalize the search term
+     const searchTerm = workspaceName.trim().toLowerCase()
++
++    // If the name starts with "workspace ", also consider the remainder as an alternate
++    // Example: "workspace 5" could be ambiguous with a workspace named "5".
++    const altSearchTerm = searchTerm.startsWith('workspace ')
++      ? searchTerm.replace(/^workspace\s+/, '').trim()
++      : ''
+ 
+     // Handle special case: "dashboard"
+     const isDashboard = searchTerm === 'dashboard' || searchTerm === 'home'
+ 
+-    // Build the query
+-    let query: string
+-    let params: any[]
+-
+-    if (entryName) {
+-      // Search within a specific entry (by name)
+-      query = `
+-        SELECT
+-          nw.id,
+-          nw.name,
+-          nw.item_id as entry_id,
+-          nw.is_default,
+-          nw.updated_at,
+-          i.name as entry_name
+-        FROM note_workspaces nw
+-        LEFT JOIN items i ON nw.item_id = i.id
+-        WHERE nw.user_id = $1
+-          AND LOWER(i.name) LIKE $2
+-          AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
+-        ORDER BY
+-          CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
+-          nw.updated_at DESC NULLS LAST
+-        LIMIT 10
+-      `
+-      params = [
+-        context.userId,
+-        `%${entryName.toLowerCase()}%`,
+-        `%${searchTerm}%`,
+-        isDashboard,
+-        searchTerm,
+-      ]
+-    } else if (context.currentEntryId) {
+-      // Search within current entry first
+-      query = `
+-        SELECT
+-          nw.id,
+-          nw.name,
+-          nw.item_id as entry_id,
+-          nw.is_default,
+-          nw.updated_at,
+-          i.name as entry_name
+-        FROM note_workspaces nw
+-        LEFT JOIN items i ON nw.item_id = i.id
+-        WHERE nw.user_id = $1
+-          AND nw.item_id = $2
+-          AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
+-        ORDER BY
+-          CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
+-          nw.updated_at DESC NULLS LAST
+-        LIMIT 10
+-      `
+-      params = [
+-        context.userId,
+-        context.currentEntryId,
+-        `%${searchTerm}%`,
+-        isDashboard,
+-        searchTerm,
+-      ]
+-    } else {
+-      // Search across all entries
+-      query = `
+-        SELECT
+-          nw.id,
+-          nw.name,
+-          nw.item_id as entry_id,
+-          nw.is_default,
+-          nw.updated_at,
+-          i.name as entry_name
+-        FROM note_workspaces nw
+-        LEFT JOIN items i ON nw.item_id = i.id
+-        WHERE nw.user_id = $1
+-          AND (LOWER(nw.name) LIKE $2 OR ($3 AND nw.is_default = true))
+-        ORDER BY
+-          CASE WHEN LOWER(nw.name) = $4 THEN 0 ELSE 1 END,
+-          nw.updated_at DESC NULLS LAST
+-        LIMIT 10
+-      `
+-      params = [context.userId, `%${searchTerm}%`, isDashboard, searchTerm]
+-    }
+-
+-    const result = await serverPool.query(query, params)
++    function buildQuery(term: string): { query: string; params: any[] } {
++      let query: string
++      let params: any[]
++
++      if (entryName) {
++        // Search within a specific entry (by name)
++        query = `
++          SELECT
++            nw.id,
++            nw.name,
++            nw.item_id as entry_id,
++            nw.is_default,
++            nw.updated_at,
++            i.name as entry_name
++          FROM note_workspaces nw
++          LEFT JOIN items i ON nw.item_id = i.id
++          WHERE nw.user_id = $1
++            AND LOWER(i.name) LIKE $2
++            AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
++          ORDER BY
++            CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
++            nw.updated_at DESC NULLS LAST
++          LIMIT 10
++        `
++        params = [
++          context.userId,
++          `%${entryName.toLowerCase()}%`,
++          `%${term}%`,
++          isDashboard,
++          term,
++        ]
++      } else if (context.currentEntryId) {
++        // Search within current entry first
++        query = `
++          SELECT
++            nw.id,
++            nw.name,
++            nw.item_id as entry_id,
++            nw.is_default,
++            nw.updated_at,
++            i.name as entry_name
++          FROM note_workspaces nw
++          LEFT JOIN items i ON nw.item_id = i.id
++          WHERE nw.user_id = $1
++            AND nw.item_id = $2
++            AND (LOWER(nw.name) LIKE $3 OR ($4 AND nw.is_default = true))
++          ORDER BY
++            CASE WHEN LOWER(nw.name) = $5 THEN 0 ELSE 1 END,
++            nw.updated_at DESC NULLS LAST
++          LIMIT 10
++        `
++        params = [
++          context.userId,
++          context.currentEntryId,
++          `%${term}%`,
++          isDashboard,
++          term,
++        ]
++      } else {
++        // Search across all entries
++        query = `
++          SELECT
++            nw.id,
++            nw.name,
++            nw.item_id as entry_id,
++            nw.is_default,
++            nw.updated_at,
++            i.name as entry_name
++          FROM note_workspaces nw
++          LEFT JOIN items i ON nw.item_id = i.id
++          WHERE nw.user_id = $1
++            AND (LOWER(nw.name) LIKE $2 OR ($3 AND nw.is_default = true))
++          ORDER BY
++            CASE WHEN LOWER(nw.name) = $4 THEN 0 ELSE 1 END,
++            nw.updated_at DESC NULLS LAST
++          LIMIT 10
++        `
++        params = [context.userId, `%${term}%`, isDashboard, term]
++      }
++
++      return { query, params }
++    }
++
++    const primary = buildQuery(searchTerm)
++    const primaryResult = await serverPool.query(primary.query, primary.params)
++
++    let matches: WorkspaceMatch[] = primaryResult.rows.map((row) => ({
++      id: row.id,
++      name: row.name,
++      entryId: row.entry_id,
++      entryName: row.entry_name || 'Unknown',
++      isDefault: row.is_default || false,
++      updatedAt: row.updated_at,
++    }))
++
++    // If "workspace X" could also mean "X", search the alternate term and merge
++    if (altSearchTerm) {
++      const alt = buildQuery(altSearchTerm)
++      const altResult = await serverPool.query(alt.query, alt.params)
++      const altMatches: WorkspaceMatch[] = altResult.rows.map((row) => ({
++        id: row.id,
++        name: row.name,
++        entryId: row.entry_id,
++        entryName: row.entry_name || 'Unknown',
++        isDefault: row.is_default || false,
++        updatedAt: row.updated_at,
++      }))
++
++      const seen = new Set(matches.map((m) => m.id))
++      for (const m of altMatches) {
++        if (!seen.has(m.id)) {
++          matches.push(m)
++          seen.add(m.id)
++        }
++      }
++    }
+-
+-    if (result.rows.length === 0) {
++    if (matches.length === 0) {
+       return {
+         status: 'not_found',
+         message: `No workspace found matching "${workspaceName}"`,
+       }
+     }
+-
+-    const matches: WorkspaceMatch[] = result.rows.map((row) => ({
+-      id: row.id,
+-      name: row.name,
+-      entryId: row.entry_id,
+-      entryName: row.entry_name || 'Unknown',
+-      isDefault: row.is_default || false,
+-      updatedAt: row.updated_at,
+-    }))
+ 
+     // If exact match (case-insensitive), return it
+     const exactMatch = matches.find(
+       (m) => m.name.toLowerCase() === searchTerm ||
+         (isDashboard && m.isDefault)
+     )
++
++    const altExactMatch = altSearchTerm
++      ? matches.find((m) => m.name.toLowerCase() === altSearchTerm)
++      : undefined
++
++    // If both exact matches exist ("workspace 5" and "5"), request clarification
++    if (exactMatch && altExactMatch && exactMatch.id !== altExactMatch.id) {
++      return {
++        status: 'multiple',
++        matches: [exactMatch, altExactMatch],
++        message: `Did you mean "${exactMatch.name}" or "${altExactMatch.name}"?`,
++      }
++    }
+ 
+     if (exactMatch && matches.length === 1) {
+       return {
+         status: 'found',
+*** End Patch

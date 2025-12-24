@@ -1,0 +1,131 @@
+*** Begin Patch
+*** Update File: components/chat/chat-navigation-panel.tsx
+@@
+ // =============================================================================
+ // Normalization Helper
+ // =============================================================================
+@@
+ function normalizeUserMessage(input: string): string {
+   let normalized = input.trim()
+@@
+   return normalized
+ }
+ 
++// Context assembly limits
++const MAX_RECENT_USER_MESSAGES = 6
++const SUMMARY_MAX_CHARS = 400
++
++/**
++ * Create a compact summary from older user messages.
++ */
++function summarizeUserMessages(messages: string[]): string | undefined {
++  const trimmed = messages.map((m) => m.trim()).filter(Boolean)
++  if (trimmed.length === 0) return undefined
++
++  let summary = `Earlier user requests: ${trimmed.join(' | ')}`
++  if (summary.length > SUMMARY_MAX_CHARS) {
++    summary = `${summary.slice(0, SUMMARY_MAX_CHARS - 3)}...`
++  }
++
++  return summary
++}
++
+ /**
+  * Build context payload from message history.
+  * Returns recent user messages and last assistant question (if any).
+  */
+ function buildContextPayload(messages: ChatMessage[]): {
++  summary?: string
+   recentUserMessages: string[]
+   lastAssistantQuestion?: string
+ } {
+-  // Get last 6 user messages
+-  const recentUserMessages = messages
+-    .filter((m) => m.role === 'user')
+-    .slice(-6)
+-    .map((m) => m.content)
++  const allUserMessages = messages
++    .filter((m) => m.role === 'user')
++    .map((m) => m.content)
++
++  // Get last N user messages
++  const recentUserMessages = allUserMessages.slice(-MAX_RECENT_USER_MESSAGES)
++  const olderUserMessages = allUserMessages.slice(0, -MAX_RECENT_USER_MESSAGES)
++  const summary = summarizeUserMessages(olderUserMessages)
+ 
+   // Check if last assistant message was a question (has options = disambiguation)
+   const lastAssistant = messages.filter((m) => m.role === 'assistant').slice(-1)[0]
+-  const lastAssistantQuestion =
+-    lastAssistant && !lastAssistant.isError && lastAssistant.options && lastAssistant.options.length > 0
+-      ? lastAssistant.content
+-      : undefined
+-
+-  return { recentUserMessages, lastAssistantQuestion }
++  const lastAssistantQuestion =
++    lastAssistant && !lastAssistant.isError
++      ? lastAssistant.content.trim().endsWith('?') ||
++        (lastAssistant.options && lastAssistant.options.length > 0)
++        ? lastAssistant.content
++        : undefined
++      : undefined
++
++  return { summary, recentUserMessages, lastAssistantQuestion }
+ }
+@@
+       // Build conversation context from message history
+       const context = buildContextPayload(messages)
+ 
+       // Call the navigate API with normalized message and context
+       const response = await fetch('/api/chat/navigate', {
+@@
+-          context: context.recentUserMessages.length > 0 || context.lastAssistantQuestion
+-            ? context
+-            : undefined,
++          context: context.summary || context.recentUserMessages.length > 0 || context.lastAssistantQuestion
++            ? context
++            : undefined,
+         }),
+       })
+*** End Patch
+*** Begin Patch
+*** Update File: app/api/chat/navigate/route.ts
+@@
+-    const conversationContext = context as {
+-      recentUserMessages?: string[]
+-      lastAssistantQuestion?: string
+-    } | undefined
++    const conversationContext = context as {
++      summary?: string
++      recentUserMessages?: string[]
++      lastAssistantQuestion?: string
++    } | undefined
+*** End Patch
+*** Begin Patch
+*** Update File: lib/chat/intent-prompt.ts
+@@
+ export interface ConversationContext {
++  summary?: string
+   recentUserMessages?: string[]
+   lastAssistantQuestion?: string
+ }
+@@
+-  if (context && (context.recentUserMessages?.length || context.lastAssistantQuestion)) {
++  if (context && (context.summary || context.recentUserMessages?.length || context.lastAssistantQuestion)) {
+     let contextBlock = 'Conversation context:\n'
+ 
++    if (context.summary) {
++      contextBlock += `Summary: "${context.summary}"\n`
++    }
++
+     if (context.recentUserMessages && context.recentUserMessages.length > 0) {
+       contextBlock += 'Recent user messages:\n'
+       context.recentUserMessages.forEach((msg, i) => {
+         contextBlock += `  ${i + 1}) "${msg}"\n`
+       })
+     }
+ 
+     if (context.lastAssistantQuestion) {
+-      contextBlock += `Last assistant response: "${context.lastAssistantQuestion}"\n`
++      contextBlock += `Last assistant question: "${context.lastAssistantQuestion}"\n`
+     }
+*** End Patch
